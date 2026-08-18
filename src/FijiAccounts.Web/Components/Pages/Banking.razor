@@ -785,9 +785,37 @@ reconciliationSessions =
                     codingModel.VatTreatment,
                     codingModel.TransferToAccountId));
             statusClass = "alert-success";
-            status = $"Transaction posted as journal {journal.SequenceNumber} and reconciled. It is now included in financial reports.";
-            CancelCoding();
-            await Reload();
+status =
+    $"Transaction posted as journal {journal.SequenceNumber} " +
+    "and reconciled. It is now included in financial reports.";
+
+var statement =
+    statementLines.FirstOrDefault(x =>
+        x.Id == codingStatementId.Value);
+
+if (statement is not null)
+{
+    var affectedSessions =
+        reconciliationSessions
+            .Where(x =>
+                !x.IsCompleted &&
+                x.BankAccountId == statement.BankAccountId &&
+                statement.TransactionDate >= x.StatementStartDate &&
+                statement.TransactionDate <= x.StatementEndDate)
+            .ToList();
+
+    foreach (var session in affectedSessions)
+    {
+        await ReconciliationSessions.RefreshAsync(
+            userId,
+            OrganisationId,
+            session.Id);
+    }
+}
+
+CancelCoding();
+
+await Reload();
         }
         catch (Exception ex)
         {
