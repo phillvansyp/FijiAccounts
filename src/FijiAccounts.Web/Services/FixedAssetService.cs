@@ -21,15 +21,150 @@ public sealed record FixedAssetRequest(
 
 public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
 {
-    public async Task<FixedAsset> CreateAsync(string userId, FixedAssetRequest request, CancellationToken ct = default)
+    public async Task<FixedAsset> CreateAsync(
+    string userId,
+    FixedAssetRequest request,
+    CancellationToken ct = default)
+{
+    if (!await access.CanPostJournalsAsync(
+            userId,
+            request.OrganisationId))
     {
-        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot maintain fixed assets for this organisation.");
-        if (string.IsNullOrWhiteSpace(request.AssetNumber) || string.IsNullOrWhiteSpace(request.Name) || request.Cost <= 0 || request.ResidualValue < 0 || request.ResidualValue >= request.Cost || request.UsefulLifeMonths < 1) throw new InvalidOperationException("Enter valid asset details, cost, residual value and useful life.");
-        var ids = new[] { request.AssetAccountId, request.AccumulatedDepreciationAccountId, request.DepreciationExpenseAccountId }; var accounts = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
-        if (accounts.Count != 3 || accounts[request.AssetAccountId].Type != AccountType.Asset || accounts[request.AccumulatedDepreciationAccountId].Type != AccountType.Asset || accounts[request.DepreciationExpenseAccountId].Type != AccountType.Expense) throw new InvalidOperationException("Select valid asset, accumulated depreciation and expense accounts.");
-        var asset = new FixedAsset { OrganisationId = request.OrganisationId, AssetNumber = request.AssetNumber.Trim().ToUpperInvariant(), Name = request.Name.Trim(), AcquisitionDate = request.AcquisitionDate, Cost = request.Cost, ResidualValue = request.ResidualValue, UsefulLifeMonths = request.UsefulLifeMonths, AssetAccountId = request.AssetAccountId, DepreciationExpenseAccountId = request.DepreciationExpenseAccountId, AccumulatedDepreciationAccountId = request.AccumulatedDepreciationAccountId, CreatedByUserId = userId };
-        db.FixedAssets.Add(asset); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "FixedAssetCreated", asset.Id, new { asset.AssetNumber, asset.Cost })); await db.SaveChangesAsync(ct); return asset;
+        throw new UnauthorizedAccessException(
+            "You cannot maintain fixed assets for this organisation.");
     }
+
+    if (string.IsNullOrWhiteSpace(request.AssetNumber) ||
+        string.IsNullOrWhiteSpace(request.Name) ||
+        request.Cost <= 0 ||
+        request.ResidualValue < 0 ||
+        request.ResidualValue >= request.Cost ||
+        request.UsefulLifeMonths < 1)
+    {
+        throw new InvalidOperationException(
+            "Enter valid asset details, cost, residual value and useful life.");
+    }
+
+    var ids = new[]
+    {
+        request.AssetAccountId,
+        request.AccumulatedDepreciationAccountId,
+        request.DepreciationExpenseAccountId
+    };
+
+    var accounts =
+        await db.LedgerAccounts
+            .Where(x =>
+                x.OrganisationId == request.OrganisationId &&
+                x.IsActive &&
+                ids.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, ct);
+
+    if (accounts.Count != 3 ||
+        accounts[request.AssetAccountId].Type != AccountType.Asset ||
+        accounts[request.AccumulatedDepreciationAccountId].Type != AccountType.Asset ||
+        accounts[request.DepreciationExpenseAccountId].Type != AccountType.Expense)
+    {
+        throw new InvalidOperationException(
+            "Select valid asset, accumulated depreciation and expense accounts.");
+    }
+
+    LedgerAccount? acquisitionBank = null;
+
+    if (request.AcquisitionBankAccountId is not null)
+    {
+        acquisitionBank =
+            await db.LedgerAccounts
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == request.AcquisitionBankAccountId.Value &&
+                        x.OrganisationId == request.OrganisationId &&
+                        x.IsActive &&
+                        x.IsBankAccount,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Select an active bank account for the asset acquisition.");
+    }
+
+    await using var transaction =
+        await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
+
+    PostedJournal? acquisitionJournal = null;
+
+    if (acquisitionBank is not null)
+    {
+        acquisitionJournal =
+            await posting.PostAsync(
+                userId,
+                new(
+                    request.OrganisationId,
+                    request.AcquisitionDate,
+                    $"FA-{request.AssetNumber.Trim().ToUpperInvariant()}",
+                    $"Fixed asset acquisition · {request.Name.Trim()}",
+                    [
+                        new(
+                            request.AssetAccountId,
+                            request.Name.Trim(),
+                            request.Cost,
+                            0),
+                        new(
+                            acquisitionBank.Id,
+                            request.Name.Trim(),
+                            0,
+                            request.Cost)
+                    ]),
+                ct);
+    }
+
+    var asset =
+        new FixedAsset
+        {
+            OrganisationId = request.OrganisationId,
+            AssetNumber =
+                request.AssetNumber.Trim().ToUpperInvariant(),
+            Name = request.Name.Trim(),
+            AcquisitionDate = request.AcquisitionDate,
+            Cost = request.Cost,
+            ResidualValue = request.ResidualValue,
+            UsefulLifeMonths = request.UsefulLifeMonths,
+            AssetAccountId = request.AssetAccountId,
+            DepreciationExpenseAccountId =
+                request.DepreciationExpenseAccountId,
+            AccumulatedDepreciationAccountId =
+                request.AccumulatedDepreciationAccountId,
+
+            AcquisitionBankAccountId =
+                acquisitionBank?.Id,
+
+            AcquisitionJournalId =
+                acquisitionJournal?.Id,
+
+            CreatedByUserId = userId
+        };
+
+    db.FixedAssets.Add(asset);
+
+    db.AuditEvents.Add(
+        Audit(
+            request.OrganisationId,
+            userId,
+            "FixedAssetCreated",
+            asset.Id,
+            new
+            {
+                asset.AssetNumber,
+                asset.Cost,
+                asset.AcquisitionBankAccountId,
+                asset.AcquisitionJournalId
+            }));
+
+    await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
+
+    return asset;
+}
 
     public async Task<FixedAssetDepreciation> DepreciateThroughAsync(string userId, Guid organisationId, Guid assetId, DateOnly throughDate, CancellationToken ct = default)
     {

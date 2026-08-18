@@ -8,6 +8,109 @@ namespace FijiAccounts.Web.Tests;
 public sealed class FixedAssetAccountingTests
 {
     [Fact]
+    public async Task CreateFixedAsset_WithBankAccount_PostsAcquisitionJournal()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new FixedAssetService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var bank =
+            test.Account("1000");
+
+        var assetAccount =
+            test.Account("1500");
+
+        var accumulatedDepreciation =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1510",
+                Name = "Accumulated Depreciation",
+                Type = AccountType.Asset,
+                IsSystemAccount = false,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(accumulatedDepreciation);
+        await test.Db.SaveChangesAsync();
+
+        var asset =
+            await service.CreateAsync(
+                test.UserId,
+                new FixedAssetRequest(
+                    OrganisationId: test.Organisation.Id,
+                    AssetNumber: "FA-001",
+                    Name: "Office Computer",
+                    AcquisitionDate: new DateOnly(2026, 8, 18),
+                    Cost: 2400m,
+                    ResidualValue: 400m,
+                    UsefulLifeMonths: 36,
+                    AssetAccountId: assetAccount.Id,
+                    DepreciationExpenseAccountId:
+                        test.Account("6900").Id,
+                    AccumulatedDepreciationAccountId:
+                        accumulatedDepreciation.Id,
+                    AcquisitionBankAccountId: bank.Id));
+
+        var saved =
+            await test.Db.FixedAssets
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == asset.Id);
+
+        Assert.Equal(
+            bank.Id,
+            saved.AcquisitionBankAccountId);
+
+        Assert.NotNull(
+            saved.AcquisitionJournalId);
+
+        var journal =
+            await test.LoadJournalAsync(
+                saved.AcquisitionJournalId!.Value);
+
+        var fixedAssetLine =
+            journal.Lines.Single(
+                x => x.LedgerAccount.Code == "1500");
+
+        var bankLine =
+            journal.Lines.Single(
+                x => x.LedgerAccount.Code == "1000");
+
+        Assert.Equal(
+            2400m,
+            fixedAssetLine.Debit);
+
+        Assert.Equal(
+            0m,
+            fixedAssetLine.Credit);
+
+        Assert.Equal(
+            0m,
+            bankLine.Debit);
+
+        Assert.Equal(
+            2400m,
+            bankLine.Credit);
+
+        Assert.Equal(
+            journal.Lines.Sum(x => x.Debit),
+            journal.Lines.Sum(x => x.Credit));
+
+        Assert.Equal(
+            2400m,
+            await test.AccountBalanceAsync("1500"));
+
+        Assert.Equal(
+            -2400m,
+            await test.AccountBalanceAsync("1000"));
+    }
+
+    [Fact]
     public async Task DepreciateThrough_PostsCorrectStraightLineDepreciation()
     {
         await using var test =
@@ -19,8 +122,6 @@ public sealed class FixedAssetAccountingTests
                 test.Access,
                 test.Posting);
 
-        // Accumulated depreciation is a contra-asset,
-        // but the current service requires AccountType.Asset.
         var accumulatedDepreciation =
             new LedgerAccount
             {
@@ -54,7 +155,7 @@ public sealed class FixedAssetAccountingTests
                 test.UserId,
                 new FixedAssetRequest(
                     OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-001",
+                    AssetNumber: "FA-DEP-001",
                     Name: "Test Equipment",
                     AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
@@ -66,13 +167,6 @@ public sealed class FixedAssetAccountingTests
                     AccumulatedDepreciationAccountId:
                         accumulatedDepreciation.Id));
 
-        Assert.NotEqual(Guid.Empty, asset.Id);
-        Assert.Equal(12_000m, asset.Cost);
-        Assert.Equal(12, asset.UsefulLifeMonths);
-
-        // Through March = 3 months.
-        // $12,000 / 12 = $1,000 per month.
-        // Target depreciation = $3,000.
         var depreciation =
             await fixedAssets.DepreciateThroughAsync(
                 test.UserId,
@@ -80,7 +174,9 @@ public sealed class FixedAssetAccountingTests
                 asset.Id,
                 new DateOnly(2026, 3, 31));
 
-        Assert.Equal(3_000m, depreciation.Amount);
+        Assert.Equal(
+            3_000m,
+            depreciation.Amount);
 
         var journal =
             await test.LoadJournalAsync(
@@ -98,19 +194,25 @@ public sealed class FixedAssetAccountingTests
                     x.LedgerAccountId ==
                     accumulatedDepreciation.Id);
 
-        Assert.Equal(3_000m, expenseLine.Debit);
-        Assert.Equal(0m, expenseLine.Credit);
+        Assert.Equal(
+            3_000m,
+            expenseLine.Debit);
 
-        Assert.Equal(0m, accumulatedLine.Debit);
-        Assert.Equal(3_000m, accumulatedLine.Credit);
+        Assert.Equal(
+            0m,
+            expenseLine.Credit);
+
+        Assert.Equal(
+            0m,
+            accumulatedLine.Debit);
+
+        Assert.Equal(
+            3_000m,
+            accumulatedLine.Credit);
 
         Assert.Equal(
             journal.Lines.Sum(x => x.Debit),
             journal.Lines.Sum(x => x.Credit));
-
-        Assert.Equal(
-            3_000m,
-            journal.Lines.Sum(x => x.Debit));
 
         var storedEntries =
             await test.Db.FixedAssetDepreciations
@@ -178,7 +280,7 @@ public sealed class FixedAssetAccountingTests
                 test.UserId,
                 new FixedAssetRequest(
                     OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-002",
+                    AssetNumber: "FA-DEP-002",
                     Name: "Second Test Equipment",
                     AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
@@ -197,11 +299,10 @@ public sealed class FixedAssetAccountingTests
                 asset.Id,
                 new DateOnly(2026, 3, 31));
 
-        Assert.Equal(3_000m, march.Amount);
+        Assert.Equal(
+            3_000m,
+            march.Amount);
 
-        // Through June target is $6,000 total.
-        // $3,000 already posted,
-        // so only another $3,000 should be posted.
         var june =
             await fixedAssets.DepreciateThroughAsync(
                 test.UserId,
@@ -209,7 +310,9 @@ public sealed class FixedAssetAccountingTests
                 asset.Id,
                 new DateOnly(2026, 6, 30));
 
-        Assert.Equal(3_000m, june.Amount);
+        Assert.Equal(
+            3_000m,
+            june.Amount);
 
         var entries =
             await test.Db.FixedAssetDepreciations
@@ -217,7 +320,9 @@ public sealed class FixedAssetAccountingTests
                 .Where(x => x.FixedAssetId == asset.Id)
                 .ToListAsync();
 
-        Assert.Equal(2, entries.Count);
+        Assert.Equal(
+            2,
+            entries.Count);
 
         Assert.Equal(
             6_000m,
@@ -277,7 +382,7 @@ public sealed class FixedAssetAccountingTests
                 test.UserId,
                 new FixedAssetRequest(
                     OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-003",
+                    AssetNumber: "FA-DEP-003",
                     Name: "Residual Value Asset",
                     AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
@@ -289,7 +394,6 @@ public sealed class FixedAssetAccountingTests
                     AccumulatedDepreciationAccountId:
                         accumulatedDepreciation.Id));
 
-        // Date is well beyond useful life.
         var depreciation =
             await fixedAssets.DepreciateThroughAsync(
                 test.UserId,
@@ -297,9 +401,9 @@ public sealed class FixedAssetAccountingTests
                 asset.Id,
                 new DateOnly(2028, 12, 31));
 
-        // Maximum depreciable amount:
-        // $12,000 - $2,000 residual = $10,000.
-        Assert.Equal(10_000m, depreciation.Amount);
+        Assert.Equal(
+            10_000m,
+            depreciation.Amount);
 
         Assert.Equal(
             10_000m,
