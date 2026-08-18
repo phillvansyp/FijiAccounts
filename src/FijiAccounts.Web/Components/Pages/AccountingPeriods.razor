@@ -1,4 +1,4 @@
-@page "/o/{OrganisationId:guid}/periods"
+﻿@page "/o/{OrganisationId:guid}/periods"
 @attribute [Authorize]
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
@@ -13,27 +13,302 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>Accounting periods · Account Island</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
 else
 {
-    <div class="period-heading"><div><p class="eyebrow">Controls</p><h1>Accounting periods</h1><p>Lock completed periods to prevent backdated changes to the books.</p></div>@if (canManage) { <button class="btn btn-primary" @onclick="() => showCreate = !showCreate">+ New period</button> }</div>
-    @if (status is not null) { <div class="alert @statusClass">@status</div> }
-    @if (showCreate) { <section class="create-period"><h2>Create accounting period</h2><EditForm Model="model" OnValidSubmit="Create" FormName="create-period"><DataAnnotationsValidator /><ValidationSummary /><div class="period-fields"><div><label class="form-label">Period name</label><InputText class="form-control" @bind-Value="model.Name" /></div><div><label class="form-label">Starts</label><InputDate class="form-control" @bind-Value="model.StartsOn" /></div><div><label class="form-label">Ends</label><InputDate class="form-control" @bind-Value="model.EndsOn" /></div><button class="btn btn-primary">Create period</button></div></EditForm></section> }
-    <section class="period-list"><header><div><h2>Financial calendar</h2><p>@access.Organisation.LegalName · year end @FinancialYearEnd</p></div><span>@periods.Count(x => x.IsLocked) locked</span></header>
-        @if (periods.Count == 0) { <div class="empty-periods"><strong>No accounting periods configured</strong><span>Create monthly, quarterly or annual periods when you are ready to close the books.</span></div> }
-        else { @foreach (var item in periods) { <div class="period-row"><span class="period-state @(item.IsLocked ? "locked" : "open")">@(item.IsLocked ? "🔒" : "○")</span><div><strong>@item.Name</strong><small>@item.StartsOn.ToString("dd MMM yyyy") – @item.EndsOn.ToString("dd MMM yyyy")</small></div><span class="status-pill @(item.IsLocked ? "locked" : "open")">@(item.IsLocked ? "Locked" : "Open")</span>@if (canManage) { <button class="btn btn-sm @(item.IsLocked ? "btn-outline-secondary" : "btn-outline-danger")" @onclick="() => Toggle(item)">@(item.IsLocked ? "Unlock" : "Lock period")</button> }</div> } }
+    <div class="period-heading">
+        <div>
+            <p class="eyebrow">Controls</p>
+            <h1>Accounting periods</h1>
+            <p>Lock completed periods to prevent backdated changes to the books.</p>
+        </div>
+
+        @if (canManage)
+        {
+            <button class="btn btn-primary"
+                    @onclick="() => showCreate = !showCreate">
+                + New period
+            </button>
+        }
+    </div>
+
+    @if (status is not null)
+    {
+        <div class="alert @statusClass">@status</div>
+    }
+
+    @if (showCreate)
+    {
+        <section class="create-period">
+            <h2>Create accounting period</h2>
+
+            <EditForm Model="model"
+                      OnValidSubmit="Create"
+                      FormName="create-period">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="period-fields">
+                    <div>
+                        <label class="form-label">Period name</label>
+                        <InputText class="form-control" @bind-Value="model.Name" />
+                    </div>
+
+                    <div>
+                        <label class="form-label">Starts</label>
+                        <InputDate class="form-control" @bind-Value="model.StartsOn" />
+                    </div>
+
+                    <div>
+                        <label class="form-label">Ends</label>
+                        <InputDate class="form-control" @bind-Value="model.EndsOn" />
+                    </div>
+
+                    <button class="btn btn-primary">Create period</button>
+                </div>
+            </EditForm>
+        </section>
+    }
+
+    <section class="period-list">
+        <header>
+            <div>
+                <h2>Financial calendar</h2>
+                <p>@access.Organisation.LegalName · year end @FinancialYearEnd</p>
+            </div>
+
+            <span>@periods.Count(x => x.IsLocked) locked</span>
+        </header>
+
+        @if (periods.Count == 0)
+        {
+            <div class="empty-periods">
+                <strong>No accounting periods configured</strong>
+                <span>Create monthly, quarterly or annual periods when you are ready to close the books.</span>
+            </div>
+        }
+        else
+        {
+            @foreach (var item in periods)
+            {
+                <div class="period-row">
+                    <span class="period-state @(item.IsLocked ? "locked" : "open")">
+                        @(item.IsLocked ? "🔒" : "○")
+                    </span>
+
+                    <div>
+                        <strong>@item.Name</strong>
+                        <small>
+                            @item.StartsOn.ToString("dd MMM yyyy") – @item.EndsOn.ToString("dd MMM yyyy")
+                        </small>
+                    </div>
+
+                    <span class="status-pill @(item.IsLocked ? "locked" : "open")">
+                        @(item.IsLocked ? "Locked" : "Open")
+                    </span>
+
+                    @if (canManage)
+                    {
+                        <button class="btn btn-sm @(item.IsLocked ? "btn-outline-secondary" : "btn-outline-danger")"
+                                @onclick="() => OpenConfirmation(item)">
+                            @(item.IsLocked ? "Unlock" : "Lock period")
+                        </button>
+                    }
+                </div>
+
+                @if (confirmingPeriodId == item.Id)
+                {
+                    <div class="border-top border-bottom py-3 px-3 mb-2">
+                        @if (item.IsLocked)
+                        {
+                            <h3 class="h5">Unlock @item.Name?</h3>
+                            <p class="mb-3">
+                                Unlocking this period will allow transactions and journals
+                                to be posted into dates from
+                                <strong>@item.StartsOn.ToString("dd MMM yyyy")</strong>
+                                to
+                                <strong>@item.EndsOn.ToString("dd MMM yyyy")</strong>.
+                                The unlock will be recorded in the audit trail.
+                            </p>
+                        }
+                        else
+                        {
+                            <h3 class="h5">Lock @item.Name?</h3>
+                            <p class="mb-3">
+                                Once locked, invoices, bills, receipts, payments and manual
+                                journals cannot be posted into dates from
+                                <strong>@item.StartsOn.ToString("dd MMM yyyy")</strong>
+                                to
+                                <strong>@item.EndsOn.ToString("dd MMM yyyy")</strong>
+                                until the period is unlocked.
+                            </p>
+                        }
+
+                        <div class="d-flex gap-2">
+                            <button class="btn @(item.IsLocked ? "btn-warning" : "btn-danger")"
+                                    @onclick="() => ConfirmToggle(item)">
+                                @(item.IsLocked ? "Confirm unlock" : "Confirm lock")
+                            </button>
+
+                            <button class="btn btn-outline-secondary"
+                                    @onclick="CancelConfirmation">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                }
+            }
+        }
     </section>
-    <div class="control-note"><strong>How locking works</strong><span>Invoices, bills, receipts, payments and manual journals cannot be posted into a locked period. Unlocking is recorded in the audit trail.</span></div>
+
+    <div class="control-note">
+        <strong>How locking works</strong>
+        <span>
+            Invoices, bills, receipts, payments and manual journals cannot be posted
+            into a locked period. Unlocking is recorded in the audit trail.
+        </span>
+    </div>
 }
 
 @code {
-    [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, showCreate; private List<AccountingPeriod> periods = []; private PeriodModel model = new(); private string? status; private string statusClass = "alert-success";
-    private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); Reset(); await Reload(); }
-    private async Task Reload() => periods = await Db.AccountingPeriods.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.EndsOn).ToListAsync();
-    private void Reset() { var today = DateOnly.FromDateTime(DateTime.Today); model = new() { Name = today.ToString("MMMM yyyy"), StartsOn = new DateOnly(today.Year, today.Month, 1), EndsOn = new DateOnly(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month)) }; }
-    private async Task Create() { try { await PeriodService.CreateAsync(userId, new(OrganisationId, model.Name, model.StartsOn, model.EndsOn)); statusClass = "alert-success"; status = "Accounting period created."; showCreate = false; Reset(); await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
-    private async Task Toggle(AccountingPeriod item) { try { await PeriodService.SetLockedAsync(userId, OrganisationId, item.Id, !item.IsLocked); statusClass = "alert-success"; status = item.IsLocked ? "Accounting period unlocked." : "Accounting period locked."; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
-    private sealed class PeriodModel { [Required, StringLength(80)] public string Name { get; set; } = ""; public DateOnly StartsOn { get; set; } public DateOnly EndsOn { get; set; } }
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canManage;
+    private bool showCreate;
+    private List<AccountingPeriod> periods = [];
+    private PeriodModel model = new();
+    private string? status;
+    private string statusClass = "alert-success";
+    private Guid? confirmingPeriodId;
+
+    private string FinancialYearEnd =>
+        new DateOnly(
+            2000,
+            access!.Organisation.FinancialYearEndMonth,
+            access.Organisation.FinancialYearEndDay)
+        .ToString("dd MMMM");
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+
+        if (access is null)
+            return;
+
+        canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+
+        Reset();
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        periods = await Db.AccountingPeriods
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.EndsOn)
+            .ToListAsync();
+    }
+
+    private void Reset()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        model = new()
+        {
+            Name = today.ToString("MMMM yyyy"),
+            StartsOn = new DateOnly(today.Year, today.Month, 1),
+            EndsOn = new DateOnly(
+                today.Year,
+                today.Month,
+                DateTime.DaysInMonth(today.Year, today.Month))
+        };
+    }
+
+    private async Task Create()
+    {
+        try
+        {
+            await PeriodService.CreateAsync(
+                userId,
+                new(
+                    OrganisationId,
+                    model.Name,
+                    model.StartsOn,
+                    model.EndsOn));
+
+            statusClass = "alert-success";
+            status = "Accounting period created.";
+            showCreate = false;
+
+            Reset();
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private void OpenConfirmation(AccountingPeriod item)
+    {
+        confirmingPeriodId = item.Id;
+        status = null;
+    }
+
+    private void CancelConfirmation()
+    {
+        confirmingPeriodId = null;
+    }
+
+    private async Task ConfirmToggle(AccountingPeriod item)
+    {
+        try
+        {
+            var wasLocked = item.IsLocked;
+
+            await PeriodService.SetLockedAsync(
+                userId,
+                OrganisationId,
+                item.Id,
+                !wasLocked);
+
+            statusClass = "alert-success";
+            status = wasLocked
+                ? "Accounting period unlocked."
+                : "Accounting period locked.";
+
+            confirmingPeriodId = null;
+
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private sealed class PeriodModel
+    {
+        [Required, StringLength(80)]
+        public string Name { get; set; } = "";
+
+        public DateOnly StartsOn { get; set; }
+
+        public DateOnly EndsOn { get; set; }
+    }
 }
