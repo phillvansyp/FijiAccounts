@@ -81,6 +81,7 @@ builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<FinancialReportService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankReconciliationSessionService>();
+builder.Services.AddScoped<BankAccountService>();
 
 var app = builder.Build();
 

@@ -28,6 +28,11 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
 
         Access = new TenantAccessService(Db);
         Posting = new JournalPostingService(Db, Access);
+        BankAccounts =
+    new BankAccountService(
+        Db,
+        Access,
+        Posting);
         SalesInvoices = new SalesInvoiceService(Db, Access, Posting);
         Purchasing = new PurchasingService(Db, Access, Posting);
         Reconciliation = new BankReconciliationService(Db, Access);
@@ -60,6 +65,8 @@ BankCoding = new BankTransactionCodingService(
     public BankReconciliationService Reconciliation { get; }
 
 public BankTransactionCodingService BankCoding { get; }
+
+    public BankAccountService BankAccounts { get; }
 
     public static async Task<AccountingTestDatabase> CreateAsync()
     {

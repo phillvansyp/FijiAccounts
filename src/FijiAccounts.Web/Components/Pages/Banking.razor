@@ -11,18 +11,13 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject BankReconciliationService Reconciliation
-@inject ApplicationDbContext Db
-@inject TenantAccessService TenantAccess
-@inject BankReconciliationService Reconciliation
 @inject BankReconciliationSessionService ReconciliationSessions
 @inject BankStatementImportService StatementImport
 @inject BankTransactionCodingService TransactionCoding
+@inject JournalPostingService JournalPosting
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
-@inject BankStatementImportService StatementImport
-@inject BankTransactionCodingService TransactionCoding
-@inject UserManager<ApplicationUser> UserManager
-@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject BankAccountService BankAccounts
 
 <PageTitle>Banking · Account Island</PageTitle>
     @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
@@ -30,7 +25,63 @@ else
 {
     <div class="bank-heading"><div><p class="eyebrow">Banking</p><h1>Bank accounts</h1><p>Balances, statement lines and reconciliation from the posted ledger.</p></div><div class="heading-actions">@if (canReconcile) { <button class="btn btn-outline-primary" @onclick="() => showFeeds = !showFeeds">Bank feeds</button><button class="btn btn-outline-primary" @onclick="() => showImport = !showImport">Read statement</button><button class="btn btn-outline-primary" @onclick="() => showStatement = !showStatement">+ Statement line</button> }@if (canManage) { <button class="btn btn-primary" @onclick="ToggleAddAccountForm">+ Add bank account</button> }</div></div>
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
-    @if (showAdd) { <section class="add-bank"><h2>Add bank account</h2><EditForm Model="model" OnValidSubmit="AddBank" OnInvalidSubmit="AddBankInvalid" FormName="add-bank"><DataAnnotationsValidator /><ValidationSummary /><div class="bank-fields"><div><label class="form-label">Ledger code</label><InputText class="form-control" @bind-Value="model.Code" /></div><div><label class="form-label">Account name</label><InputText class="form-control" @bind-Value="model.Name" /></div><div><label class="form-label">Account number</label><InputText class="form-control" @bind-Value="model.AccountNumber" /></div><button class="btn btn-primary" type="submit">Create account</button></div></EditForm></section> }
+    @if (showAdd)
+{
+    <section class="add-bank">
+        <h2>Add bank account</h2>
+
+        <EditForm Model="model"
+                  OnValidSubmit="AddBank"
+                  OnInvalidSubmit="AddBankInvalid"
+                  FormName="add-bank">
+
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="bank-fields">
+                <div>
+                    <label class="form-label">Ledger code</label>
+                    <InputText class="form-control"
+                               @bind-Value="model.Code" />
+                </div>
+
+                <div>
+                    <label class="form-label">Account name</label>
+                    <InputText class="form-control"
+                               @bind-Value="model.Name" />
+                </div>
+
+                <div>
+                    <label class="form-label">Account number</label>
+                    <InputText class="form-control"
+                               @bind-Value="model.AccountNumber" />
+                </div>
+
+                <div>
+                    <label class="form-label">Opening balance</label>
+                    <InputNumber class="form-control"
+                                 @bind-Value="model.OpeningBalance" />
+                    <small class="text-muted">
+                        Enter the bank balance when you begin using Account Island.
+                    </small>
+                </div>
+
+                <div>
+                    <label class="form-label">Balance date</label>
+                    <InputDate class="form-control"
+                               @bind-Value="model.OpeningBalanceDate" />
+                </div>
+
+                <div class="d-flex align-items-end">
+                    <button class="btn btn-primary"
+                            type="submit">
+                        Create account
+                    </button>
+                </div>
+            </div>
+        </EditForm>
+    </section>
+}
     <div class="bank-grid">
     <article class="bank-card bank-card-clickable @(selectedBankAccountId is null ? "selected" : null)"
              @onclick="() => SelectBankAccount(null)">
@@ -185,6 +236,13 @@ else
                         selectedBankAccountId.Value)
                     .ToList();
     }
+
+    @if (reconciliationStatus is not null)
+{
+    <div class="alert @reconciliationStatusClass mt-3">
+        @reconciliationStatus
+    </div>
+}
 
     @if (visibleSessions.Count == 0)
     {
@@ -458,6 +516,8 @@ else
 private ReconciliationSessionModel reconciliationModel = new();
 private bool showReconciliationSession;
 private bool savingReconciliationSession;
+private string? reconciliationStatus;
+private string reconciliationStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); await Reload(); }
     private async Task Reload()
     {
@@ -518,59 +578,59 @@ reconciliationSessions =
     }
     private decimal Balance(Guid accountId) => balances.GetValueOrDefault(accountId);
     private async Task AddBank()
+{
+    if (!canManage)
     {
-        if (!canManage)
-        {
-            statusClass = "alert-danger";
-            status = "You do not have permission to add bank accounts.";
-            return;
-        }
+        statusClass = "alert-danger";
+        status = "You do not have permission to add bank accounts.";
+        return;
+    }
 
-        var code = model.Code?.Trim() ?? "";
-        var name = model.Name?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
-        {
-            statusClass = "alert-danger";
-            status = "Account code and name are required.";
-            return;
-        }
+    try
+    {
+        var bank =
+            await BankAccounts.CreateAsync(
+                userId,
+                new CreateBankAccountRequest(
+                    OrganisationId,
+                    model.Code,
+                    model.Name,
+                    model.AccountNumber,
+                    model.OpeningBalance,
+                    model.OpeningBalanceDate));
 
-        if (await Db.LedgerAccounts.AnyAsync(x => x.OrganisationId == OrganisationId && x.Code == code))
-        {
-            statusClass = "alert-danger";
-            status = $"The account code '{code}' is already in use. Enter a different ledger code.";
-            model.Code = await NextAvailableBankCodeAsync();
-            return;
-        }
+        statusClass = "alert-success";
 
-        try
-        {
-            Db.LedgerAccounts.Add(new LedgerAccount
-            {
-                OrganisationId = OrganisationId,
-                Code = code,
-                Name = name,
-                BankAccountNumber = model.AccountNumber?.Trim(),
-                Type = AccountType.Asset,
-                IsBankAccount = true
-            });
-            await Db.SaveChangesAsync();
+        status =
+            model.OpeningBalance == 0m
+                ? $"Bank account '{bank.Name}' ({bank.Code}) created."
+                : $"Bank account '{bank.Name}' ({bank.Code}) created " +
+                  $"with opening balance {model.OpeningBalance:N2}.";
 
-            statusClass = "alert-success";
-            status = $"Bank account '{name}' ({code}) created.";
-            model = new();
-            model.Code = await NextAvailableBankCodeAsync();
-            showAdd = false;
-            await Reload();
-        }
-        catch (Exception ex)
+        model = new();
+        model.Code =
+            await NextAvailableBankCodeAsync();
+
+        showAdd = false;
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+
+        if (ex.Message.Contains(
+                "already in use",
+                StringComparison.OrdinalIgnoreCase))
         {
-            statusClass = "alert-danger";
-            status = ex is InvalidOperationException
-                ? ex.Message
-                : $"Could not create the bank account: {ex.Message}";
+            model.Code =
+                await NextAvailableBankCodeAsync();
         }
     }
+}
     private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
     private PostedJournalLine? SuggestedMatch(BankStatementLine item)
     {
@@ -793,7 +853,22 @@ reconciliationSessions =
 }
     private async Task ImportPreview() { if (statementPreview is null) return; try { var result = await StatementImport.ImportAsync(userId, OrganisationId, importBankAccountId, statementPreview.Lines, statementPreview.Format); statusClass = "alert-success"; status = $"Imported {result.Imported} statement line{(result.Imported == 1 ? "" : "s")}. Skipped {result.Skipped} duplicate{(result.Skipped == 1 ? "" : "s")}."; statementPreview = null; showImport = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
     private static bool AmountMatches(decimal left, decimal right) => Math.Round(left, 2, MidpointRounding.AwayFromZero) == Math.Round(right, 2, MidpointRounding.AwayFromZero);
-    private sealed class BankModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(160)] public string Name { get; set; } = ""; [StringLength(80)] public string? AccountNumber { get; set; } }
+    private sealed class BankModel
+{
+    [Required, StringLength(20)]
+    public string Code { get; set; } = "";
+
+    [Required, StringLength(160)]
+    public string Name { get; set; } = "";
+
+    [StringLength(80)]
+    public string? AccountNumber { get; set; }
+
+    public decimal OpeningBalance { get; set; }
+
+    public DateOnly OpeningBalanceDate { get; set; } =
+        DateOnly.FromDateTime(DateTime.Today);
+}
     private async Task ToggleAddAccountForm()
     {
         showAdd = !showAdd;
@@ -1009,13 +1084,16 @@ private async Task RefreshReconciliationSession(Guid sessionId)
 {
     try
     {
+        reconciliationStatus = null;
+
         await ReconciliationSessions.RefreshAsync(
             userId,
             OrganisationId,
             sessionId);
 
-        statusClass = "alert-success";
-        status = "Reconciliation balance refreshed.";
+        reconciliationStatusClass = "alert-success";
+        reconciliationStatus =
+            "Reconciliation balance refreshed.";
 
         await Reload();
     }
@@ -1023,8 +1101,8 @@ private async Task RefreshReconciliationSession(Guid sessionId)
         when (ex is InvalidOperationException
               or UnauthorizedAccessException)
     {
-        statusClass = "alert-danger";
-        status = ex.Message;
+        reconciliationStatusClass = "alert-danger";
+        reconciliationStatus = ex.Message;
     }
 }
 
@@ -1032,13 +1110,16 @@ private async Task CompleteReconciliationSession(Guid sessionId)
 {
     try
     {
+        reconciliationStatus = null;
+
         await ReconciliationSessions.CompleteAsync(
             userId,
             OrganisationId,
             sessionId);
 
-        statusClass = "alert-success";
-        status = "Bank reconciliation completed.";
+        reconciliationStatusClass = "alert-success";
+        reconciliationStatus =
+            "Bank reconciliation completed.";
 
         await Reload();
     }
@@ -1046,8 +1127,8 @@ private async Task CompleteReconciliationSession(Guid sessionId)
         when (ex is InvalidOperationException
               or UnauthorizedAccessException)
     {
-        statusClass = "alert-danger";
-        status = ex.Message;
+        reconciliationStatusClass = "alert-danger";
+        reconciliationStatus = ex.Message;
     }
 }
 }
