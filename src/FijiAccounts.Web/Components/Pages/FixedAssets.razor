@@ -379,11 +379,43 @@ else
                                                         }
                                                     </InputSelect>
                                                 </div>
+
+                                                <div class="row mb-3">
+    <div class="col-md-3">
+        <label class="form-label">Depreciation to disposal</label>
+        <div class="form-control bg-light">
+            $@DisposalDepreciationPreview(asset).ToString("N2")
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <label class="form-label">Book value at disposal</label>
+        <div class="form-control bg-light">
+            $@DisposalBookValuePreview(asset).ToString("N2")
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <label class="form-label">Proceeds</label>
+        <div class="form-control bg-light">
+            $@disposalModel.Proceeds.ToString("N2")
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <label class="form-label">Estimated gain / loss</label>
+        <div class="form-control bg-light">
+            @DisposalGainLossText(asset)
+        </div>
+    </div>
+</div>
                                             </div>
 
                                             <div class="alert alert-warning">
-                                                Disposal is permanent and will post an accounting journal.
-                                            </div>
+    Disposal is permanent. Fiji Accounts will automatically post any
+    depreciation due through the disposal date before calculating the
+    final book value and gain or loss.
+</div>
 
                                             <button class="btn btn-danger"
                                                     @onclick="() => Dispose(asset.Id)">
@@ -696,6 +728,73 @@ private decimal BookValueAfterPreview(FixedAsset asset)
         selectedDisposalAssetId = null;
         ResetDisposal();
     }
+
+    private decimal DisposalTargetDepreciation(FixedAsset asset)
+{
+    if (disposalModel.DisposalDate < asset.AcquisitionDate)
+    {
+        return 0m;
+    }
+
+    var months =
+        Math.Min(
+            asset.UsefulLifeMonths,
+            (disposalModel.DisposalDate.Year - asset.AcquisitionDate.Year) * 12 +
+            disposalModel.DisposalDate.Month -
+            asset.AcquisitionDate.Month +
+            1);
+
+    return Math.Round(
+        (asset.Cost - asset.ResidualValue) *
+        months /
+        asset.UsefulLifeMonths,
+        2);
+}
+
+private decimal DisposalDepreciationPreview(FixedAsset asset)
+{
+    var alreadyPosted =
+        asset.DepreciationEntries.Sum(x => x.Amount);
+
+    return Math.Max(
+        0m,
+        DisposalTargetDepreciation(asset) - alreadyPosted);
+}
+
+private decimal DisposalBookValuePreview(FixedAsset asset)
+{
+    var accumulatedAfterDisposal =
+        asset.DepreciationEntries.Sum(x => x.Amount) +
+        DisposalDepreciationPreview(asset);
+
+    return Math.Max(
+        asset.ResidualValue,
+        asset.Cost - accumulatedAfterDisposal);
+}
+
+private decimal DisposalGainLossPreview(FixedAsset asset)
+{
+    return disposalModel.Proceeds -
+           DisposalBookValuePreview(asset);
+}
+
+private string DisposalGainLossText(FixedAsset asset)
+{
+    var amount =
+        DisposalGainLossPreview(asset);
+
+    if (amount > 0)
+    {
+        return $"Gain ${amount:N2}";
+    }
+
+    if (amount < 0)
+    {
+        return $"Loss ${Math.Abs(amount):N2}";
+    }
+
+    return "No gain or loss";
+}
 
     private async Task Dispose(Guid id)
     {
