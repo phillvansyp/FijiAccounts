@@ -1,7 +1,6 @@
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -27,7 +26,8 @@ public sealed class BalanceSheetAccountingTests
                         Quantity: 1m,
                         UnitPrice: 100m,
                         VatTreatment: VatTreatment.Standard,
-                        RevenueAccountId: test.Account("4000").Id)
+                        RevenueAccountId:
+                            test.Account("4000").Id)
                 ]));
 
         await test.Purchasing.PostBillAsync(
@@ -45,57 +45,58 @@ public sealed class BalanceSheetAccountingTests
                         Quantity: 1m,
                         UnitPrice: 40m,
                         VatTreatment: VatTreatment.Standard,
-                        ExpenseAccountId: test.Account("6000").Id)
+                        ExpenseAccountId:
+                            test.Account("6000").Id)
                 ]));
 
-        var all =
-            await test.Db.PostedJournalLines
-                .AsNoTracking()
-                .Where(x =>
-                    x.PostedJournal.OrganisationId ==
-                        test.Organisation.Id &&
-                    x.PostedJournal.EntryDate <=
-                        new DateOnly(2026, 8, 31))
-                .GroupBy(x => new
-                {
-                    x.LedgerAccount.Code,
-                    x.LedgerAccount.Type
-                })
-                .Select(x => new
-                {
-                    x.Key.Code,
-                    x.Key.Type,
-                    Debit = x.Sum(y => y.Debit),
-                    Credit = x.Sum(y => y.Credit)
-                })
-                .ToListAsync();
+        var reports =
+            new FinancialReportService(test.Db);
+
+        var report =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31));
 
         var assets =
-            all.Where(x => x.Type == AccountType.Asset)
-               .Sum(x => x.Debit - x.Credit);
+            report.Balances
+                .Where(x =>
+                    x.Type == AccountType.Asset)
+                .Sum(x => x.DisplayAmount);
 
         var liabilities =
-            all.Where(x => x.Type == AccountType.Liability)
-               .Sum(x => x.Credit - x.Debit);
+            report.Balances
+                .Where(x =>
+                    x.Type == AccountType.Liability)
+                .Sum(x => x.DisplayAmount);
 
         var equity =
-            all.Where(x => x.Type == AccountType.Equity)
-               .Sum(x => x.Credit - x.Debit);
+            report.Balances
+                .Where(x =>
+                    x.Type == AccountType.Equity)
+                .Sum(x => x.DisplayAmount);
 
         var revenue =
-            all.Where(x => x.Type == AccountType.Revenue)
-               .Sum(x => x.Credit - x.Debit);
+            report.Balances
+                .Where(x =>
+                    x.Type == AccountType.Revenue)
+                .Sum(x => x.DisplayAmount);
 
         var expenses =
-            all.Where(x => x.Type == AccountType.Expense)
-               .Sum(x => x.Debit - x.Credit);
+            report.Balances
+                .Where(x =>
+                    x.Type == AccountType.Expense)
+                .Sum(x => x.DisplayAmount);
 
-        var currentProfit = revenue - expenses;
+        var currentProfit =
+            revenue - expenses;
 
         Assert.Equal(
             assets,
             liabilities + equity + currentProfit);
 
-        Assert.Equal(60m, currentProfit);
+        Assert.Equal(
+            60m,
+            currentProfit);
     }
 }

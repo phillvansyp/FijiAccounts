@@ -78,6 +78,7 @@ builder.Services.AddScoped<BankRuleService>();
 builder.Services.AddScoped<BankTransactionCodingService>();
 builder.Services.AddScoped<ProductCatalogService>();
 builder.Services.AddScoped<InventoryService>();
+builder.Services.AddScoped<FinancialReportService>();
 
 var app = builder.Build();
 

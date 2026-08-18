@@ -1,6 +1,5 @@
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -11,10 +10,6 @@ public sealed class TrialBalanceAccountingTests
     {
         await using var test =
             await AccountingTestDatabase.CreateAsync();
-
-        // -------------------------------------------------
-        // 1. Post a sales invoice
-        // -------------------------------------------------
 
         await test.SalesInvoices.CreateAndPostAsync(
             test.UserId,
@@ -30,12 +25,9 @@ public sealed class TrialBalanceAccountingTests
                         Quantity: 1m,
                         UnitPrice: 100m,
                         VatTreatment: VatTreatment.Standard,
-                        RevenueAccountId: test.Account("4000").Id)
+                        RevenueAccountId:
+                            test.Account("4000").Id)
                 ]));
-
-        // -------------------------------------------------
-        // 2. Post a supplier bill
-        // -------------------------------------------------
 
         await test.Purchasing.PostBillAsync(
             test.UserId,
@@ -52,59 +44,48 @@ public sealed class TrialBalanceAccountingTests
                         Quantity: 1m,
                         UnitPrice: 40m,
                         VatTreatment: VatTreatment.Standard,
-                        ExpenseAccountId: test.Account("6000").Id)
+                        ExpenseAccountId:
+                            test.Account("6000").Id)
                 ]));
 
-        // -------------------------------------------------
-        // 3. Reproduce the Trial Balance calculation
-        //    used by Reports.razor
-        // -------------------------------------------------
+        var reports =
+            new FinancialReportService(test.Db);
 
-        var rows = await test.Db.PostedJournalLines
-            .AsNoTracking()
-            .Where(x =>
-                x.PostedJournal.OrganisationId ==
-                    test.Organisation.Id &&
-                x.PostedJournal.EntryDate <=
-                    new DateOnly(2026, 8, 18))
-            .GroupBy(x => new
-            {
-                x.LedgerAccount.Code,
-                x.LedgerAccount.Name
-            })
-            .Select(x => new
-            {
-                x.Key.Code,
-                x.Key.Name,
-                Debit = x.Sum(y => y.Debit),
-                Credit = x.Sum(y => y.Credit)
-            })
-            .ToListAsync();
+        var report =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 18));
 
-        // -------------------------------------------------
-        // 4. Trial balance MUST agree
-        // -------------------------------------------------
+        var totalDebit =
+            report.TrialBalance.Sum(x => x.Debit);
 
-        var totalDebit = rows.Sum(x => x.Debit);
-        var totalCredit = rows.Sum(x => x.Credit);
+        var totalCredit =
+            report.TrialBalance.Sum(x => x.Credit);
 
-        Assert.Equal(totalDebit, totalCredit);
-
-        // -------------------------------------------------
-        // 5. Ensure important accounts are represented
-        // -------------------------------------------------
-
-        Assert.Contains(rows, x => x.Code == "1100");
-        Assert.Contains(rows, x => x.Code == "4000");
-        Assert.Contains(rows, x => x.Code == "2000");
-        Assert.Contains(rows, x => x.Code == "6000");
-
-        // -------------------------------------------------
-        // 6. VAT accounts must also exist
-        // -------------------------------------------------
+        Assert.Equal(
+            totalDebit,
+            totalCredit);
 
         Assert.Contains(
-            rows,
-            x => x.Code == "2100" || x.Code == "1200");
+            report.TrialBalance,
+            x => x.Code == "1100");
+
+        Assert.Contains(
+            report.TrialBalance,
+            x => x.Code == "4000");
+
+        Assert.Contains(
+            report.TrialBalance,
+            x => x.Code == "2000");
+
+        Assert.Contains(
+            report.TrialBalance,
+            x => x.Code == "6000");
+
+        Assert.Contains(
+            report.TrialBalance,
+            x => x.Code == "2100" ||
+                 x.Code == "1200");
     }
 }
