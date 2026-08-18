@@ -102,9 +102,9 @@ public sealed class FixedAssetDisposalAccountingTests
                     GainAccountId: gainOnDisposal.Id,
                     LossAccountId: lossOnDisposal.Id));
 
-        Assert.Equal(800m, disposal.AccumulatedDepreciation);
-        Assert.Equal(1600m, disposal.BookValue);
-        Assert.Equal(300m, disposal.GainLoss);
+        Assert.Equal(1000m, disposal.AccumulatedDepreciation);
+Assert.Equal(1400m, disposal.BookValue);
+Assert.Equal(500m, disposal.GainLoss);
 
         var journal =
             await test.LoadJournalAsync(
@@ -129,14 +129,14 @@ public sealed class FixedAssetDisposalAccountingTests
         Assert.Equal(0m, assetLine.Debit);
         Assert.Equal(2400m, assetLine.Credit);
 
-        Assert.Equal(800m, accumulatedLine.Debit);
+        Assert.Equal(1000m, accumulatedLine.Debit);
         Assert.Equal(0m, accumulatedLine.Credit);
 
         Assert.Equal(1900m, bankLine.Debit);
         Assert.Equal(0m, bankLine.Credit);
 
         Assert.Equal(0m, gainLine.Debit);
-        Assert.Equal(300m, gainLine.Credit);
+        Assert.Equal(500m, gainLine.Credit);
 
         Assert.Equal(
             journal.Lines.Sum(x => x.Debit),
@@ -149,4 +149,130 @@ public sealed class FixedAssetDisposalAccountingTests
 
         Assert.False(savedAsset.IsActive);
     }
+
+        [Fact]
+public async Task DisposeAsset_AutomaticallyPostsDepreciationThroughDisposalDate()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    var gainOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "4200",
+            Name = "Gain on Disposal of Assets",
+            Type = AccountType.Revenue,
+            IsActive = true
+        };
+
+    var lossOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6800",
+            Name = "Loss on Disposal of Assets",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense,
+        gainOnDisposal,
+        lossOnDisposal);
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var asset =
+        await service.CreateAsync(
+            test.UserId,
+            new FixedAssetRequest(
+                OrganisationId: test.Organisation.Id,
+                Name: "Disposal Depreciation Test",
+                AcquisitionDate: new DateOnly(2026, 1, 1),
+                Cost: 2400m,
+                ResidualValue: 0m,
+                UsefulLifeMonths: 12,
+                AssetAccountId: test.Account("1500").Id,
+                DepreciationExpenseAccountId:
+                    depreciationExpense.Id,
+                AccumulatedDepreciationAccountId:
+                    accumulatedDepreciation.Id,
+                AcquisitionBankAccountId:
+                    test.Account("1000").Id));
+
+    var disposal =
+        await service.DisposeAsync(
+            test.UserId,
+            new FixedAssetDisposalRequest(
+                OrganisationId: test.Organisation.Id,
+                FixedAssetId: asset.Id,
+                DisposalDate: new DateOnly(2026, 5, 31),
+                Proceeds: 1500m,
+                BankAccountId: test.Account("1000").Id,
+                GainAccountId: gainOnDisposal.Id,
+                LossAccountId: lossOnDisposal.Id));
+
+    Assert.Equal(1000m, disposal.AccumulatedDepreciation);
+    Assert.Equal(1400m, disposal.BookValue);
+    Assert.Equal(100m, disposal.GainLoss);
+
+    var depreciationEntries =
+        await test.Db.FixedAssetDepreciations
+            .AsNoTracking()
+            .Where(x => x.FixedAssetId == asset.Id)
+            .ToListAsync();
+
+    var depreciation =
+        Assert.Single(depreciationEntries);
+
+    Assert.Equal(
+        new DateOnly(2026, 5, 31),
+        depreciation.ThroughDate);
+
+    Assert.Equal(
+        1000m,
+        depreciation.Amount);
+
+    var savedAsset =
+        await test.Db.FixedAssets
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == asset.Id);
+
+    Assert.False(savedAsset.IsActive);
+
+    await Assert.ThrowsAsync<InvalidOperationException>(
+        () => service.DepreciateThroughAsync(
+            test.UserId,
+            test.Organisation.Id,
+            asset.Id,
+            new DateOnly(2026, 6, 30)));
+}
 }

@@ -269,35 +269,114 @@ var assetNumber =
         ?? throw new InvalidOperationException(
             "Select a valid loss account.");
 
-    var accumulatedDepreciation =
-        asset.DepreciationEntries.Sum(x => x.Amount);
+    var alreadyPostedDepreciation =
+    asset.DepreciationEntries.Sum(x => x.Amount);
 
-    var bookValue =
-        asset.Cost - accumulatedDepreciation;
+var months =
+    Math.Min(
+        asset.UsefulLifeMonths,
+        (request.DisposalDate.Year - asset.AcquisitionDate.Year) * 12 +
+        request.DisposalDate.Month -
+        asset.AcquisitionDate.Month +
+        1);
 
-    var gainLoss =
-        request.Proceeds - bookValue;
+var targetDepreciation =
+    Math.Round(
+        (asset.Cost - asset.ResidualValue) *
+        months /
+        asset.UsefulLifeMonths,
+        2);
 
-    await using var transaction =
-        await db.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable,
+var depreciationToPost =
+    targetDepreciation - alreadyPostedDepreciation;
+
+await using var transaction =
+    await db.Database.BeginTransactionAsync(
+        IsolationLevel.Serializable,
+        ct);
+
+if (depreciationToPost > 0)
+{
+    var depreciationJournal =
+        await posting.PostAsync(
+            userId,
+            new(
+                request.OrganisationId,
+                request.DisposalDate,
+                $"DEP-{asset.AssetNumber}-{request.DisposalDate:yyyyMM}",
+                $"Book depreciation through disposal {request.DisposalDate:dd MMM yyyy}",
+                [
+                    new(
+                        asset.DepreciationExpenseAccountId,
+                        asset.Name,
+                        depreciationToPost,
+                        0),
+
+                    new(
+                        asset.AccumulatedDepreciationAccountId,
+                        asset.Name,
+                        0,
+                        depreciationToPost)
+                ]),
             ct);
 
-    var lines =
-        new List<JournalLineInput>
+    var depreciationEntry =
+        new FixedAssetDepreciation
         {
-            new(
-                asset.AccumulatedDepreciationAccountId,
-                $"Dispose {asset.AssetNumber}",
-                accumulatedDepreciation,
-                0),
-
-            new(
-                asset.AssetAccountId,
-                $"Dispose {asset.AssetNumber}",
-                0,
-                asset.Cost)
+            FixedAssetId = asset.Id,
+            ThroughDate = request.DisposalDate,
+            Amount = depreciationToPost,
+            PostedJournalId = depreciationJournal.Id,
+            PostedByUserId = userId
         };
+
+    db.FixedAssetDepreciations.Add(
+        depreciationEntry);
+
+    db.AuditEvents.Add(
+        Audit(
+            request.OrganisationId,
+            userId,
+            "FixedAssetDepreciationPosted",
+            asset.Id,
+            new
+            {
+                asset.AssetNumber,
+                ThroughDate = request.DisposalDate,
+                Amount = depreciationToPost,
+                Reason = "Disposal"
+            }));
+}
+
+var accumulatedDepreciation =
+    alreadyPostedDepreciation +
+    Math.Max(0m, depreciationToPost);
+
+var bookValue =
+    asset.Cost - accumulatedDepreciation;
+
+var gainLoss =
+    request.Proceeds - bookValue;
+
+    var lines =
+    new List<JournalLineInput>();
+
+if (accumulatedDepreciation > 0)
+{
+    lines.Add(
+        new JournalLineInput(
+            asset.AccumulatedDepreciationAccountId,
+            $"Dispose {asset.AssetNumber}",
+            accumulatedDepreciation,
+            0));
+}
+
+lines.Add(
+    new JournalLineInput(
+        asset.AssetAccountId,
+        $"Dispose {asset.AssetNumber}",
+        0,
+        asset.Cost));
 
     if (request.Proceeds > 0)
     {
