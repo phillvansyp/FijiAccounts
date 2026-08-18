@@ -1,0 +1,708 @@
+@page "/o/{OrganisationId:guid}/banking"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject BankReconciliationService Reconciliation
+@inject BankStatementImportService StatementImport
+@inject BankTransactionCodingService TransactionCoding
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Banking · Account Island</PageTitle>
+    @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="bank-heading"><div><p class="eyebrow">Banking</p><h1>Bank accounts</h1><p>Balances, statement lines and reconciliation from the posted ledger.</p></div><div class="heading-actions">@if (canReconcile) { <button class="btn btn-outline-primary" @onclick="() => showFeeds = !showFeeds">Bank feeds</button><button class="btn btn-outline-primary" @onclick="() => showImport = !showImport">Read statement</button><button class="btn btn-outline-primary" @onclick="() => showStatement = !showStatement">+ Statement line</button> }@if (canManage) { <button class="btn btn-primary" @onclick="ToggleAddAccountForm">+ Add bank account</button> }</div></div>
+    @if (status is not null) { <div class="alert @statusClass">@status</div> }
+    @if (showAdd) { <section class="add-bank"><h2>Add bank account</h2><EditForm Model="model" OnValidSubmit="AddBank" OnInvalidSubmit="AddBankInvalid" FormName="add-bank"><DataAnnotationsValidator /><ValidationSummary /><div class="bank-fields"><div><label class="form-label">Ledger code</label><InputText class="form-control" @bind-Value="model.Code" /></div><div><label class="form-label">Account name</label><InputText class="form-control" @bind-Value="model.Name" /></div><div><label class="form-label">Account number</label><InputText class="form-control" @bind-Value="model.AccountNumber" /></div><button class="btn btn-primary" type="submit">Create account</button></div></EditForm></section> }
+    <div class="bank-grid">
+    <article class="bank-card bank-card-clickable @(selectedBankAccountId is null ? "selected" : null)"
+             @onclick="() => SelectBankAccount(null)">
+        <div>
+            <span class="bank-icon">Σ</span>
+            <div>
+                <h2>All accounts</h2>
+                <small>Full banking ledger</small>
+            </div>
+        </div>
+
+        <span class="currency">@access.Organisation.BaseCurrency</span>
+
+        <strong>
+            $@accounts.Sum(x => Balance(x.Id)).ToString("N2")
+        </strong>
+
+        <small>Combined ledger balance</small>
+    </article>
+
+    @foreach (var account in accounts)
+    {
+        <article class="bank-card bank-card-clickable @(selectedBankAccountId == account.Id ? "selected" : null)"
+                 @onclick="() => SelectBankAccount(account.Id)">
+            <div>
+                <span class="bank-icon">$</span>
+
+                <div>
+                    <h2>@account.Name</h2>
+
+                    <small>
+                        @(string.IsNullOrWhiteSpace(account.BankAccountNumber)
+                            ? $"Ledger {account.Code}"
+                            : account.BankAccountNumber)
+                    </small>
+                </div>
+            </div>
+
+            <span class="currency">
+                @access.Organisation.BaseCurrency
+            </span>
+
+            <strong>
+                $@Balance(account.Id).ToString("N2")
+            </strong>
+
+            <small>Ledger balance</small>
+        </article>
+    }
+</div>
+    @if (accounts.Count == 0) { <div class="empty-state"><strong>No bank accounts configured</strong><span>Add a bank account to receive customer payments and pay supplier bills.</span></div> }
+    @if (showStatement && accounts.Count > 0) { <section class="add-bank"><h2>Add statement line</h2><EditForm Model="statementModel" OnValidSubmit="AddStatement" FormName="add-statement-line"><DataAnnotationsValidator /><ValidationSummary /><div class="statement-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="statementModel.BankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="statementModel.Date" /></div><div><label class="form-label">Description</label><InputText class="form-control" @bind-Value="statementModel.Description" /></div><div><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="statementModel.Reference" /></div><div><label class="form-label">Amount (+ in / − out)</label><InputNumber class="form-control" @bind-Value="statementModel.Amount" /></div><button class="btn btn-primary">Add line</button></div></EditForm></section> }
+    @if (showFeeds) { <section class="add-bank import-panel"><h2>Fiji bank connections</h2><p>Connection availability depends on the bank, account type and a bank-approved agreement.</p><div class="table-responsive"><table class="table"><thead><tr><th>Bank</th><th>Available method</th><th>Account Island option</th></tr></thead><tbody><tr><td><strong>ANZ Fiji</strong></td><td>Transactive/Fileactive corporate statement delivery</td><td>Contact ANZ relationship manager to approve host-to-host access</td></tr><tr><td><strong>BSP Fiji</strong></td><td>Online banking statement exports</td><td>Download and use Read statement</td></tr><tr><td>Westpac Fiji, BRED, HFC, Bank of Baroda</td><td>Statement export; direct API not publicly confirmed</td><td>Download and use Read statement</td></tr></tbody></table></div><small>Account Island never asks for or stores internet-banking passwords.</small></section> }
+    @if (showImport && accounts.Count > 0) { <section class="add-bank import-panel"><h2>Read bank statement</h2><p>Drop in or select a PDF, CSV, OFX, QFX or QIF statement. We read and preview it before anything is imported. Maximum 5 MB.</p>@if (statementError is not null) { <div class="alert alert-danger">@statementError</div> }<div class="import-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="importBankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Statement file</label><InputFile class="form-control" OnChange="SelectStatement" accept=".csv,.txt,.ofx,.qfx,.qif,.pdf" />@if (selectedStatement is not null) { <small class="d-block mt-2 text-muted">@selectedStatement.Name · @FormatFileSize(selectedStatement.Size)</small> }</div><div class="d-flex align-items-end"><button type="button" class="btn btn-primary" disabled="@(selectedStatement is null || readingStatement)" @onclick="ReadSelectedStatement">@(readingStatement ? "Reading…" : "Upload and read statement")</button></div></div>
+        @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement · @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
+    </section> }
+    <section class="reconciliation"><div class="reconcile-heading"><div><h2>Reconciliation</h2><p>Match statement activity to the ledger</p></div><span>@VisibleStatementLines.Count(x => x.ReconciledAt is null) unreconciled</span></div>
+        @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>Add a statement line to begin reconciling.</span></div> }
+        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "✓" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") · @item.BankAccount.Name · @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code — @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "—")</small> } else { <span>—</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">✐</button> } } else if (match is not null) { <small>Suggested: @match.PostedJournal.Reference</small><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }</div></div>
+            @if (codingStatementId == item.Id)
+            {
+                <div class="coding-panel" @key="item.Id">
+                    <EditForm Model="codingModel" FormName="@($"code-bank-{item.Id}")">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+                        @if (codingError is not null) { <div class="alert alert-danger">@codingError</div> }
+                        <div class="coding-fields">
+                            <div class="mb-3">
+                                <label class="form-label">Code as</label>
+                                <select class="form-select" value="@codingMode" @onchange="e => SetCodingMode(item, e.Value?.ToString())">
+                                    <option value="ledger">Ledger account</option>
+                                    <option value="transfer" disabled="@(!CanTransferFromStatement)">Internal transfer</option>
+                                </select>
+                                @if (!CanTransferFromStatement)
+                                {
+                                    <small class="text-danger">Need at least 2 active bank accounts to use internal transfers.</small>
+                                }
+                            </div>
+                            @if (codingModel.IsTransfer)
+                            {
+                                <div>
+                                    <label class="form-label">
+    @(item.Amount > 0 ? "Transfer from bank account" : "Transfer to bank account")
+</label>
+                                    <InputSelect class="form-select" @bind-Value="codingModel.TransferToAccountId">
+    <option value="">
+        @(item.Amount > 0 ? "Select sending bank account" : "Select receiving bank account")
+    </option>
+                                        @foreach (var account in accounts.Where(a => a.Id != item.BankAccountId))
+                                        {
+                                            <option value="@account.Id">@account.Code — @account.Name</option>
+                                        }
+                                    </InputSelect>
+                                </div>
+                            }
+                            else
+                            {
+                                <div>
+                                    <label class="form-label">Account</label>
+                                    <InputSelect class="form-select" @bind-Value="codingModel.TargetAccountCode">
+                                        @foreach (var account in codingAccounts)
+                                        {
+                                            <option value="@account.Code">@account.Code — @account.Name</option>
+                                        }
+                                    </InputSelect>
+                                    @if (codingSuggestion is not null) { <small>Suggested from the last matching transaction.</small> }
+                                </div>
+                            }
+                            <div><label class="form-label">Description</label><InputText class="form-control" @bind-Value="codingModel.Description" /></div>
+                            @if (!codingModel.IsTransfer)
+                            {
+                                <div>
+                                    <label class="form-label">Tax treatment</label>
+                                    <InputSelect class="form-select" @bind-Value="codingModel.VatTreatment">
+                                        <option value="@VatTreatment.Standard">VAT on purchases (standard rate)</option>
+                                        <option value="@VatTreatment.ZeroRated">Zero-rated</option>
+                                        <option value="@VatTreatment.Exempt">Exempt</option>
+                                        <option value="@VatTreatment.OutOfScope">Out of scope</option>
+                                    </InputSelect>
+                                    <small>Choose standard VAT only when you hold a valid tax invoice.</small>
+                                </div>
+                            }
+                            <div class="coding-actions">
+                                <button type="button" class="btn btn-outline-secondary" disabled="@postingCoding" @onclick="CancelCoding">Cancel</button>
+                                <button type="button" class="btn btn-primary" disabled="@postingCoding" @onclick="PostCoding">@(postingCoding ? "Posting…" : "Post & reconcile")</button>
+                            </div>
+                        </div>
+                    </EditForm>
+                </div>
+            }
+        } }
+    </section>
+    <section class="activity">
+
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h2>Recent bank activity</h2>
+
+            <p>
+                @(selectedBankAccountId is null
+                    ? "Latest posted entries across all bank accounts"
+                    : $"Latest posted entries for {accounts.FirstOrDefault(x => x.Id == selectedBankAccountId)?.Name}")
+            </p>
+        </div>
+
+        @if (HiddenCorrectionCount > 0)
+        {
+            <small class="text-muted">
+                @HiddenCorrectionCount correction
+                @(HiddenCorrectionCount == 1 ? "" : "s") hidden
+            </small>
+        }
+    </div>
+
+    @if (!VisibleTransactions.Any())
+    {
+        <div class="empty-state">
+            <strong>No bank activity yet</strong>
+            <span>
+                Receipts, payments and journals will appear here.
+            </span>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table">
+
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Account</th>
+                        <th>Reference</th>
+                        <th>Description</th>
+                        <th class="text-end">Money in</th>
+                        <th class="text-end">Money out</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    @foreach (var line in VisibleTransactions)
+                    {
+                        <tr>
+                            <td>
+                                @line.PostedJournal.EntryDate.ToString("dd MMM yyyy")
+                            </td>
+
+                            <td>
+                                @line.LedgerAccount.Name
+                            </td>
+
+                            <td>
+                                @CleanReference(line.PostedJournal.Reference)
+                            </td>
+
+                            <td>
+                                @CleanDescription(line.Description)
+                            </td>
+
+                            <td class="text-end money-in">
+                                @(line.Debit > 0
+                                    ? $"${line.Debit:N2}"
+                                    : "—")
+                            </td>
+
+                            <td class="text-end money-out">
+                                @(line.Credit > 0
+                                    ? $"${line.Credit:N2}"
+                                    : "—")
+                            </td>
+                        </tr>
+                    }
+
+                </tbody>
+
+            </table>
+        </div>
+    }
+
+</section>
+}
+
+<style>
+    .edit-coding { border: 0; background: transparent; color: #0d6efd; font-size: 1.25rem; line-height: 1; padding: .15rem .35rem; transform: rotate(180deg); }
+    .edit-coding:hover { color: #084298; }
+    .included-vat { text-transform: none !important; margin-top: .15rem; }
+</style>
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showFeeds, readingStatement, postingCoding; private Guid importBankAccountId; private Guid? codingStatementId; private IBrowserFile? selectedStatement; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); await Reload(); }
+    private async Task Reload()
+    {
+        accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
+        codingAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && !x.IsBankAccount && x.Code != "1100" && x.Code != "1150" && x.Code != "2000" && x.Code != "2100").OrderBy(x => x.Type).ThenBy(x => x.Code).ToListAsync();
+        var ids = accounts.Select(x => x.Id).ToArray();
+        transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
+        statementLines = await Db.BankStatementLines.AsNoTracking().Include(x => x.BankAccount).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.TransactionDate).Take(100).ToListAsync();
+        await LoadCodedAccounts();
+        balances = transactions.GroupBy(x => x.LedgerAccountId).ToDictionary(x => x.Key, x => x.Sum(y => y.Debit - y.Credit));
+        if (accounts.Count > 0 && statementModel.BankAccountId == Guid.Empty) statementModel.BankAccountId = accounts[0].Id;
+        if (accounts.Count > 0 && importBankAccountId == Guid.Empty) importBankAccountId = accounts[0].Id;
+    }
+
+    private async Task LoadCodedAccounts()
+    {
+        codedAccounts = [];
+        codedVat = [];
+        var matchedIds = statementLines.Where(x => x.MatchedPostedJournalLineId.HasValue).Select(x => x.MatchedPostedJournalLineId!.Value).ToArray();
+        if (matchedIds.Length == 0) return;
+        var matchedLines = await Db.PostedJournalLines.AsNoTracking().Where(x => matchedIds.Contains(x.Id)).Select(x => new { x.Id, x.PostedJournalId }).ToListAsync();
+        var journalIds = matchedLines.Select(x => x.PostedJournalId).Distinct().ToArray();
+        var allLines = await Db.PostedJournalLines.AsNoTracking().Include(x => x.LedgerAccount).Where(x => journalIds.Contains(x.PostedJournalId) && x.LedgerAccount.OrganisationId == OrganisationId).ToListAsync();
+        var linesByJournal = allLines.GroupBy(x => x.PostedJournalId).ToDictionary(x => x.Key, x => x.ToList());
+        var matchedJournals = matchedLines.ToDictionary(x => x.Id, x => x.PostedJournalId);
+        foreach (var statement in statementLines.Where(x => x.MatchedPostedJournalLineId.HasValue))
+            if (matchedJournals.TryGetValue(statement.MatchedPostedJournalLineId!.Value, out var journalId) && linesByJournal.TryGetValue(journalId, out var lines))
+            {
+                var codingLine = lines.FirstOrDefault(x => !x.LedgerAccount.IsBankAccount && x.LedgerAccount.Code is not "1150" and not "2100");
+                if (codingLine is not null)
+                {
+                    codedAccounts[statement.Id] = codingLine.LedgerAccount;
+                    var vatLine = lines.FirstOrDefault(x => !x.LedgerAccount.IsBankAccount && x.LedgerAccount.Code is "1150" or "2100");
+                    var vatAmount = vatLine is null ? 0m : Math.Max(vatLine.Debit, vatLine.Credit);
+                    var treatment = vatAmount > 0 ? "Standard VAT" : "Out of scope";
+                    codedVat[statement.Id] = new(vatAmount, treatment);
+                }
+                else
+                {
+                    var transferLine = lines.FirstOrDefault(x => x.LedgerAccount.IsBankAccount && x.LedgerAccountId != statement.BankAccountId);
+                    if (transferLine is not null) codedAccounts[statement.Id] = transferLine.LedgerAccount;
+                    codedVat[statement.Id] = new(0m, "Not VAT");
+                }
+            }
+    }
+    private decimal Balance(Guid accountId) => balances.GetValueOrDefault(accountId);
+    private async Task AddBank()
+    {
+        if (!canManage)
+        {
+            statusClass = "alert-danger";
+            status = "You do not have permission to add bank accounts.";
+            return;
+        }
+
+        var code = model.Code?.Trim() ?? "";
+        var name = model.Name?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
+        {
+            statusClass = "alert-danger";
+            status = "Account code and name are required.";
+            return;
+        }
+
+        if (await Db.LedgerAccounts.AnyAsync(x => x.OrganisationId == OrganisationId && x.Code == code))
+        {
+            statusClass = "alert-danger";
+            status = $"The account code '{code}' is already in use. Enter a different ledger code.";
+            model.Code = await NextAvailableBankCodeAsync();
+            return;
+        }
+
+        try
+        {
+            Db.LedgerAccounts.Add(new LedgerAccount
+            {
+                OrganisationId = OrganisationId,
+                Code = code,
+                Name = name,
+                BankAccountNumber = model.AccountNumber?.Trim(),
+                Type = AccountType.Asset,
+                IsBankAccount = true
+            });
+            await Db.SaveChangesAsync();
+
+            statusClass = "alert-success";
+            status = $"Bank account '{name}' ({code}) created.";
+            model = new();
+            model.Code = await NextAvailableBankCodeAsync();
+            showAdd = false;
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = ex is InvalidOperationException
+                ? ex.Message
+                : $"Could not create the bank account: {ex.Message}";
+        }
+    }
+    private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private PostedJournalLine? SuggestedMatch(BankStatementLine item)
+    {
+        return transactions.FirstOrDefault(x =>
+            x.LedgerAccountId == item.BankAccountId &&
+            x.PostedJournal.EntryDate == item.TransactionDate &&
+            AmountMatches(x.Debit - x.Credit, item.Amount) &&
+            !statementLines.Any(s => s.MatchedPostedJournalLineId == x.Id));
+    }
+    private async Task Reconcile(Guid statementId, Guid journalLineId) { try { await Reconciliation.ReconcileAsync(userId, OrganisationId, statementId, journalLineId); statusClass = "alert-success"; status = "Bank statement line reconciled."; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private async Task BeginCoding(BankStatementLine item)
+    {
+        codingError = null;
+        codingSuggestion = null;
+        status = null;
+        codingStatementId = item.Id;
+        codingMode = "ledger";
+        var suggested = SuggestedCodingAccount(item);
+        codingModel = new CodingModel { TargetAccountCode = suggested, Description = item.Description };
+
+        // SQLite cannot order DateTimeOffset values. There will only be a small
+        // history for one description, so load the tenant-scoped matches and choose
+        // the newest one in .NET instead of crashing the Blazor circuit.
+        var normalizedDescription = item.Description.Trim().ToUpper();
+        var history = await Db.BankStatementLines.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.Id != item.Id && x.ReconciledAt != null && x.MatchedPostedJournalLineId != null && x.Description.ToUpper() == normalizedDescription)
+            .Select(x => new { x.MatchedPostedJournalLineId, x.ReconciledAt })
+            .ToListAsync();
+        var previous = history.OrderByDescending(x => x.ReconciledAt).FirstOrDefault();
+        var previousAccount = previous?.MatchedPostedJournalLineId is Guid matchedId ? await FindCodedAccount(matchedId, item) : null;
+        if (previousAccount is not null && codingAccounts.Any(x => x.Code == previousAccount.Code))
+        {
+            codingModel.TargetAccountCode = previousAccount.Code;
+            codingSuggestion = previousAccount.Code;
+        }
+        if (codingModel.TargetAccountCode == "")
+        {
+            var previousForReopen = await FindCodedAccount(item.MatchedPostedJournalLineId, item);
+            if (previousForReopen is not null && previousForReopen.IsBankAccount)
+            {
+                codingModel.IsTransfer = true;
+                codingMode = "transfer";
+                codingModel.TransferToAccountId = previousForReopen.Id;
+                codingModel.TargetAccountCode = "";
+            }
+        }
+    }
+    private void SetCodingMode(BankStatementLine item, string? mode)
+    {
+        if (mode is null)
+        {
+            codingMode = "ledger";
+            return;
+        }
+
+        if (mode == "transfer" && !CanTransferFromStatement)
+        {
+            codingMode = "ledger";
+            return;
+        }
+
+        codingMode = mode;
+        codingModel.IsTransfer = codingMode == "transfer";
+        if (codingModel.IsTransfer)
+        {
+            codingModel.TargetAccountCode = "";
+            if (codingModel.TransferToAccountId is null || codingModel.TransferToAccountId == Guid.Empty)
+            {
+                var preferredTarget = accounts.FirstOrDefault(a => a.Id != item.BankAccountId) ?? accounts.FirstOrDefault();
+                if (preferredTarget is not null)
+                {
+                    codingModel.TransferToAccountId = preferredTarget.Id;
+                }
+            }
+        }
+        else
+        {
+            codingModel.TransferToAccountId = null;
+            if (string.IsNullOrWhiteSpace(codingModel.TargetAccountCode))
+                codingModel.TargetAccountCode = SuggestedCodingAccount(item);
+        }
+    }
+    private string SuggestedCodingAccount(BankStatementLine item) { var preferredType = item.Amount < 0 ? AccountType.Expense : AccountType.Revenue; return codingAccounts.FirstOrDefault(x => x.Type == preferredType)?.Code ?? codingAccounts.FirstOrDefault()?.Code ?? ""; }
+    private LedgerAccount? CodedAccount(BankStatementLine item) => codedAccounts.GetValueOrDefault(item.Id);
+    private CodedVatInfo CodedVat(BankStatementLine item) => codedVat.GetValueOrDefault(item.Id) ?? new(0m, item.ReconciledAt is null ? "Not coded" : "No VAT");
+    private async Task ChangeCoding(BankStatementLine item)
+    {
+        try
+        {
+            var previousAccount = CodedAccount(item);
+            await TransactionCoding.ReopenCodingAsync(userId, OrganisationId, item.Id);
+            await Reload();
+            await BeginCoding(statementLines.Single(x => x.Id == item.Id));
+            if (previousAccount is not null && !previousAccount.IsBankAccount)
+            {
+                codingModel.TargetAccountCode = previousAccount.Code;
+            }
+        if (previousAccount is not null && previousAccount.IsBankAccount)
+        {
+            codingModel.IsTransfer = true;
+            codingMode = "transfer";
+            codingModel.TransferToAccountId = previousAccount.Id;
+            codingModel.TargetAccountCode = "";
+        }
+            statusClass = "alert-warning";
+            status = "The previous coding was reversed. Choose the correct VAT treatment, then post and reconcile again.";
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Could not change coding: {ex.Message}";
+        }
+    }
+    private async Task<LedgerAccount?> FindCodedAccount(Guid? matchedLineId, BankStatementLine? statementLine = null)
+    {
+        if (matchedLineId is null) return null;
+        var journalId = await Db.PostedJournalLines.AsNoTracking().Where(x => x.Id == matchedLineId.Value).Select(x => (Guid?)x.PostedJournalId).SingleOrDefaultAsync();
+        if (journalId is null) return null;
+        var lines = await Db.PostedJournalLines.AsNoTracking().Include(x => x.LedgerAccount).Where(x => x.PostedJournalId == journalId.Value && x.LedgerAccount.OrganisationId == OrganisationId).ToListAsync();
+        var nonBank = lines.FirstOrDefault(x => !x.LedgerAccount.IsBankAccount && x.LedgerAccount.Code is not "1150" and not "2100");
+        if (nonBank is not null) return nonBank.LedgerAccount;
+        return lines.FirstOrDefault(x => x.LedgerAccount.IsBankAccount && x.LedgerAccountId != statementLine?.BankAccountId)?.LedgerAccount;
+    }
+    private void CancelCoding() { codingError = null; codingSuggestion = null; codingStatementId = null; codingModel = new(); codingMode = "ledger"; }
+    private async Task PostCoding()
+    {
+        if (codingStatementId is null || postingCoding) return;
+        if (codingModel.IsTransfer &&
+    (codingModel.TransferToAccountId is null || codingModel.TransferToAccountId == Guid.Empty))
+{
+    var statement = statementLines.FirstOrDefault(x => x.Id == codingStatementId);
+
+    codingError = statement?.Amount > 0
+        ? "Select the bank account this money was transferred from."
+        : "Select the bank account this money was transferred to.";
+
+    return;
+}
+        if (!codingModel.IsTransfer && string.IsNullOrWhiteSpace(codingModel.TargetAccountCode)) { codingError = "Choose an account before posting."; return; }
+        if (string.IsNullOrWhiteSpace(codingModel.Description)) { codingError = "Enter a description before posting."; return; }
+        postingCoding = true;
+        codingError = null;
+        try
+        {
+            var journal = await TransactionCoding.PostAndReconcileAsync(
+                userId,
+                new(
+                    OrganisationId,
+                    codingStatementId.Value,
+                    codingModel.IsTransfer ? "" : codingModel.TargetAccountCode,
+                    codingModel.Description,
+                    codingModel.VatTreatment,
+                    codingModel.TransferToAccountId));
+            statusClass = "alert-success";
+            status = $"Transaction posted as journal {journal.SequenceNumber} and reconciled. It is now included in financial reports.";
+            CancelCoding();
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            codingError = $"Could not post and reconcile: {ex.Message}";
+            if (ex is InvalidOperationException && ex.InnerException is not null)
+            {
+                codingError += $" ({ex.InnerException.Message})";
+            }
+            statusClass = "alert-danger";
+            status = codingError;
+        }
+        finally { postingCoding = false; }
+    }
+    private void SelectStatement(InputFileChangeEventArgs args) { selectedStatement = args.File; statementPreview = null; statementError = null; status = null; }
+    private async Task ReadSelectedStatement()
+{
+    if (selectedStatement is null)
+        return;
+
+    readingStatement = true;
+    statementError = null;
+
+    try
+    {
+        var selectedAccount = accounts.FirstOrDefault(
+            x => x.Id == importBankAccountId);
+
+        if (selectedAccount is null)
+        {
+            throw new InvalidOperationException(
+                "Select the bank or card account for this statement.");
+        }
+
+        await using var stream =
+            selectedStatement.OpenReadStream(5 * 1024 * 1024);
+
+        statementPreview = await StatementImport.ReadAsync(
+            stream,
+            selectedStatement.Name,
+            selectedAccount.BankAccountKind);
+
+        statusClass = "alert-success";
+
+        status =
+            $"Read {statementPreview.Lines.Count} " +
+            $"transaction{(statementPreview.Lines.Count == 1 ? "" : "s")}. " +
+            "Review the preview before importing.";
+    }
+    catch (Exception ex)
+    {
+        statementPreview = null;
+
+        statementError =
+            $"We could not read this statement: {ex.Message}";
+
+        statusClass = "alert-danger";
+        status = statementError;
+    }
+    finally
+    {
+        readingStatement = false;
+    }
+}
+    private async Task ImportPreview() { if (statementPreview is null) return; try { var result = await StatementImport.ImportAsync(userId, OrganisationId, importBankAccountId, statementPreview.Lines, statementPreview.Format); statusClass = "alert-success"; status = $"Imported {result.Imported} statement line{(result.Imported == 1 ? "" : "s")}. Skipped {result.Skipped} duplicate{(result.Skipped == 1 ? "" : "s")}."; statementPreview = null; showImport = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private static bool AmountMatches(decimal left, decimal right) => Math.Round(left, 2, MidpointRounding.AwayFromZero) == Math.Round(right, 2, MidpointRounding.AwayFromZero);
+    private sealed class BankModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(160)] public string Name { get; set; } = ""; [StringLength(80)] public string? AccountNumber { get; set; } }
+    private async Task ToggleAddAccountForm()
+    {
+        showAdd = !showAdd;
+        if (showAdd)
+        {
+            model = new();
+            model.Code = await NextAvailableBankCodeAsync();
+            status = null;
+            statusClass = "alert-success";
+        }
+    }
+    private async Task<string> NextAvailableBankCodeAsync()
+    {
+        var usedCodes = await Db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId)
+            .Select(x => x.Code)
+            .ToListAsync();
+
+        var used = new HashSet<int>();
+        foreach (var accountCode in usedCodes)
+        {
+            if (int.TryParse(accountCode, out var value) && value > 0)
+            {
+                used.Add(value);
+            }
+        }
+
+        for (var candidate = 1010; ; candidate++)
+        {
+            if (!used.Contains(candidate))
+            {
+                return candidate.ToString();
+            }
+        }
+    }
+    private void AddBankInvalid()
+    {
+        statusClass = "alert-danger";
+        status = "Please fill in the required ledger code and account name.";
+    }
+    private static string FormatFileSize(long bytes) => bytes < 1024 * 1024 ? $"{bytes / 1024d:N1} KB" : $"{bytes / 1024d / 1024d:N1} MB";
+    private sealed class StatementModel { public Guid BankAccountId { get; set; } public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Required, StringLength(300)] public string Description { get; set; } = ""; [StringLength(80)] public string? Reference { get; set; } [Range(-999999999, 999999999)] public decimal Amount { get; set; } }
+    private sealed class CodingModel
+    {
+        public bool IsTransfer { get; set; }
+        [Required] public string TargetAccountCode { get; set; } = "";
+        public Guid? TransferToAccountId { get; set; }
+        [Required, StringLength(300)] public string Description { get; set; } = "";
+        public VatTreatment VatTreatment { get; set; } = VatTreatment.OutOfScope;
+    }
+    private sealed record CodedVatInfo(decimal Amount, string Treatment);
+    private bool CanTransferFromStatement => accounts.Count > 1;
+    private Guid? selectedBankAccountId;
+    private IEnumerable<BankStatementLine> VisibleStatementLines =>
+    selectedBankAccountId is null
+        ? statementLines
+        : statementLines.Where(x => x.BankAccountId == selectedBankAccountId);
+
+private IEnumerable<PostedJournalLine> VisibleTransactions
+{
+    get
+    {
+        var query = selectedBankAccountId is null
+            ? transactions
+            : transactions.Where(
+                x => x.LedgerAccountId == selectedBankAccountId);
+
+        return query
+            .Where(x =>
+                !x.PostedJournal.Reference.StartsWith(
+                    "REV-BANK-",
+                    StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.PostedJournal.EntryDate)
+            .ThenByDescending(x => x.PostedJournal.SequenceNumber);
+    }
+}
+
+private int HiddenCorrectionCount
+{
+    get
+    {
+        var query = selectedBankAccountId is null
+            ? transactions
+            : transactions.Where(
+                x => x.LedgerAccountId == selectedBankAccountId);
+
+        return query.Count(x =>
+            x.PostedJournal.Reference.StartsWith(
+                "REV-BANK-",
+                StringComparison.OrdinalIgnoreCase));
+    }
+}
+
+private void SelectBankAccount(Guid? accountId)
+{
+    selectedBankAccountId = accountId;
+
+    if (accountId.HasValue)
+    {
+        importBankAccountId = accountId.Value;
+        statementModel.BankAccountId = accountId.Value;
+    }
+}
+
+    private static string CleanReference(string reference)
+{
+    if (reference.StartsWith(
+            "BANK-",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        return reference;
+    }
+
+    return reference;
+}
+
+private static string CleanDescription(string description)
+{
+    if (description.StartsWith(
+            "Reverse ",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        return description["Reverse ".Length..];
+    }
+
+    return description;
+}
+}

@@ -1,0 +1,708 @@
+@page "/o/{OrganisationId:guid}/accounts"
+@attribute [Authorize]
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject ChartOfAccountsService AccountsService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Chart of accounts · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">
+        You do not have access to this organisation.
+    </div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Accounting</p>
+            <h1>Chart of accounts</h1>
+            <p class="page-intro">
+                Control how transactions are classified in the general ledger.
+            </p>
+        </div>
+
+        <span class="status-pill">
+            @accounts.Count(x => x.IsActive) active accounts
+        </span>
+    </div>
+
+    @if (canManage)
+    {
+        <details class="setup-card mb-4">
+            <summary>
+                <strong>+ Add ledger account</strong>
+            </summary>
+
+            <EditForm Model="model"
+                      OnValidSubmit="Create"
+                      FormName="ledger-account"
+                      class="mt-3">
+
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="row">
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Code</label>
+                        <InputText class="form-control"
+                                   @bind-Value="model.Code" />
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Account name</label>
+                        <InputText class="form-control"
+                                   @bind-Value="model.Name" />
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Type</label>
+                        <InputSelect class="form-select"
+                                     @bind-Value="model.Type">
+                            @foreach (var type in Enum.GetValues<AccountType>())
+                            {
+                                <option value="@type">@type</option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Financial account</label>
+
+                        <div class="form-check mt-2">
+                            <InputCheckbox class="form-check-input"
+                                           @bind-Value="model.IsBankAccount"
+                                           @bind-Value:after="NewBankFlagChanged" />
+
+                            <label class="form-check-label">
+                                Bank / card account
+                            </label>
+                        </div>
+                    </div>
+
+                    @if (model.IsBankAccount)
+                    {
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Account kind</label>
+
+                            <InputSelect class="form-select"
+                                         @bind-Value="model.BankAccountKind"
+                                         @bind-Value:after="BankKindChanged">
+
+                                <option value="@BankAccountKind.Bank">
+                                    Bank account
+                                </option>
+
+                                <option value="@BankAccountKind.DebitCard">
+                                    Debit / EFTPOS card
+                                </option>
+
+                                <option value="@BankAccountKind.CreditCard">
+                                    Credit card
+                                </option>
+
+                            </InputSelect>
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">
+                                Account / card number
+                            </label>
+
+                            <InputText class="form-control"
+                                       @bind-Value="model.BankAccountNumber" />
+                        </div>
+                    }
+
+                </div>
+
+                @if (model.IsBankAccount)
+                {
+                    <div class="alert alert-light border mb-3">
+                        @BankKindHelp
+                    </div>
+                }
+
+                <button class="btn btn-primary">
+                    Add account
+                </button>
+
+            </EditForm>
+        </details>
+    }
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">
+            @message
+        </div>
+    }
+
+    @if (editingAccount is not null)
+    {
+        <section class="setup-card mb-4">
+            <div class="d-flex justify-content-between align-items-start mb-3">
+                <div>
+                    <p class="eyebrow">Edit account</p>
+                    <h2 class="h4 mb-1">
+                        @editingAccount.Code · @editingAccount.Name
+                    </h2>
+                    <p class="text-muted mb-0">
+                        Change the account classification and banking details.
+                    </p>
+                </div>
+
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @onclick="CancelEdit">
+                    Cancel
+                </button>
+            </div>
+
+            <EditForm Model="editModel"
+                      OnValidSubmit="SaveEdit"
+                      FormName="edit-ledger-account">
+
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="row">
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Code</label>
+                        <input class="form-control"
+                               value="@editingAccount.Code"
+                               disabled />
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Account name</label>
+                        <InputText class="form-control"
+                                   @bind-Value="editModel.Name" />
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Type</label>
+                        <InputSelect class="form-select"
+                                     @bind-Value="editModel.Type">
+                            @foreach (var type in Enum.GetValues<AccountType>())
+                            {
+                                <option value="@type">@type</option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Financial account</label>
+
+                        <div class="form-check mt-2">
+                            <InputCheckbox class="form-check-input"
+                                           @bind-Value="editModel.IsBankAccount"
+                                           @bind-Value:after="EditBankFlagChanged" />
+
+                            <label class="form-check-label">
+                                Bank / card account
+                            </label>
+                        </div>
+                    </div>
+
+                    @if (editModel.IsBankAccount)
+                    {
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Account kind</label>
+
+                            <InputSelect class="form-select"
+                                         @bind-Value="editModel.BankAccountKind"
+                                         @bind-Value:after="EditBankKindChanged">
+
+                                <option value="@BankAccountKind.Bank">
+                                    Bank account
+                                </option>
+
+                                <option value="@BankAccountKind.DebitCard">
+                                    Debit / EFTPOS card
+                                </option>
+
+                                <option value="@BankAccountKind.CreditCard">
+                                    Credit card
+                                </option>
+
+                            </InputSelect>
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">
+                                Account / card number
+                            </label>
+
+                            <InputText class="form-control"
+                                       @bind-Value="editModel.BankAccountNumber" />
+                        </div>
+                    }
+
+                </div>
+
+                @if (editModel.IsBankAccount)
+                {
+                    <div class="alert alert-light border mb-3">
+                        @EditBankKindHelp
+                    </div>
+                }
+
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary">
+                        Save changes
+                    </button>
+
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @onclick="CancelEdit">
+                        Cancel
+                    </button>
+                </div>
+
+            </EditForm>
+        </section>
+    }
+
+    <section class="detail-card">
+
+        <div class="card-heading">
+            <div>
+                <span class="eyebrow">General ledger</span>
+                <h2>Accounts</h2>
+            </div>
+
+            <div class="d-flex gap-2">
+                <InputText class="form-control"
+                           @bind-Value="search"
+                           placeholder="Search code or name" />
+
+                <InputSelect class="form-select"
+                             @bind-Value="typeFilter">
+
+                    <option value="">All types</option>
+
+                    @foreach (var type in Enum.GetValues<AccountType>())
+                    {
+                        <option value="@type.ToString()">
+                            @type
+                        </option>
+                    }
+
+                </InputSelect>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+
+            <table class="table">
+
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Classification</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    @foreach (var account in FilteredAccounts)
+                    {
+                        <tr>
+                            <td>
+                                <code>@account.Code</code>
+                            </td>
+
+                            <td>
+                                <strong>@account.Name</strong>
+
+                                @if (account.BankAccountNumber is not null)
+                                {
+                                    <small class="d-block text-muted">
+                                        @account.BankAccountNumber
+                                    </small>
+                                }
+                            </td>
+
+                            <td>
+                                @account.Type
+                            </td>
+
+                            <td>
+                                @AccountClassification(account)
+                            </td>
+
+                            <td>
+                                <span class="status-pill">
+                                    @(account.IsActive
+                                        ? "Active"
+                                        : "Archived")
+                                </span>
+                            </td>
+
+                            <td class="text-end">
+                                @if (canManage && !account.IsSystemAccount)
+                                {
+                                    <div class="d-flex gap-2 justify-content-end">
+                                        <button class="btn btn-sm btn-outline-primary"
+                                                @onclick="() => StartEdit(account)">
+                                            Edit
+                                        </button>
+
+                                        <button class="btn btn-sm btn-outline-secondary"
+                                                @onclick="() => Toggle(account)">
+                                            @(account.IsActive
+                                                ? "Archive"
+                                                : "Reactivate")
+                                        </button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </section>
+}
+
+@code {
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canManage;
+
+    private List<LedgerAccount> accounts = [];
+
+    private AccountModel model = new();
+
+    private LedgerAccount? editingAccount;
+    private EditAccountModel editModel = new();
+
+    private string search = "";
+    private string typeFilter = "";
+
+    private string? message;
+    private string messageClass = "alert-success";
+
+    private IEnumerable<LedgerAccount> FilteredAccounts =>
+        accounts.Where(x =>
+            (
+                string.IsNullOrWhiteSpace(search) ||
+                x.Code.Contains(
+                    search,
+                    StringComparison.OrdinalIgnoreCase) ||
+                x.Name.Contains(
+                    search,
+                    StringComparison.OrdinalIgnoreCase)
+            ) &&
+            (
+                string.IsNullOrWhiteSpace(typeFilter) ||
+                x.Type.ToString() == typeFilter
+            ));
+
+    private string BankKindHelp =>
+        BankKindHelpFor(model.BankAccountKind);
+
+    private string EditBankKindHelp =>
+        BankKindHelpFor(editModel.BankAccountKind);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state =
+            await AuthenticationStateProvider
+                .GetAuthenticationStateAsync();
+
+        userId = UserManager.GetUserId(state.User)!;
+
+        access = await TenantAccess.FindAsync(
+            userId,
+            OrganisationId);
+
+        if (access is null)
+        {
+            return;
+        }
+
+        canManage =
+            await TenantAccess.CanPostJournalsAsync(
+                userId,
+                OrganisationId);
+
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        accounts = await Db.LedgerAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId)
+            .OrderBy(x => x.Code)
+            .ToListAsync();
+    }
+
+    private void NewBankFlagChanged()
+    {
+        if (!model.IsBankAccount)
+        {
+            model.BankAccountKind = BankAccountKind.Bank;
+            model.BankAccountNumber = null;
+            return;
+        }
+
+        BankKindChanged();
+    }
+
+    private void BankKindChanged()
+    {
+        if (!model.IsBankAccount)
+        {
+            return;
+        }
+
+        model.Type =
+            model.BankAccountKind == BankAccountKind.CreditCard
+                ? AccountType.Liability
+                : AccountType.Asset;
+    }
+
+    private void StartEdit(LedgerAccount account)
+    {
+        editingAccount = account;
+
+        editModel = new EditAccountModel
+        {
+            Name = account.Name,
+            Type = account.Type,
+            IsBankAccount = account.IsBankAccount,
+            BankAccountKind = account.BankAccountKind,
+            BankAccountNumber = account.BankAccountNumber
+        };
+
+        message = null;
+    }
+
+    private void CancelEdit()
+    {
+        editingAccount = null;
+        editModel = new EditAccountModel();
+    }
+
+    private void EditBankFlagChanged()
+    {
+        if (!editModel.IsBankAccount)
+        {
+            editModel.BankAccountKind = BankAccountKind.Bank;
+            editModel.BankAccountNumber = null;
+            return;
+        }
+
+        EditBankKindChanged();
+    }
+
+    private void EditBankKindChanged()
+    {
+        if (!editModel.IsBankAccount)
+        {
+            return;
+        }
+
+        editModel.Type =
+            editModel.BankAccountKind == BankAccountKind.CreditCard
+                ? AccountType.Liability
+                : AccountType.Asset;
+    }
+
+    private async Task Create()
+    {
+        try
+        {
+            var account = await AccountsService.CreateAsync(
+                userId,
+                new LedgerAccountRequest(
+                    OrganisationId,
+                    model.Code,
+                    model.Name,
+                    model.Type,
+                    model.IsBankAccount,
+                    model.BankAccountKind,
+                    model.BankAccountNumber));
+
+            messageClass = "alert-success";
+            message = $"Account {account.Code} added.";
+
+            model = new AccountModel();
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private async Task SaveEdit()
+    {
+        if (editingAccount is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var account = await AccountsService.UpdateAsync(
+                userId,
+                new UpdateLedgerAccountRequest(
+                    OrganisationId,
+                    editingAccount.Id,
+                    editModel.Name,
+                    editModel.Type,
+                    editModel.IsBankAccount,
+                    editModel.BankAccountKind,
+                    editModel.BankAccountNumber));
+
+            messageClass = "alert-success";
+            message = $"Account {account.Code} updated.";
+
+            editingAccount = null;
+            editModel = new EditAccountModel();
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private async Task Toggle(LedgerAccount account)
+    {
+        try
+        {
+            await AccountsService.SetActiveAsync(
+                userId,
+                OrganisationId,
+                account.Id,
+                !account.IsActive);
+
+            messageClass = "alert-success";
+
+            message =
+                $"Account {account.Code} " +
+                $"{(account.IsActive ? "archived" : "reactivated")}.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private static string AccountClassification(
+        LedgerAccount account)
+    {
+        if (!account.IsBankAccount)
+        {
+            return account.IsSystemAccount
+                ? "System control"
+                : "Standard";
+        }
+
+        return account.BankAccountKind switch
+        {
+            BankAccountKind.DebitCard =>
+                "Debit / EFTPOS card",
+
+            BankAccountKind.CreditCard =>
+                "Credit card",
+
+            _ =>
+                "Bank account"
+        };
+    }
+
+    private static string BankKindHelpFor(
+        BankAccountKind kind)
+    {
+        return kind switch
+        {
+            BankAccountKind.DebitCard =>
+                "Debit / EFTPOS cards use money held in a bank account. They use the Asset account type.",
+
+            BankAccountKind.CreditCard =>
+                "Credit cards represent money owed to the card provider. They use the Liability account type.",
+
+            _ =>
+                "Cheque, current and savings bank accounts use the Asset account type."
+        };
+    }
+
+    private sealed class AccountModel
+    {
+        [Required]
+        [StringLength(20, MinimumLength = 2)]
+        public string Code { get; set; } = "";
+
+        [Required]
+        [StringLength(160, MinimumLength = 2)]
+        public string Name { get; set; } = "";
+
+        public AccountType Type { get; set; }
+            = AccountType.Expense;
+
+        public bool IsBankAccount { get; set; }
+
+        public BankAccountKind BankAccountKind { get; set; }
+            = BankAccountKind.Bank;
+
+        [StringLength(80)]
+        public string? BankAccountNumber { get; set; }
+    }
+
+    private sealed class EditAccountModel
+    {
+        [Required]
+        [StringLength(160, MinimumLength = 2)]
+        public string Name { get; set; } = "";
+
+        public AccountType Type { get; set; }
+
+        public bool IsBankAccount { get; set; }
+
+        public BankAccountKind BankAccountKind { get; set; }
+            = BankAccountKind.Bank;
+
+        [StringLength(80)]
+        public string? BankAccountNumber { get; set; }
+    }
+}

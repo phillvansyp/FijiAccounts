@@ -1,0 +1,132 @@
+@page "/o/{OrganisationId:guid}/sales"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject SalesInvoiceService InvoiceService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Sales invoices</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Money in</p>
+            <h1>Sales invoices</h1>
+            <p class="page-intro">Create invoices, monitor what customers owe, and follow up overdue balances.</p>
+        </div>
+        <div>
+            <a class="btn btn-outline-primary me-2" href="o/@OrganisationId/receipts">Record customer receipt</a>
+            <a class="btn btn-primary" href="o/@OrganisationId/sales/new">+ New invoice</a>
+        </div>
+    </div>
+
+    <div class="invoice-summary">
+        <article><span>Total invoiced</span><strong>$@invoices.Sum(x => x.Total).ToString("N2")</strong><small>@invoices.Count invoice@(invoices.Count == 1 ? "" : "s")</small></article>
+        <article><span>Outstanding</span><strong>$@invoices.Where(x => x.Status != InvoiceStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Awaiting payment</small></article>
+        <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>$@OverdueTotal.ToString("N2")</strong><small>@OverdueCount invoice@(OverdueCount == 1 ? "" : "s") past due</small></article>
+    </div>
+
+    @if (canPost && customers.Count == 0)
+    {
+        <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div>
+    }
+
+    <section class="invoice-list">
+        <div class="list-heading">
+            <div>
+                <h2>Invoice activity</h2>
+                <p>Most recent 100 invoices</p>
+            </div>
+        </div>
+        @if (invoices.Count == 0)
+        {
+            <div class="empty-state"><strong>No invoices yet</strong><span>Your posted invoices will appear here.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Invoice</th>
+                            <th>Date</th>
+                            <th>Due</th>
+                            <th>Customer</th>
+                            <th>Status</th>
+                            <th class="text-end">Net</th>
+                            <th class="text-end">VAT</th>
+                            <th class="text-end">Total</th>
+                            <th class="text-end">Outstanding</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var invoice in invoices)
+                    {
+                        var overdue = IsOverdue(invoice);
+                        <tr class="@(overdue ? "overdue-row" : null)">
+                            <td><a href="o/@OrganisationId/sales/@invoice.Id"><strong>@invoice.InvoiceNumber</strong></a></td>
+                            <td>@invoice.IssueDate.ToString("dd MMM yyyy")</td>
+                            <td>@invoice.DueDate.ToString("dd MMM yyyy")</td>
+                            <td>@invoice.Customer.Name</td>
+                            <td><span class="status-badge status-@invoice.Status.ToString().ToLowerInvariant()">@(overdue ? "Overdue" : invoice.Status)</span></td>
+                            <td class="text-end">$@invoice.Subtotal.ToString("N2")</td>
+                            <td class="text-end">$@invoice.VatTotal.ToString("N2")</td>
+                            <td class="text-end">$@invoice.Total.ToString("N2")</td>
+                            <td class="text-end outstanding">$@((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2"))</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private string userId = string.Empty;
+    private bool canPost;
+    private List<BusinessParty> customers = [];
+    private List<SalesInvoice> invoices = [];
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+
+        canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        customers = await Db.BusinessParties.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0)
+            .OrderBy(x => x.Name)
+            .ToListAsync();
+
+        await Reload();
+    }
+
+    private async Task Reload() => invoices = await Db.SalesInvoices.AsNoTracking()
+        .Include(x => x.Customer)
+        .Where(x => x.OrganisationId == OrganisationId)
+        .OrderByDescending(x => x.SequenceNumber)
+        .Take(100)
+        .ToListAsync();
+
+    private static bool IsOverdue(SalesInvoice invoice) =>
+        invoice.Status is not InvoiceStatus.Paid and not InvoiceStatus.Voided and not InvoiceStatus.Credited &&
+        invoice.DueDate < DateOnly.FromDateTime(DateTime.Today) &&
+        invoice.AmountPaid + invoice.AmountCredited < invoice.Total;
+
+    private int OverdueCount => invoices.Count(IsOverdue);
+    private decimal OverdueTotal => invoices.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);
+}

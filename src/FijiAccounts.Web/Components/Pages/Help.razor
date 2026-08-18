@@ -1,0 +1,56 @@
+@page "/help"
+@using Microsoft.AspNetCore.Components
+
+<PageTitle>Help centre · Account Island</PageTitle>
+<div class="help-hero"><span class="eyebrow">Account Island help centre</span><h1>How can we help?</h1><p>Search guidance for setup, daily transactions, access, VAT and reporting.</p>
+    <div class="help-search"><span>⌕</span><input aria-label="Search help" placeholder="Search Account Island help..." @bind="query" @bind:event="oninput" /></div>
+</div>
+
+@if (ContextArticle is not null && string.IsNullOrWhiteSpace(query))
+{
+    <section class="context-help"><span class="badge text-bg-success">Help for this page</span><h2>@ContextArticle.Title</h2><p>@ContextArticle.Summary</p><ol>@foreach (var step in ContextArticle.Steps) { <li>@step</li> }</ol></section>
+}
+
+<div class="help-layout">
+    <aside><h2>Topics</h2>@foreach (var category in articles.Select(x => x.Category).Distinct()) { <button @onclick="() => query = category">@category</button> }<button @onclick="() => query = string.Empty">View all</button></aside>
+    <section><div class="results-heading"><h2>@(string.IsNullOrWhiteSpace(query) ? "All help topics" : $"Results for “{query}”")</h2><span>@Filtered.Count() articles</span></div>
+        <div class="help-grid">@foreach (var article in Filtered) { <article id="@article.Slug"><span>@article.Category</span><h3>@article.Title</h3><p>@article.Summary</p><ol>@foreach (var step in article.Steps) { <li>@step</li> }</ol></article> }</div>
+        @if (!Filtered.Any()) { <div class="empty-help"><h3>No matching help yet</h3><p>Try a broader term. New articles will be added as Account Island evolves.</p></div> }
+    </section>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name="from")] public string? From { get; set; }
+    private string query = string.Empty;
+    private IEnumerable<HelpArticle> Filtered => string.IsNullOrWhiteSpace(query) ? articles : articles.Where(x => $"{x.Category} {x.Title} {x.Summary} {string.Join(' ',x.Steps)}".Contains(query, StringComparison.OrdinalIgnoreCase));
+    private HelpArticle? ContextArticle => articles.FirstOrDefault(x => MatchesRoute(x.Route, From));
+    private static bool MatchesRoute(string route, string? from)
+    {
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(route)) return false;
+        var star = route.IndexOf('*');
+        return star < 0
+            ? string.Equals(route, from, StringComparison.OrdinalIgnoreCase)
+            : from.StartsWith(route[..star], StringComparison.OrdinalIgnoreCase) && from.EndsWith(route[(star + 1)..], StringComparison.OrdinalIgnoreCase);
+    }
+    private sealed record HelpArticle(string Slug, string Category, string Title, string Summary, string Route, string[] Steps);
+    private readonly HelpArticle[] articles =
+    [
+        new("sign-in","Getting started","Sign in and protect your account","Access Account Island securely with your email, password, passkeys or two-factor authentication.","Account/Login",["Enter the email address associated with your account.","Enter your password and select Log in.","Open Profile & security from the top-right menu to configure passkeys or two-factor authentication."]),
+        new("organisations","Getting started","Create and switch organisations","Each business or accounting practice has an isolated accounting workspace.","organisations",["Select Organisations in the top menu.","Enter the legal name, optional trading name and Fiji TIN.","Choose Business or Accounting practice and create the workspace."]),
+        new("workspace","Getting started","Use an organisation workspace","The workspace is the launch point for sales, purchases, contacts, journals and team access.","o/*",["Check the active organisation name before entering transactions.","Choose the module you need from the workspace actions.","Return to Organisations to change businesses."]),
+        new("search-org","Getting started","Search records within your organisation","Use the top-right search icon to search contacts, invoices and supplier bills at once.","o/*/search",["Click the search icon in the top menu.","Type a client, invoice or bill reference.","Open the matching transaction or contact from the results list."]),
+        new("contacts","Contacts","Add customers and suppliers","A contact may be a customer, supplier, or both.","o/*/contacts",["Open Customers & suppliers.","Enter the contact name and optional email and TIN.","Select the contact type and save."]),
+        new("sales","Sales","Create a sales invoice","Posted invoices calculate VAT and create Accounts Receivable, Revenue and VAT Payable entries.","o/*/sales",["Select a customer and invoice dates.","Enter the description, quantity and VAT-exclusive unit price.","Confirm the VAT treatment and revenue account, then post."]),
+        new("receipts","Sales","Record a customer receipt","Allocate full or partial receipts while keeping the invoice balance current.","o/*/receipts",["Choose an outstanding invoice.","Select the deposit account and enter the payment reference.","Confirm the amount and record the receipt."]),
+        new("purchases","Purchases","Post and pay supplier bills","Bills record expenses, purchase VAT and Accounts Payable; payments clear the payable.","o/*/purchases",["Select a supplier and enter its invoice reference.","Choose the expense or asset account and VAT treatment.","Post the bill, then use Pay supplier bill when funds leave the bank."]),
+        new("inventory","Inventory","Track stock and inventory value","Tracked items use weighted-average cost and every adjustment posts to the general ledger.","o/*/inventory",["Create a tracked item under Products & services.","Open Inventory and post opening stock with its unit cost.","Set a reorder level and review low-stock alerts and movement history."]),
+        new("journals","Accounting","Post a manual journal","Manual journals must balance and become immutable after posting.","o/*/journals",["Choose the journal date and reference.","Select debit and credit accounts and enter the amount.","Review carefully before posting; corrections require a reversing journal."]),
+        new("general-ledger","Reporting","Review and export the general ledger","Trace account balances to every posted journal line, with running balances and CSV evidence.","o/*/general-ledger",["Choose the date range and optionally one account.","Search by reference or description to isolate evidence.","Print the report or export the filtered rows to CSV."]),
+        new("cash-summary","Reporting","Review cash movement","See opening and closing cash, money in, money out and movement by bank account and month.","o/*/reports/cash-summary",["Choose the period and optionally one bank account.","Review monthly and bank-account summaries.","Open journal evidence, print the report, or export the transactions to CSV."]),
+        new("budgets","Planning","Set budgets and compare actuals","Maintain monthly revenue and expense targets and compare them with posted ledger performance.","o/*/budgets",["Choose a revenue or expense account and month.","Enter the target amount and save the budget.","Review annual and monthly variances; favourable values appear in green."]),
+        new("bank-transfers","Banking","Transfer funds between bank accounts","A transfer posts one balanced journal and does not change the organisation’s total cash.","o/*/bank-transfers",["Choose two different active bank accounts.","Enter the date, unique reference and positive amount.","Post the transfer and use its journal link for supporting evidence."]),
+        new("journal-detail","Accounting","Inspect a posted journal","Each journal is an immutable balanced record with posting identity and related audit evidence.","o/*/journals/*",["Open a journal number from the general ledger or journal register.","Confirm its reference, entry date, debit and credit account lines.","Print the journal when evidence is required for review or audit."]),
+        new("vat","Fiji tax","Understand VAT treatments","Account Island preserves the rate and treatment used on every transaction.","",["Standard applies the effective Fiji VAT rate for the transaction date.","Zero-rated records a taxable supply at 0%.","Exempt and out-of-scope are reported separately and do not calculate VAT."]),
+        new("team","Access & security","Invite team members","Owners and administrators can give users only the role they need.","",["Open the organisation workspace and find Team.","Enter the person’s email and choose a role.","Send the generated invitation link; it expires after seven days."])
+    ];
+}

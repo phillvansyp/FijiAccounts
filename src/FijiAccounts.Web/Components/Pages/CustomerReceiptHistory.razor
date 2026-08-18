@@ -1,0 +1,26 @@
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject CustomerReceiptService ReceiptService
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+@if (receipts.Count > 0)
+{
+    <section class="detail-card mt-4 no-print"><div class="card-heading"><div><span class="eyebrow">Receipt history</span><h2>Customer receipts</h2></div></div><div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Reference</th><th>Bank account</th><th class="text-end">Amount</th><th>Status</th><th></th></tr></thead><tbody>@foreach (var receipt in receipts) { var reversed = reversedReceiptIds.Contains(receipt.Id); <tr><td>@receipt.ReceiptDate.ToString("dd MMM yyyy")</td><td>@receipt.Reference</td><td>@receipt.BankAccount.Code — @receipt.BankAccount.Name</td><td class="text-end">$@receipt.Amount.ToString("N2")</td><td><span class="status-pill">@(reversed ? "Reversed" : "Posted")</span></td><td>@if (canManage && !reversed) { <button class="btn btn-sm btn-outline-danger" @onclick="() => OpenReversal(receipt.Id)">Reverse</button> }</td></tr> }</tbody></table></div>
+    @if (reversingReceiptId is not null) { <div class="border-top pt-3"><h3>Reverse receipt</h3><div class="row"><div class="col-md-3"><label class="form-label">Reversal date</label><InputDate class="form-control" @bind-Value="reversalDate" /></div><div class="col-md-6"><label class="form-label">Reason</label><InputText class="form-control" @bind-Value="reason" /></div><div class="col-md-3 d-flex align-items-end gap-2"><button class="btn btn-danger" @onclick="Reverse">Confirm reversal</button><button class="btn btn-outline-secondary" @onclick="() => reversingReceiptId = null">Cancel</button></div></div></div> }
+    @if (message is not null) { <div class="alert @messageClass mt-3">@message</div> }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid InvoiceId { get; set; } [Parameter] public EventCallback OnChanged { get; set; }
+    private string userId = ""; private bool canManage; private List<CustomerReceipt> receipts = []; private HashSet<Guid> reversedReceiptIds = []; private Guid? reversingReceiptId; private DateOnly reversalDate = DateOnly.FromDateTime(DateTime.Today); private string reason = ""; private string? message; private string messageClass = "alert-success";
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); await Reload(); }
+    private async Task Reload() { receipts = await Db.CustomerReceipts.AsNoTracking().Include(x => x.BankAccount).Include(x => x.Allocations).Where(x => x.OrganisationId == OrganisationId && x.Allocations.Any(a => a.SalesInvoiceId == InvoiceId)).OrderByDescending(x => x.ReceiptDate).ToListAsync(); var ids = receipts.Select(x => x.Id).ToArray(); reversedReceiptIds = (await Db.CustomerReceiptReversals.AsNoTracking().Where(x => ids.Contains(x.CustomerReceiptId)).Select(x => x.CustomerReceiptId).ToListAsync()).ToHashSet(); }
+    private void OpenReversal(Guid id) { reversingReceiptId = id; reversalDate = DateOnly.FromDateTime(DateTime.Today); reason = ""; message = null; }
+    private async Task Reverse() { if (reversingReceiptId is null) return; try { await ReceiptService.ReverseAsync(userId, OrganisationId, reversingReceiptId.Value, reversalDate, reason); reversingReceiptId = null; messageClass = "alert-success"; message = "Receipt reversed and the invoice balance restored."; await Reload(); await OnChanged.InvokeAsync(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { messageClass = "alert-danger"; message = ex.Message; } }
+}

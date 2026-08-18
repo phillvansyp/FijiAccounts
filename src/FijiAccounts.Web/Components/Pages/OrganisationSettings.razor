@@ -1,0 +1,115 @@
+@page "/o/{OrganisationId:guid}/settings"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Organisation settings · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="settings-heading"><div><p class="eyebrow">Organisation</p><h1>Business settings</h1><p>Identity, regional accounting and compliance configuration.</p></div><span class="tax-pack @(jurisdiction.TaxPackEnabled ? "enabled" : "pending")">@(jurisdiction.TaxPackEnabled ? "Tax pack enabled" : "Tax pack pending verification")</span></div>
+    @if (status is not null) { <div class="alert @statusClass">@status</div> }
+    <div class="settings-grid">
+        <section class="settings-card"><h2>Business details</h2><p>Used on transactions, reports and tax documents.</p>
+            <EditForm Model="model" OnValidSubmit="Save" FormName="organisation-settings"><DataAnnotationsValidator /><ValidationSummary />
+                <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
+                <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
+                <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
+                @if (canManage) { <button class="btn btn-primary">Save business details</button> }
+            </EditForm>
+        </section>
+        <section class="settings-card"><h2>Island jurisdiction</h2><p>Controls currency, local dates, tax terminology and compliance rules.</p>
+            <dl class="jurisdiction-list"><div><dt>Country</dt><dd>@jurisdiction.CountryName</dd></div><div><dt>Base currency</dt><dd>@access.Organisation.BaseCurrency</dd></div><div><dt>Time zone</dt><dd>@access.Organisation.TimeZoneId</dd></div><div><dt>Indirect tax</dt><dd>@access.Organisation.TaxLabel</dd></div><div><dt>Financial year end</dt><dd>@FinancialYearEnd</dd></div></dl>
+            @if (!jurisdiction.TaxPackEnabled) { <div class="compliance-note"><strong>Posting protection is active</strong><span>Transactions remain locked until this country’s tax rules have been independently verified and activated.</span></div> }
+            @if (canChangeJurisdiction) { <label class="form-label mt-3">Change jurisdiction before posting begins</label><InputSelect class="form-select" @bind-Value="selectedCountry">@foreach (var item in IslandJurisdictions.All) { <option value="@item.CountryCode">@item.CountryName — @item.CurrencyCode</option> }</InputSelect><button class="btn btn-outline-primary mt-2" @onclick="ChangeJurisdiction">Apply jurisdiction</button> }
+            else if (canManage) { <small class="locked-note">Jurisdiction is locked because accounting transactions already exist.</small> }
+        </section>
+        <section class="settings-card"><h2>Departments</h2><p>Set up operational teams for management reporting and transaction tracking.</p>
+            @if (canManage)
+            {
+                <EditForm Model="departmentModel" OnValidSubmit="CreateDepartment" FormName="add-department"><DataAnnotationsValidator /><ValidationSummary />
+                    <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="departmentModel.Code" /></div><div class="col-md-8 mb-3"><label class="form-label">Department name</label><InputText class="form-control" @bind-Value="departmentModel.Name" /></div></div>
+                    <button class="btn btn-primary">Add department</button>
+                </EditForm>
+            }
+            <div class="table-responsive mt-4"><table class="table"><thead><tr><th>Code</th><th>Department</th><th>Status</th><th></th></tr></thead><tbody>
+                @if (departments.Count == 0) { <tr><td colspan="4" class="text-muted">No departments have been set up.</td></tr> }
+                @foreach (var item in departments) { <tr><td><strong>@item.Code</strong></td><td>@item.Name</td><td>@(item.IsActive ? "Active" : "Inactive")</td><td class="text-end">@if (canManage) { <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleUnit(item)">@(item.IsActive ? "Deactivate" : "Activate")</button> }</td></tr> }
+            </tbody></table></div>
+        </section>
+        <section class="settings-card"><h2>Branches</h2><p>Set up business locations for local activity and branch-level reporting.</p>
+            @if (canManage)
+            {
+                <EditForm Model="branchModel" OnValidSubmit="CreateBranch" FormName="add-branch"><DataAnnotationsValidator /><ValidationSummary />
+                    <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="branchModel.Code" /></div><div class="col-md-8 mb-3"><label class="form-label">Branch name</label><InputText class="form-control" @bind-Value="branchModel.Name" /></div></div>
+                    <button class="btn btn-primary">Add branch</button>
+                </EditForm>
+            }
+            <div class="table-responsive mt-4"><table class="table"><thead><tr><th>Code</th><th>Branch</th><th>Status</th><th></th></tr></thead><tbody>
+                @if (branches.Count == 0) { <tr><td colspan="4" class="text-muted">No branches have been set up.</td></tr> }
+                @foreach (var item in branches) { <tr><td><strong>@item.Code</strong></td><td>@item.Name</td><td>@(item.IsActive ? "Active" : "Inactive")</td><td class="text-end">@if (canManage) { <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleUnit(item)">@(item.IsActive ? "Deactivate" : "Activate")</button> }</td></tr> }
+            </tbody></table></div>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private bool canManage, canChangeJurisdiction; private SettingsModel model = new(); private UnitModel departmentModel = new(); private UnitModel branchModel = new(); private List<OrganisationUnit> departments = []; private List<OrganisationUnit> branches = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin }; await LoadUnits(); }
+    private async Task Save()
+    {
+        if (!canManage || access is null) return;
+        try
+        {
+            var legalName = model.LegalName.Trim();
+            var tradingName = NullIfWhiteSpace(model.TradingName);
+            var tin = NullIfWhiteSpace(model.Tin);
+            var changed = await Db.Organisations
+                .Where(x => x.Id == OrganisationId)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(x => x.LegalName, legalName)
+                    .SetProperty(x => x.TradingName, tradingName)
+                    .SetProperty(x => x.Tin, tin));
+            if (changed != 1) throw new InvalidOperationException("The organisation could not be updated.");
+
+            var stored = await Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == OrganisationId);
+            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin };
+            access = access with { Organisation = stored };
+            statusClass = "alert-success";
+            status = "Business details saved and verified.";
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Business details were not saved: {ex.Message}";
+        }
+    }
+    private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private async Task ChangeJurisdiction() { if (!canChangeJurisdiction || access is null) return; var selected = IslandJurisdictions.Get(selectedCountry); var organisation = await Db.Organisations.SingleAsync(x => x.Id == OrganisationId); organisation.CountryCode = selected.CountryCode; organisation.BaseCurrency = selected.CurrencyCode; organisation.TimeZoneId = selected.TimeZoneId; organisation.TaxLabel = selected.TaxLabel; organisation.FinancialYearEndMonth = selected.FinancialYearEndMonth; organisation.FinancialYearEndDay = selected.FinancialYearEndDay; await Db.SaveChangesAsync(); access = access with { Organisation = organisation }; jurisdiction = selected; status = $"Jurisdiction changed to {selected.CountryName}."; }
+    private async Task LoadUnits() { var units = await Db.OrganisationUnits.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); departments = units.Where(x => x.Type == OrganisationUnitType.Department).ToList(); branches = units.Where(x => x.Type == OrganisationUnitType.Branch).ToList(); }
+    private Task CreateDepartment() => CreateUnit(departmentModel, OrganisationUnitType.Department);
+    private Task CreateBranch() => CreateUnit(branchModel, OrganisationUnitType.Branch);
+    private async Task CreateUnit(UnitModel input, OrganisationUnitType type)
+    {
+        if (!canManage) return;
+        var code = input.Code.Trim().ToUpperInvariant(); var name = input.Name.Trim();
+        if (await Db.OrganisationUnits.AnyAsync(x => x.OrganisationId == OrganisationId && x.Type == type && (x.Code == code || x.Name == name))) { status = $"That {type.ToString().ToLowerInvariant()} code or name already exists."; return; }
+        Db.OrganisationUnits.Add(new OrganisationUnit { OrganisationId = OrganisationId, Type = type, Code = code, Name = name });
+        await Db.SaveChangesAsync();
+        if (type == OrganisationUnitType.Department) departmentModel = new(); else branchModel = new();
+        status = $"{type} added."; await LoadUnits();
+    }
+    private async Task ToggleUnit(OrganisationUnit item) { if (!canManage) return; var stored = await Db.OrganisationUnits.SingleAsync(x => x.Id == item.Id && x.OrganisationId == OrganisationId); stored.IsActive = !stored.IsActive; await Db.SaveChangesAsync(); status = $"{stored.Name} is now {(stored.IsActive ? "active" : "inactive")}."; await LoadUnits(); }
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } }
+    private sealed class UnitModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
+}

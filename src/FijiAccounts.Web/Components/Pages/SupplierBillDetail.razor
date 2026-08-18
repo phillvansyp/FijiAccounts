@@ -1,0 +1,1214 @@
+@page "/o/{OrganisationId:guid}/purchases/{BillId:guid}"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject PurchasingService Purchasing
+@inject SupplierCreditNoteService SupplierCredits
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>@(bill?.BillNumber ?? "Supplier bill") · Account Island</PageTitle>
+
+@if (bill is null || access is null)
+{
+    <div class="alert alert-danger">
+        Supplier bill not found or access denied.
+    </div>
+}
+else
+{
+    <div class="bill-page">
+        <div class="bill-heading no-print">
+            <div>
+                <a class="back-link" href="/o/@OrganisationId/purchases">← Supplier bills</a>
+                <span class="eyebrow">Purchases</span>
+
+                <div class="title-row">
+                    <h1>Supplier Bill</h1>
+                    <span class="bill-status status-@bill.Status.ToString().ToLowerInvariant()">
+                        @bill.Status
+                    </span>
+                </div>
+
+                <p class="heading-subtitle">@bill.BillNumber · @bill.Supplier.Name</p>
+            </div>
+
+                        <div class="bill-actions">
+
+                <div class="attachment-menu-wrap">
+
+                    @if (bill.Attachments.Count == 0)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-secondary attachment-top-button"
+                                disabled>
+                            Attachments
+                            <span class="attachment-count">0</span>
+                        </button>
+                    }
+                    else if (bill.Attachments.Count == 1)
+                    {
+                        var attachment = bill.Attachments[0];
+
+                        <a class="btn btn-outline-secondary attachment-top-button"
+                           href="@AttachmentUrl(attachment)"
+                           target="_blank">
+                            Attachments
+                            <span class="attachment-count">1</span>
+                        </a>
+                    }
+                    else
+                    {
+                        <button type="button"
+                                class="btn btn-outline-secondary attachment-top-button"
+                                @onclick="ToggleAttachmentMenu">
+                            Attachments
+                            <span class="attachment-count">@bill.Attachments.Count</span>
+                        </button>
+
+                        @if (showAttachmentMenu)
+                        {
+                            <div class="attachment-menu">
+
+                                <div class="attachment-menu-title">
+                                    <strong>Attachments</strong>
+                                    <span>
+                                        @bill.Attachments.Count files
+                                    </span>
+                                </div>
+
+                                @foreach (var attachment in bill.Attachments
+                                    .OrderByDescending(x => x.UploadedAt))
+                                {
+                                    <div class="attachment-menu-row">
+
+                                        <a class="attachment-menu-item"
+                                           href="@AttachmentUrl(attachment)"
+                                           target="_blank">
+
+                                            <span class="attachment-menu-icon">
+                                                @DocumentIcon(attachment.ContentType)
+                                            </span>
+
+                                            <span class="attachment-menu-copy">
+                                                <strong>@attachment.FileName</strong>
+                                                <small>
+                                                    @FormatFileSize(attachment.OriginalSize)
+                                                </small>
+                                            </span>
+
+                                        </a>
+
+                                        @if (canManage)
+                                        {
+                                            <button type="button"
+                                                    class="attachment-delete"
+                                                    title="Delete attachment"
+                                                    @onclick="() => DeleteDocument(attachment.Id)">
+                                                ×
+                                            </button>
+                                        }
+
+                                    </div>
+                                }
+
+                            </div>
+                        }
+                    }
+
+                </div>
+
+                @if (canManage && AmountDue > 0 && bill.Status != BillStatus.Voided)
+                {
+                    <button class="btn btn-outline-primary" @onclick="OpenCredit">
+                        Supplier credit
+                    </button>
+                }
+
+                @if (canManage &&
+                     bill.Status == BillStatus.Posted &&
+                     bill.AmountPaid == 0 &&
+                     bill.AmountCredited == 0)
+                {
+                    <button class="btn btn-outline-danger" @onclick="() => showVoid = true">
+                        Void bill
+                    </button>
+                }
+
+                <button class="btn btn-outline-secondary" onclick="window.print()">
+                    Print / Save PDF
+                </button>
+            </div>
+        </div>
+
+        @if (showCredit)
+        {
+            <section class="action-card no-print">
+                <div class="action-card-heading">
+                    <span class="eyebrow">Supplier credit</span>
+                    <h2>Post supplier credit note</h2>
+                    <p>This reduces Accounts Payable and Fiji input VAT. The credit cannot exceed the unpaid balance.</p>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-2">
+                        <label class="form-label">Credit date</label>
+                        <InputDate class="form-control" @bind-Value="creditDate" />
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label">Supplier reference / reason</label>
+                        <InputText class="form-control" @bind-Value="creditReason" />
+                    </div>
+
+                    <div class="col-md-2">
+                        <label class="form-label">Amount incl. VAT</label>
+                        <InputNumber class="form-control" @bind-Value="creditAmount" />
+                    </div>
+
+                    @if (HasTrackedItems)
+                    {
+                        <div class="col-md-2 d-flex align-items-end">
+                            <label class="tracked-check">
+                                <InputCheckbox @bind-Value="returnTrackedItems" />
+                                Return tracked stock
+                            </label>
+                        </div>
+                    }
+
+                    <div class="col-md-2 d-flex align-items-end gap-2">
+                        <button class="btn btn-primary" @onclick="PostCredit">Post credit</button>
+                        <button class="btn btn-outline-secondary" @onclick="() => showCredit = false">Cancel</button>
+                    </div>
+                </div>
+            </section>
+        }
+
+        @if (showVoid)
+        {
+            <section class="action-card danger-card no-print">
+                <div class="action-card-heading">
+                    <span class="eyebrow danger-eyebrow">Void bill</span>
+                    <h2>Void supplier bill</h2>
+                    <p>This posts a full reversing journal. Tracked stock received on this bill will be removed.</p>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Void date</label>
+                        <InputDate class="form-control" @bind-Value="voidDate" />
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">Reason</label>
+                        <InputText class="form-control" @bind-Value="voidReason" />
+                    </div>
+
+                    <div class="col-md-3 d-flex align-items-end gap-2">
+                        <button class="btn btn-danger" @onclick="VoidBill">Confirm void</button>
+                        <button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button>
+                    </div>
+                </div>
+            </section>
+        }
+
+        @if (status is not null)
+        {
+            <div class="alert @statusClass no-print">@status</div>
+        }
+
+        @if (documentError is not null)
+        {
+            <div class="alert alert-danger no-print">@documentError</div>
+        }
+
+        @if (uploadingDocument)
+        {
+            <div class="alert alert-info no-print">Uploading attachment…</div>
+        }
+
+        <article class="bill-document">
+            <div class="bill-document-header">
+                <div>
+                    <span class="document-brand">Account Island</span>
+                    <h2>@bill.Supplier.Name</h2>
+
+                    @if (!string.IsNullOrWhiteSpace(bill.Supplier.Address))
+                    {
+                        <span class="supplier-detail">@bill.Supplier.Address</span>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(bill.Supplier.Tin))
+                    {
+                        <span class="supplier-detail">TIN: @bill.Supplier.Tin</span>
+                    }
+                </div>
+
+                <div class="document-identity">
+                    <span>SUPPLIER BILL</span>
+                    <strong>@bill.BillNumber</strong>
+                    <span class="bill-status status-@bill.Status.ToString().ToLowerInvariant()">@bill.Status</span>
+                </div>
+            </div>
+
+            <section class="bill-info-grid">
+                <div class="info-panel">
+                    <span class="info-label">ORGANISATION</span>
+                    <strong>@access.Organisation.LegalName</strong>
+
+                    @if (!string.IsNullOrWhiteSpace(access.Organisation.Tin))
+                    {
+                        <span>TIN: @access.Organisation.Tin</span>
+                    }
+                </div>
+
+                <div class="info-panel">
+                    <span class="info-label">SUPPLIER</span>
+                    <strong>@bill.Supplier.Name</strong>
+
+                    @if (!string.IsNullOrWhiteSpace(bill.SupplierReference))
+                    {
+                        <span>Reference: @bill.SupplierReference</span>
+                    }
+                    else
+                    {
+                        <span class="muted">No supplier reference</span>
+                    }
+                </div>
+
+                <div class="info-panel bill-dates">
+                    <div>
+                        <span>Bill date</span>
+                        <strong>@bill.BillDate.ToString("dd MMM yyyy")</strong>
+                    </div>
+
+                    <div>
+                        <span>Due date</span>
+                        <strong>@bill.DueDate.ToString("dd MMM yyyy")</strong>
+                    </div>
+
+                    <div>
+                        <span>Currency</span>
+                        <strong>@bill.Currency</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="lines-section">
+                <div class="section-heading">
+                    <span class="eyebrow">Line items</span>
+                    <h3>Bill details</h3>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="bill-lines">
+                        <thead>
+                            <tr>
+                                <th>Description</th>
+                                <th class="number">Qty</th>
+                                <th class="number">Unit price</th>
+                                <th>Tax</th>
+                                <th class="number">Amount</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            @foreach (var line in bill.Lines)
+                            {
+                                <tr>
+                                    <td><strong>@line.Description</strong></td>
+                                    <td class="number">@line.Quantity.ToString("N2")</td>
+                                    <td class="number">$@line.UnitPrice.ToString("N2")</td>
+                                    <td><span class="tax-pill">@line.VatTreatment</span></td>
+                                    <td class="number amount-cell">$@line.NetAmount.ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="bill-summary-area">
+                <div class="ledger-info">
+                    <span class="info-label">ACCOUNTING</span>
+                    <strong>Posted to accounting ledger</strong>
+                    <span>Journal @bill.PostedJournalId</span>
+                </div>
+
+                <div class="bill-totals">
+                    <div><span>Subtotal</span><strong>$@bill.Subtotal.ToString("N2")</strong></div>
+                    <div><span>@access.Organisation.TaxLabel</span><strong>$@bill.VatTotal.ToString("N2")</strong></div>
+                    <div class="total-line"><span>Total</span><strong>$@bill.Total.ToString("N2")</strong></div>
+                    <div><span>Credits</span><strong>$@bill.AmountCredited.ToString("N2")</strong></div>
+                    <div><span>Paid</span><strong>$@bill.AmountPaid.ToString("N2")</strong></div>
+                    <div class="amount-due"><span>Amount due</span><strong>$@AmountDue.ToString("N2")</strong></div>
+                </div>
+            </section>
+
+            @if (canManage)
+{
+    <div class="bill-attachment mt-4 no-print">
+        <label class="bill-drop-zone">
+            <InputFile class="bill-file-input"
+                       OnChange="UploadDocuments"
+                       accept=".pdf,.jpg,.jpeg,.png"
+                       multiple />
+
+            <strong>Drop a supplier invoice or supporting document here</strong>
+
+            <span>
+                or click to choose a file. Maximum 10 MB per file.
+            </span>
+        </label>
+
+        @if (!string.IsNullOrWhiteSpace(documentError))
+        {
+            <div class="text-danger mt-2">
+                @documentError
+            </div>
+        }
+    </div>
+}
+        </article>
+
+        @if (credits.Count > 0)
+        {
+            <section class="history-card no-print">
+                <div class="history-heading">
+                    <span class="eyebrow">Credit history</span>
+                    <h2>Supplier credit notes</h2>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table history-table">
+                        <thead>
+                            <tr>
+                                <th>Credit note</th>
+                                <th>Date</th>
+                                <th>Reference / reason</th>
+                                <th>Stock return</th>
+                                <th class="text-end">Net</th>
+                                <th class="text-end">VAT</th>
+                                <th class="text-end">Total</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            @foreach (var credit in credits)
+                            {
+                                <tr>
+                                    <td><strong>@credit.CreditNoteNumber</strong></td>
+                                    <td>@credit.CreditDate.ToString("dd MMM yyyy")</td>
+                                    <td>@credit.Reason</td>
+                                    <td>@(credit.ReturnedTrackedItems ? "Yes" : "No")</td>
+                                    <td class="text-end">$@credit.Subtotal.ToString("N2")</td>
+                                    <td class="text-end">$@credit.VatTotal.ToString("N2")</td>
+                                    <td class="text-end"><strong>$@credit.Total.ToString("N2")</strong></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+
+        @if (payments.Count > 0)
+        {
+            <section class="history-card no-print">
+                <div class="history-heading">
+                    <span class="eyebrow">Payment history</span>
+                    <h2>Supplier payments</h2>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table history-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Reference</th>
+                                <th>Bank account</th>
+                                <th class="text-end">Amount</th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            @foreach (var payment in payments)
+                            {
+                                var reversed = reversedPaymentIds.Contains(payment.Id);
+
+                                <tr>
+                                    <td>@payment.PaymentDate.ToString("dd MMM yyyy")</td>
+                                    <td>@payment.Reference</td>
+                                    <td><strong>@payment.BankAccount.Code — @payment.BankAccount.Name</strong></td>
+                                    <td class="text-end">$@payment.Amount.ToString("N2")</td>
+                                    <td>
+                                        <span class="payment-status @(reversed ? "payment-reversed" : "payment-posted")">
+                                            @(reversed ? "Reversed" : "Posted")
+                                        </span>
+                                    </td>
+                                    <td class="text-end">
+                                        @if (canManage && !reversed && bill.Status != BillStatus.Voided)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @onclick="() => OpenPaymentReversal(payment.Id)">
+                                                Reverse
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (reversingPaymentId is not null)
+                {
+                    <div class="payment-reversal">
+                        <h3>Reverse payment</h3>
+
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label class="form-label">Reversal date</label>
+                                <InputDate class="form-control" @bind-Value="paymentReversalDate" />
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Reason</label>
+                                <InputText class="form-control" @bind-Value="paymentReversalReason" />
+                            </div>
+
+                            <div class="col-md-3 d-flex align-items-end gap-2">
+                                <button class="btn btn-danger" @onclick="ReversePayment">Confirm reversal</button>
+                                <button class="btn btn-outline-secondary" @onclick="() => reversingPaymentId = null">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+}
+
+<style>
+    .bill-page { width: 100%; padding-bottom: 2rem; }
+.bill-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; margin-bottom: 1rem; }
+.back-link { display: inline-block; margin-bottom: .7rem; color: #0d6efd; text-decoration: none; font-size: .9rem; }
+.back-link:hover { text-decoration: underline; }
+.eyebrow { display: block; margin: 0 0 .25rem; color: #087f5b; font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.title-row { display: flex; align-items: center; gap: .7rem; }
+.title-row h1 { margin: 0; color: #102a43; font-size: 2rem; font-weight: 500; }
+.heading-subtitle { margin: .35rem 0 0; color: #667985; }
+.bill-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; padding-top: 1.7rem; }
+
+/* =========================================================
+   ATTACHMENTS MENU
+   ========================================================= */
+
+.attachment-menu-wrap {
+    position: relative;
+}
+
+.attachment-top-button {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    white-space: nowrap;
+}
+
+.attachment-symbol {
+    font-size: .9rem;
+}
+
+.attachment-count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: #087f5b;
+    color: #fff;
+    font-size: .68rem;
+    font-weight: 800;
+}
+
+.attachment-menu {
+    position: absolute;
+    top: calc(100% + .5rem);
+    right: 0;
+    z-index: 1000;
+    width: 390px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #dfe8ec;
+    border-radius: .8rem;
+    box-shadow: 0 14px 34px rgba(16,42,67,.16);
+}
+
+.attachment-menu-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .85rem 1rem;
+    border-bottom: 1px solid #e7edef;
+    color: #17324d;
+}
+
+.attachment-menu-title strong {
+    font-size: .95rem;
+}
+
+.attachment-menu-title span {
+    color: #667985;
+    font-size: .75rem;
+}
+
+.attachment-menu-row {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) 34px;
+    gap: .45rem;
+    align-items: center;
+    padding: .2rem .55rem .2rem .35rem;
+    border-bottom: 1px solid #edf1f3;
+}
+
+.attachment-menu-row:last-of-type {
+    border-bottom: 0;
+}
+
+.attachment-menu-item {
+    display: grid;
+    grid-template-columns: 40px minmax(0,1fr);
+    gap: .7rem;
+    align-items: center;
+    min-width: 0;
+    padding: .7rem .65rem;
+    border: 0;
+    border-radius: .55rem;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.attachment-menu-item:hover {
+    background: #f4f8f9;
+}
+
+.attachment-menu-icon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: .55rem;
+    background: #e8f5ef;
+    color: #087f5b;
+    font-size: .67rem;
+    font-weight: 900;
+}
+
+.attachment-menu-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.attachment-menu-copy strong {
+    overflow: hidden;
+    color: #17324d;
+    font-size: .82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-menu-copy small {
+    margin-top: .12rem;
+    color: #667985;
+    font-size: .72rem;
+}
+
+.attachment-delete {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: .45rem;
+    background: transparent;
+    color: #b42318;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.attachment-delete:hover {
+    background: #fdeaea;
+}
+
+.attachment-menu-add {
+    position: relative;
+    display: block;
+    padding: .8rem 1rem;
+    color: #0d6efd;
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.attachment-menu-add:hover {
+    background: #f4f8f9;
+}
+
+.attachment-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+/* ========================================================= */
+
+.bill-status { display: inline-flex; align-items: center; width: fit-content; padding: .3rem .65rem; border-radius: 999px; background: #e8f5ef; color: #087f5b; font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.status-voided { background: #fdeaea; color: #b42318; }
+.status-draft { background: #eef2f5; color: #526b78; }
+
+.action-card, .history-card, .bill-document { background: #fff; border: 1px solid #dfe8ec; border-radius: .9rem; box-shadow: 0 6px 20px rgba(16,42,67,.05); }
+.action-card { margin-bottom: 1rem; padding: 1.25rem; }
+.danger-card { border-color: #f0c7c7; }
+.danger-eyebrow { color: #b42318; }
+.action-card-heading { margin-bottom: 1rem; }
+.action-card-heading h2 { margin: 0; color: #17324d; font-size: 1.15rem; }
+.action-card-heading p { margin: .3rem 0 0; color: #667985; }
+.tracked-check { display: flex; align-items: center; gap: .4rem; min-height: 38px; }
+
+.bill-document { overflow: hidden; }
+.bill-document-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 2rem; padding: 1.5rem 1.6rem; border-bottom: 1px solid #e3ebef; }
+.document-brand { display: block; margin-bottom: .35rem; color: #087f5b; font-size: .75rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.bill-document-header h2 { margin: 0 0 .3rem; color: #102a43; font-size: 1.4rem; }
+.supplier-detail { display: block; color: #667985; font-size: .85rem; }
+.document-identity { display: flex; flex-direction: column; align-items: flex-end; gap: .35rem; text-align: right; }
+.document-identity > span:first-child { color: #667985; font-size: .7rem; font-weight: 800; letter-spacing: .1em; }
+.document-identity > strong { color: #102a43; font-size: 1.35rem; }
+
+.bill-info-grid { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 1rem; padding: 1.25rem 1.6rem; background: #f8fafb; border-bottom: 1px solid #e3ebef; }
+.info-panel { display: flex; flex-direction: column; min-width: 0; }
+.info-label { display: block; margin-bottom: .35rem; color: #667985; font-size: .68rem; font-weight: 800; letter-spacing: .08em; }
+.info-panel strong { color: #17324d; }
+.info-panel > span:not(.info-label) { color: #667985; font-size: .82rem; }
+.muted { color: #93a1a8 !important; }
+.bill-dates { display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; }
+.bill-dates div { display: flex; flex-direction: column; }
+.bill-dates span { margin-bottom: .2rem; color: #667985; font-size: .72rem; }
+.bill-dates strong { font-size: .9rem; }
+
+.lines-section { padding: 1.5rem 1.6rem .5rem; }
+.section-heading { margin-bottom: .8rem; }
+.section-heading h3 { margin: 0; color: #17324d; font-size: 1.1rem; }
+.bill-lines { width: 100%; border-collapse: collapse; }
+.bill-lines th { padding: .7rem .75rem; background: #f7fafb; border-top: 1px solid #e3ebef; border-bottom: 1px solid #e3ebef; color: #526b78; font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.bill-lines td { padding: .9rem .75rem; border-bottom: 1px solid #edf1f3; color: #17324d; vertical-align: middle; }
+.bill-lines .number { text-align: right; white-space: nowrap; }
+.amount-cell { font-weight: 700; }
+.tax-pill { display: inline-flex; padding: .25rem .5rem; border-radius: .4rem; background: #eef4f6; color: #526b78; font-size: .75rem; }
+
+.bill-summary-area { display: grid; grid-template-columns: 1fr 360px; gap: 2rem; align-items: start; padding: 1.5rem 1.6rem; }
+.ledger-info { display: flex; flex-direction: column; max-width: 600px; }
+.ledger-info strong { color: #17324d; }
+.ledger-info > span:last-child { margin-top: .25rem; color: #667985; font-size: .78rem; overflow-wrap: anywhere; }
+.bill-totals { width: 100%; }
+.bill-totals > div { display: flex; justify-content: space-between; gap: 2rem; padding: .4rem 0; color: #526b78; }
+.bill-totals strong { color: #102a43; }
+.total-line { margin-top: .35rem; padding-top: .75rem !important; border-top: 1px solid #dfe8ec; }
+.total-line span, .total-line strong { color: #102a43; font-size: 1.05rem; font-weight: 800; }
+.amount-due { margin-top: .45rem; padding: .8rem .9rem !important; border-radius: .55rem; background: #e8f5ef; }
+.amount-due span, .amount-due strong { color: #087f5b; font-size: 1.1rem; font-weight: 800; }
+
+.history-card { margin-top: 1rem; overflow: hidden; }
+.history-heading { padding: 1.15rem 1.25rem; border-bottom: 1px solid #e3ebef; }
+.history-heading h2 { margin: 0; color: #17324d; font-size: 1.1rem; }
+.history-table { margin: 0; }
+.history-table th { padding: .75rem 1rem; background: #f7fafb; color: #526b78; font-size: .72rem; text-transform: uppercase; }
+.history-table td { padding: .8rem 1rem; vertical-align: middle; }
+.payment-status { display: inline-flex; padding: .25rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 700; }
+.payment-posted { background: #e8f5ef; color: #087f5b; }
+.payment-reversed { background: #fdeaea; color: #b42318; }
+.payment-reversal { padding: 1.25rem; border-top: 1px solid #e3ebef; background: #f8fafb; }
+.payment-reversal h3 { margin: 0 0 1rem; color: #17324d; font-size: 1rem; }
+
+@@media (max-width: 900px) {
+    .bill-heading { flex-direction: column; }
+    .bill-actions { justify-content: flex-start; padding-top: 0; }
+    .bill-info-grid { grid-template-columns: 1fr; }
+    .bill-summary-area { grid-template-columns: 1fr; }
+    .attachment-menu { left: 0; right: auto; }
+}
+
+@@media (max-width: 650px) {
+    .bill-document-header { flex-direction: column; }
+    .document-identity { align-items: flex-start; text-align: left; }
+    .bill-dates { grid-template-columns: 1fr; }
+    .bill-document-header, .bill-info-grid, .lines-section, .bill-summary-area { padding-left: 1rem; padding-right: 1rem; }
+    .attachment-menu { width: min(360px, calc(100vw - 2rem)); }
+}
+
+@@media print {
+    .no-print, header, nav { display: none !important; }
+    .bill-page { padding: 0; }
+    .bill-document { border: 0; box-shadow: none; }
+    body { background: #fff !important; }
+}
+
+</style>
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid BillId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private SupplierBill? bill;
+    private List<SupplierPayment> payments = [];
+    private List<SupplierCreditNote> credits = [];
+    private HashSet<Guid> reversedPaymentIds = [];
+
+    private string userId = "";
+    private bool canManage;
+    private bool showVoid;
+    private bool showCredit;
+    private bool showAttachmentMenu;
+    private bool uploadingDocument;
+
+    private string? documentError;
+    private string? status;
+    private string statusClass = "alert-success";
+
+    private DateOnly voidDate = DateOnly.FromDateTime(DateTime.Today);
+    private string voidReason = "";
+
+    private DateOnly creditDate = DateOnly.FromDateTime(DateTime.Today);
+    private string creditReason = "";
+    private decimal creditAmount;
+    private bool returnTrackedItems;
+
+    private Guid? reversingPaymentId;
+    private DateOnly paymentReversalDate = DateOnly.FromDateTime(DateTime.Today);
+    private string paymentReversalReason = "";
+
+    private const long MaxDocumentSize = 10 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedDocumentTypes =
+    [
+        "application/pdf",
+        "image/png",
+        "image/jpeg"
+    ];
+
+    private decimal AmountDue =>
+        bill is null
+            ? 0
+            : bill.Total - bill.AmountPaid - bill.AmountCredited;
+
+    private bool HasTrackedItems =>
+        bill?.Lines.Any(x => x.ProductItem?.Kind == ProductKind.TrackedItem) == true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+
+        if (access is null)
+        {
+            return;
+        }
+
+        canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        bill = await Db.SupplierBills
+            .AsNoTracking()
+            .Include(x => x.Supplier)
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.ProductItem)
+            .Include(x => x.Attachments)
+            .SingleOrDefaultAsync(
+                x => x.Id == BillId &&
+                     x.OrganisationId == OrganisationId);
+
+        payments = await Db.SupplierPayments
+            .AsNoTracking()
+            .Include(x => x.BankAccount)
+            .Where(
+                x => x.SupplierBillId == BillId &&
+                     x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.PaymentDate)
+            .ToListAsync();
+
+        credits = await Db.SupplierCreditNotes
+            .AsNoTracking()
+            .Where(
+                x => x.SupplierBillId == BillId &&
+                     x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.CreditDate)
+            .ToListAsync();
+
+        var ids = payments.Select(x => x.Id).ToArray();
+
+        reversedPaymentIds =
+            (await Db.SupplierPaymentReversals
+                .AsNoTracking()
+                .Where(x => ids.Contains(x.SupplierPaymentId))
+                .Select(x => x.SupplierPaymentId)
+                .ToListAsync())
+            .ToHashSet();
+    }
+
+    private void ToggleAttachmentMenu()
+    {
+        showAttachmentMenu = !showAttachmentMenu;
+    }
+
+    private async Task UploadDocuments(InputFileChangeEventArgs e)
+    {
+        if (bill is null)
+        {
+            return;
+        }
+
+        documentError = null;
+        uploadingDocument = true;
+
+        try
+        {
+            var files = e.GetMultipleFiles(10);
+
+            if (files.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                if (file.Size <= 0)
+                {
+                    continue;
+                }
+
+                if (file.Size > MaxDocumentSize)
+                {
+                    throw new InvalidOperationException(
+                        $"{file.Name} is larger than the 10 MB limit.");
+                }
+
+                var contentType =
+                    string.IsNullOrWhiteSpace(file.ContentType)
+                        ? "application/octet-stream"
+                        : file.ContentType.ToLowerInvariant();
+
+                if (!AllowedDocumentTypes.Contains(contentType))
+                {
+                    throw new InvalidOperationException(
+                        $"{file.Name} is not a supported file type. Use PDF, JPG or PNG.");
+                }
+
+                await using var input = file.OpenReadStream(MaxDocumentSize);
+                using var memory = new MemoryStream();
+
+                await input.CopyToAsync(memory);
+
+                var content = memory.ToArray();
+
+                var attachment = new SupplierBillAttachment
+                {
+                    OrganisationId = OrganisationId,
+                    SupplierBillId = BillId,
+                    FileName = Path.GetFileName(file.Name),
+                    ContentType = contentType,
+                    OriginalSize = file.Size,
+                    StoredSize = content.LongLength,
+                    IsCompressed = false,
+                    Content = content,
+                    UploadedAt = DateTimeOffset.UtcNow,
+                    UploadedByUserId = userId
+                };
+
+                Db.SupplierBillAttachments.Add(attachment);
+
+                Db.AuditEvents.Add(
+                    new AuditEvent
+                    {
+                        OrganisationId = OrganisationId,
+                        UserId = userId,
+                        EventType = "SupplierBillDocumentAdded",
+                        EntityType = nameof(SupplierBill),
+                        EntityId = BillId.ToString(),
+                        JsonData = System.Text.Json.JsonSerializer.Serialize(
+                            new
+                            {
+                                AttachmentId = attachment.Id,
+                                attachment.FileName,
+                                attachment.ContentType,
+                                attachment.OriginalSize
+                            })
+                    });
+            }
+
+            await Db.SaveChangesAsync();
+
+            showAttachmentMenu = false;
+            statusClass = "alert-success";
+
+            status =
+                files.Count == 1
+                    ? $"{files[0].Name} attached to {bill.BillNumber}."
+                    : $"{files.Count} documents attached to {bill.BillNumber}.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            documentError = $"Could not add document: {ex.Message}";
+        }
+        finally
+        {
+            uploadingDocument = false;
+        }
+    }
+
+    private async Task DeleteDocument(Guid attachmentId)
+    {
+        documentError = null;
+
+        try
+        {
+            var attachment = await Db.SupplierBillAttachments
+                .SingleOrDefaultAsync(
+                    x => x.Id == attachmentId &&
+                         x.SupplierBillId == BillId &&
+                         x.OrganisationId == OrganisationId);
+
+            if (attachment is null)
+            {
+                throw new InvalidOperationException(
+                    "The attachment could not be found.");
+            }
+
+            var fileName = attachment.FileName;
+
+            Db.SupplierBillAttachments.Remove(attachment);
+
+            Db.AuditEvents.Add(
+                new AuditEvent
+                {
+                    OrganisationId = OrganisationId,
+                    UserId = userId,
+                    EventType = "SupplierBillDocumentRemoved",
+                    EntityType = nameof(SupplierBill),
+                    EntityId = BillId.ToString(),
+                    JsonData = System.Text.Json.JsonSerializer.Serialize(
+                        new
+                        {
+                            AttachmentId = attachment.Id,
+                            attachment.FileName
+                        })
+                });
+
+            await Db.SaveChangesAsync();
+
+            statusClass = "alert-success";
+            status = $"{fileName} removed.";
+
+            await Reload();
+
+            if (bill?.Attachments.Count is null or <= 1)
+            {
+                showAttachmentMenu = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            documentError = $"Could not remove attachment: {ex.Message}";
+        }
+    }
+
+    private string AttachmentUrl(
+    SupplierBillAttachment attachment)
+{
+    return
+        $"/api/o/{OrganisationId}" +
+        $"/purchases/{BillId}" +
+        $"/attachments/{attachment.Id}";
+}
+
+    private static string DocumentIcon(string contentType)
+    {
+        if (contentType.Equals(
+                "application/pdf",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return "PDF";
+        }
+
+        if (contentType.StartsWith(
+                "image/",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return "IMG";
+        }
+
+        return "FILE";
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes >= 1024 * 1024)
+        {
+            return $"{bytes / 1024d / 1024d:N1} MB";
+        }
+
+        if (bytes >= 1024)
+        {
+            return $"{bytes / 1024d:N0} KB";
+        }
+
+        return $"{bytes:N0} B";
+    }
+
+    private void OpenCredit()
+    {
+        showCredit = true;
+        showVoid = false;
+
+        creditDate = DateOnly.FromDateTime(DateTime.Today);
+        creditReason = "";
+        creditAmount = AmountDue;
+        returnTrackedItems = HasTrackedItems;
+    }
+
+    private async Task PostCredit()
+    {
+        try
+        {
+            var result = await SupplierCredits.CreateAsync(
+                userId,
+                new(
+                    OrganisationId,
+                    BillId,
+                    creditDate,
+                    creditReason,
+                    creditAmount,
+                    returnTrackedItems));
+
+            showCredit = false;
+            statusClass = "alert-success";
+            status =
+                $"Supplier credit {result.CreditNoteNumber} posted for ${result.Total:N2}.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                  or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private async Task VoidBill()
+    {
+        try
+        {
+            await Purchasing.VoidBillAsync(
+                userId,
+                OrganisationId,
+                BillId,
+                voidDate,
+                voidReason);
+
+            showVoid = false;
+            statusClass = "alert-success";
+            status =
+                "Supplier bill voided and its ledger entries reversed.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                  or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private void OpenPaymentReversal(Guid id)
+    {
+        reversingPaymentId = id;
+        paymentReversalReason = "";
+        paymentReversalDate = DateOnly.FromDateTime(DateTime.Today);
+        showVoid = false;
+        showCredit = false;
+    }
+
+    private async Task ReversePayment()
+    {
+        if (reversingPaymentId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Purchasing.ReversePaymentAsync(
+                userId,
+                OrganisationId,
+                reversingPaymentId.Value,
+                paymentReversalDate,
+                paymentReversalReason);
+
+            reversingPaymentId = null;
+            statusClass = "alert-success";
+            status =
+                "Supplier payment reversed. The bill is outstanding again.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                  or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private bool showAttachmentUploader;
+
+private void ToggleAttachmentUploader()
+{
+    showAttachmentUploader = !showAttachmentUploader;
+    showAttachmentMenu = false;
+    documentError = null;
+}
+}

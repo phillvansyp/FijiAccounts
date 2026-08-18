@@ -1,0 +1,52 @@
+@page "/o/{OrganisationId:guid}/tax"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Tax centre · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="page-heading"><div><p class="eyebrow">Island compliance</p><h1>@access.Organisation.TaxLabel centre</h1><p class="page-intro">Review tax collected and paid before preparing your return.</p></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print review</button></div>
+    @if (!jurisdiction!.TaxPackEnabled) { <div class="alert alert-warning"><strong>@jurisdiction.CountryName tax pack awaiting verification.</strong> Tax calculations and return preparation remain locked until local rules have been professionally reviewed.</div> }
+    else
+    {
+        <section class="report-controls no-print"><EditForm Model="period" OnValidSubmit="Load" FormName="tax-period"><div><label class="form-label">From</label><InputDate class="form-control" @bind-Value="period.From" /></div><div><label class="form-label">To</label><InputDate class="form-control" @bind-Value="period.To" /></div><button class="btn btn-primary">Update review</button></EditForm><span>Accrual basis · @access.Organisation.BaseCurrency</span></section>
+        @if (error is not null) { <div class="alert alert-danger">@error</div> }
+        <div class="invoice-summary"><article><span>Output @access.Organisation.TaxLabel</span><strong>$@OutputTax.ToString("N2")</strong><small>Sales tax less credit notes</small></article><article><span>Input @access.Organisation.TaxLabel</span><strong>$@InputTax.ToString("N2")</strong><small>Tax on supplier bills</small></article><article class="@(NetTax > 0 ? "needs-attention" : null)"><span>Net position</span><strong>$@Math.Abs(NetTax).ToString("N2")</strong><small>@(NetTax >= 0 ? "Estimated payable" : "Estimated refundable")</small></article></div>
+        <section class="financial-report"><header><div><h2>@access.Organisation.TaxLabel review</h2><p>@period.From.ToString("dd MMM yyyy") to @period.To.ToString("dd MMM yyyy")</p></div><strong>@access.Organisation.LegalName</strong></header>
+            <table class="report-table"><thead><tr><th>Transaction class</th><th class="number">Net supplies/purchases</th><th class="number">Tax</th></tr></thead><tbody>
+                <tr><td>Standard-rated sales</td><td class="number">$@SalesStandardNet.ToString("N2")</td><td class="number">$@SalesStandardTax.ToString("N2")</td></tr><tr><td>Zero-rated sales</td><td class="number">$@SalesZeroNet.ToString("N2")</td><td class="number">—</td></tr><tr><td>Exempt sales</td><td class="number">$@SalesExemptNet.ToString("N2")</td><td class="number">—</td></tr><tr><td>Sales credit notes</td><td class="number">($@CreditNet.ToString("N2"))</td><td class="number">($@CreditTax.ToString("N2"))</td></tr>
+                <tr><td>Standard-rated purchases</td><td class="number">$@PurchaseStandardNet.ToString("N2")</td><td class="number">$@PurchaseStandardTax.ToString("N2")</td></tr><tr><td>Zero-rated purchases</td><td class="number">$@PurchaseZeroNet.ToString("N2")</td><td class="number">—</td></tr><tr><td>Exempt purchases</td><td class="number">$@PurchaseExemptNet.ToString("N2")</td><td class="number">—</td></tr>
+                <tr>
+    <td>Supplier credit notes</td>
+    <td class="number">
+        ($@SupplierCreditNet.ToString("N2"))
+    </td>
+    <td class="number">
+        ($@SupplierCreditTax.ToString("N2"))
+    </td>
+</tr>
+            </tbody><tfoot><tr><th>Estimated @(NetTax >= 0 ? "tax payable" : "tax refundable")</th><th></th><th class="number">$@Math.Abs(NetTax).ToString("N2")</th></tr></tfoot></table>
+            <div class="alert alert-info mt-4 mb-0">Review transaction classifications and supporting documents before filing. Account Island has not submitted this return to the tax authority.</div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private IslandJurisdiction? jurisdiction; private PeriodModel period = new(); private string? error; private List<TaxLine> sales = [], purchases = []; private decimal CreditNet, CreditTax, SupplierCreditNet, SupplierCreditTax;
+    private decimal SalesStandardNet => SumNet(sales, VatTreatment.Standard); private decimal SalesStandardTax => SumTax(sales, VatTreatment.Standard); private decimal SalesZeroNet => SumNet(sales, VatTreatment.ZeroRated); private decimal SalesExemptNet => SumNet(sales, VatTreatment.Exempt); private decimal PurchaseStandardNet => SumNet(purchases, VatTreatment.Standard); private decimal PurchaseStandardTax => SumTax(purchases, VatTreatment.Standard); private decimal PurchaseZeroNet => SumNet(purchases, VatTreatment.ZeroRated); private decimal PurchaseExemptNet => SumNet(purchases, VatTreatment.Exempt); private decimal OutputTax => sales.Sum(x => x.Tax) - CreditTax; private decimal InputTax => purchases.Sum(x => x.Tax) - SupplierCreditTax; private decimal NetTax => OutputTax - InputTax;
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); var today = DateOnly.FromDateTime(DateTime.Today); period.To = today; period.From = new DateOnly(today.Year, today.Month, 1).AddMonths(-1); period.To = new DateOnly(today.Year, today.Month, 1).AddDays(-1); if (jurisdiction.TaxPackEnabled) await Load(); }
+    private async Task Load() { error = period.From > period.To ? "The start date must be before the end date." : null; if (error is not null) return; sales = await Db.SalesInvoiceLines.AsNoTracking().Where(x => x.SalesInvoice.OrganisationId == OrganisationId && x.SalesInvoice.IssueDate >= period.From && x.SalesInvoice.IssueDate <= period.To && x.SalesInvoice.Status != InvoiceStatus.Draft && x.SalesInvoice.Status != InvoiceStatus.Voided).Select(x => new TaxLine(x.VatTreatment, x.NetAmount, x.VatAmount)).ToListAsync(); purchases = await Db.SupplierBillLines.AsNoTracking().Where(x => x.SupplierBill.OrganisationId == OrganisationId && x.SupplierBill.BillDate >= period.From && x.SupplierBill.BillDate <= period.To && x.SupplierBill.Status != BillStatus.Voided).Select(x => new TaxLine(x.VatTreatment, x.NetAmount, x.VatAmount)).ToListAsync(); var credits = await Db.SalesCreditNotes.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CreditDate >= period.From && x.CreditDate <= period.To).ToListAsync(); CreditNet = credits.Sum(x => x.Subtotal); CreditTax = credits.Sum(x => x.VatTotal); var supplierCredits = await Db.SupplierCreditNotes.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CreditDate >= period.From && x.CreditDate <= period.To).ToListAsync(); SupplierCreditNet = supplierCredits.Sum(x => x.Subtotal); SupplierCreditTax = supplierCredits.Sum(x => x.VatTotal); }
+    private static decimal SumNet(IEnumerable<TaxLine> rows, VatTreatment treatment) => rows.Where(x => x.Treatment == treatment).Sum(x => x.Net); private static decimal SumTax(IEnumerable<TaxLine> rows, VatTreatment treatment) => rows.Where(x => x.Treatment == treatment).Sum(x => x.Tax);
+    private sealed record TaxLine(VatTreatment Treatment, decimal Net, decimal Tax); private sealed class PeriodModel { public DateOnly From { get; set; } public DateOnly To { get; set; } }
+}

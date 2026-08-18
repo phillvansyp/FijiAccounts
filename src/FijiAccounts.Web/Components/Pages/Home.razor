@@ -1,0 +1,29 @@
+﻿@page "/"
+
+<PageTitle>Account Island</PageTitle>
+
+<section class="hero">
+    <div>
+        <span class="eyebrow">Account Island · Built for Fiji business</span>
+        <h1>Clear books.<br />Confident decisions.</h1>
+        <p class="lead">A secure accounting workspace for business owners, their teams, and the accountants who support them.</p>
+        <AuthorizeView>
+            <Authorized><a class="btn btn-primary btn-lg" href="organisations">Open your organisations</a></Authorized>
+            <NotAuthorized>
+                <a class="btn btn-primary btn-lg" href="Account/Register">Start your business</a>
+                <a class="btn btn-outline-secondary btn-lg ms-2" href="Account/Login">Sign in</a>
+            </NotAuthorized>
+        </AuthorizeView>
+    </div>
+    <div class="compliance-card">
+        <div class="metric"><strong>12.5%</strong><span>Current standard VAT rate</span></div>
+        <div class="metric"><strong>FJD</strong><span>Native reporting currency</span></div>
+        <div class="metric"><strong>Audit-ready</strong><span>Balanced, traceable journals</span></div>
+    </div>
+</section>
+
+<section class="feature-grid">
+    <article><h2>One business, one clean ledger</h2><p>Sales, purchases, bank reconciliation, tax and reporting built on double-entry accounting.</p></article>
+    <article><h2>Your team, the right access</h2><p>Give owners, bookkeepers, payroll staff and read-only reviewers only the permissions they need.</p></article>
+    <article><h2>Accountants across clients</h2><p>Practices can move between authorised client organisations without sharing credentials.</p></article>
+</section>

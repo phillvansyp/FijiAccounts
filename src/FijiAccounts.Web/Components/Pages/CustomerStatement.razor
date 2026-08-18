@@ -1,0 +1,42 @@
+@page "/o/{OrganisationId:guid}/contacts/{CustomerId:guid}/statement"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Customer statement · Account Island</PageTitle>
+@if (access is null || customer is null) { <div class="alert alert-danger">Customer not found or access denied.</div> }
+else
+{
+    <div class="detail-actions no-print"><a href="o/@OrganisationId/contacts">← Contacts</a><div><button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+    <section class="report-controls no-print"><EditForm Model="period" OnValidSubmit="Load" FormName="statement-period"><div><label class="form-label">From</label><InputDate class="form-control" @bind-Value="period.From" /></div><div><label class="form-label">To</label><InputDate class="form-control" @bind-Value="period.To" /></div><button class="btn btn-primary">Update statement</button></EditForm><span>@access.Organisation.BaseCurrency</span></section>
+    @if (error is not null) { <div class="alert alert-danger">@error</div> }
+    <article class="invoice-document statement-document"><header><div><span class="document-brand">Account Island</span><h1>Customer Statement</h1></div><div class="document-number"><strong>@customer.Name</strong><span>@period.From.ToString("dd MMM yyyy") – @period.To.ToString("dd MMM yyyy")</span></div></header>
+        <section class="invoice-meta"><div><small>From</small><strong>@access.Organisation.LegalName</strong><span>@access.Organisation.Tin</span></div><div><small>To</small><strong>@customer.Name</strong><span>@customer.Address</span><span>@customer.Email</span></div><dl><dt>Opening balance</dt><dd>$@openingBalance.ToString("N2")</dd><dt>Closing balance</dt><dd><strong>$@closingBalance.ToString("N2")</strong></dd><dt>Currency</dt><dd>@access.Organisation.BaseCurrency</dd></dl></section>
+        <table class="document-lines"><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th class="number">Debit</th><th class="number">Credit</th><th class="number">Balance</th></tr></thead><tbody><tr><td>@period.From.ToString("dd MMM yyyy")</td><td></td><td>Opening balance</td><td></td><td></td><td class="number">$@openingBalance.ToString("N2")</td></tr>@foreach (var row in rows) { <tr><td>@row.Date.ToString("dd MMM yyyy")</td><td>@row.Reference</td><td>@row.Description</td><td class="number">@(row.Debit == 0 ? "—" : $"${row.Debit:N2}")</td><td class="number">@(row.Credit == 0 ? "—" : $"${row.Credit:N2}")</td><td class="number"><strong>$@row.Balance.ToString("N2")</strong></td></tr> }</tbody></table>
+        <section class="document-totals"><div><span>Invoices</span><strong>$@rows.Sum(x => x.Debit).ToString("N2")</strong></div><div><span>Receipts and credits</span><strong>$@rows.Sum(x => x.Credit).ToString("N2")</strong></div><div class="grand-total"><span>Amount due</span><strong>$@closingBalance.ToString("N2")</strong></div></section>
+        <footer>Statement generated @DateTimeOffset.Now.ToString("dd MMM yyyy HH:mm")</footer>
+    </article>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid CustomerId { get; set; }
+    private AccessibleOrganisation? access; private BusinessParty? customer; private PeriodModel period = new(); private List<StatementRow> rows = []; private decimal openingBalance, closingBalance; private string? error;
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; customer = await Db.BusinessParties.AsNoTracking().SingleOrDefaultAsync(x => x.Id == CustomerId && x.OrganisationId == OrganisationId && (x.Type & PartyType.Customer) != 0); if (customer is not null) await Load(); }
+    private async Task Load()
+    {
+        error = period.From > period.To ? "The start date must be before the end date." : null; if (error is not null) return;
+        var invoices = await Db.SalesInvoices.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CustomerId == CustomerId && x.Status != InvoiceStatus.Draft && x.Status != InvoiceStatus.Voided && x.IssueDate <= period.To).Select(x => new EventRow(x.IssueDate, x.CreatedAt, x.InvoiceNumber, "Invoice", x.Total, 0)).ToListAsync();
+        var receipts = await Db.CustomerReceipts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CustomerId == CustomerId && x.ReceiptDate <= period.To).Select(x => new EventRow(x.ReceiptDate, x.CreatedAt, x.Reference, "Payment received", 0, x.Amount)).ToListAsync();
+        var credits = await Db.SalesCreditNotes.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.SalesInvoice.CustomerId == CustomerId && x.CreditDate <= period.To).Select(x => new EventRow(x.CreditDate, x.CreatedAt, x.CreditNoteNumber, "Credit note", 0, x.Total)).ToListAsync();
+        var all = invoices.Concat(receipts).Concat(credits).OrderBy(x => x.Date).ThenBy(x => x.CreatedAt).ToList(); openingBalance = all.Where(x => x.Date < period.From).Sum(x => x.Debit - x.Credit); var balance = openingBalance; rows = []; foreach (var item in all.Where(x => x.Date >= period.From)) { balance += item.Debit - item.Credit; rows.Add(new StatementRow(item.Date, item.Reference, item.Description, item.Debit, item.Credit, balance)); } closingBalance = balance;
+    }
+    private sealed class PeriodModel { public DateOnly From { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddMonths(-1)); public DateOnly To { get; set; } = DateOnly.FromDateTime(DateTime.Today); }
+    private sealed record EventRow(DateOnly Date, DateTimeOffset CreatedAt, string Reference, string Description, decimal Debit, decimal Credit); private sealed record StatementRow(DateOnly Date, string Reference, string Description, decimal Debit, decimal Credit, decimal Balance);
+}

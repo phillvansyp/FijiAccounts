@@ -1,0 +1,54 @@
+@page "/o/{OrganisationId:guid}/journals/{JournalId:guid}"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>@(journal is null ? "Journal" : $"J-{journal.SequenceNumber:D6}") · Account Island</PageTitle>
+@if (access is null || journal is null) { <div class="alert alert-danger">Journal not found or access denied.</div> }
+else
+{
+    <div class="detail-actions no-print"><a href="o/@OrganisationId/general-ledger">← General ledger</a><button class="btn btn-outline-secondary" onclick="window.print()">Print journal</button></div>
+    <article class="invoice-document"><header><div><span class="document-brand">Account Island</span><h1>Posted Journal</h1></div><div class="document-number"><strong>J-@journal.SequenceNumber.ToString("D6")</strong><span class="status-badge">Posted</span></div></header>
+        <section class="invoice-meta"><div><small>Organisation</small><strong>@access.Organisation.LegalName</strong><span>@access.Organisation.BaseCurrency</span></div><div><small>Posted by</small><strong>@(postedBy ?? journal.PostedByUserId)</strong><span>@journal.PostedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm zzz")</span></div><dl><dt>Entry date</dt><dd>@journal.EntryDate.ToString("dd MMM yyyy")</dd><dt>Reference</dt><dd>@journal.Reference</dd><dt>Description</dt><dd>@journal.Description</dd></dl></section>
+        <table class="document-lines"><thead><tr><th>Account</th><th>Description</th><th class="number">Debit</th><th class="number">Credit</th></tr></thead><tbody>@foreach (var line in journal.Lines.OrderByDescending(x => x.Debit)) { <tr><td><strong>@line.LedgerAccount.Code</strong> — @line.LedgerAccount.Name</td><td>@line.Description</td><td class="number">@(line.Debit == 0 ? "—" : $"${line.Debit:N2}")</td><td class="number">@(line.Credit == 0 ? "—" : $"${line.Credit:N2}")</td></tr> }</tbody><tfoot><tr><th colspan="2">Totals</th><th class="number">$@DebitTotal.ToString("N2")</th><th class="number">$@CreditTotal.ToString("N2")</th></tr></tfoot></table>
+        <section class="document-totals"><div class="grand-total"><span>Balance check</span><strong>@(DebitTotal == CreditTotal ? "Balanced" : $"Difference ${Math.Abs(DebitTotal - CreditTotal):N2}")</strong></div></section>
+        <footer>Immutable accounting record · Journal ID @journal.Id</footer>
+    </article>
+    <section class="detail-card mt-4 no-print"><div class="card-heading"><div><span class="eyebrow">Audit evidence</span><h2>Related events</h2></div><span>@events.Count events</span></div>@if (events.Count == 0) { <div class="empty-state"><strong>No additional source event</strong><span>The journal posting event remains recorded.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>User</th><th>Evidence</th></tr></thead><tbody>@foreach (var item in events) { <tr><td>@item.OccurredAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</td><td>@Friendly(item.EventType)</td><td>@item.EntityType · @item.EntityId</td><td>@item.UserId</td><td><code>@PrettyJson(item.JsonData)</code></td></tr> }</tbody></table></div> }</section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid JournalId { get; set; }
+    private AccessibleOrganisation? access; private PostedJournal? journal; private string? postedBy; private List<AuditEvent> events = []; private decimal DebitTotal => journal?.Lines.Sum(x => x.Debit) ?? 0; private decimal CreditTotal => journal?.Lines.Sum(x => x.Credit) ?? 0;
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+
+        journal = await Db.PostedJournals.AsNoTracking()
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.LedgerAccount)
+            .SingleOrDefaultAsync(x => x.Id == JournalId && x.OrganisationId == OrganisationId);
+        if (journal is null) return;
+
+        postedBy = await Db.Users.Where(x => x.Id == journal.PostedByUserId).Select(x => x.Email).SingleOrDefaultAsync();
+        // SQLite does not support ORDER BY DateTimeOffset in this query path.
+        events = (await Db.AuditEvents.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && (x.EntityId == JournalId.ToString() || x.JsonData.Contains(JournalId.ToString())))
+            .ToListAsync())
+            .OrderBy(x => x.OccurredAt)
+            .ToList();
+    }
+    private static string Friendly(string value) { var result = new System.Text.StringBuilder(); foreach (var c in value) { if (char.IsUpper(c) && result.Length > 0) result.Append(' '); result.Append(c); } return result.ToString(); }
+    private static string PrettyJson(string json) { try { using var document = JsonDocument.Parse(json); return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = false }); } catch { return json; } }
+}

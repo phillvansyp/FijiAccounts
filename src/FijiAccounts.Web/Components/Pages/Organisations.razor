@@ -1,0 +1,53 @@
+@page "/organisations"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Organisations</PageTitle>
+<h1>Your organisations</h1>
+<p class="text-secondary">Choose a business or create a new workspace.</p>
+
+@if (organisations is null) { <p>Loading…</p> }
+else
+{
+    <div class="org-grid">
+        @foreach (var membership in organisations)
+        {
+            <a class="org-card text-decoration-none text-body" href="o/@membership.Organisation.Id">
+                <span class="badge text-bg-light">@(membership.IsClient ? "Accountant client" : membership.Organisation.Kind)</span>
+                <h2>@membership.Organisation.LegalName</h2><p>@membership.AccessLabel · @CountryName(membership.Organisation.CountryCode) · @membership.Organisation.BaseCurrency</p>
+            </a>
+        }
+    </div>
+    <div class="setup-card">
+        <h2>Create an organisation</h2>
+        <EditForm Model="model" OnValidSubmit="CreateOrganisation" FormName="create-organisation">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" /></div>
+            <div class="mb-3"><label class="form-label">Trading name (optional)</label><InputText class="form-control" @bind-Value="model.TradingName" /></div>
+            <div class="mb-3"><label class="form-label">Country or island jurisdiction</label><InputSelect class="form-select" @bind-Value="model.CountryCode">@foreach (var jurisdiction in IslandJurisdictions.All) { <option value="@jurisdiction.CountryCode">@jurisdiction.CountryName — @jurisdiction.CurrencyCode</option> }</InputSelect><div class="form-text">Country settings determine currency, time zone, financial year and the applicable tax pack.</div></div>
+            <div class="mb-3"><label class="form-label">Tax identification number (optional during setup)</label><InputText class="form-control" @bind-Value="model.Tin" /></div>
+            <div class="mb-3"><label class="form-label">Organisation type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
+            <button class="btn btn-primary" type="submit">Create organisation</button>
+        </EditForm>
+    </div>
+}
+
+@code {
+    private List<AccessibleOrganisation>? organisations;
+    private CreateOrganisationModel model = new();
+    private string userId = string.Empty;
+    protected override async Task OnInitializedAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; await Reload(); }
+    private async Task Reload() => organisations = await TenantAccess.ListAsync(userId);
+    private async Task CreateOrganisation() { var jurisdiction = IslandJurisdictions.Get(model.CountryCode); var organisation = new Organisation { LegalName = model.LegalName.Trim(), TradingName = model.TradingName?.Trim(), Tin = model.Tin?.Trim(), Kind = model.Kind, CountryCode = jurisdiction.CountryCode, BaseCurrency = jurisdiction.CurrencyCode, TimeZoneId = jurisdiction.TimeZoneId, TaxLabel = jurisdiction.TaxLabel, FinancialYearEndMonth = jurisdiction.FinancialYearEndMonth, FinancialYearEndDay = jurisdiction.FinancialYearEndDay }; Db.Organisations.Add(organisation); Db.OrganisationMemberships.Add(new OrganisationMembership { Organisation = organisation, UserId = userId, Role = OrganisationRole.Owner }); Db.LedgerAccounts.AddRange(FijiStarterChart.For(organisation.Id)); await Db.SaveChangesAsync(); model = new(); await Reload(); }
+    private static string CountryName(string countryCode) => IslandJurisdictions.Get(countryCode).CountryName;
+    private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
+}

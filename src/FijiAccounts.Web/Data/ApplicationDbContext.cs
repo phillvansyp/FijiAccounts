@@ -1,0 +1,193 @@
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace FijiAccounts.Web.Data;
+
+public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
+{
+    public DbSet<Organisation> Organisations => Set<Organisation>();
+    public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
+    public DbSet<OrganisationMembership> OrganisationMemberships => Set<OrganisationMembership>();
+    public DbSet<AccountantEngagement> AccountantEngagements => Set<AccountantEngagement>();
+    public DbSet<LedgerAccount> LedgerAccounts => Set<LedgerAccount>();
+    public DbSet<OrganisationInvitation> OrganisationInvitations => Set<OrganisationInvitation>();
+    public DbSet<AccountingPeriod> AccountingPeriods => Set<AccountingPeriod>();
+    public DbSet<PostedJournal> PostedJournals => Set<PostedJournal>();
+    public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
+    public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
+    public DbSet<SalesInvoiceLine> SalesInvoiceLines => Set<SalesInvoiceLine>();
+    public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
+    public DbSet<CustomerReceipt> CustomerReceipts => Set<CustomerReceipt>();
+    public DbSet<CustomerReceiptAllocation> CustomerReceiptAllocations => Set<CustomerReceiptAllocation>();
+    public DbSet<CustomerReceiptReversal> CustomerReceiptReversals => Set<CustomerReceiptReversal>();
+    public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
+    public DbSet<SupplierBillLine> SupplierBillLines => Set<SupplierBillLine>();
+    public DbSet<SupplierBillAttachment> SupplierBillAttachments => Set<SupplierBillAttachment>();
+    public DbSet<SupplierBillDraft> SupplierBillDrafts => Set<SupplierBillDraft>();
+    public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+    public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
+    public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
+    public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
+    public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
+    public DbSet<AccountBudget> AccountBudgets => Set<AccountBudget>();
+    public DbSet<SalesQuote> SalesQuotes => Set<SalesQuote>();
+    public DbSet<SalesQuoteLine> SalesQuoteLines => Set<SalesQuoteLine>();
+    public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
+    public DbSet<FixedAssetDepreciation> FixedAssetDepreciations => Set<FixedAssetDepreciation>();
+    public DbSet<BankRule> BankRules => Set<BankRule>();
+    public DbSet<ProductItem> ProductItems => Set<ProductItem>();
+    public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
+        base.OnModelCreating(builder);
+        builder.Entity<OrganisationMembership>().HasKey(x => new { x.OrganisationId, x.UserId });
+        builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Code }).IsUnique();
+        builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Name }).IsUnique();
+        builder.Entity<OrganisationUnit>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<OrganisationMembership>().HasIndex(x => x.UserId);
+        builder.Entity<AccountantEngagement>().HasIndex(x => new { x.PracticeOrganisationId, x.ClientOrganisationId }).IsUnique();
+        builder.Entity<AccountantEngagement>().HasOne(x => x.PracticeOrganisation).WithMany()
+            .HasForeignKey(x => x.PracticeOrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AccountantEngagement>().HasOne(x => x.ClientOrganisation).WithMany()
+            .HasForeignKey(x => x.ClientOrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<LedgerAccount>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique();
+        builder.Entity<OrganisationInvitation>().HasIndex(x => x.TokenHash).IsUnique();
+        builder.Entity<AccountingPeriod>().HasIndex(x => new { x.OrganisationId, x.StartsOn, x.EndsOn }).IsUnique();
+        builder.Entity<PostedJournal>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<PostedJournal>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>().Property(x => x.Debit).HasPrecision(18, 2);
+        builder.Entity<PostedJournalLine>().Property(x => x.Credit).HasPrecision(18, 2);
+        builder.Entity<PostedJournalLine>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AuditEvent>().HasIndex(x => new { x.OrganisationId, x.OccurredAt });
+        builder.Entity<BusinessParty>().HasIndex(x => new { x.OrganisationId, x.Name });
+        builder.Entity<BusinessParty>().HasOne(x => x.DefaultPurchaseAccount).WithMany().HasForeignKey(x => x.DefaultPurchaseAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.InvoiceNumber }).IsUnique();
+        builder.Entity<SalesInvoice>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().Property(x => x.Subtotal).HasPrecision(18, 2);
+        builder.Entity<SalesInvoice>().Property(x => x.VatTotal).HasPrecision(18, 2);
+        builder.Entity<SalesInvoice>().Property(x => x.Total).HasPrecision(18, 2);
+        builder.Entity<SalesInvoice>().Property(x => x.AmountPaid).HasPrecision(18, 2);
+        builder.Entity<SalesInvoice>().Property(x => x.AmountCredited).HasPrecision(18, 2);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.Quantity).HasPrecision(18, 4);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.UnitPrice).HasPrecision(18, 4);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.VatRate).HasPrecision(8, 6);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.NetAmount).HasPrecision(18, 2);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.VatAmount).HasPrecision(18, 2);
+        builder.Entity<SalesInvoiceLine>().Property(x => x.GrossAmount).HasPrecision(18, 2);
+        builder.Entity<SalesInvoiceLine>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoiceLine>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesCreditNote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<SalesCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
+        builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesCreditNote>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
+        builder.Entity<CustomerReceipt>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceiptAllocation>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<CustomerReceiptAllocation>().HasIndex(x => new { x.CustomerReceiptId, x.SalesInvoiceId }).IsUnique();
+        builder.Entity<CustomerReceiptAllocation>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceiptReversal>().HasIndex(x => x.CustomerReceiptId).IsUnique(); builder.Entity<CustomerReceiptReversal>().HasOne(x => x.CustomerReceipt).WithMany().HasForeignKey(x => x.CustomerReceiptId).OnDelete(DeleteBehavior.Restrict); builder.Entity<CustomerReceiptReversal>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<SupplierBill>().HasIndex(x => new { x.OrganisationId, x.SupplierId, x.SupplierReference }).IsUnique();
+        builder.Entity<SupplierBill>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasOne<PostedJournal>().WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(SupplierBill.Subtotal), nameof(SupplierBill.VatTotal), nameof(SupplierBill.Total), nameof(SupplierBill.AmountPaid), nameof(SupplierBill.AmountCredited) }) builder.Entity<SupplierBill>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SupplierBillLine>().Property(x => x.Quantity).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.UnitPrice).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.VatRate).HasPrecision(8, 6); builder.Entity<SupplierBillLine>().Property(x => x.NetAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.VatAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.GrossAmount).HasPrecision(18, 2);
+        builder.Entity<SupplierBillLine>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillLine>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillAttachment>().HasIndex(x => new { x.OrganisationId, x.SupplierBillId });
+        builder.Entity<SupplierBillAttachment>().HasOne(x => x.SupplierBill).WithMany(x => x.Attachments).HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<SupplierBillDraft>().HasIndex(x => new { x.OrganisationId, x.UpdatedAt });
+        builder.Entity<SupplierBillDraft>().Property(x => x.Quantity).HasPrecision(18, 4);
+        builder.Entity<SupplierBillDraft>().Property(x => x.UnitPrice).HasPrecision(18, 4);
+        builder.Entity<SupplierBillDraft>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<SupplierPayment>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
+        builder.Entity<SupplierCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierCreditNote>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierCreditNote>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(SupplierCreditNote.Subtotal), nameof(SupplierCreditNote.VatTotal), nameof(SupplierCreditNote.Total) }) builder.Entity<SupplierCreditNote>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SupplierPayment>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentReversal>().HasIndex(x => x.SupplierPaymentId).IsUnique(); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.SupplierPayment).WithMany().HasForeignKey(x => x.SupplierPaymentId).OnDelete(DeleteBehavior.Restrict); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementLine>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<BankStatementLine>().HasIndex(x => new { x.OrganisationId, x.BankAccountId, x.TransactionDate });
+        builder.Entity<BankStatementLine>().HasIndex(x => x.MatchedPostedJournalLineId).IsUnique();
+        builder.Entity<BankStatementLine>().HasIndex(x => new { x.OrganisationId, x.BankAccountId, x.SourceHash }).IsUnique();
+        builder.Entity<BankStatementLine>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementLine>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementLine>().HasOne(x => x.MatchedPostedJournalLine).WithMany().HasForeignKey(x => x.MatchedPostedJournalLineId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankTransfer>().HasIndex(x => new { x.OrganisationId, x.Reference }).IsUnique(); builder.Entity<BankTransfer>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<BankTransfer>().HasOne(x => x.FromBankAccount).WithMany().HasForeignKey(x => x.FromBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.ToBankAccount).WithMany().HasForeignKey(x => x.ToBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AccountBudget>().HasIndex(x => new { x.OrganisationId, x.LedgerAccountId, x.Month }).IsUnique(); builder.Entity<AccountBudget>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<AccountBudget>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesQuote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
+        builder.Entity<SalesQuote>().HasIndex(x => new { x.OrganisationId, x.QuoteNumber }).IsUnique();
+        builder.Entity<SalesQuote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesQuote>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesQuote>().HasOne(x => x.ConvertedInvoice).WithMany().HasForeignKey(x => x.ConvertedInvoiceId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(SalesQuote.Subtotal), nameof(SalesQuote.VatTotal), nameof(SalesQuote.Total) }) builder.Entity<SalesQuote>().Property(property).HasPrecision(18, 2);
+        foreach (var property in new[] { nameof(SalesQuoteLine.Quantity), nameof(SalesQuoteLine.UnitPrice), nameof(SalesQuoteLine.VatRate), nameof(SalesQuoteLine.NetAmount), nameof(SalesQuoteLine.VatAmount), nameof(SalesQuoteLine.GrossAmount) }) builder.Entity<SalesQuoteLine>().Property(property).HasPrecision(18, property == nameof(SalesQuoteLine.Quantity) || property == nameof(SalesQuoteLine.UnitPrice) ? 4 : property == nameof(SalesQuoteLine.VatRate) ? 6 : 2);
+        builder.Entity<SalesQuoteLine>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>().HasIndex(x => new { x.OrganisationId, x.AssetNumber }).IsUnique();
+        builder.Entity<FixedAsset>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>().HasOne(x => x.AssetAccount).WithMany().HasForeignKey(x => x.AssetAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>().HasOne(x => x.DepreciationExpenseAccount).WithMany().HasForeignKey(x => x.DepreciationExpenseAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>().HasOne(x => x.AccumulatedDepreciationAccount).WithMany().HasForeignKey(x => x.AccumulatedDepreciationAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>().Property(x => x.Cost).HasPrecision(18, 2); builder.Entity<FixedAsset>().Property(x => x.ResidualValue).HasPrecision(18, 2);
+        builder.Entity<FixedAssetDepreciation>().HasIndex(x => new { x.FixedAssetId, x.ThroughDate }).IsUnique(); builder.Entity<FixedAssetDepreciation>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<FixedAssetDepreciation>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAsset>()
+    .HasOne(x => x.AcquisitionJournal)
+    .WithMany()
+    .HasForeignKey(x => x.AcquisitionJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<FixedAsset>()
+    .HasOne(x => x.AcquisitionBankAccount)
+    .WithMany()
+    .HasForeignKey(x => x.AcquisitionBankAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankRule>().HasIndex(x => new { x.OrganisationId, x.Name }).IsUnique(); builder.Entity<BankRule>().HasOne(x => x.TargetAccount).WithMany().HasForeignKey(x => x.TargetAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProductItem>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique(); builder.Entity<ProductItem>().Property(x => x.SalePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.PurchasePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.QuantityOnHand).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.AverageCost).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.ReorderLevel).HasPrecision(18, 4); builder.Entity<ProductItem>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.InventoryAccount).WithMany().HasForeignKey(x => x.InventoryAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.CostAdjustmentAccount).WithMany().HasForeignKey(x => x.CostAdjustmentAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<InventoryMovement>().HasIndex(x => new { x.OrganisationId, x.ProductItemId, x.MovementDate }); builder.Entity<InventoryMovement>().Property(x => x.QuantityChange).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.UnitCost).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.ValueChange).HasPrecision(18, 2); builder.Entity<InventoryMovement>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default) { ProtectAppendOnlyRecords(); return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
+
+    private void ProtectAppendOnlyRecords()
+    {
+        if (ChangeTracker.Entries<PostedJournal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<PostedJournalLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<AuditEvent>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SalesInvoice>().Any(x => x.State == EntityState.Deleted && x.Entity.Status != InvoiceStatus.Draft) ||
+            ChangeTracker.Entries<SalesInvoiceLine>().Any(x => (x.State is EntityState.Modified or EntityState.Deleted) && x.Entity.SalesInvoice.Status != InvoiceStatus.Draft) ||
+            ChangeTracker.Entries<SalesCreditNote>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SalesQuote>().Any(x => x.State == EntityState.Deleted && x.Entity.Status != QuoteStatus.Draft) ||
+            ChangeTracker.Entries<SalesQuoteLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<FixedAssetDepreciation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<InventoryMovement>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<BankTransfer>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<CustomerReceipt>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<CustomerReceiptAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<CustomerReceiptReversal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SupplierBill>().Any(x => x.State == EntityState.Deleted) ||
+            ChangeTracker.Entries<SupplierBillLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SupplierCreditNote>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SupplierPayment>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SupplierPaymentReversal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Posted journals and audit events are append-only.");
+    }
+}

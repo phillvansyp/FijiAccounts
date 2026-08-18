@@ -1,0 +1,10 @@
+.search-page { max-width: 1200px; }
+.search-hero { background: #fff; border: 1px solid #dbe3e8; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 16px 44px rgba(15,23,42,.05); }
+.search-input-wrap { margin-top: .8rem; display: flex; align-items: center; gap: .7rem; padding: .7rem 1rem; border: 1px solid #dbe3e8; border-radius: .9rem; background: #fff; }
+.search-input-wrap span { font-size: 1.2rem; }
+.search-input-wrap input { width: 100%; border: 0; outline: 0; font-size: 1rem; background: transparent; }
+.search-input-wrap input::placeholder { color: #8394a1; }
+.search-empty { margin-top: 1rem; padding: 2rem; text-align: center; background: #fff; border-radius: 1rem; border: 1px solid #dbe3e8; color: #4f5f6d; }
+.search-results-grid { margin-top: 1rem; display: grid; gap: 1rem; }
+.search-result-card { background: #fff; border: 1px solid #dbe3e8; border-radius: 1rem; padding: 1.2rem; box-shadow: 0 14px 40px rgba(15,23,42,.05); }
+.search-result-card h2 { margin: 0 0 .85rem; color: #17324d; font-size: 1.15rem; }

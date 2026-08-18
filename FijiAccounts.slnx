@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FijiAccounts.Domain/FijiAccounts.Domain.csproj" />
+    <Project Path="src/FijiAccounts.Web/FijiAccounts.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FijiAccounts.Domain.Tests/FijiAccounts.Domain.Tests.csproj" />
+    <Project Path="tests/FijiAccounts.Web.Tests/FijiAccounts.Web.Tests.csproj" />
+  </Folder>
+</Solution>

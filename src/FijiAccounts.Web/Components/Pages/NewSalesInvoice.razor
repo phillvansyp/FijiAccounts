@@ -1,0 +1,102 @@
+@page "/o/{OrganisationId:guid}/sales/new"
+@page "/o/{OrganisationId:guid}/sales/{InvoiceId:guid}/edit"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject SalesInvoiceService InvoiceService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>New invoice · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else if (customers.Count == 0) { <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
+else
+{
+    <div class="editor-heading"><div><p class="eyebrow">Money in</p><h1>@(InvoiceId is null ? "New sales invoice" : "Edit draft invoice")</h1><p>Create a draft or post it to the ledger when ready.</p></div><a class="btn btn-outline-secondary" href="o/@OrganisationId/sales">Cancel</a></div>
+    @if (status is not null) { <div class="alert alert-danger">@status</div> }
+    <EditForm Model="model" OnValidSubmit="Post" FormName="advanced-sales-invoice" class="invoice-editor"><DataAnnotationsValidator /><ValidationSummary /><CatalogProductPicker OrganisationId="OrganisationId" OnSelected="AddProductLine" />
+        <section class="invoice-parties"><div><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId" @bind-Value:after="ApplySelectedCustomerDefaultsAsync">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div><label class="form-label">Issue date</label><InputDate class="form-control" @bind-Value="model.IssueDate" /></div><div><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="model.DueDate" /></div><div><label class="form-label">Currency</label><input class="form-control" value="@access.Organisation.BaseCurrency" disabled /></div></section>
+        <section class="line-editor"><div class="line-header"><span>Description</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
+            @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> }
+            <button type="button" class="add-line" @onclick="AddLine">+ Add another line</button>
+        </section>
+        <section class="invoice-totals"><div><span>Subtotal</span><strong>$@Subtotal.ToString("N2")</strong></div><small>Final tax totals are calculated using the organisation’s effective-dated tax pack when saved.</small></section>
+        <footer class="editor-actions"><button type="button" class="btn btn-outline-primary" @onclick="SaveDraft">Save draft</button><button class="btn btn-primary">Post invoice</button></footer>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid? InvoiceId { get; set; }
+    private AccessibleOrganisation? access; private string userId = ""; private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private InvoiceEditorModel model = new(); private string? status; private decimal Subtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; customers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0).OrderBy(x => x.Name).ToListAsync(); revenueAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Revenue).OrderBy(x => x.Code).ToListAsync(); if (InvoiceId is not null) { var invoice = await Db.SalesInvoices.AsNoTracking().Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == InvoiceId && x.OrganisationId == OrganisationId && x.Status == InvoiceStatus.Draft); if (invoice is null) { status = "Only draft invoices can be edited."; return; } model = new() { CustomerId = invoice.CustomerId, IssueDate = invoice.IssueDate, DueDate = invoice.DueDate, Lines = invoice.Lines.Select(x => new InvoiceLineModel { Description = x.Description, Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId }).ToList() }; await ApplySelectedCustomerDefaultsAsync(); } else { model.CustomerId = customers.FirstOrDefault()?.Id ?? Guid.Empty; AddLine(); await ApplySelectedCustomerDefaultsAsync(); } }
+    private void AddLine() => model.Lines.Add(new InvoiceLineModel { RevenueAccountId = revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty }); private void AddProductLine(ProductItem item) { var line = model.Lines.Count == 1 && string.IsNullOrWhiteSpace(model.Lines[0].Description) ? model.Lines[0] : new InvoiceLineModel(); line.Description = string.IsNullOrWhiteSpace(item.Description) ? item.Name : item.Description; line.Quantity = 1; line.UnitPrice = item.SalePrice; line.VatTreatment = item.SaleTaxTreatment; line.RevenueAccountId = item.RevenueAccountId ?? revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty; line.ProductItemId = item.Id; if (!model.Lines.Contains(line)) model.Lines.Add(line); } private void RemoveLine(int index) { if (model.Lines.Count > 1) model.Lines.RemoveAt(index); }
+    private SalesInvoiceRequest Request() => new(OrganisationId, model.CustomerId, model.IssueDate, model.DueDate, model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId, x.ProductItemId)).ToList());
+    private async Task SaveDraft() { try { var invoice = InvoiceId is null ? await InvoiceService.CreateDraftAsync(userId, Request()) : await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request()); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}"); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { status = ex.Message; } }
+    private async Task ApplySelectedCustomerDefaultsAsync()
+    {
+        var suggestion = await GetCustomerCodingSuggestionAsync(model.CustomerId);
+        if (suggestion is null || model.Lines.Count == 0) return;
+        if (suggestion.RevenueAccountId is not null) model.Lines[0].RevenueAccountId = suggestion.RevenueAccountId.Value;
+        if (suggestion.VatTreatment is not null) model.Lines[0].VatTreatment = suggestion.VatTreatment.Value;
+    }
+    private async Task<SalesInvoiceCodingSuggestion?> GetCustomerCodingSuggestionAsync(Guid customerId)
+    {
+        if (customerId == Guid.Empty) return null;
+        var customer = customers.FirstOrDefault(x => x.Id == customerId);
+        if (customer is null) return null;
+
+        Guid? accountId = customer.DefaultPurchaseAccountId is Guid defaultAccountId && revenueAccounts.Any(x => x.Id == defaultAccountId)
+            ? defaultAccountId
+            : null;
+        var vatTreatment = customer.DefaultPurchaseVatTreatment;
+        var source = customer.DefaultPurchaseAccountId is not null || customer.DefaultPurchaseVatTreatment is not null
+            ? "customer settings"
+            : null;
+
+        if (accountId is not null && vatTreatment is not null) return new SalesInvoiceCodingSuggestion(accountId, vatTreatment, source ?? "customer settings");
+
+        var previousLine = await Db.SalesInvoiceLines.AsNoTracking()
+            .Where(x => x.SalesInvoice.OrganisationId == OrganisationId && x.SalesInvoice.CustomerId == customerId)
+            .OrderByDescending(x => x.SalesInvoice.SequenceNumber)
+            .ThenByDescending(x => x.Id)
+            .Select(x => new { x.RevenueAccountId, x.VatTreatment })
+            .FirstOrDefaultAsync();
+        if (previousLine is null)
+        {
+            if (accountId is null && vatTreatment is null) return null;
+            return new SalesInvoiceCodingSuggestion(accountId, vatTreatment, source ?? "latest customer coding");
+        }
+
+        Guid? fallbackAccount = revenueAccounts.Any(x => x.Id == previousLine.RevenueAccountId) ? previousLine.RevenueAccountId : null;
+        var fallbackVat = vatTreatment ?? previousLine.VatTreatment;
+        var combinedSource = source is null
+            ? "latest customer coding"
+            : accountId is null || vatTreatment is null
+                ? $"{source}; latest customer coding"
+                : source;
+
+        return new SalesInvoiceCodingSuggestion(accountId ?? fallbackAccount, fallbackVat, combinedSource);
+    }
+    private async Task Post() { try { SalesInvoice invoice; if (InvoiceId is null) invoice = await InvoiceService.CreateAndPostAsync(userId, Request()); else { await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request()); invoice = await InvoiceService.PostDraftAsync(userId, OrganisationId, InvoiceId.Value); } await PersistCustomerInvoiceDefaultsAsync(invoice.CustomerId); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}"); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { status = ex.Message; } }
+    private async Task PersistCustomerInvoiceDefaultsAsync(Guid customerId)
+    {
+        var customer = await Db.BusinessParties.SingleOrDefaultAsync(x => x.Id == customerId && x.OrganisationId == OrganisationId);
+        if (customer is null || model.Lines.Count == 0) return;
+        var firstLine = model.Lines[0];
+        if (customer.DefaultPurchaseAccountId is null && firstLine.RevenueAccountId != Guid.Empty) customer.DefaultPurchaseAccountId = firstLine.RevenueAccountId;
+        if (customer.DefaultPurchaseVatTreatment is null) customer.DefaultPurchaseVatTreatment = firstLine.VatTreatment;
+        if (customer.DefaultPurchaseAccountId is not null || customer.DefaultPurchaseVatTreatment is not null) await Db.SaveChangesAsync();
+    }
+    private sealed class InvoiceEditorModel { public Guid CustomerId { get; set; } public DateOnly IssueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); public List<InvoiceLineModel> Lines { get; set; } = []; }
+    private sealed class InvoiceLineModel { [Required, StringLength(300)] public string Description { get; set; } = ""; [Range(.0001, 999999999)] public decimal Quantity { get; set; } = 1; [Range(0, 999999999)] public decimal UnitPrice { get; set; } public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard; public Guid RevenueAccountId { get; set; } public Guid? ProductItemId { get; set; } }
+    private sealed record SalesInvoiceCodingSuggestion(Guid? RevenueAccountId, VatTreatment? VatTreatment, string Source);
+}

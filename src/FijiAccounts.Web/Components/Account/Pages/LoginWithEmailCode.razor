@@ -1,0 +1,65 @@
+@page "/Account/LoginWithEmailCode"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@inject SignInManager<ApplicationUser> SignInManager
+@inject UserManager<ApplicationUser> UserManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<LoginWithEmailCode> Logger
+
+<PageTitle>Email verification · Account Island</PageTitle>
+<span class="eyebrow">Secure sign in</span>
+<h1>Check your email</h1>
+<StatusMessage Message="@message" />
+<p>Enter the verification code sent to your confirmed email address.</p>
+<div class="row"><div class="col-md-5">
+    <EditForm Model="Input" FormName="login-with-email-code" OnValidSubmit="VerifyAsync" method="post">
+        <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
+        <input type="hidden" name="RememberMe" value="@RememberMe" />
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" role="alert" />
+        <div class="form-floating mb-3">
+            <InputText @bind-Value="Input.Code" id="Input.Code" class="form-control" inputmode="numeric" autocomplete="one-time-code" />
+            <label for="Input.Code">Email verification code</label>
+        </div>
+        <div class="checkbox mb-3"><label><InputCheckbox @bind-Value="Input.RememberMachine" /> Remember this machine</label></div>
+        <button type="submit" class="w-100 btn btn-lg btn-primary">Verify and sign in</button>
+    </EditForm>
+    <p class="mt-3"><a href="Account/LoginWith2fa?ReturnUrl=@ReturnUrl&RememberMe=@RememberMe">Use authenticator app instead</a></p>
+</div></div>
+
+@code {
+    private string? message;
+    private ApplicationUser user = default!;
+    [SupplyParameterFromForm] private InputModel Input { get; set; } = default!;
+    [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery] private bool RememberMe { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
+            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+    }
+
+    private async Task VerifyAsync()
+    {
+        var code = Input.Code!.Replace(" ", string.Empty).Replace("-", string.Empty);
+        var result = await SignInManager.TwoFactorSignInAsync(TokenOptions.DefaultEmailProvider, code, RememberMe, Input.RememberMachine);
+        var userId = await UserManager.GetUserIdAsync(user);
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("User with ID '{UserId}' signed in using an email verification code.", userId);
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        else if (result.IsLockedOut) RedirectManager.RedirectTo("Account/Lockout");
+        else message = "Error: The email verification code is invalid or has expired.";
+    }
+
+    private sealed class InputModel
+    {
+        [Required, StringLength(8, MinimumLength = 6)]
+        public string? Code { get; set; }
+        public bool RememberMachine { get; set; }
+    }
+}

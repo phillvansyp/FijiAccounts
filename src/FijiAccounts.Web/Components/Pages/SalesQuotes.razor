@@ -1,0 +1,57 @@
+@page "/o/{OrganisationId:guid}/quotes"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject SalesQuoteService QuoteService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Quotes · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="page-heading"><div><p class="eyebrow">Money in</p><h1>Quotes</h1><p class="page-intro">Prepare customer proposals and turn accepted work into a draft invoice without re-entering it.</p></div><a class="btn btn-outline-primary" href="o/@OrganisationId/sales">Sales invoices</a></div>
+    @if (canManage && customers.Count > 0 && revenueAccounts.Count > 0)
+    {
+        <div class="setup-card mb-5"><h2>Create quote</h2><EditForm Model="model" OnValidSubmit="Create" FormName="sales-quote"><DataAnnotationsValidator /><ValidationSummary /><CatalogProductPicker OrganisationId="OrganisationId" OnSelected="AddProductLine" />
+            <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Quote date</label><InputDate class="form-control" @bind-Value="model.QuoteDate" /></div><div class="col-md-3 mb-3"><label class="form-label">Expires</label><InputDate class="form-control" @bind-Value="model.ExpiryDate" /></div></div>
+            <section class="line-editor"><div class="line-header"><span>Description</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
+                @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> }
+                <button type="button" class="add-line" @onclick="AddLine">+ Add another line</button>
+            </section>
+            <div class="d-flex justify-content-between align-items-center mt-3"><strong>Estimated subtotal: @access.Organisation.BaseCurrency @EstimatedSubtotal.ToString("N2")</strong><button class="btn btn-primary">Save draft quote</button></div>
+        </EditForm></div>
+    }
+    else if (customers.Count == 0) { <div class="alert alert-info">Add a customer before creating a quote. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
+    @if (message is not null) { <div class="alert @messageClass">@message</div> }
+    <section class="invoice-list"><div class="list-heading"><div><h2>Quote activity</h2><p>Quotes do not affect the ledger until converted and posted as an invoice.</p></div></div>
+    @if (quotes.Count == 0) { <div class="empty-state"><strong>No quotes yet</strong><span>Your customer proposals will appear here.</span></div> }
+    else { <div class="table-responsive"><table class="table"><thead><tr><th>Quote</th><th>Customer</th><th>Date</th><th>Expires</th><th>Status</th><th class="text-end">Total</th><th>Actions</th></tr></thead><tbody>
+        @foreach (var quote in quotes) { var displayStatus = quote.ExpiryDate < today && quote.Status is QuoteStatus.Draft or QuoteStatus.Sent ? QuoteStatus.Expired : quote.Status; <tr><td><a href="o/@OrganisationId/quotes/@quote.Id"><strong>@quote.QuoteNumber</strong></a></td><td>@quote.Customer.Name</td><td>@quote.QuoteDate.ToString("dd MMM yyyy")</td><td>@quote.ExpiryDate.ToString("dd MMM yyyy")</td><td><span class="status-badge status-@displayStatus.ToString().ToLowerInvariant()">@displayStatus</span></td><td class="text-end">@quote.Currency @quote.Total.ToString("N2")</td><td><div class="d-flex gap-2 flex-wrap">@if (displayStatus == QuoteStatus.Draft) { <button class="btn btn-sm btn-outline-primary" @onclick="() => ChangeStatus(quote.Id, QuoteStatus.Sent)">Mark sent</button> } @if (displayStatus == QuoteStatus.Sent) { <button class="btn btn-sm btn-outline-primary" @onclick="() => ChangeStatus(quote.Id, QuoteStatus.Accepted)">Accept</button><button class="btn btn-sm btn-outline-secondary" @onclick="() => ChangeStatus(quote.Id, QuoteStatus.Declined)">Decline</button> } @if (displayStatus == QuoteStatus.Accepted) { <button class="btn btn-sm btn-primary" @onclick="() => Convert(quote.Id)">Convert to invoice</button> } @if (quote.Status == QuoteStatus.Invoiced && quote.ConvertedInvoiceId is not null) { <a class="btn btn-sm btn-outline-primary" href="o/@OrganisationId/sales/@quote.ConvertedInvoiceId">View invoice</a> }</div></td></tr> }
+    </tbody></table></div> }</section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private string userId = ""; private bool canManage; private readonly DateOnly today = DateOnly.FromDateTime(DateTime.Today); private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private List<SalesQuote> quotes = []; private QuoteModel model = new(); private string? message; private string messageClass = "alert-success"; private decimal EstimatedSubtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); customers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0).OrderBy(x => x.Name).ToListAsync(); revenueAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Revenue).OrderBy(x => x.Code).ToListAsync(); Reset(); await Reload(); }
+    private async Task Reload() => quotes = await Db.SalesQuotes.AsNoTracking().Include(x => x.Customer).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.SequenceNumber).Take(100).ToListAsync();
+    private void Reset() { model = new QuoteModel { CustomerId = customers.FirstOrDefault()?.Id ?? Guid.Empty }; AddLine(); }
+    private void AddLine() => model.Lines.Add(new QuoteLineModel { RevenueAccountId = revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty });
+    private void AddProductLine(ProductItem item) { var line = model.Lines.Count == 1 && string.IsNullOrWhiteSpace(model.Lines[0].Description) ? model.Lines[0] : new QuoteLineModel(); line.Description = string.IsNullOrWhiteSpace(item.Description) ? item.Name : item.Description; line.Quantity = 1; line.UnitPrice = item.SalePrice; line.VatTreatment = item.SaleTaxTreatment; line.RevenueAccountId = item.RevenueAccountId ?? revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty; if (!model.Lines.Contains(line)) model.Lines.Add(line); }
+    private void RemoveLine(int index) { if (model.Lines.Count > 1) model.Lines.RemoveAt(index); }
+    private async Task Create() { try { var lines = model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId)).ToList(); var quote = await QuoteService.CreateAsync(userId, new SalesQuoteRequest(OrganisationId, model.CustomerId, model.QuoteDate, model.ExpiryDate, lines)); messageClass = "alert-success"; message = $"{quote.QuoteNumber} saved for {quote.Currency} {quote.Total:N2}."; Reset(); await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { messageClass = "alert-danger"; message = ex.Message; } }
+    private async Task ChangeStatus(Guid id, QuoteStatus status) { try { await QuoteService.SetStatusAsync(userId, OrganisationId, id, status); messageClass = "alert-success"; message = $"Quote marked {status}."; await Reload(); } catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; } }
+    private async Task Convert(Guid id) { try { var invoice = await QuoteService.ConvertToDraftInvoiceAsync(userId, OrganisationId, id); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}/edit"); } catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; } }
+    private sealed class QuoteModel { public Guid CustomerId { get; set; } public DateOnly QuoteDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly ExpiryDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); public List<QuoteLineModel> Lines { get; set; } = []; }
+    private sealed class QuoteLineModel { [Required, StringLength(300)] public string Description { get; set; } = ""; [Range(.0001, 999999999)] public decimal Quantity { get; set; } = 1; [Range(0, 999999999)] public decimal UnitPrice { get; set; } public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard; public Guid RevenueAccountId { get; set; } }
+}

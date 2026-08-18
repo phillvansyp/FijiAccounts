@@ -1,0 +1,66 @@
+@implements IDisposable
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject UserManager<ApplicationUser> UserManager
+@inject TenantAccessService TenantAccess
+
+<header class="app-header"><nav class="nav-inner" aria-label="Primary navigation">
+    <a class="brand" href=""><img class="brand-mark" src="account-island-logo.png" alt="" /><span>Account Island</span></a>
+    <input id="menu-toggle" class="menu-toggle" type="checkbox" aria-label="Toggle navigation" /><label class="menu-button" for="menu-toggle"><span></span><span></span><span></span></label>
+    <AuthorizeView><Authorized>
+        @if (accessibleOrganisations.Count > 0)
+        {
+            <details class="org-switch org-picker" name="account-island-top-menu"><summary><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
+                <div class="org-panel">
+                    @if (activeOrganisationId is not null)
+                    {
+                        <div class="active-company"><span class="org-avatar">@OrganisationInitials(activeOrganisationName!)</span><b>@activeOrganisationName</b></div>
+                        <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, Fiji tax and financial settings</small></span></a>
+                        <a class="company-action" href="@OrgUrl()#team"><span class="company-icon">♟</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
+                    }
+                    @if (accessibleOrganisations.Count > 1)
+                    {
+                        <strong>Organisations</strong>
+                        @foreach (var item in accessibleOrganisations.Where(x => x.Organisation.Id != activeOrganisationId)) { <a href="o/@item.Organisation.Id"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span><b>@item.Organisation.LegalName</b><small>@(item.IsClient ? "Accountant client" : item.AccessLabel)</small></span></a> }
+                    }
+                    <a class="manage-organisations" href="organisations">Manage organisations</a>
+                </div>
+            </details>
+        }
+        else { <div class="org-switch"><a href="organisations"><span class="org-avatar">+</span><span class="org-name">Create organisation</span></a></div> }
+        @if (activeOrganisationId is not null)
+        {
+            <div class="primary-links">
+                <NavLink href="@OrgUrl()" Match="NavLinkMatch.All">Overview</NavLink>
+                <details class="module-menu" name="account-island-top-menu"><summary>Sales</summary><div class="mega-menu"><strong>Money in</strong><a href="@OrgUrl("sales")">Sales invoices</a><a href="@OrgUrl("quotes")">Quotes</a><a href="@OrgUrl("products")">Products &amp; services</a><a href="@OrgUrl("receipts")">Customer receipts</a><a href="@OrgUrl("contacts/customers")">Customers</a><small>Create quotes and invoices, track balances and record payments.</small></div></details>
+                <details class="module-menu" name="account-island-top-menu"><summary>Purchases</summary><div class="mega-menu"><strong>Money out</strong><a href="@OrgUrl("purchases")">Supplier bills</a><a href="@OrgUrl("inventory")">Inventory</a><a href="@OrgUrl("contacts/suppliers")">Suppliers</a><small>Capture purchases, control stock and manage what you owe.</small></div></details>
+                <details class="module-menu" name="account-island-top-menu"><summary>Reporting</summary><div class="mega-menu"><strong>Financial reports</strong><a href="@OrgUrl("reports/profit-loss")">Profit &amp; Loss</a><a href="@OrgUrl("reports/balance-sheet")">Balance Sheet</a><a href="@OrgUrl("reports/trial-balance")">Trial Balance</a><a href="@OrgUrl("reports/cash-summary")">Cash summary</a><a href="@OrgUrl("budgets")">Budget vs actual</a><a href="@OrgUrl("general-ledger")">General ledger</a><a href="@OrgUrl("reports/aging")">Ageing reports</a><a href="@OrgUrl("reports/aging/receivables")">Receivables ageing</a><a href="@OrgUrl("reports/aging/payables")">Payables ageing</a><small>Live reports generated from posted ledger entries.</small></div></details>
+                <details class="module-menu" name="account-island-top-menu"><summary>Accounting</summary><div class="mega-menu"><strong>Books &amp; controls</strong><a href="@OrgUrl("banking")">Bank accounts</a><a href="@OrgUrl("bank-transfers")">Bank transfers</a><a href="@OrgUrl("bank-rules")">Bank rules</a><a href="@OrgUrl("accounts")">Chart of accounts</a><a href="@OrgUrl("inventory")">Inventory valuation</a><a href="@OrgUrl("assets")">Fixed assets</a><a href="@OrgUrl("journals")">Manual journals</a><a href="@OrgUrl("periods")">Accounting periods</a><a href="@OrgUrl("audit")">Audit trail</a><small>Maintain the ledger, controls and audit access.</small></div></details>
+                <details class="module-menu" name="account-island-top-menu"><summary>Tax</summary><div class="mega-menu"><strong>Fiji compliance</strong><a href="@OrgUrl("tax")">Tax centre</a><a href="@OrgUrl()#tax-position">Tax position</a><a href="help?from=vat">Fiji tax guidance</a><small>Verified, effective-dated Fiji tax treatment.</small></div></details>
+                <details class="module-menu" name="account-island-top-menu"><summary>Contacts</summary><div class="mega-menu"><strong>Contacts</strong><a href="@OrgUrl("contacts")">All contacts</a><a href="@OrgUrl("contacts/customers")">Customers</a><a href="@OrgUrl("contacts/suppliers")">Suppliers</a><small>Manage the people and businesses you sell to and buy from.</small></div></details>
+            </div>
+        }
+    </Authorized><NotAuthorized><div class="primary-links"><NavLink href="" Match="NavLinkMatch.All">Home</NavLink></div></NotAuthorized></AuthorizeView>
+    <div class="nav-actions">
+        @if (activeOrganisationId is not null) { <details class="quick-menu"><summary title="Quick create">+</summary><div class="action-panel"><strong>Quick create</strong><a href="@OrgUrl("sales/new")"><span>↗</span> Sales invoice</a><a href="@OrgUrl("quotes")"><span>↗</span> Quote</a><a href="@OrgUrl("purchases")"><span>↙</span> Supplier bill</a><a href="@OrgUrl("receipts")"><span>✓</span> Customer receipt</a><a href="@OrgUrl("journals")"><span>≡</span> Manual journal</a></div></details> }
+        <a class="icon-link" href="@SearchUrl" title="Search this organisation">⌕</a><a class="icon-link" href="@ContextHelpUrl" title="Help for this page">?</a>
+        <AuthorizeView><Authorized><details class="profile-menu"><summary><span class="avatar">@Initial(context.User.Identity?.Name)</span></summary><div class="profile-panel"><div class="profile-email">@context.User.Identity?.Name</div><a href="Account/Manage">Profile &amp; security</a><a href="organisations">Switch organisation</a><a href="help">Help centre</a><form action="Account/Logout" method="post"><AntiforgeryToken /><input type="hidden" name="ReturnUrl" value="@currentUrl" /><button type="submit">Sign out</button></form></div></details></Authorized><NotAuthorized><a class="signin-link" href="Account/Login">Sign in</a><a class="join-link" href="Account/Register">Get started</a></NotAuthorized></AuthorizeView>
+    </div>
+</nav></header>
+
+@code {
+    private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private List<AccessibleOrganisation> accessibleOrganisations = [];
+    private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
+    private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
+    protected override async Task OnInitializedAsync() { await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
+    private async void LocationChanged(object? sender, LocationChangedEventArgs e) { await UpdateContext(); await InvokeAsync(StateHasChanged); }
+    private async Task UpdateContext() { currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri); activeOrganisationId = ExtractOrganisationId(currentUrl); activeOrganisationName = null; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User); accessibleOrganisations = userId is null ? [] : await TenantAccess.ListAsync(userId); if (activeOrganisationId is not null) activeOrganisationName = accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation.LegalName; if (activeOrganisationName is null && accessibleOrganisations.Count > 0) { activeOrganisationId = accessibleOrganisations[0].Organisation.Id; activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName; } }
+    private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
+    private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
+    private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();
+    private static string OrganisationInitials(string name) { var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries); return words.Length > 1 ? string.Concat(words.Take(2).Select(x => char.ToUpperInvariant(x[0]))) : name[..Math.Min(2, name.Length)].ToUpperInvariant(); }
+    public void Dispose() => Navigation.LocationChanged -= LocationChanged;
+}

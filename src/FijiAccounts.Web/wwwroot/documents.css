@@ -1,0 +1,6 @@
+.void-panel { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; padding:1rem; background:#fff4f2; border:1px solid #f2b8ad; border-radius:.7rem; }
+.void-panel > div { display:flex; flex:1; flex-direction:column; }
+.void-panel span { color:#667985; }
+.void-panel .form-control { width:170px; }
+.credit-panel .reason { width:min(280px, 100%); }
+@media (max-width:700px) { .void-panel { align-items:stretch; flex-direction:column; } .void-panel .form-control { width:100%; } }

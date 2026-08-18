@@ -1,0 +1,49 @@
+@page "/o/{OrganisationId:guid}/reports/aging"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Ageing reports · Account Island</PageTitle>
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Reporting</p>
+            <h1>Ageing reports</h1>
+            <p class="page-intro">Choose a specific ageing report.</p>
+        </div>
+    </div>
+    <section class="detail-card">
+        <div class="card-heading">
+            <div>
+                <span class="eyebrow">Ageing</span>
+                <h2>Receivables and payables</h2>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-outline-primary" href="o/@OrganisationId/reports/aging/receivables">Open aged receivables</a>
+            <a class="btn btn-outline-secondary" href="o/@OrganisationId/reports/aging/payables">Open aged payables</a>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+    }
+}

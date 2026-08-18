@@ -1,0 +1,30 @@
+@page "/invite/{Token}"
+@attribute [Authorize]
+@using System.Security.Cryptography
+@using System.Text
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@inject ApplicationDbContext Db
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Accept invitation</PageTitle>
+<h1>Organisation invitation</h1>
+@if (message is null) { <p>Checking your invitation...</p> } else { <div class="alert @alertClass">@message</div> }
+
+@code {
+    [Parameter] public string Token { get; set; } = string.Empty;
+    private string? message; private string alertClass = "alert-danger";
+    protected override async Task OnParametersSetAsync()
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Token)));
+        var invitation = await Db.OrganisationInvitations.Include(x => x.Organisation).SingleOrDefaultAsync(x => x.TokenHash == hash);
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var user = await UserManager.GetUserAsync(state.User); var email = user is null ? null : await UserManager.GetEmailAsync(user);
+        if (invitation is null || invitation.ExpiresAt <= DateTimeOffset.UtcNow || invitation.AcceptedAt is not null || invitation.RevokedAt is not null) { message = "This invitation is invalid or has expired."; return; }
+        if (!string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase)) { message = $"This invitation was issued to {invitation.Email}. Sign in using that address."; return; }
+        if (!await Db.OrganisationMemberships.AnyAsync(x => x.OrganisationId == invitation.OrganisationId && x.UserId == user!.Id)) Db.OrganisationMemberships.Add(new OrganisationMembership { OrganisationId = invitation.OrganisationId, UserId = user!.Id, Role = invitation.Role });
+        invitation.AcceptedAt = DateTimeOffset.UtcNow; await Db.SaveChangesAsync(); alertClass = "alert-success"; message = $"You now have {invitation.Role} access to {invitation.Organisation.LegalName}.";
+    }
+}

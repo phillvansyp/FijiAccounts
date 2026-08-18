@@ -1,0 +1,152 @@
+@page "/o/{OrganisationId:guid}/reports/aging/receivables"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Receivables ageing · Account Island</PageTitle>
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Reporting</p>
+            <h1>Aged receivables</h1>
+            <p class="page-intro">See who owes you and how long each balance has been outstanding.</p>
+        </div>
+        <div>
+            <button class="btn btn-outline-secondary no-print" onclick="window.print()">Print / Save PDF</button>
+        </div>
+    </div>
+
+    <section class="report-controls no-print">
+        <EditForm Model="filter" OnValidSubmit="Load" FormName="aging-date-receivables">
+            <div><label class="form-label">As at</label><InputDate class="form-control" @bind-Value="filter.AsAt" /></div>
+            <button class="btn btn-primary">Update ageing</button>
+        </EditForm>
+        <span>@access.Organisation.BaseCurrency</span>
+    </section>
+
+    <section class="financial-report aging-report">
+        <header><div><h2>Aged Receivables Summary</h2><p>As at @filter.AsAt.ToString("dd MMM yyyy")</p></div><strong>@access.Organisation.LegalName</strong></header>
+        @if (receivables.Count == 0)
+        {
+            <div class="empty-state"><strong>No outstanding balances</strong><span>There is nothing due at this date.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th class="number">Current</th>
+                            <th class="number">1–30 days</th>
+                            <th class="number">31–60 days</th>
+                            <th class="number">61–90 days</th>
+                            <th class="number">90+ days</th>
+                            <th class="number">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in receivables)
+                        {
+                            <tr>
+                                <td><strong>@row.Contact</strong></td>
+                                <td class="number">@Money(row.Current)</td>
+                                <td class="number">@Money(row.Days30)</td>
+                                <td class="number">@Money(row.Days60)</td>
+                                <td class="number">@Money(row.Days90)</td>
+                                <td class="number">@Money(row.Over90)</td>
+                                <td class="number"><strong>@Money(row.Total)</strong></td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <th>Total</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Current))</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Days30))</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Days60))</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Days90))</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Over90))</th>
+                            <th class="number">@Money(receivables.Sum(x => x.Total))</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private FilterModel filter = new();
+    private List<AgingRow> receivables = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null) await Load();
+    }
+
+    private async Task Load()
+    {
+        var invoices = await Db.SalesInvoices.AsNoTracking()
+            .Include(x => x.Customer)
+            .Where(x => x.OrganisationId == OrganisationId && x.IssueDate <= filter.AsAt && x.Status != InvoiceStatus.Draft && x.Status != InvoiceStatus.Voided)
+            .ToListAsync();
+
+        var invoiceIds = invoices.Select(x => x.Id).ToArray();
+        var paid = await Db.CustomerReceiptAllocations.AsNoTracking()
+            .Where(x => invoiceIds.Contains(x.SalesInvoiceId) && x.CustomerReceipt.ReceiptDate <= filter.AsAt)
+            .GroupBy(x => x.SalesInvoiceId)
+            .Select(x => new { x.Key, Amount = x.Sum(y => y.Amount) })
+            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+
+        var credited = await Db.SalesCreditNotes.AsNoTracking()
+            .Where(x => invoiceIds.Contains(x.SalesInvoiceId) && x.CreditDate <= filter.AsAt)
+            .GroupBy(x => x.SalesInvoiceId)
+            .Select(x => new { x.Key, Amount = x.Sum(y => y.Total) })
+            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+
+        receivables = Group(invoices.Select(x => new AgingItem(x.Customer.Name, x.DueDate, Math.Max(0, x.Total - paid.GetValueOrDefault(x.Id) - credited.GetValueOrDefault(x.Id)))));
+    }
+
+    private List<AgingRow> Group(IEnumerable<AgingItem> items) => items
+        .Where(x => x.Amount > 0)
+        .GroupBy(x => x.Contact)
+        .Select(group =>
+        {
+            decimal current = 0, d30 = 0, d60 = 0, d90 = 0, over = 0;
+            foreach (var item in group)
+            {
+                var days = filter.AsAt.DayNumber - item.DueDate.DayNumber;
+                if (days <= 0) current += item.Amount;
+                else if (days <= 30) d30 += item.Amount;
+                else if (days <= 60) d60 += item.Amount;
+                else if (days <= 90) d90 += item.Amount;
+                else over += item.Amount;
+            }
+            return new AgingRow(group.Key, current, d30, d60, d90, over);
+        })
+        .OrderBy(x => x.Contact)
+        .ToList();
+
+    private static string Money(decimal value) => value == 0 ? "—" : $"${value:N2}";
+    private sealed class FilterModel { public DateOnly AsAt { get; set; } = DateOnly.FromDateTime(DateTime.Today); }
+    private sealed record AgingItem(string Contact, DateOnly DueDate, decimal Amount);
+    private sealed record AgingRow(string Contact, decimal Current, decimal Days30, decimal Days60, decimal Days90, decimal Over90) { public decimal Total => Current + Days30 + Days60 + Days90 + Over90; }
+}

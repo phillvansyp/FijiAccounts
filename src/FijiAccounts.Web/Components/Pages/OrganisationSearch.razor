@@ -1,0 +1,191 @@
+@page "/o/{OrganisationId:guid}/search"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Search @access?.Organisation.LegalName</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="search-page">
+        <div class="search-hero">
+            <p class="eyebrow">Organisation search</p>
+            <h1>Find contacts, bills and invoices</h1>
+            <div class="search-input-wrap">
+                <span>⌕</span>
+                <input aria-label="Search organisation" placeholder="Search by name, email, TIN, invoice, supplier or bill reference" value="@searchTerm" @oninput="OnSearchChanged" />
+            </div>
+            <small>Tip: search supports names, references and dates (e.g. "rentokil").</small>
+        </div>
+        @if (!HasQuery)
+        {
+            <div class="search-empty">Type a term to search your contacts, sales invoices and supplier bills.</div>
+        }
+        else if (NoResults)
+        {
+            <div class="search-empty">No matches found for “@searchTerm”. Try a shorter spelling or different term.</div>
+        }
+        else
+        {
+            <div class="search-results-grid">
+                @if (contacts.Count > 0)
+                {
+                    <section class="search-result-card">
+                        <h2>Contacts</h2>
+                        <table class="table">
+                            <thead><tr><th>Name</th><th>Type</th><th>Email</th><th>TIN</th><th>Open</th></tr></thead>
+                            <tbody>
+                            @foreach (var party in contacts)
+                            {
+                                <tr>
+                                    <td><strong>@party.Name</strong></td>
+                                    <td>@party.Type</td>
+                                    <td>@party.Email</td>
+                                    <td>@party.Tin</td>
+                                    <td>
+                                        @if ((party.Type & PartyType.Customer) != 0)
+                                        {
+                                            <a class="btn btn-sm btn-outline-primary me-2" href="o/@OrganisationId/contacts/@party.Id/statement">Statement</a>
+                                        }
+                                        <a class="btn btn-sm btn-outline-secondary" href="o/@OrganisationId/contacts?q=@Uri.EscapeDataString(party.Name)">View in contacts</a>
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </section>
+                }
+
+                @if (invoices.Count > 0)
+                {
+                    <section class="search-result-card">
+                        <h2>Sales invoices</h2>
+                        <table class="table">
+                            <thead><tr><th>Invoice</th><th>Customer</th><th>Status</th><th>Date</th><th>Due</th><th class="text-end">Total</th><th class="text-end">Due</th></tr></thead>
+                            <tbody>
+                            @foreach (var invoice in invoices)
+                            {
+                                <tr>
+                                    <td><a href="o/@OrganisationId/sales/@invoice.Id"><strong>@invoice.InvoiceNumber</strong></a></td>
+                                    <td>@invoice.Customer.Name</td>
+                                    <td>@invoice.Status</td>
+                                    <td>@invoice.IssueDate.ToString("dd MMM yyyy")</td>
+                                    <td>@invoice.DueDate.ToString("dd MMM yyyy")</td>
+                                    <td class="text-end">$@invoice.Total.ToString("N2")</td>
+                                    <td class="text-end">$@((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2"))</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </section>
+                }
+
+                @if (bills.Count > 0)
+                {
+                    <section class="search-result-card">
+                        <h2>Supplier bills</h2>
+                        <table class="table">
+                            <thead><tr><th>Bill</th><th>Supplier</th><th>Status</th><th>Bill date</th><th>Due</th><th class="text-end">Total</th><th class="text-end">Due</th></tr></thead>
+                            <tbody>
+                            @foreach (var bill in bills)
+                            {
+                                <tr>
+                                    <td><a href="o/@OrganisationId/purchases/@bill.Id"><strong>@(string.IsNullOrWhiteSpace(bill.SupplierReference) ? bill.BillNumber : bill.SupplierReference)</strong></a></td>
+                                    <td>@bill.Supplier.Name</td>
+                                    <td>@bill.Status</td>
+                                    <td>@bill.BillDate.ToString("dd MMM yyyy")</td>
+                                    <td>@bill.DueDate.ToString("dd MMM yyyy")</td>
+                                    <td class="text-end">$@bill.Total.ToString("N2")</td>
+                                    <td class="text-end">$@Math.Max(0m, bill.Total - bill.AmountPaid - bill.AmountCredited).ToString("N2")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </section>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [SupplyParameterFromQuery(Name = "q")] public string? Query { get; set; }
+
+    private AccessibleOrganisation? access;
+    private string searchTerm = string.Empty;
+    private List<BusinessParty> contacts = [];
+    private List<SalesInvoice> invoices = [];
+    private List<SupplierBill> bills = [];
+
+    private bool HasQuery => !string.IsNullOrWhiteSpace(searchTerm);
+    private bool NoResults => contacts.Count == 0 && invoices.Count == 0 && bills.Count == 0;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        searchTerm = Query?.Trim() ?? string.Empty;
+        if (access is not null) await Reload();
+    }
+
+    private async Task OnSearchChanged(ChangeEventArgs args)
+    {
+        searchTerm = args?.Value?.ToString() ?? string.Empty;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        contacts = [];
+        invoices = [];
+        bills = [];
+
+        if (!HasQuery || access is null) return;
+
+        var normalized = searchTerm.ToUpperInvariant();
+
+        contacts = await Db.BusinessParties.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive &&
+                        (x.Name.ToUpper().Contains(normalized) ||
+                         (x.Email ?? "").ToUpper().Contains(normalized) ||
+                         (x.Tin ?? "").ToUpper().Contains(normalized)))
+            .OrderBy(x => x.Name)
+            .Take(20)
+            .ToListAsync();
+
+        invoices = await Db.SalesInvoices.AsNoTracking()
+            .Include(x => x.Customer)
+            .Where(x => x.OrganisationId == OrganisationId &&
+                        (x.InvoiceNumber.ToUpper().Contains(normalized) ||
+                         x.Customer.Name.ToUpper().Contains(normalized) ||
+                         x.Status.ToString().ToUpper().Contains(normalized)))
+            .OrderByDescending(x => x.IssueDate)
+            .ThenByDescending(x => x.SequenceNumber)
+            .Take(20)
+            .ToListAsync();
+
+        bills = await Db.SupplierBills.AsNoTracking()
+            .Include(x => x.Supplier)
+            .Where(x => x.OrganisationId == OrganisationId &&
+                        (x.BillNumber.ToUpper().Contains(normalized) ||
+                         (x.SupplierReference ?? "").ToUpper().Contains(normalized) ||
+                         x.Supplier.Name.ToUpper().Contains(normalized) ||
+                         x.Status.ToString().ToUpper().Contains(normalized)))
+            .OrderByDescending(x => x.BillDate)
+            .ThenByDescending(x => x.SequenceNumber)
+            .Take(20)
+            .ToListAsync();
+    }
+
+}

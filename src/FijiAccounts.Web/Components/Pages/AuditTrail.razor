@@ -1,0 +1,79 @@
+@page "/o/{OrganisationId:guid}/audit"
+@attribute [Authorize]
+@using System.Text.Json
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Audit trail · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="page-heading"><div><p class="eyebrow">Assurance</p><h1>Audit trail</h1><p class="page-intro">Immutable history of financial and administrative activity.</p></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print evidence</button></div>
+    <section class="report-controls no-print"><EditForm Model="filter" OnValidSubmit="Load" FormName="audit-filter"><div><label class="form-label">From</label><InputDate class="form-control" @bind-Value="filter.From" /></div><div><label class="form-label">To</label><InputDate class="form-control" @bind-Value="filter.To" /></div><div><label class="form-label">Event</label><InputSelect class="form-select" @bind-Value="filter.EventType"><option value="">All events</option>@foreach (var type in eventTypes) { <option value="@type">@Friendly(type)</option> }</InputSelect></div><div><label class="form-label">User</label><InputSelect class="form-select" @bind-Value="filter.UserId"><option value="">All users</option>@foreach (var user in users) { <option value="@user.Key">@user.Value</option> }</InputSelect></div><button class="btn btn-primary">Apply filters</button></EditForm><span>Showing @events.Count event@(events.Count == 1 ? "" : "s")</span></section>
+    @if (error is not null) { <div class="alert alert-danger">@error</div> }
+    <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Append-only record</span><h2>Organisation activity</h2></div><span>Newest first</span></div>
+        @if (events.Count == 0) { <div class="empty-state"><strong>No events found</strong><span>Try a wider date range or different filters.</span></div> }
+        else { <div class="table-responsive"><table class="table"><thead><tr><th>Date and time</th><th>Activity</th><th>User</th><th>Record</th><th>Evidence</th></tr></thead><tbody>@foreach (var item in events) { <tr><td><strong>@item.OccurredAt.ToLocalTime().ToString("dd MMM yyyy")</strong><small class="d-block text-muted">@item.OccurredAt.ToLocalTime().ToString("HH:mm:ss zzz")</small></td><td><span class="status-pill">@Friendly(item.EventType)</span></td><td>@users.GetValueOrDefault(item.UserId, item.UserId)</td><td>@item.EntityType<small class="d-block text-muted">@ShortId(item.EntityId)</small></td><td><details><summary>View details</summary><pre class="mt-2 mb-0">@PrettyJson(item.JsonData)</pre></details></td></tr> }</tbody></table></div> }
+        @if (hasMore) { <div class="alert alert-info mt-3 mb-0">Only the newest 500 matching events are shown. Narrow the filters for a complete review period.</div> }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private AuditFilter filter = new(); private List<AuditEvent> events = []; private List<string> eventTypes = []; private Dictionary<string, string> users = []; private bool hasMore; private string? error;
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; eventTypes = await Db.AuditEvents.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).Select(x => x.EventType).Distinct().OrderBy(x => x).ToListAsync(); var userIds = await Db.AuditEvents.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).Select(x => x.UserId).Distinct().ToArrayAsync(); users = await Db.Users.AsNoTracking().Where(x => userIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Email ?? x.UserName ?? x.Id); await Load(); }
+    private async Task Load()
+{
+    error = filter.From > filter.To
+        ? "The start date must be before the end date."
+        : null;
+
+    if (error is not null)
+        return;
+
+    var from = new DateTimeOffset(
+        filter.From.ToDateTime(TimeOnly.MinValue),
+        TimeSpan.Zero);
+
+    var to = new DateTimeOffset(
+        filter.To.AddDays(1).ToDateTime(TimeOnly.MinValue),
+        TimeSpan.Zero);
+
+    // Keep only SQLite-safe filtering in the database query.
+    var query = Db.AuditEvents
+        .AsNoTracking()
+        .Where(x => x.OrganisationId == OrganisationId);
+
+    if (!string.IsNullOrWhiteSpace(filter.EventType))
+    {
+        query = query.Where(x => x.EventType == filter.EventType);
+    }
+
+    if (!string.IsNullOrWhiteSpace(filter.UserId))
+    {
+        query = query.Where(x => x.UserId == filter.UserId);
+    }
+
+    // SQLite cannot reliably translate DateTimeOffset range comparisons
+    // or ordering for this query, so perform those operations in .NET.
+    var result = (await query.ToListAsync())
+        .Where(x => x.OccurredAt >= from && x.OccurredAt < to)
+        .OrderByDescending(x => x.OccurredAt)
+        .Take(501)
+        .ToList();
+
+    hasMore = result.Count > 500;
+    events = result.Take(500).ToList();
+}
+    private static string Friendly(string value) { var words = System.Text.RegularExpressions.Regex.Replace(value, "([a-z])([A-Z])", "$1 $2"); return words.Replace("Csv", "CSV"); }
+    private static string ShortId(string id) => id.Length <= 12 ? id : id[..8] + "…";
+    private static string PrettyJson(string json) { try { using var document = JsonDocument.Parse(json); return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = true }); } catch { return json; } }
+    private sealed class AuditFilter { public DateOnly From { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddMonths(-1)); public DateOnly To { get; set; } = DateOnly.FromDateTime(DateTime.Today); public string EventType { get; set; } = ""; public string UserId { get; set; } = ""; }
+}

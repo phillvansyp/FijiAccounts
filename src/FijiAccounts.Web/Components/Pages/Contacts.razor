@@ -1,0 +1,132 @@
+@page "/o/{OrganisationId:guid}/contacts"
+@page "/o/{OrganisationId:guid}/contacts/{ContactView}"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using FijiAccounts.Domain.Tax
+@using FijiAccounts.Domain.Accounting
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>@PageHeading</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <h1>@PageHeading</h1>
+    @if (canEdit) { <div class="setup-card"><h2>Add contact</h2><EditForm Model="model" OnValidSubmit="Create" FormName="add-contact"><DataAnnotationsValidator /><ValidationSummary />
+        <div class="mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
+        <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="model.Email" /></div><div class="col-md-6 mb-3"><label class="form-label">TIN</label><InputText class="form-control" @bind-Value="model.Tin" /></div></div>
+        <div class="mb-3"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="model.Type"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="3">Customer and supplier</option></InputSelect></div>
+        @if ((model.Type & PartyType.Supplier) != 0) { <div class="row"><div class="col-md-8 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div></div> }
+        <button class="btn btn-primary">Add contact</button>
+    </EditForm></div> }
+    @if (!string.IsNullOrWhiteSpace(searchTerm))
+    {
+        <div class="alert alert-info">
+            Showing contacts matching "<strong>@searchTerm</strong>".
+            <a href="o/@OrganisationId/contacts" class="ms-2">Clear</a>
+        </div>
+    }
+    <div class="table-responsive mt-5"><table class="table"><thead><tr><th>Name</th><th>Type</th><th>Email</th><th>TIN</th><th>Purchase defaults</th><th></th></tr></thead><tbody>@foreach (var party in parties) { <tr><td><strong>@party.Name</strong></td><td>@party.Type</td><td>@party.Email</td><td>@party.Tin</td><td>@(party.DefaultPurchaseAccount is null ? "—" : $"{party.DefaultPurchaseAccount.Code} — {party.DefaultPurchaseAccount.Name}")@if (party.DefaultPurchaseVatTreatment is not null) { <span> · @party.DefaultPurchaseVatTreatment</span> }</td><td class="text-end">@if ((party.Type & PartyType.Customer) != 0) { <a class="btn btn-sm btn-outline-primary me-2" href="o/@OrganisationId/contacts/@party.Id/statement">Statement</a> }@if (canEdit && (party.Type & PartyType.Supplier) != 0) { <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => EditDefaults(party)">Supplier settings</button> }</td></tr>@if (editingPartyId == party.Id) { <tr><td colspan="6"><div class="setup-card"><h3>@party.Name purchase defaults</h3><div class="row"><div class="col-md-8"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="editDefaults.DefaultPurchaseAccountId"><option value="">No default</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="editDefaults.DefaultPurchaseVatTreatment"><option value="">No default</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div></div><div class="mt-3"><button type="button" class="btn btn-primary me-2" @onclick="SaveDefaults">Save supplier settings</button><button type="button" class="btn btn-outline-secondary" @onclick="CancelDefaults">Cancel</button></div></div></td></tr> } }</tbody></table></div>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public string? ContactView { get; set; }
+    [SupplyParameterFromQuery(Name = "q")] public string? Query { get; set; }
+    private AccessibleOrganisation? access;
+    private string userId = string.Empty;
+    private bool canEdit;
+    private List<BusinessParty> parties = [];
+    private List<LedgerAccount> purchaseAccounts = [];
+    private ContactModel model = new();
+    private Guid? editingPartyId;
+    private PurchaseDefaultsModel editDefaults = new();
+    private string searchTerm = string.Empty;
+
+    private string NormalizedView => ContactView?.ToLowerInvariant() switch
+    {
+        "customers" => "customers",
+        "suppliers" => "suppliers",
+        _ => "all"
+    };
+    private string PageHeading => NormalizedView switch
+    {
+        "customers" => "Customers",
+        "suppliers" => "Suppliers",
+        _ => "All contacts"
+    };
+    private static string NormalizeForSearch(string value) => value.Trim().ToUpperInvariant();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null)
+        {
+            canEdit = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+            searchTerm = Query?.Trim() ?? string.Empty;
+            model = new ContactModel { Type = NormalizedView == "suppliers" ? PartyType.Supplier : PartyType.Customer };
+            purchaseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Code == "1200" || x.Code == "1500")).OrderBy(x => x.Code).ToListAsync();
+            await Reload();
+        }
+    }
+
+    private async Task Reload()
+    {
+        var query = Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive);
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            var normalized = NormalizeForSearch(searchTerm);
+            query = query.Where(x => x.Name.ToUpper().Contains(normalized) ||
+                                     (x.Email ?? "").ToUpper().Contains(normalized) ||
+                                     (x.Tin ?? "").ToUpper().Contains(normalized));
+        }
+        query = NormalizedView switch
+        {
+            "customers" => query.Where(x => (x.Type & PartyType.Customer) != 0),
+            "suppliers" => query.Where(x => (x.Type & PartyType.Supplier) != 0),
+            _ => query
+        };
+        parties = await query.Include(x => x.DefaultPurchaseAccount).OrderBy(x => x.Name).ToListAsync();
+    }
+
+    private async Task Create()
+    {
+        if (!await TenantAccess.CanPostJournalsAsync(userId, OrganisationId)) return;
+        Db.BusinessParties.Add(new BusinessParty { OrganisationId = OrganisationId, Name = model.Name.Trim(), Email = model.Email?.Trim(), Tin = model.Tin?.Trim(), Type = model.Type, DefaultPurchaseAccountId = model.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = model.DefaultPurchaseVatTreatment });
+        await Db.SaveChangesAsync();
+        model = new ContactModel { Type = NormalizedView == "suppliers" ? PartyType.Supplier : PartyType.Customer };
+        await Reload();
+    }
+
+    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment }; }
+    private void CancelDefaults() { editingPartyId = null; editDefaults = new(); }
+    private async Task SaveDefaults()
+    {
+        if (editingPartyId is not Guid id || !canEdit) return;
+        var party = await Db.BusinessParties.FirstOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId);
+        if (party is null) return;
+        party.DefaultPurchaseAccountId = editDefaults.DefaultPurchaseAccountId;
+        party.DefaultPurchaseVatTreatment = editDefaults.DefaultPurchaseVatTreatment;
+        await Db.SaveChangesAsync();
+        CancelDefaults();
+        await Reload();
+    }
+
+    private class PurchaseDefaultsModel { public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } }
+    private sealed class ContactModel : PurchaseDefaultsModel
+    {
+        [Required, StringLength(160)] public string Name { get; set; } = string.Empty;
+        [EmailAddress, StringLength(320)] public string? Email { get; set; }
+        [StringLength(32)] public string? Tin { get; set; }
+        public PartyType Type { get; set; } = PartyType.Customer;
+    }
+}

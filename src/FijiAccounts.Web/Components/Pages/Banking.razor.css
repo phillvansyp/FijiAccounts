@@ -1,0 +1,413 @@
+.bank-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.bank-heading h1 {
+    margin: 0;
+    color: #102a43;
+}
+
+.bank-heading p:last-child {
+    margin: .3rem 0 0;
+    color: #667985;
+}
+
+.eyebrow {
+    margin: 0;
+    color: #087f5b;
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+
+
+/* =========================================================
+   BANK ACCOUNT CARDS
+   ========================================================= */
+
+.bank-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .65rem;
+    margin-bottom: .8rem;
+}
+
+.bank-card,
+.add-bank,
+.activity {
+    background: #fff;
+    border: 1px solid #dfe8ec;
+    border-radius: .75rem;
+    box-shadow: 0 4px 14px rgba(16, 42, 67, .05);
+}
+
+.bank-card {
+    position: relative;
+    min-width: 0;
+    padding: .75rem .9rem;
+}
+
+.bank-card > div {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    min-width: 0;
+}
+
+.bank-card h2 {
+    margin: 0;
+    color: #17324d;
+    font-size: .9rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bank-card small {
+    color: #667985;
+    font-size: .72rem;
+}
+
+.bank-card strong {
+    display: block;
+    margin: .65rem 0 .1rem;
+    color: #102a43;
+    font-size: 1.25rem;
+    line-height: 1.1;
+}
+
+.bank-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: .55rem;
+    background: #dff7ef;
+    color: #087f5b;
+    font-size: .8rem;
+    font-weight: 900;
+}
+
+.currency {
+    position: absolute;
+    right: .75rem;
+    top: .65rem;
+    color: #667985;
+    font-size: .65rem;
+    font-weight: 800;
+}
+
+.bank-card-clickable {
+    cursor: pointer;
+    transition:
+        border-color .15s ease,
+        box-shadow .15s ease,
+        transform .15s ease;
+}
+
+.bank-card-clickable:hover {
+    border-color: #9fcfc2;
+    box-shadow: 0 5px 14px rgba(16, 42, 67, .07);
+    transform: translateY(-1px);
+}
+
+.bank-card-clickable.selected {
+    border: 2px solid #087f5b;
+    padding: calc(.75rem - 1px) calc(.9rem - 1px);
+    box-shadow: 0 0 0 2px rgba(8, 127, 91, .06);
+}
+
+
+/* =========================================================
+   ADD BANK / STATEMENT PANELS
+   ========================================================= */
+
+.add-bank {
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.add-bank h2 {
+    margin-top: 0;
+    font-size: 1.1rem;
+}
+
+.bank-fields {
+    display: grid;
+    grid-template-columns: 150px 1fr 1fr auto;
+    gap: .75rem;
+    align-items: end;
+}
+
+
+/* =========================================================
+   ACTIVITY
+   ========================================================= */
+
+.activity {
+    padding: 0;
+    overflow: hidden;
+}
+
+.activity > div:first-child {
+    padding: 1.15rem 1.25rem;
+}
+
+.activity h2 {
+    margin: 0;
+    color: #17324d;
+    font-size: 1.1rem;
+}
+
+.activity p {
+    margin: .2rem 0 0;
+    color: #667985;
+}
+
+.activity .table {
+    margin: 0;
+}
+
+.activity th {
+    padding: .8rem 1rem;
+    background: #f7fafb;
+    color: #526b78;
+    font-size: .75rem;
+    text-transform: uppercase;
+}
+
+.activity td {
+    padding: .85rem 1rem;
+}
+
+.money-in {
+    color: #087f5b;
+    font-weight: 700;
+}
+
+.money-out {
+    color: #a04438;
+    font-weight: 700;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem;
+    color: #667985;
+}
+
+.empty-state strong {
+    color: #17324d;
+}
+
+
+/* =========================================================
+   BANK TRANSACTION CODING PANEL
+   ========================================================= */
+
+.coding-panel {
+    margin: 0 1rem 1rem 4rem;
+    padding: 1rem;
+    background: #f7fafb;
+    border: 1px solid #d7e2e7;
+    border-radius: .75rem;
+}
+
+.coding-fields {
+    display: grid;
+    grid-template-columns:
+        165px
+        300px
+        minmax(280px, 1fr)
+        255px
+        auto;
+    column-gap: .75rem;
+    row-gap: .5rem;
+    align-items: start;
+}
+
+.coding-fields > div {
+    min-width: 0;
+}
+
+.coding-fields .form-label {
+    display: block;
+    margin-bottom: .35rem;
+    font-size: .85rem;
+    line-height: 1.2;
+}
+
+.coding-fields .form-control,
+.coding-fields .form-select {
+    width: 100%;
+    min-height: 38px;
+}
+
+.coding-fields small {
+    display: block;
+    margin-top: .3rem;
+    color: #667985;
+    font-size: .75rem;
+    line-height: 1.25;
+}
+
+.coding-fields > div:nth-child(3) {
+    min-width: 0;
+}
+
+.coding-fields > div:nth-child(4) {
+    width: 100%;
+}
+
+.coding-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    align-self: start;
+    gap: .5rem;
+    padding-top: 1.72rem;
+    white-space: nowrap;
+}
+
+.coding-actions .btn {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+
+/* =========================================================
+   RECONCILIATION LIST
+   ========================================================= */
+
+.statement-row {
+    grid-template-columns:
+        34px
+        minmax(280px, 1fr)
+        130px
+        minmax(190px, 260px)
+        160px;
+}
+
+.coded-account {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.coded-account small {
+    color: #667985;
+    font-size: .7rem;
+    text-transform: uppercase;
+}
+
+.coded-account strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #17324d;
+}
+
+.coded-account span {
+    color: #93a1a8;
+}
+
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 1350px) {
+    .coding-fields {
+        grid-template-columns:
+            160px
+            270px
+            minmax(240px, 1fr)
+            235px
+            auto;
+    }
+}
+
+@media (max-width: 1100px) {
+    .bank-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 1150px) {
+    .coding-fields {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .coding-actions {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+        padding-top: 0;
+    }
+
+    .statement-row {
+        grid-template-columns: 34px 1fr 110px 180px;
+    }
+
+    .match-action {
+        grid-column: 4;
+    }
+
+    .coded-account {
+        grid-column: 2;
+    }
+}
+
+@media (max-width: 850px) {
+    .bank-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .bank-heading {
+        flex-direction: column;
+    }
+
+    .statement-row {
+        grid-template-columns: 34px 1fr;
+    }
+
+    .coded-account,
+    .statement-row > b,
+    .match-action {
+        grid-column: 2;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 650px) {
+    .bank-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .coding-panel {
+        margin: 0 .5rem 1rem;
+        padding: .85rem;
+    }
+
+    .coding-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .coding-actions {
+        grid-column: 1;
+        justify-content: flex-start;
+        padding-top: 0;
+    }
+
+    .coding-actions .btn {
+        flex: 1;
+    }
+}

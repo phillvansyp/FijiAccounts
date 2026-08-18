@@ -1,0 +1,43 @@
+@page "/o/{OrganisationId:guid}/receipts"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject CustomerReceiptService ReceiptService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Customer receipts</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <a href="o/@OrganisationId/sales">← Sales invoices</a><h1>Customer receipts</h1>
+    @if (canPost && openInvoices.Count > 0 && bankAccounts.Count > 0)
+    {
+        <div class="setup-card"><h2>Record payment</h2><EditForm Model="model" OnValidSubmit="Record" FormName="customer-receipt"><DataAnnotationsValidator /><ValidationSummary />
+            <div class="mb-3"><label class="form-label">Invoice</label><InputSelect class="form-select" @bind-Value="model.InvoiceId" @bind-Value:after="SetOutstanding">@foreach (var invoice in openInvoices) { <option value="@invoice.Id">@invoice.InvoiceNumber — @invoice.Customer.Name — $@((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2")) due</option> }</InputSelect></div>
+            <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Receipt date</label><InputDate class="form-control" @bind-Value="model.Date" /></div><div class="col-md-6 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div></div>
+            <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Deposit account</label><InputSelect class="form-select" @bind-Value="model.BankAccountId">@foreach (var account in bankAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-6 mb-3"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div></div>
+            <button class="btn btn-primary">Record receipt</button>
+        </EditForm>@if (status is not null) { <div class="alert @statusClass mt-3">@status</div> }</div>
+    }
+    else if (openInvoices.Count == 0) { <div class="alert alert-info">There are no outstanding sales invoices.</div> }
+    <h2 class="mt-5">Receipt history</h2><div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var receipt in receipts) { <tr><td>@receipt.ReceiptDate.ToString("dd MMM yyyy")</td><td>@receipt.Reference</td><td>@receipt.Customer.Name</td><td class="text-end">$@receipt.Amount.ToString("N2")</td></tr> }</tbody></table></div>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private List<SalesInvoice> openInvoices = []; private List<LedgerAccount> bankAccounts = []; private List<CustomerReceipt> receipts = []; private ReceiptModel model = new(); private string? status; private string statusClass = "alert-success";
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); bankAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Asset).OrderBy(x => x.Code).ToListAsync(); await Reload(); Reset(); }
+    private async Task Reload() { openInvoices = await Db.SalesInvoices.AsNoTracking().Include(x => x.Customer).Where(x => x.OrganisationId == OrganisationId && x.Status != InvoiceStatus.Paid && x.Status != InvoiceStatus.Voided && x.Status != InvoiceStatus.Draft).OrderBy(x => x.DueDate).ToListAsync(); bankAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync(); receipts = await Db.CustomerReceipts.AsNoTracking().Include(x => x.Customer).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.ReceiptDate).Take(100).ToListAsync(); }
+    private void Reset() { model = new(); if (openInvoices.Count > 0) { model.InvoiceId = openInvoices[0].Id; SetOutstanding(); } if (bankAccounts.Count > 0) model.BankAccountId = bankAccounts[0].Id; }
+    private void SetOutstanding() { var invoice = openInvoices.SingleOrDefault(x => x.Id == model.InvoiceId); if (invoice is not null) model.Amount = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; }
+    private async Task Record() { try { var receipt = await ReceiptService.RecordAsync(userId, new(OrganisationId, model.InvoiceId, model.Date, model.Reference, model.Amount, model.BankAccountId)); statusClass = "alert-success"; status = $"Receipt {receipt.Reference} recorded for ${receipt.Amount:N2}."; await Reload(); Reset(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private sealed class ReceiptModel { public Guid InvoiceId { get; set; } public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Required, StringLength(80)] public string Reference { get; set; } = string.Empty; [Range(0.01, 999999999)] public decimal Amount { get; set; } public Guid BankAccountId { get; set; } }
+}

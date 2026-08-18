@@ -1,0 +1,50 @@
+# .NET build output
+bin/
+obj/
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test output
+TestResults/
+coverage/
+coverage.*
+*.trx
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local configuration / secrets
+appsettings.Local.json
+appsettings.Development.local.json
+secrets.json
+.env
+.env.*
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+~$*
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary development scripts
+inspect-attachment.csx

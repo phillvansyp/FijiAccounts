@@ -1,0 +1,100 @@
+@page "/o/{OrganisationId:guid}/bank-transfers"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject BankTransferService TransferService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Bank transfers · Account Island</PageTitle>
+@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else
+{
+    <div class="page-heading"><div><p class="eyebrow">Banking</p><h1>Bank transfers</h1><p class="page-intro">Move funds between the organisation’s own bank accounts with one balanced entry.</p></div><a class="btn btn-outline-secondary" href="o/@OrganisationId/banking">Bank accounts</a></div>
+    @if (message is not null) { <div class="alert @messageClass">@message</div> }
+    @if (canPost && accounts.Count >= 2) { <section class="setup-card mb-4"><h2>Transfer funds</h2><EditForm Model="model" OnValidSubmit="Post" FormName="bank-transfer"><DataAnnotationsValidator /><ValidationSummary /><div class="row"><div class="col-md-3 mb-3"><label class="form-label">From account</label><InputSelect class="form-select" @bind-Value="model.FromAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">To account</label><InputSelect class="form-select" @bind-Value="model.ToAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div><div class="col-md-2 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div><div class="col-md-2 mb-3"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div></div><div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div><button class="btn btn-primary">Post transfer</button></EditForm></section> }
+    else if (accounts.Count < 2) { <div class="alert alert-info">Add at least two bank accounts before recording a transfer.</div> }
+    <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Transfer history</span><h2>Posted transfers</h2></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print</button></div>@if (transfers.Count == 0) { <div class="empty-state"><strong>No bank transfers</strong><span>Posted transfers will appear here permanently.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Reference</th><th>From</th><th>To</th><th>Description</th><th class="text-end">Amount</th><th>Journal</th></tr></thead><tbody>@foreach (var item in transfers) { <tr><td>@item.TransferDate.ToString("dd MMM yyyy")</td><td>@item.Reference</td><td>@item.FromBankAccount.Name</td><td>@item.ToBankAccount.Name</td><td>@item.Description</td><td class="text-end">$@item.Amount.ToString("N2")</td><td><a href="o/@OrganisationId/journals/@item.PostedJournalId">View journal</a></td></tr> }</tbody></table></div> }</section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canPost;
+    private List<LedgerAccount> accounts = [];
+    private List<BankTransfer> transfers = [];
+    private TransferModel model = new();
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
+        Reset();
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        // SQLite does not support ORDER BY DateTimeOffset in this final tie-breaker.
+        var recent = await Db.BankTransfers.AsNoTracking()
+            .Include(x => x.FromBankAccount)
+            .Include(x => x.ToBankAccount)
+            .Where(x => x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.TransferDate)
+            .Take(500)
+            .ToListAsync();
+
+        transfers = recent
+            .OrderByDescending(x => x.TransferDate)
+            .ThenByDescending(x => x.CreatedAt)
+            .Take(200)
+            .ToList();
+    }
+
+    private void Reset()
+    {
+        model = new();
+        if (accounts.Count > 0) model.FromAccountId = accounts[0].Id;
+        if (accounts.Count > 1) model.ToAccountId = accounts[1].Id;
+    }
+
+    private async Task Post()
+    {
+        try
+        {
+            var transfer = await TransferService.PostAsync(userId, new(OrganisationId, model.FromAccountId, model.ToAccountId, model.Date, model.Reference, model.Description, model.Amount));
+            messageClass = "alert-success";
+            message = $"Transfer {transfer.Reference} posted for ${transfer.Amount:N2}.";
+            Reset();
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or FijiAccounts.Domain.Accounting.DomainException)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private sealed class TransferModel
+    {
+        public Guid FromAccountId { get; set; }
+        public Guid ToAccountId { get; set; }
+        public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        [Required, StringLength(80)] public string Reference { get; set; } = "";
+        [StringLength(300)] public string? Description { get; set; }
+        [Range(.01, 999999999)] public decimal Amount { get; set; }
+    }
+}
