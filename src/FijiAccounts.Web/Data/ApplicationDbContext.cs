@@ -30,6 +30,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
     public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
     public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
+    public DbSet<BankReconciliationSession> BankReconciliationSessions =>
+    Set<BankReconciliationSession>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
     public DbSet<AccountBudget> AccountBudgets => Set<AccountBudget>();
     public DbSet<SalesQuote> SalesQuotes => Set<SalesQuote>();
@@ -132,6 +134,41 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<BankStatementLine>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().HasOne(x => x.MatchedPostedJournalLine).WithMany().HasForeignKey(x => x.MatchedPostedJournalLineId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankReconciliationSession>()
+    .HasIndex(x => new
+    {
+        x.OrganisationId,
+        x.BankAccountId,
+        x.StatementEndDate
+    });
+
+builder.Entity<BankReconciliationSession>()
+    .Property(x => x.OpeningStatementBalance)
+    .HasPrecision(18, 2);
+
+builder.Entity<BankReconciliationSession>()
+    .Property(x => x.ClosingStatementBalance)
+    .HasPrecision(18, 2);
+
+builder.Entity<BankReconciliationSession>()
+    .Property(x => x.LedgerBalance)
+    .HasPrecision(18, 2);
+
+builder.Entity<BankReconciliationSession>()
+    .Property(x => x.Difference)
+    .HasPrecision(18, 2);
+
+builder.Entity<BankReconciliationSession>()
+    .HasOne(x => x.Organisation)
+    .WithMany()
+    .HasForeignKey(x => x.OrganisationId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<BankReconciliationSession>()
+    .HasOne(x => x.BankAccount)
+    .WithMany()
+    .HasForeignKey(x => x.BankAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankTransfer>().HasIndex(x => new { x.OrganisationId, x.Reference }).IsUnique(); builder.Entity<BankTransfer>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<BankTransfer>().HasOne(x => x.FromBankAccount).WithMany().HasForeignKey(x => x.FromBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.ToBankAccount).WithMany().HasForeignKey(x => x.ToBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<AccountBudget>().HasIndex(x => new { x.OrganisationId, x.LedgerAccountId, x.Month }).IsUnique(); builder.Entity<AccountBudget>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<AccountBudget>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesQuote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();

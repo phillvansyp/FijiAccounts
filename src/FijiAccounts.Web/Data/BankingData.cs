@@ -23,6 +23,42 @@ public sealed class BankStatementLine
     [MaxLength(64)] public string? SourceHash { get; set; }
 }
 
+    public sealed class BankReconciliationSession
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+
+    public Guid BankAccountId { get; set; }
+    public LedgerAccount BankAccount { get; set; } = null!;
+
+    public DateOnly StatementStartDate { get; set; }
+
+    public DateOnly StatementEndDate { get; set; }
+
+    public decimal OpeningStatementBalance { get; set; }
+
+    public decimal ClosingStatementBalance { get; set; }
+
+    public decimal LedgerBalance { get; set; }
+
+    public decimal Difference { get; set; }
+
+    public bool IsCompleted { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    [MaxLength(450)]
+    public string? CompletedByUserId { get; set; }
+}
+
 public sealed class BankTransfer
 {
     public Guid Id { get; set; } = Guid.NewGuid();

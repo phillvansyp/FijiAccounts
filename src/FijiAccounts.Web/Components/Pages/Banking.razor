@@ -11,6 +11,14 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject BankReconciliationService Reconciliation
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject BankReconciliationService Reconciliation
+@inject BankReconciliationSessionService ReconciliationSessions
+@inject BankStatementImportService StatementImport
+@inject BankTransactionCodingService TransactionCoding
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject BankStatementImportService StatementImport
 @inject BankTransactionCodingService TransactionCoding
 @inject UserManager<ApplicationUser> UserManager
@@ -79,6 +87,197 @@ else
     @if (showImport && accounts.Count > 0) { <section class="add-bank import-panel"><h2>Read bank statement</h2><p>Drop in or select a PDF, CSV, OFX, QFX or QIF statement. We read and preview it before anything is imported. Maximum 5 MB.</p>@if (statementError is not null) { <div class="alert alert-danger">@statementError</div> }<div class="import-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="importBankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Statement file</label><InputFile class="form-control" OnChange="SelectStatement" accept=".csv,.txt,.ofx,.qfx,.qif,.pdf" />@if (selectedStatement is not null) { <small class="d-block mt-2 text-muted">@selectedStatement.Name · @FormatFileSize(selectedStatement.Size)</small> }</div><div class="d-flex align-items-end"><button type="button" class="btn btn-primary" disabled="@(selectedStatement is null || readingStatement)" @onclick="ReadSelectedStatement">@(readingStatement ? "Reading…" : "Upload and read statement")</button></div></div>
         @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement · @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
     </section> }
+    <section class="add-bank">
+    <div class="reconcile-heading">
+        <div>
+            <h2>Statement reconciliation</h2>
+            <p>Balance a bank statement against the posted ledger.</p>
+        </div>
+
+        @if (canReconcile && accounts.Count > 0)
+        {
+            <button type="button"
+                    class="btn btn-primary"
+                    @onclick="BeginReconciliationSession">
+                + New reconciliation
+            </button>
+        }
+    </div>
+
+    @if (showReconciliationSession)
+    {
+        <EditForm Model="reconciliationModel"
+                  OnValidSubmit="CreateReconciliationSession"
+                  FormName="bank-reconciliation-session">
+
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="statement-fields">
+                <div>
+                    <label class="form-label">Bank account</label>
+
+                    <InputSelect class="form-select"
+                                 @bind-Value="reconciliationModel.BankAccountId">
+                        @foreach (var account in accounts)
+                        {
+                            <option value="@account.Id">
+                                @account.Name
+                            </option>
+                        }
+                    </InputSelect>
+                </div>
+
+                <div>
+                    <label class="form-label">Statement start</label>
+
+                    <InputDate class="form-control"
+                               @bind-Value="reconciliationModel.StatementStartDate" />
+                </div>
+
+                <div>
+                    <label class="form-label">Statement end</label>
+
+                    <InputDate class="form-control"
+                               @bind-Value="reconciliationModel.StatementEndDate" />
+                </div>
+
+                <div>
+                    <label class="form-label">Opening balance</label>
+
+                    <InputNumber class="form-control"
+                                 @bind-Value="reconciliationModel.OpeningStatementBalance" />
+                </div>
+
+                <div>
+                    <label class="form-label">Closing balance</label>
+
+                    <InputNumber class="form-control"
+                                 @bind-Value="reconciliationModel.ClosingStatementBalance" />
+                </div>
+
+                <div class="d-flex align-items-end gap-2">
+                    <button type="submit"
+                            class="btn btn-primary"
+                            disabled="@savingReconciliationSession">
+                        @(savingReconciliationSession
+                            ? "Creating…"
+                            : "Create reconciliation")
+                    </button>
+
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @onclick="CancelReconciliationSession">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </EditForm>
+    }
+
+    @{
+        var visibleSessions =
+            selectedBankAccountId is null
+                ? reconciliationSessions
+                : reconciliationSessions
+                    .Where(x =>
+                        x.BankAccountId ==
+                        selectedBankAccountId.Value)
+                    .ToList();
+    }
+
+    @if (visibleSessions.Count == 0)
+    {
+        <div class="empty-state">
+            <strong>No reconciliation history</strong>
+            <span>
+                Create a reconciliation when you have a bank statement
+                period to balance.
+            </span>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive mt-3">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Bank account</th>
+                        <th>Statement period</th>
+                        <th class="text-end">Statement balance</th>
+                        <th class="text-end">Ledger balance</th>
+                        <th class="text-end">Difference</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    @foreach (var session in visibleSessions)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@session.BankAccount.Name</strong>
+                            </td>
+
+                            <td>
+                                @session.StatementStartDate.ToString("dd MMM yyyy")
+                                –
+                                @session.StatementEndDate.ToString("dd MMM yyyy")
+                            </td>
+
+                            <td class="text-end">
+                                $@session.ClosingStatementBalance.ToString("N2")
+                            </td>
+
+                            <td class="text-end">
+                                $@session.LedgerBalance.ToString("N2")
+                            </td>
+
+                            <td class="text-end @(Math.Abs(session.Difference) <= 0.01m ? "money-in" : "money-out")">
+                                $@session.Difference.ToString("N2")
+                            </td>
+
+                            <td>
+                                @if (session.IsCompleted)
+                                {
+                                    <span class="badge text-bg-success">
+                                        Completed
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-warning">
+                                        In progress
+                                    </span>
+                                }
+                            </td>
+
+                            <td class="text-end">
+                                @if (!session.IsCompleted && canReconcile)
+                                {
+                                    <div class="d-flex gap-2 justify-content-end">
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-primary"
+                                                @onclick="() => RefreshReconciliationSession(session.Id)">
+                                            Refresh
+                                        </button>
+
+                                        <button type="button"
+                                                class="btn btn-sm btn-primary"
+                                                @onclick="() => CompleteReconciliationSession(session.Id)">
+                                            Complete
+                                        </button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
     <section class="reconciliation"><div class="reconcile-heading"><div><h2>Reconciliation</h2><p>Match statement activity to the ledger</p></div><span>@VisibleStatementLines.Count(x => x.ReconciledAt is null) unreconciled</span></div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>Add a statement line to begin reconciling.</span></div> }
         else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "✓" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") · @item.BankAccount.Name · @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code — @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "—")</small> } else { <span>—</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">✐</button> } } else if (match is not null) { <small>Suggested: @match.PostedJournal.Reference</small><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }</div></div>
@@ -255,6 +454,10 @@ else
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showFeeds, readingStatement, postingCoding; private Guid importBankAccountId; private Guid? codingStatementId; private IBrowserFile? selectedStatement; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
+    private List<BankReconciliationSession> reconciliationSessions = [];
+private ReconciliationSessionModel reconciliationModel = new();
+private bool showReconciliationSession;
+private bool savingReconciliationSession;
     protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); await Reload(); }
     private async Task Reload()
     {
@@ -263,6 +466,19 @@ else
         var ids = accounts.Select(x => x.Id).ToArray();
         transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
         statementLines = await Db.BankStatementLines.AsNoTracking().Include(x => x.BankAccount).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.TransactionDate).Take(100).ToListAsync();
+        var loadedReconciliationSessions =
+    await Db.BankReconciliationSessions
+        .AsNoTracking()
+        .Include(x => x.BankAccount)
+        .Where(x =>
+            x.OrganisationId == OrganisationId)
+        .ToListAsync();
+
+reconciliationSessions =
+    loadedReconciliationSessions
+        .OrderByDescending(x => x.StatementEndDate)
+        .ThenByDescending(x => x.CreatedAt)
+        .ToList();
         await LoadCodedAccounts();
         balances = transactions.GroupBy(x => x.LedgerAccountId).ToDictionary(x => x.Key, x => x.Sum(y => y.Debit - y.Credit));
         if (accounts.Count > 0 && statementModel.BankAccountId == Guid.Empty) statementModel.BankAccountId = accounts[0].Id;
@@ -704,5 +920,134 @@ private static string CleanDescription(string description)
     }
 
     return description;
+}
+
+private void BeginReconciliationSession()
+{
+    status = null;
+
+    var bankAccountId =
+        selectedBankAccountId ??
+        accounts.FirstOrDefault()?.Id ??
+        Guid.Empty;
+
+    var today = DateOnly.FromDateTime(DateTime.Today);
+
+    reconciliationModel =
+        new ReconciliationSessionModel
+        {
+            BankAccountId = bankAccountId,
+            StatementStartDate =
+                new DateOnly(today.Year, today.Month, 1),
+            StatementEndDate = today
+        };
+
+    showReconciliationSession = true;
+}
+
+private void CancelReconciliationSession()
+{
+    showReconciliationSession = false;
+    reconciliationModel = new();
+}
+
+private async Task CreateReconciliationSession()
+{
+    try
+    {
+        savingReconciliationSession = true;
+        status = null;
+
+        await ReconciliationSessions.CreateAsync(
+            userId,
+            new BankReconciliationSessionRequest(
+                OrganisationId,
+                reconciliationModel.BankAccountId,
+                reconciliationModel.StatementStartDate,
+                reconciliationModel.StatementEndDate,
+                reconciliationModel.OpeningStatementBalance,
+                reconciliationModel.ClosingStatementBalance));
+
+        statusClass = "alert-success";
+        status = "Bank reconciliation created.";
+
+        showReconciliationSession = false;
+        reconciliationModel = new();
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+    }
+    finally
+    {
+        savingReconciliationSession = false;
+    }
+}
+
+private sealed class ReconciliationSessionModel
+{
+    [Required]
+    public Guid BankAccountId { get; set; }
+
+    [Required]
+    public DateOnly StatementStartDate { get; set; }
+
+    [Required]
+    public DateOnly StatementEndDate { get; set; }
+
+    public decimal OpeningStatementBalance { get; set; }
+
+    public decimal ClosingStatementBalance { get; set; }
+}
+
+private async Task RefreshReconciliationSession(Guid sessionId)
+{
+    try
+    {
+        await ReconciliationSessions.RefreshAsync(
+            userId,
+            OrganisationId,
+            sessionId);
+
+        statusClass = "alert-success";
+        status = "Reconciliation balance refreshed.";
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+    }
+}
+
+private async Task CompleteReconciliationSession(Guid sessionId)
+{
+    try
+    {
+        await ReconciliationSessions.CompleteAsync(
+            userId,
+            OrganisationId,
+            sessionId);
+
+        statusClass = "alert-success";
+        status = "Bank reconciliation completed.";
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+    }
 }
 }
