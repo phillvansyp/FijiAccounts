@@ -10,6 +10,13 @@ public sealed record AccountingPeriodRequest(
     DateOnly StartsOn,
     DateOnly EndsOn);
 
+public sealed record AccountingPeriodUpdateRequest(
+    Guid OrganisationId,
+    Guid PeriodId,
+    string Name,
+    DateOnly StartsOn,
+    DateOnly EndsOn);
+
 public sealed record AccountingPeriodReadiness(
     int UnreconciledBankStatementLines,
     int IncompleteBankReconciliations,
@@ -52,6 +59,12 @@ public sealed class AccountingPeriodService(
                 "The period end cannot be before its start.");
         }
 
+        if (string.IsNullOrWhiteSpace(request.Name))
+{
+    throw new InvalidOperationException(
+        "Enter an accounting period name.");
+}
+
         var overlaps =
             await db.AccountingPeriods.AnyAsync(
                 x =>
@@ -89,6 +102,79 @@ public sealed class AccountingPeriodService(
 
         return period;
     }
+
+    public async Task<AccountingPeriod> UpdateAsync(
+    string userId,
+    AccountingPeriodUpdateRequest request,
+    CancellationToken ct = default)
+{
+    if (!await access.CanManageTeamAsync(
+            userId,
+            request.OrganisationId))
+    {
+        throw new UnauthorizedAccessException(
+            "Only owners and administrators can manage accounting periods.");
+    }
+
+    if (request.EndsOn < request.StartsOn)
+    {
+        throw new InvalidOperationException(
+            "The period end cannot be before its start.");
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        throw new InvalidOperationException(
+            "Enter an accounting period name.");
+    }
+
+    var period =
+        await db.AccountingPeriods
+            .SingleOrDefaultAsync(
+                x =>
+                    x.Id == request.PeriodId &&
+                    x.OrganisationId == request.OrganisationId,
+                ct)
+        ?? throw new InvalidOperationException(
+            "Accounting period not found.");
+
+    if (period.IsLocked)
+    {
+        throw new InvalidOperationException(
+            "Unlock the accounting period before editing it.");
+    }
+
+    var overlaps =
+        await db.AccountingPeriods.AnyAsync(
+            x =>
+                x.OrganisationId == request.OrganisationId &&
+                x.Id != request.PeriodId &&
+                request.StartsOn <= x.EndsOn &&
+                request.EndsOn >= x.StartsOn,
+            ct);
+
+    if (overlaps)
+    {
+        throw new InvalidOperationException(
+            "Accounting periods cannot overlap.");
+    }
+
+    period.Name = request.Name.Trim();
+    period.StartsOn = request.StartsOn;
+    period.EndsOn = request.EndsOn;
+
+    db.AuditEvents.Add(
+        Audit(
+            request.OrganisationId,
+            userId,
+            "AccountingPeriodUpdated",
+            period,
+            false));
+
+    await db.SaveChangesAsync(ct);
+
+    return period;
+}
 
     public async Task<AccountingPeriodReadiness> GetReadinessAsync(
         string userId,
