@@ -8,7 +8,6 @@ namespace FijiAccounts.Web.Services;
 
 public sealed record FixedAssetRequest(
     Guid OrganisationId,
-    string AssetNumber,
     string Name,
     DateOnly AcquisitionDate,
     decimal Cost,
@@ -32,17 +31,6 @@ public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessServi
     {
         throw new UnauthorizedAccessException(
             "You cannot maintain fixed assets for this organisation.");
-    }
-
-    if (string.IsNullOrWhiteSpace(request.AssetNumber) ||
-        string.IsNullOrWhiteSpace(request.Name) ||
-        request.Cost <= 0 ||
-        request.ResidualValue < 0 ||
-        request.ResidualValue >= request.Cost ||
-        request.UsefulLifeMonths < 1)
-    {
-        throw new InvalidOperationException(
-            "Enter valid asset details, cost, residual value and useful life.");
     }
 
     var ids = new[]
@@ -91,6 +79,27 @@ public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessServi
             IsolationLevel.Serializable,
             ct);
 
+            var existingNumbers =
+    await db.FixedAssets
+        .Where(x => x.OrganisationId == request.OrganisationId)
+        .Select(x => x.AssetNumber)
+        .ToListAsync(ct);
+
+var nextNumber =
+    existingNumbers
+        .Where(x =>
+            x.StartsWith("FA-") &&
+            int.TryParse(x[3..], out _))
+        .Select(x =>
+            int.TryParse(x[3..], out var number)
+                ? number
+                : 0)
+        .DefaultIfEmpty(0)
+        .Max() + 1;
+
+var assetNumber =
+    $"FA-{nextNumber:0000}";
+
     PostedJournal? acquisitionJournal = null;
 
     if (acquisitionBank is not null)
@@ -101,7 +110,7 @@ public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessServi
                 new(
                     request.OrganisationId,
                     request.AcquisitionDate,
-                    $"FA-{request.AssetNumber.Trim().ToUpperInvariant()}",
+                    $"ACQ-{assetNumber}",
                     $"Fixed asset acquisition · {request.Name.Trim()}",
                     [
                         new(
@@ -122,8 +131,7 @@ public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessServi
         new FixedAsset
         {
             OrganisationId = request.OrganisationId,
-            AssetNumber =
-                request.AssetNumber.Trim().ToUpperInvariant(),
+            AssetNumber = assetNumber,
             Name = request.Name.Trim(),
             AcquisitionDate = request.AcquisitionDate,
             Cost = request.Cost,

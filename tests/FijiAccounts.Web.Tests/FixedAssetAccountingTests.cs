@@ -40,27 +40,26 @@ public sealed class FixedAssetAccountingTests
         await test.Db.SaveChangesAsync();
 
         var asset =
-            await service.CreateAsync(
-                test.UserId,
-                new FixedAssetRequest(
-                    OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-001",
-                    Name: "Office Computer",
-                    AcquisitionDate: new DateOnly(2026, 8, 18),
-                    Cost: 2400m,
-                    ResidualValue: 400m,
-                    UsefulLifeMonths: 36,
-                    AssetAccountId: assetAccount.Id,
-                    DepreciationExpenseAccountId:
-                        test.Account("6900").Id,
-                    AccumulatedDepreciationAccountId:
-                        accumulatedDepreciation.Id,
-                    AcquisitionBankAccountId: bank.Id));
+    await service.CreateAsync(
+        test.UserId,
+        new FixedAssetRequest(
+            OrganisationId: test.Organisation.Id,
+            Name: "Office Computer",
+            AcquisitionDate: new DateOnly(2026, 8, 18),
+            Cost: 2400m,
+            ResidualValue: 400m,
+            UsefulLifeMonths: 36,
+            AssetAccountId: assetAccount.Id,
+            DepreciationExpenseAccountId: test.Account("6900").Id,
+            AccumulatedDepreciationAccountId: accumulatedDepreciation.Id,
+            AcquisitionBankAccountId: bank.Id));
 
-        var saved =
-            await test.Db.FixedAssets
-                .AsNoTracking()
-                .SingleAsync(x => x.Id == asset.Id);
+Assert.Equal("FA-0001", asset.AssetNumber);
+
+var saved =
+    await test.Db.FixedAssets
+        .AsNoTracking()
+        .SingleAsync(x => x.Id == asset.Id);
 
         Assert.Equal(
             bank.Id,
@@ -68,6 +67,8 @@ public sealed class FixedAssetAccountingTests
 
         Assert.NotNull(
             saved.AcquisitionJournalId);
+
+        Assert.Equal("FA-0001", saved.AssetNumber);
 
         var journal =
             await test.LoadJournalAsync(
@@ -154,10 +155,9 @@ public sealed class FixedAssetAccountingTests
             await fixedAssets.CreateAsync(
                 test.UserId,
                 new FixedAssetRequest(
-                    OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-DEP-001",
-                    Name: "Test Equipment",
-                    AcquisitionDate: new DateOnly(2026, 1, 1),
+    OrganisationId: test.Organisation.Id,
+    Name: "Test Equipment",
+    AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
                     ResidualValue: 0m,
                     UsefulLifeMonths: 12,
@@ -279,10 +279,9 @@ public sealed class FixedAssetAccountingTests
             await fixedAssets.CreateAsync(
                 test.UserId,
                 new FixedAssetRequest(
-                    OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-DEP-002",
-                    Name: "Second Test Equipment",
-                    AcquisitionDate: new DateOnly(2026, 1, 1),
+    OrganisationId: test.Organisation.Id,
+    Name: "Test Equipment",
+    AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
                     ResidualValue: 0m,
                     UsefulLifeMonths: 12,
@@ -381,10 +380,9 @@ public sealed class FixedAssetAccountingTests
             await fixedAssets.CreateAsync(
                 test.UserId,
                 new FixedAssetRequest(
-                    OrganisationId: test.Organisation.Id,
-                    AssetNumber: "FA-DEP-003",
-                    Name: "Residual Value Asset",
-                    AcquisitionDate: new DateOnly(2026, 1, 1),
+    OrganisationId: test.Organisation.Id,
+    Name: "Test Equipment",
+    AcquisitionDate: new DateOnly(2026, 1, 1),
                     Cost: 12_000m,
                     ResidualValue: 2_000m,
                     UsefulLifeMonths: 10,

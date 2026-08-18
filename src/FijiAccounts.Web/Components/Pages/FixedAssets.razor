@@ -1,5 +1,6 @@
 @page "/o/{OrganisationId:guid}/assets"
 @attribute [Authorize]
+
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
@@ -7,6 +8,7 @@
 @using FijiAccounts.Domain.Accounting
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
+
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject FixedAssetService AssetService
@@ -14,23 +16,522 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>Fixed assets · Account Island</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+
+@if (access is null)
+{
+    <div class="alert alert-danger">
+        You do not have access to this organisation.
+    </div>
+}
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Accounting</p><h1>Fixed assets</h1><p class="page-intro">Maintain the book register and post straight-line depreciation.</p></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print register</button></div>
-    @if (canManage && assetAccounts.Count > 0 && expenseAccounts.Count > 0) { <details class="setup-card mb-4"><summary><strong>+ Register fixed asset</strong></summary><EditForm Model="model" OnValidSubmit="Create" FormName="fixed-asset" class="mt-3"><DataAnnotationsValidator /><ValidationSummary /><div class="row"><div class="col-md-2 mb-3"><label class="form-label">Asset number</label><InputText class="form-control" @bind-Value="model.AssetNumber" /></div><div class="col-md-4 mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="model.Name" /></div><div class="col-md-2 mb-3"><label class="form-label">Acquired</label><InputDate class="form-control" @bind-Value="model.AcquisitionDate" /></div><div class="col-md-2 mb-3"><label class="form-label">Cost</label><InputNumber class="form-control" @bind-Value="model.Cost" /></div><div class="col-md-2 mb-3"><label class="form-label">Residual value</label><InputNumber class="form-control" @bind-Value="model.ResidualValue" /></div></div><div class="row"><div class="col-md-3 mb-3"><label class="form-label">Useful life (months)</label><InputNumber class="form-control" @bind-Value="model.UsefulLifeMonths" /></div><div class="col-md-3 mb-3"><label class="form-label">Asset account</label><InputSelect class="form-select" @bind-Value="model.AssetAccountId">@foreach (var item in assetAccounts) { <option value="@item.Id">@item.Code — @item.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Accumulated depreciation</label><InputSelect class="form-select" @bind-Value="model.AccumulatedAccountId">@foreach (var item in assetAccounts) { <option value="@item.Id">@item.Code — @item.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Depreciation expense</label><InputSelect class="form-select" @bind-Value="model.ExpenseAccountId">@foreach (var item in expenseAccounts) { <option value="@item.Id">@item.Code — @item.Name</option> }</InputSelect></div></div><button class="btn btn-primary">Register asset</button></EditForm></details> }
-    @if (message is not null) { <div class="alert @messageClass">@message</div> }
-    <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Book register</span><h2>Assets</h2></div><span>@assets.Count active</span></div>@if (assets.Count == 0) { <div class="empty-state"><strong>No fixed assets</strong><span>Register assets to begin book depreciation.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Asset</th><th>Acquired</th><th class="text-end">Cost</th><th class="text-end">Accumulated depreciation</th><th class="text-end">Book value</th><th>Useful life</th><th class="no-print">Post through</th></tr></thead><tbody>@foreach (var asset in assets) { var accumulated = asset.DepreciationEntries.Sum(x => x.Amount); <tr><td><strong>@asset.AssetNumber · @asset.Name</strong><small class="d-block text-muted">@asset.AssetAccount.Code — @asset.AssetAccount.Name</small></td><td>@asset.AcquisitionDate.ToString("dd MMM yyyy")</td><td class="text-end">$@asset.Cost.ToString("N2")</td><td class="text-end">$@accumulated.ToString("N2")</td><td class="text-end"><strong>$@((asset.Cost - accumulated).ToString("N2"))</strong></td><td>@asset.UsefulLifeMonths months</td><td class="no-print"><div class="d-flex gap-2"><InputDate class="form-control form-control-sm" @bind-Value="depreciationDate" /><button class="btn btn-sm btn-outline-primary" @onclick="() => Depreciate(asset.Id)">Post</button></div></td></tr> }</tbody></table></div> }</section>
-    <div class="alert alert-info mt-4">This register calculates book depreciation only. Tax depreciation and capital allowance rules must be handled by the verified tax pack for the organisation’s jurisdiction.</div>
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Accounting</p>
+            <h1>Fixed assets</h1>
+            <p class="page-intro">
+                Maintain the book register, post asset acquisitions and calculate straight-line depreciation.
+            </p>
+        </div>
+
+        <button class="btn btn-outline-secondary no-print"
+                onclick="window.print()">
+            Print register
+        </button>
+    </div>
+
+    @if (canManage &&
+         assetAccounts.Count > 0 &&
+         expenseAccounts.Count > 0 &&
+         bankAccounts.Count > 0)
+    {
+                <details class="setup-card mb-4" open>
+            <summary>
+                <strong>Register fixed asset</strong>
+            </summary>
+
+            <EditForm Model="model"
+                      OnValidSubmit="Create"
+                      FormName="fixed-asset"
+                      class="mt-3">
+
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Name</label>
+                        <InputText class="form-control"
+                                   @bind-Value="model.Name" />
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Acquired</label>
+                        <InputDate class="form-control"
+                                   @bind-Value="model.AcquisitionDate" />
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Cost</label>
+                        <InputNumber class="form-control"
+                                     @bind-Value="model.Cost" />
+                    </div>
+
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">Residual value</label>
+                        <InputNumber class="form-control"
+                                     @bind-Value="model.ResidualValue" />
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Useful life (months)</label>
+                        <InputNumber class="form-control"
+                                     @bind-Value="model.UsefulLifeMonths" />
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Asset account</label>
+                        <InputSelect class="form-select"
+                                     @bind-Value="model.AssetAccountId">
+                            @foreach (var item in assetAccounts)
+                            {
+                                <option value="@item.Id">
+                                    @item.Code — @item.Name
+                                </option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">
+                            Accumulated depreciation
+                        </label>
+
+                        <InputSelect class="form-select"
+                                     @bind-Value="model.AccumulatedAccountId">
+                            @foreach (var item in assetAccounts)
+                            {
+                                <option value="@item.Id">
+                                    @item.Code — @item.Name
+                                </option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">
+                            Depreciation expense
+                        </label>
+
+                        <InputSelect class="form-select"
+                                     @bind-Value="model.ExpenseAccountId">
+                            @foreach (var item in expenseAccounts)
+                            {
+                                <option value="@item.Id">
+                                    @item.Code — @item.Name
+                                </option>
+                            }
+                        </InputSelect>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">
+                            Paid from account
+                        </label>
+
+                        <InputSelect class="form-select"
+                                     @bind-Value="model.AcquisitionBankAccountId">
+                            @foreach (var item in bankAccounts)
+                            {
+                                <option value="@item.Id">
+                                    @item.Code — @item.Name
+                                </option>
+                            }
+                        </InputSelect>
+
+                        <div class="form-text">
+                            The asset cost will be posted to the fixed asset account
+                            and credited to this account.
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary">
+                    Register and post asset
+                </button>
+            </EditForm>
+        </details>
+    }
+    else if (canManage && bankAccounts.Count == 0)
+    {
+        <div class="alert alert-warning">
+            Add an active bank or card account before posting a fixed asset acquisition.
+        </div>
+    }
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">
+            @message
+        </div>
+    }
+
+    <section class="detail-card">
+        <div class="card-heading">
+            <div>
+                <span class="eyebrow">Book register</span>
+                <h2>Assets</h2>
+            </div>
+
+            <span>@assets.Count active</span>
+        </div>
+
+        @if (assets.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No fixed assets</strong>
+                <span>Register assets to begin book depreciation.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Asset</th>
+                            <th>Acquired</th>
+                            <th>Paid from</th>
+                            <th class="text-end">Cost</th>
+                            <th class="text-end">
+                                Accumulated depreciation
+                            </th>
+                            <th class="text-end">Book value</th>
+                            <th>Useful life</th>
+                            <th>Acquisition</th>
+                            <th class="no-print">Post through</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @foreach (var asset in assets)
+                        {
+                            var accumulated =
+                                asset.DepreciationEntries.Sum(x => x.Amount);
+
+                            var bookValue =
+                                asset.Cost - accumulated;
+
+                            <tr>
+                                <td>
+                                    <strong>
+                                        @asset.AssetNumber · @asset.Name
+                                    </strong>
+
+                                    <small class="d-block text-muted">
+                                        @asset.AssetAccount.Code —
+                                        @asset.AssetAccount.Name
+                                    </small>
+                                </td>
+
+                                <td>
+                                    @asset.AcquisitionDate.ToString("dd MMM yyyy")
+                                </td>
+
+                                <td>
+                                    @if (asset.AcquisitionBankAccount is not null)
+                                    {
+                                        <span>
+                                            @asset.AcquisitionBankAccount.Code —
+                                            @asset.AcquisitionBankAccount.Name
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">
+                                            Register only
+                                        </span>
+                                    }
+                                </td>
+
+                                <td class="text-end">
+                                    $@asset.Cost.ToString("N2")
+                                </td>
+
+                                <td class="text-end">
+                                    $@accumulated.ToString("N2")
+                                </td>
+
+                                <td class="text-end">
+                                    <strong>
+                                        $@bookValue.ToString("N2")
+                                    </strong>
+                                </td>
+
+                                <td>
+                                    @asset.UsefulLifeMonths months
+                                </td>
+
+                                <td>
+                                    @if (asset.AcquisitionJournalId is not null)
+                                    {
+                                        <span class="badge text-bg-success">
+                                            Posted
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">
+                                            Not posted
+                                        </span>
+                                    }
+                                </td>
+
+                                <td class="no-print">
+                                    <div class="d-flex gap-2">
+                                        <InputDate class="form-control form-control-sm"
+                                                   @bind-Value="depreciationDate" />
+
+                                        <button class="btn btn-sm btn-outline-primary"
+                                                @onclick="() => Depreciate(asset.Id)">
+                                            Post
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <div class="alert alert-info mt-4">
+        This register calculates book depreciation only.
+        Tax depreciation and capital allowance rules must be handled by
+        the verified tax pack for the organisation's jurisdiction.
+    </div>
 }
 
 @code {
-    [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage; private List<LedgerAccount> assetAccounts = [], expenseAccounts = []; private List<FixedAsset> assets = []; private AssetModel model = new(); private DateOnly depreciationDate = DateOnly.FromDateTime(DateTime.Today); private string? message; private string messageClass = "alert-success";
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); assetAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Asset).OrderBy(x => x.Code).ToListAsync(); expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Expense).OrderBy(x => x.Code).ToListAsync(); Reset(); await Reload(); }
-    private async Task Reload() => assets = await Db.FixedAssets.AsNoTracking().Include(x => x.AssetAccount).Include(x => x.DepreciationEntries).Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.AssetNumber).ToListAsync();
-    private void Reset() => model = new AssetModel { AssetAccountId = assetAccounts.FirstOrDefault()?.Id ?? Guid.Empty, AccumulatedAccountId = assetAccounts.FirstOrDefault()?.Id ?? Guid.Empty, ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty };
-    private async Task Create() { try { var asset = await AssetService.CreateAsync(userId, new FixedAssetRequest(OrganisationId, model.AssetNumber, model.Name, model.AcquisitionDate, model.Cost, model.ResidualValue, model.UsefulLifeMonths, model.AssetAccountId, model.ExpenseAccountId, model.AccumulatedAccountId)); messageClass = "alert-success"; message = $"Asset {asset.AssetNumber} registered."; Reset(); await Reload(); } catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; } }
-    private async Task Depreciate(Guid id) { try { var entry = await AssetService.DepreciateThroughAsync(userId, OrganisationId, id, depreciationDate); messageClass = "alert-success"; message = $"Book depreciation of ${entry.Amount:N2} posted."; await Reload(); } catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; } }
-    private sealed class AssetModel { [Required, StringLength(40)] public string AssetNumber { get; set; } = ""; [Required, StringLength(160)] public string Name { get; set; } = ""; public DateOnly AcquisitionDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Range(.01, 999999999)] public decimal Cost { get; set; } [Range(0, 999999999)] public decimal ResidualValue { get; set; } [Range(1, 1200)] public int UsefulLifeMonths { get; set; } = 60; public Guid AssetAccountId { get; set; } public Guid AccumulatedAccountId { get; set; } public Guid ExpenseAccountId { get; set; } }
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    private AccessibleOrganisation? access;
+
+    private string userId = "";
+
+    private bool canManage;
+
+    private List<LedgerAccount> assetAccounts = [];
+
+    private List<LedgerAccount> expenseAccounts = [];
+
+    private List<LedgerAccount> bankAccounts = [];
+
+    private List<FixedAsset> assets = [];
+
+    private AssetModel model = new();
+
+    private DateOnly depreciationDate =
+        DateOnly.FromDateTime(DateTime.Today);
+
+    private string? message;
+
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state =
+            await AuthenticationStateProvider
+                .GetAuthenticationStateAsync();
+
+        userId =
+            UserManager.GetUserId(state.User)!;
+
+        access =
+            await TenantAccess.FindAsync(
+                userId,
+                OrganisationId);
+
+        if (access is null)
+        {
+            return;
+        }
+
+        canManage =
+            await TenantAccess.CanPostJournalsAsync(
+                userId,
+                OrganisationId);
+
+        assetAccounts =
+            await Db.LedgerAccounts
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.IsActive &&
+                    x.Type == AccountType.Asset)
+                .OrderBy(x => x.Code)
+                .ToListAsync();
+
+        expenseAccounts =
+            await Db.LedgerAccounts
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.IsActive &&
+                    x.Type == AccountType.Expense)
+                .OrderBy(x => x.Code)
+                .ToListAsync();
+
+        bankAccounts =
+            await Db.LedgerAccounts
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.IsActive &&
+                    x.IsBankAccount)
+                .OrderBy(x => x.Code)
+                .ToListAsync();
+
+        Reset();
+
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        assets =
+            await Db.FixedAssets
+                .AsNoTracking()
+                .Include(x => x.AssetAccount)
+                .Include(x => x.AcquisitionBankAccount)
+                .Include(x => x.DepreciationEntries)
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.IsActive)
+                .OrderBy(x => x.AssetNumber)
+                .ToListAsync();
+    }
+
+    private void Reset()
+    {
+        model =
+            new AssetModel
+            {
+                AssetAccountId =
+                    assetAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty,
+
+                AccumulatedAccountId =
+                    assetAccounts
+                        .FirstOrDefault(
+                            x =>
+                                x.Code !=
+                                assetAccounts.FirstOrDefault()?.Code)
+                        ?.Id ??
+                    assetAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty,
+
+                ExpenseAccountId =
+                    expenseAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty,
+
+                AcquisitionBankAccountId =
+                    bankAccounts.FirstOrDefault()?.Id
+            };
+    }
+
+    private async Task Create()
+    {
+        try
+        {
+            var asset =
+                await AssetService.CreateAsync(
+                    userId,
+                    new FixedAssetRequest(
+    OrganisationId,
+    model.Name,
+                        model.AcquisitionDate,
+                        model.Cost,
+                        model.ResidualValue,
+                        model.UsefulLifeMonths,
+                        model.AssetAccountId,
+                        model.ExpenseAccountId,
+                        model.AccumulatedAccountId,
+                        model.AcquisitionBankAccountId));
+
+            messageClass = "alert-success";
+
+            message =
+                $"Asset {asset.AssetNumber} registered and acquisition posted.";
+
+            Reset();
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private async Task Depreciate(Guid id)
+    {
+        try
+        {
+            var entry =
+                await AssetService.DepreciateThroughAsync(
+                    userId,
+                    OrganisationId,
+                    id,
+                    depreciationDate);
+
+            messageClass = "alert-success";
+
+            message =
+                $"Book depreciation of ${entry.Amount:N2} posted.";
+
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private sealed class AssetModel
+    {
+
+        [Required]
+        [StringLength(160)]
+        public string Name { get; set; } = "";
+
+        public DateOnly AcquisitionDate { get; set; } =
+            DateOnly.FromDateTime(DateTime.Today);
+
+        [Range(.01, 999999999)]
+        public decimal Cost { get; set; }
+
+        [Range(0, 999999999)]
+        public decimal ResidualValue { get; set; }
+
+        [Range(1, 1200)]
+        public int UsefulLifeMonths { get; set; } = 60;
+
+        public Guid AssetAccountId { get; set; }
+
+        public Guid AccumulatedAccountId { get; set; }
+
+        public Guid ExpenseAccountId { get; set; }
+
+        [Required]
+        public Guid? AcquisitionBankAccountId { get; set; }
+    }
 }
