@@ -39,6 +39,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BankRule> BankRules => Set<BankRule>();
     public DbSet<ProductItem> ProductItems => Set<ProductItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+    public DbSet<FixedAssetDisposal> FixedAssetDisposals =>
+    Set<FixedAssetDisposal>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -148,6 +150,55 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<FixedAsset>().Property(x => x.Cost).HasPrecision(18, 2); builder.Entity<FixedAsset>().Property(x => x.ResidualValue).HasPrecision(18, 2);
         builder.Entity<FixedAssetDepreciation>().HasIndex(x => new { x.FixedAssetId, x.ThroughDate }).IsUnique(); builder.Entity<FixedAssetDepreciation>().Property(x => x.Amount).HasPrecision(18, 2);
         builder.Entity<FixedAssetDepreciation>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FixedAssetDisposal>()
+    .HasIndex(x => x.FixedAssetId)
+    .IsUnique();
+
+builder.Entity<FixedAssetDisposal>()
+    .Property(x => x.Proceeds)
+    .HasPrecision(18, 2);
+
+builder.Entity<FixedAssetDisposal>()
+    .Property(x => x.AccumulatedDepreciation)
+    .HasPrecision(18, 2);
+
+builder.Entity<FixedAssetDisposal>()
+    .Property(x => x.BookValue)
+    .HasPrecision(18, 2);
+
+builder.Entity<FixedAssetDisposal>()
+    .Property(x => x.GainLoss)
+    .HasPrecision(18, 2);
+
+builder.Entity<FixedAssetDisposal>()
+    .HasOne(x => x.FixedAsset)
+    .WithOne(x => x.Disposal)
+    .HasForeignKey<FixedAssetDisposal>(x => x.FixedAssetId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<FixedAssetDisposal>()
+    .HasOne(x => x.BankAccount)
+    .WithMany()
+    .HasForeignKey(x => x.BankAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<FixedAssetDisposal>()
+    .HasOne(x => x.GainAccount)
+    .WithMany()
+    .HasForeignKey(x => x.GainAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<FixedAssetDisposal>()
+    .HasOne(x => x.LossAccount)
+    .WithMany()
+    .HasForeignKey(x => x.LossAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<FixedAssetDisposal>()
+    .HasOne(x => x.PostedJournal)
+    .WithMany()
+    .HasForeignKey(x => x.PostedJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<FixedAsset>()
     .HasOne(x => x.AcquisitionJournal)
     .WithMany()
@@ -177,8 +228,12 @@ builder.Entity<FixedAsset>()
             ChangeTracker.Entries<SalesCreditNote>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<SalesQuote>().Any(x => x.State == EntityState.Deleted && x.Entity.Status != QuoteStatus.Draft) ||
             ChangeTracker.Entries<SalesQuoteLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<FixedAssetDepreciation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<InventoryMovement>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+                        ChangeTracker.Entries<FixedAssetDepreciation>()
+                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<FixedAssetDisposal>()
+                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<InventoryMovement>()
+                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<BankTransfer>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<CustomerReceipt>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<CustomerReceiptAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||

@@ -15,9 +15,45 @@ public Guid? AcquisitionBankAccountId { get; set; }
 public LedgerAccount? AcquisitionBankAccount { get; set; }
     public bool IsActive { get; set; } = true; public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow; public required string CreatedByUserId { get; set; }
     public List<FixedAssetDepreciation> DepreciationEntries { get; set; } = [];
+    public FixedAssetDisposal? Disposal { get; set; }
 }
 
 public sealed class FixedAssetDepreciation
 {
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid FixedAssetId { get; set; } public FixedAsset FixedAsset { get; set; } = null!; public DateOnly ThroughDate { get; set; } public decimal Amount { get; set; } public Guid PostedJournalId { get; set; } public PostedJournal PostedJournal { get; set; } = null!; public DateTimeOffset PostedAt { get; set; } = DateTimeOffset.UtcNow; public required string PostedByUserId { get; set; }
+}
+
+public sealed class FixedAssetDisposal
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid FixedAssetId { get; set; }
+    public FixedAsset FixedAsset { get; set; } = null!;
+
+    public DateOnly DisposalDate { get; set; }
+
+    public decimal Proceeds { get; set; }
+
+    public decimal AccumulatedDepreciation { get; set; }
+
+    public decimal BookValue { get; set; }
+
+    public decimal GainLoss { get; set; }
+
+    public Guid BankAccountId { get; set; }
+    public LedgerAccount BankAccount { get; set; } = null!;
+
+    public Guid GainAccountId { get; set; }
+    public LedgerAccount GainAccount { get; set; } = null!;
+
+    public Guid LossAccountId { get; set; }
+    public LedgerAccount LossAccount { get; set; } = null!;
+
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+
+    public DateTimeOffset PostedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    public required string PostedByUserId { get; set; }
 }
