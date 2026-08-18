@@ -244,31 +244,150 @@ else
                                 </td>
 
                                 <td class="no-print">
-                                    @if (asset.IsActive)
-                                    {
-                                        <div class="d-flex gap-2 flex-wrap">
-                                            <button type="button"
-                                                    class="btn btn-sm btn-outline-primary"
-                                                    @onclick="() => SelectDepreciation(asset)">
-                                                Depreciate
-                                            </button>
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary"
+                @onclick="() => ToggleHistory(asset.Id)">
+            @(selectedHistoryAssetId == asset.Id ? "Hide history" : "History")
+        </button>
 
-                                            <button type="button"
-                                                    class="btn btn-sm btn-outline-danger"
-                                                    @onclick="() => SelectDisposal(asset)">
-                                                Dispose
-                                            </button>
-                                        </div>
-                                    }
-                                    else if (asset.Disposal is not null)
+        @if (asset.IsActive)
+        {
+            <button type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    @onclick="() => SelectDepreciation(asset)">
+                Depreciate
+            </button>
+
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger"
+                    @onclick="() => SelectDisposal(asset)">
+                Dispose
+            </button>
+        }
+        else if (asset.Disposal is not null)
+        {
+            <small class="text-muted align-self-center">
+                Disposed @asset.Disposal.DisposalDate.ToString("dd MMM yyyy")
+                · Proceeds $@asset.Disposal.Proceeds.ToString("N2")
+            </small>
+        }
+    </div>
+</td>
+                            </tr>
+
+                            @if (selectedHistoryAssetId == asset.Id)
+{
+    <tr class="no-print">
+        <td colspan="7">
+            <div class="border rounded p-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <span class="eyebrow">Accounting history</span>
+                        <h3 class="h6 mb-0">
+                            @asset.AssetNumber · @asset.Name
+                        </h3>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Event</th>
+                                <th>Description</th>
+                                <th class="text-end">Amount</th>
+                                <th>Journal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>@asset.AcquisitionDate.ToString("dd MMM yyyy")</td>
+                                <td>Acquisition</td>
+                                <td>Asset registered at cost</td>
+                                <td class="text-end">
+                                    $@asset.Cost.ToString("N2")
+                                </td>
+                                <td>
+                                    @if (asset.AcquisitionJournalId.HasValue)
                                     {
-                                        <small class="text-muted">
-                                            Disposed @asset.Disposal.DisposalDate.ToString("dd MMM yyyy")
-                                            · Proceeds $@asset.Disposal.Proceeds.ToString("N2")
-                                        </small>
+                                        <a href="o/@OrganisationId/journals/@asset.AcquisitionJournalId.Value">
+                                            View journal
+                                        </a>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
                                     }
                                 </td>
                             </tr>
+
+                            @foreach (var entry in asset.DepreciationEntries
+                                .OrderBy(x => x.ThroughDate)
+                                .ThenBy(x => x.PostedAt))
+                            {
+                                <tr>
+                                    <td>@entry.ThroughDate.ToString("dd MMM yyyy")</td>
+                                    <td>Depreciation</td>
+                                    <td>
+                                        Depreciation through
+                                        @entry.ThroughDate.ToString("dd MMM yyyy")
+                                    </td>
+                                    <td class="text-end">
+                                        $@entry.Amount.ToString("N2")
+                                    </td>
+                                    <td>
+                                        <a href="o/@OrganisationId/journals/@entry.PostedJournalId">
+                                            View journal
+                                        </a>
+                                    </td>
+                                </tr>
+                            }
+
+                            @if (asset.Disposal is not null)
+                            {
+                                <tr>
+                                    <td>@asset.Disposal.DisposalDate.ToString("dd MMM yyyy")</td>
+                                    <td>Disposal</td>
+                                    <td>
+                                        Proceeds $@asset.Disposal.Proceeds.ToString("N2")
+                                        · Book value $@asset.Disposal.BookValue.ToString("N2")
+
+                                        @if (asset.Disposal.GainLoss > 0)
+                                        {
+                                            <span>
+                                                · Gain $@asset.Disposal.GainLoss.ToString("N2")
+                                            </span>
+                                        }
+                                        else if (asset.Disposal.GainLoss < 0)
+                                        {
+                                            <span>
+                                                · Loss $@Math.Abs(asset.Disposal.GainLoss).ToString("N2")
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span> · No gain or loss</span>
+                                        }
+                                    </td>
+                                    <td class="text-end">
+                                        $@asset.Disposal.Proceeds.ToString("N2")
+                                    </td>
+                                    <td>
+                                        <a href="o/@OrganisationId/journals/@asset.Disposal.PostedJournalId">
+                                            View journal
+                                        </a>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </td>
+    </tr>
+}
 
                             @if (selectedDepreciationAssetId == asset.Id && asset.IsActive)
                             {
@@ -456,7 +575,8 @@ else
     private DisposalModel disposalModel = new();
 
     private Guid? selectedDepreciationAssetId;
-    private Guid? selectedDisposalAssetId;
+private Guid? selectedDisposalAssetId;
+private Guid? selectedHistoryAssetId;
 
     private DateOnly depreciationDate =
         DateOnly.FromDateTime(DateTime.Today);
@@ -610,8 +730,8 @@ else
                         OrganisationId,
                         model.Name,
                         model.AcquisitionDate,
-                        model.Cost,
-                        model.ResidualValue,
+                        model.Cost!.Value,
+model.ResidualValue ?? 0m,
                         model.UsefulLifeMonths,
                         model.AssetAccountId,
                         model.ExpenseAccountId,
@@ -632,13 +752,23 @@ else
         }
     }
 
+    private void ToggleHistory(Guid assetId)
+{
+    selectedHistoryAssetId =
+        selectedHistoryAssetId == assetId
+            ? null
+            : assetId;
+}
+
     private void SelectDepreciation(FixedAsset asset)
-    {
-        selectedDepreciationAssetId = asset.Id;
-        selectedDisposalAssetId = null;
-        depreciationDate =
-            DateOnly.FromDateTime(DateTime.Today);
-    }
+{
+    selectedDepreciationAssetId = asset.Id;
+    selectedDisposalAssetId = null;
+    selectedHistoryAssetId = null;
+
+    depreciationDate =
+        DateOnly.FromDateTime(DateTime.Today);
+}
 
     private void CancelDepreciation()
     {
@@ -713,15 +843,16 @@ private decimal BookValueAfterPreview(FixedAsset asset)
     }
 
     private void SelectDisposal(FixedAsset asset)
-    {
-        selectedDisposalAssetId = asset.Id;
-        selectedDepreciationAssetId = null;
+{
+    selectedDisposalAssetId = asset.Id;
+    selectedDepreciationAssetId = null;
+    selectedHistoryAssetId = null;
 
-        ResetDisposal();
+    ResetDisposal();
 
-        disposalModel.DisposalDate =
-            DateOnly.FromDateTime(DateTime.Today);
-    }
+    disposalModel.DisposalDate =
+        DateOnly.FromDateTime(DateTime.Today);
+}
 
     private void CancelDisposal()
     {
@@ -844,11 +975,12 @@ private string DisposalGainLossText(FixedAsset asset)
         public DateOnly AcquisitionDate { get; set; } =
             DateOnly.FromDateTime(DateTime.Today);
 
-        [Range(.01, 999999999)]
-        public decimal Cost { get; set; }
+        [Required]
+[Range(typeof(decimal), "0.01", "999999999")]
+public decimal? Cost { get; set; }
 
-        [Range(0, 999999999)]
-        public decimal ResidualValue { get; set; }
+[Range(typeof(decimal), "0", "999999999")]
+public decimal? ResidualValue { get; set; }
 
         [Range(1, 1200)]
         public int UsefulLifeMonths { get; set; } = 60;
