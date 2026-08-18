@@ -30,7 +30,7 @@ else
             <p class="eyebrow">Accounting</p>
             <h1>Fixed assets</h1>
             <p class="page-intro">
-                Maintain the book register, post asset acquisitions and calculate straight-line depreciation.
+                Maintain the asset register, post acquisitions, depreciation and disposals.
             </p>
         </div>
 
@@ -45,9 +45,9 @@ else
          expenseAccounts.Count > 0 &&
          bankAccounts.Count > 0)
     {
-                <details class="setup-card mb-4" open>
+        <details class="setup-card mb-4">
             <summary>
-                <strong>Register fixed asset</strong>
+                <strong>+ Register fixed asset</strong>
             </summary>
 
             <EditForm Model="model"
@@ -105,10 +105,7 @@ else
                     </div>
 
                     <div class="col-md-3 mb-3">
-                        <label class="form-label">
-                            Accumulated depreciation
-                        </label>
-
+                        <label class="form-label">Accumulated depreciation</label>
                         <InputSelect class="form-select"
                                      @bind-Value="model.AccumulatedAccountId">
                             @foreach (var item in assetAccounts)
@@ -121,10 +118,7 @@ else
                     </div>
 
                     <div class="col-md-3 mb-3">
-                        <label class="form-label">
-                            Depreciation expense
-                        </label>
-
+                        <label class="form-label">Depreciation expense</label>
                         <InputSelect class="form-select"
                                      @bind-Value="model.ExpenseAccountId">
                             @foreach (var item in expenseAccounts)
@@ -139,10 +133,7 @@ else
 
                 <div class="row">
                     <div class="col-md-6 mb-3">
-                        <label class="form-label">
-                            Paid from account
-                        </label>
-
+                        <label class="form-label">Paid from account</label>
                         <InputSelect class="form-select"
                                      @bind-Value="model.AcquisitionBankAccountId">
                             @foreach (var item in bankAccounts)
@@ -152,11 +143,6 @@ else
                                 </option>
                             }
                         </InputSelect>
-
-                        <div class="form-text">
-                            The asset cost will be posted to the fixed asset account
-                            and credited to this account.
-                        </div>
                     </div>
                 </div>
 
@@ -165,12 +151,6 @@ else
                 </button>
             </EditForm>
         </details>
-    }
-    else if (canManage && bankAccounts.Count == 0)
-    {
-        <div class="alert alert-warning">
-            Add an active bank or card account before posting a fixed asset acquisition.
-        </div>
     }
 
     @if (message is not null)
@@ -187,7 +167,7 @@ else
                 <h2>Assets</h2>
             </div>
 
-            <span>@assets.Count active</span>
+            <span>@activeAssets active · @disposedAssets disposed</span>
         </div>
 
         @if (assets.Count == 0)
@@ -204,16 +184,12 @@ else
                     <thead>
                         <tr>
                             <th>Asset</th>
+                            <th>Status</th>
                             <th>Acquired</th>
-                            <th>Paid from</th>
                             <th class="text-end">Cost</th>
-                            <th class="text-end">
-                                Accumulated depreciation
-                            </th>
+                            <th class="text-end">Accumulated depreciation</th>
                             <th class="text-end">Book value</th>
-                            <th>Useful life</th>
-                            <th>Acquisition</th>
-                            <th class="no-print">Post through</th>
+                            <th class="no-print">Actions</th>
                         </tr>
                     </thead>
 
@@ -228,35 +204,25 @@ else
 
                             <tr>
                                 <td>
-                                    <strong>
-                                        @asset.AssetNumber · @asset.Name
-                                    </strong>
+                                    <strong>@asset.AssetNumber · @asset.Name</strong>
 
                                     <small class="d-block text-muted">
-                                        @asset.AssetAccount.Code —
-                                        @asset.AssetAccount.Name
+                                        @asset.AssetAccount.Code — @asset.AssetAccount.Name
                                     </small>
                                 </td>
 
                                 <td>
-                                    @asset.AcquisitionDate.ToString("dd MMM yyyy")
-                                </td>
-
-                                <td>
-                                    @if (asset.AcquisitionBankAccount is not null)
+                                    @if (asset.IsActive)
                                     {
-                                        <span>
-                                            @asset.AcquisitionBankAccount.Code —
-                                            @asset.AcquisitionBankAccount.Name
-                                        </span>
+                                        <span class="badge text-bg-success">Active</span>
                                     }
                                     else
                                     {
-                                        <span class="text-muted">
-                                            Register only
-                                        </span>
+                                        <span class="badge text-bg-secondary">Disposed</span>
                                     }
                                 </td>
+
+                                <td>@asset.AcquisitionDate.ToString("dd MMM yyyy")</td>
 
                                 <td class="text-end">
                                     $@asset.Cost.ToString("N2")
@@ -267,54 +233,177 @@ else
                                 </td>
 
                                 <td class="text-end">
-                                    <strong>
-                                        $@bookValue.ToString("N2")
-                                    </strong>
-                                </td>
-
-                                <td>
-                                    @asset.UsefulLifeMonths months
-                                </td>
-
-                                <td>
-                                    @if (asset.AcquisitionJournalId is not null)
+                                    @if (asset.Disposal is null)
                                     {
-                                        <span class="badge text-bg-success">
-                                            Posted
-                                        </span>
+                                        <strong>$@bookValue.ToString("N2")</strong>
                                     }
                                     else
                                     {
-                                        <span class="badge text-bg-secondary">
-                                            Not posted
-                                        </span>
+                                        <strong>$@asset.Disposal.BookValue.ToString("N2")</strong>
                                     }
                                 </td>
 
                                 <td class="no-print">
-                                    <div class="d-flex gap-2">
-                                        <InputDate class="form-control form-control-sm"
-                                                   @bind-Value="depreciationDate" />
+                                    @if (asset.IsActive)
+                                    {
+                                        <div class="d-flex gap-2 flex-wrap">
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-primary"
+                                                    @onclick="() => SelectDepreciation(asset)">
+                                                Depreciate
+                                            </button>
 
-                                        <button class="btn btn-sm btn-outline-primary"
-                                                @onclick="() => Depreciate(asset.Id)">
-                                            Post
-                                        </button>
-                                    </div>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-danger"
+                                                    @onclick="() => SelectDisposal(asset)">
+                                                Dispose
+                                            </button>
+                                        </div>
+                                    }
+                                    else if (asset.Disposal is not null)
+                                    {
+                                        <small class="text-muted">
+                                            Disposed @asset.Disposal.DisposalDate.ToString("dd MMM yyyy")
+                                            · Proceeds $@asset.Disposal.Proceeds.ToString("N2")
+                                        </small>
+                                    }
                                 </td>
                             </tr>
+
+                            @if (selectedDepreciationAssetId == asset.Id && asset.IsActive)
+                            {
+                                <tr class="no-print">
+                                    <td colspan="7">
+                                        <div class="border rounded p-3">
+                                            <div class="row align-items-end">
+    <div class="col-md-3 mb-3">
+        <label class="form-label">Depreciate through</label>
+        <InputDate class="form-control"
+                   @bind-Value="depreciationDate" />
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <label class="form-label">Depreciation to post</label>
+        <div class="form-control bg-light">
+            $@DepreciationPreview(asset).ToString("N2")
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <label class="form-label">Book value after posting</label>
+        <div class="form-control bg-light">
+            $@BookValueAfterPreview(asset).ToString("N2")
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <button class="btn btn-primary"
+                disabled="@(DepreciationPreview(asset) <= 0)"
+                @onclick="() => Depreciate(asset.Id)">
+            Post depreciation
+        </button>
+
+        <button class="btn btn-link"
+                @onclick="CancelDepreciation">
+            Cancel
+        </button>
+    </div>
+</div>
+
+<div class="form-text">
+    Straight-line book depreciation is calculated automatically from cost,
+    residual value and useful life.
+</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+
+                            @if (selectedDisposalAssetId == asset.Id && asset.IsActive)
+                            {
+                                <tr class="no-print">
+                                    <td colspan="7">
+                                        <div class="border rounded p-3">
+                                            <h3 class="h6 mb-3">
+                                                Dispose @asset.AssetNumber · @asset.Name
+                                            </h3>
+
+                                            <div class="row">
+                                                <div class="col-md-2 mb-3">
+                                                    <label class="form-label">Disposal date</label>
+                                                    <InputDate class="form-control"
+                                                               @bind-Value="disposalModel.DisposalDate" />
+                                                </div>
+
+                                                <div class="col-md-2 mb-3">
+                                                    <label class="form-label">Proceeds</label>
+                                                    <InputNumber class="form-control"
+                                                                 @bind-Value="disposalModel.Proceeds" />
+                                                </div>
+
+                                                <div class="col-md-3 mb-3">
+                                                    <label class="form-label">Received into</label>
+                                                    <InputSelect class="form-select"
+                                                                 @bind-Value="disposalModel.BankAccountId">
+                                                        @foreach (var item in bankAccounts)
+                                                        {
+                                                            <option value="@item.Id">
+                                                                @item.Code — @item.Name
+                                                            </option>
+                                                        }
+                                                    </InputSelect>
+                                                </div>
+
+                                                <div class="col-md-2 mb-3">
+                                                    <label class="form-label">Gain account</label>
+                                                    <InputSelect class="form-select"
+                                                                 @bind-Value="disposalModel.GainAccountId">
+                                                        @foreach (var item in revenueAccounts)
+                                                        {
+                                                            <option value="@item.Id">
+                                                                @item.Code — @item.Name
+                                                            </option>
+                                                        }
+                                                    </InputSelect>
+                                                </div>
+
+                                                <div class="col-md-3 mb-3">
+                                                    <label class="form-label">Loss account</label>
+                                                    <InputSelect class="form-select"
+                                                                 @bind-Value="disposalModel.LossAccountId">
+                                                        @foreach (var item in expenseAccounts)
+                                                        {
+                                                            <option value="@item.Id">
+                                                                @item.Code — @item.Name
+                                                            </option>
+                                                        }
+                                                    </InputSelect>
+                                                </div>
+                                            </div>
+
+                                            <div class="alert alert-warning">
+                                                Disposal is permanent and will post an accounting journal.
+                                            </div>
+
+                                            <button class="btn btn-danger"
+                                                    @onclick="() => Dispose(asset.Id)">
+                                                Dispose asset
+                                            </button>
+
+                                            <button class="btn btn-link"
+                                                    @onclick="CancelDisposal">
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
                         }
                     </tbody>
                 </table>
             </div>
         }
     </section>
-
-    <div class="alert alert-info mt-4">
-        This register calculates book depreciation only.
-        Tax depreciation and capital allowance rules must be handled by
-        the verified tax pack for the organisation's jurisdiction.
-    </div>
 }
 
 @code {
@@ -322,33 +411,37 @@ else
     public Guid OrganisationId { get; set; }
 
     private AccessibleOrganisation? access;
-
     private string userId = "";
-
     private bool canManage;
 
     private List<LedgerAccount> assetAccounts = [];
-
     private List<LedgerAccount> expenseAccounts = [];
-
+    private List<LedgerAccount> revenueAccounts = [];
     private List<LedgerAccount> bankAccounts = [];
-
     private List<FixedAsset> assets = [];
 
     private AssetModel model = new();
+    private DisposalModel disposalModel = new();
+
+    private Guid? selectedDepreciationAssetId;
+    private Guid? selectedDisposalAssetId;
 
     private DateOnly depreciationDate =
         DateOnly.FromDateTime(DateTime.Today);
 
     private string? message;
-
     private string messageClass = "alert-success";
+
+    private int activeAssets =>
+        assets.Count(x => x.IsActive);
+
+    private int disposedAssets =>
+        assets.Count(x => !x.IsActive);
 
     protected override async Task OnParametersSetAsync()
     {
         var state =
-            await AuthenticationStateProvider
-                .GetAuthenticationStateAsync();
+            await AuthenticationStateProvider.GetAuthenticationStateAsync();
 
         userId =
             UserManager.GetUserId(state.User)!;
@@ -388,6 +481,16 @@ else
                 .OrderBy(x => x.Code)
                 .ToListAsync();
 
+        revenueAccounts =
+            await Db.LedgerAccounts
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.IsActive &&
+                    x.Type == AccountType.Revenue)
+                .OrderBy(x => x.Code)
+                .ToListAsync();
+
         bankAccounts =
             await Db.LedgerAccounts
                 .AsNoTracking()
@@ -399,6 +502,7 @@ else
                 .ToListAsync();
 
         Reset();
+        ResetDisposal();
 
         await Reload();
     }
@@ -411,10 +515,10 @@ else
                 .Include(x => x.AssetAccount)
                 .Include(x => x.AcquisitionBankAccount)
                 .Include(x => x.DepreciationEntries)
-                .Where(x =>
-                    x.OrganisationId == OrganisationId &&
-                    x.IsActive)
-                .OrderBy(x => x.AssetNumber)
+                .Include(x => x.Disposal)
+                .Where(x => x.OrganisationId == OrganisationId)
+                .OrderByDescending(x => x.IsActive)
+                .ThenBy(x => x.AssetNumber)
                 .ToListAsync();
     }
 
@@ -428,12 +532,7 @@ else
                     Guid.Empty,
 
                 AccumulatedAccountId =
-                    assetAccounts
-                        .FirstOrDefault(
-                            x =>
-                                x.Code !=
-                                assetAccounts.FirstOrDefault()?.Code)
-                        ?.Id ??
+                    assetAccounts.Skip(1).FirstOrDefault()?.Id ??
                     assetAccounts.FirstOrDefault()?.Id ??
                     Guid.Empty,
 
@@ -446,6 +545,28 @@ else
             };
     }
 
+    private void ResetDisposal()
+    {
+        disposalModel =
+            new DisposalModel
+            {
+                DisposalDate =
+                    DateOnly.FromDateTime(DateTime.Today),
+
+                BankAccountId =
+                    bankAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty,
+
+                GainAccountId =
+                    revenueAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty,
+
+                LossAccountId =
+                    expenseAccounts.FirstOrDefault()?.Id ??
+                    Guid.Empty
+            };
+    }
+
     private async Task Create()
     {
         try
@@ -454,8 +575,8 @@ else
                 await AssetService.CreateAsync(
                     userId,
                     new FixedAssetRequest(
-    OrganisationId,
-    model.Name,
+                        OrganisationId,
+                        model.Name,
                         model.AcquisitionDate,
                         model.Cost,
                         model.ResidualValue,
@@ -466,12 +587,10 @@ else
                         model.AcquisitionBankAccountId));
 
             messageClass = "alert-success";
-
             message =
                 $"Asset {asset.AssetNumber} registered and acquisition posted.";
 
             Reset();
-
             await Reload();
         }
         catch (Exception ex)
@@ -480,6 +599,61 @@ else
             message = ex.Message;
         }
     }
+
+    private void SelectDepreciation(FixedAsset asset)
+    {
+        selectedDepreciationAssetId = asset.Id;
+        selectedDisposalAssetId = null;
+        depreciationDate =
+            DateOnly.FromDateTime(DateTime.Today);
+    }
+
+    private void CancelDepreciation()
+    {
+        selectedDepreciationAssetId = null;
+    }
+
+    private decimal DepreciationPreview(FixedAsset asset)
+{
+    if (depreciationDate < asset.AcquisitionDate)
+    {
+        return 0m;
+    }
+
+    var months =
+        Math.Min(
+            asset.UsefulLifeMonths,
+            (depreciationDate.Year - asset.AcquisitionDate.Year) * 12 +
+            depreciationDate.Month -
+            asset.AcquisitionDate.Month +
+            1);
+
+    var target =
+        Math.Round(
+            (asset.Cost - asset.ResidualValue) *
+            months /
+            asset.UsefulLifeMonths,
+            2);
+
+    var alreadyPosted =
+        asset.DepreciationEntries.Sum(x => x.Amount);
+
+    return Math.Max(
+        0m,
+        target - alreadyPosted);
+}
+
+private decimal BookValueAfterPreview(FixedAsset asset)
+{
+    var alreadyPosted =
+        asset.DepreciationEntries.Sum(x => x.Amount);
+
+    return Math.Max(
+        asset.ResidualValue,
+        asset.Cost -
+        alreadyPosted -
+        DepreciationPreview(asset));
+}
 
     private async Task Depreciate(Guid id)
     {
@@ -493,9 +667,65 @@ else
                     depreciationDate);
 
             messageClass = "alert-success";
-
             message =
                 $"Book depreciation of ${entry.Amount:N2} posted.";
+
+            selectedDepreciationAssetId = null;
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private void SelectDisposal(FixedAsset asset)
+    {
+        selectedDisposalAssetId = asset.Id;
+        selectedDepreciationAssetId = null;
+
+        ResetDisposal();
+
+        disposalModel.DisposalDate =
+            DateOnly.FromDateTime(DateTime.Today);
+    }
+
+    private void CancelDisposal()
+    {
+        selectedDisposalAssetId = null;
+        ResetDisposal();
+    }
+
+    private async Task Dispose(Guid id)
+    {
+        try
+        {
+            var disposal =
+                await AssetService.DisposeAsync(
+                    userId,
+                    new FixedAssetDisposalRequest(
+                        OrganisationId,
+                        id,
+                        disposalModel.DisposalDate,
+                        disposalModel.Proceeds,
+                        disposalModel.BankAccountId,
+                        disposalModel.GainAccountId,
+                        disposalModel.LossAccountId));
+
+            var resultText =
+                disposal.GainLoss > 0
+                    ? $"gain of ${disposal.GainLoss:N2}"
+                    : disposal.GainLoss < 0
+                        ? $"loss of ${Math.Abs(disposal.GainLoss):N2}"
+                        : "no gain or loss";
+
+            messageClass = "alert-success";
+            message =
+                $"Asset disposed. Book value ${disposal.BookValue:N2}; {resultText}.";
+
+            selectedDisposalAssetId = null;
+            ResetDisposal();
 
             await Reload();
         }
@@ -508,7 +738,6 @@ else
 
     private sealed class AssetModel
     {
-
         [Required]
         [StringLength(160)]
         public string Name { get; set; } = "";
@@ -533,5 +762,20 @@ else
 
         [Required]
         public Guid? AcquisitionBankAccountId { get; set; }
+    }
+
+    private sealed class DisposalModel
+    {
+        public DateOnly DisposalDate { get; set; } =
+            DateOnly.FromDateTime(DateTime.Today);
+
+        [Range(0, 999999999)]
+        public decimal Proceeds { get; set; }
+
+        public Guid BankAccountId { get; set; }
+
+        public Guid GainAccountId { get; set; }
+
+        public Guid LossAccountId { get; set; }
     }
 }
