@@ -169,4 +169,87 @@ public sealed class TrialBalanceAccountingTests
             august.TrialBalance.Sum(x => x.Debit),
             august.TrialBalance.Sum(x => x.Credit));
     }
+
+        [Fact]
+    public async Task SupplierBillVoidedInLaterPeriod_ChangesTrialBalanceOnlyFromVoidDate()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bill =
+            await test.Purchasing.PostBillAsync(
+                test.UserId,
+                new SupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "TB-VOID-BILL-001",
+                    BillDate: new DateOnly(2026, 7, 15),
+                    DueDate: new DateOnly(2026, 8, 14),
+                    Lines:
+                    [
+                        new SupplierBillLineRequest(
+                            Description: "July office expense",
+                            Quantity: 1m,
+                            UnitPrice: 40m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId:
+                                test.Account("6000").Id)
+                    ]));
+
+        await test.Purchasing.VoidBillAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            new DateOnly(2026, 8, 5),
+            "August correction");
+
+        var reports =
+            new FinancialReportService(test.Db);
+
+        var july =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 1),
+                new DateOnly(2026, 7, 31));
+
+        var august =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31));
+
+        var julyPayables =
+            july.TrialBalance
+                .Where(x => x.Code == "2000")
+                .Sum(x => x.Credit - x.Debit);
+
+        var julyExpenses =
+            july.TrialBalance
+                .Where(x => x.Code == "6000")
+                .Sum(x => x.Debit - x.Credit);
+
+        var augustPayables =
+            august.TrialBalance
+                .Where(x => x.Code == "2000")
+                .Sum(x => x.Credit - x.Debit);
+
+        var augustExpenses =
+            august.TrialBalance
+                .Where(x => x.Code == "6000")
+                .Sum(x => x.Debit - x.Credit);
+
+        Assert.Equal(45m, julyPayables);
+        Assert.Equal(40m, julyExpenses);
+
+        Assert.Equal(0m, augustPayables);
+        Assert.Equal(0m, augustExpenses);
+
+        Assert.Equal(
+            july.TrialBalance.Sum(x => x.Debit),
+            july.TrialBalance.Sum(x => x.Credit));
+
+        Assert.Equal(
+            august.TrialBalance.Sum(x => x.Debit),
+            august.TrialBalance.Sum(x => x.Credit));
+    }
 }

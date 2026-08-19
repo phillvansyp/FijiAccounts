@@ -139,4 +139,68 @@ public sealed class ProfitAndLossAccountingTests
         Assert.Equal(100m, julyRevenue);
         Assert.Equal(-100m, augustRevenue);
     }
+
+        [Fact]
+    public async Task SupplierBillVoidedInLaterPeriod_ReversesExpenseOnlyInVoidPeriod()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bill =
+            await test.Purchasing.PostBillAsync(
+                test.UserId,
+                new SupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "PL-VOID-BILL-001",
+                    BillDate: new DateOnly(2026, 7, 15),
+                    DueDate: new DateOnly(2026, 8, 14),
+                    Lines:
+                    [
+                        new SupplierBillLineRequest(
+                            Description: "July office expense",
+                            Quantity: 1m,
+                            UnitPrice: 40m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId:
+                                test.Account("6000").Id)
+                    ]));
+
+        await test.Purchasing.VoidBillAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            new DateOnly(2026, 8, 5),
+            "August correction");
+
+        var reports =
+            new FinancialReportService(test.Db);
+
+        var july =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 1),
+                new DateOnly(2026, 7, 31));
+
+        var august =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31));
+
+        var julyExpenses =
+            july.Balances
+                .Where(x =>
+                    x.Type == AccountType.Expense)
+                .Sum(x => x.DisplayAmount);
+
+        var augustExpenses =
+            august.Balances
+                .Where(x =>
+                    x.Type == AccountType.Expense)
+                .Sum(x => x.DisplayAmount);
+
+        Assert.Equal(40m, julyExpenses);
+        Assert.Equal(-40m, augustExpenses);
+    }
 }
