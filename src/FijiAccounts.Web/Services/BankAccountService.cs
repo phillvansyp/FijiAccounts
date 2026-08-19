@@ -69,7 +69,7 @@ public sealed class BankAccountService(
 
         await db.SaveChangesAsync(ct);
 
-        if (request.OpeningBalance != 0m)
+                if (request.OpeningBalance != 0m)
         {
             var openingEquity =
                 await db.LedgerAccounts
@@ -81,10 +81,11 @@ public sealed class BankAccountService(
                             x.IsActive,
                         ct);
 
-            if (openingEquity is null)
+            if (openingEquity is null ||
+                openingEquity.Type != AccountType.Equity)
             {
                 throw new InvalidOperationException(
-                    "Opening Balance Equity (3200) is required.");
+                    "Opening Balance Equity (3200) must be an active Equity account.");
             }
 
             var amount =
