@@ -57,7 +57,78 @@ if (!controls.TryGetValue(
 journalLines.Add(
     new(receivables.Id, number, 0, request.Amount));
         var issues = request.RestockTrackedItems ? await db.InventoryMovements.Where(x => x.OrganisationId == request.OrganisationId && x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(ct) : [];
-        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; if (item.InventoryAccountId is null || item.CostAdjustmentAccountId is null) throw new InvalidOperationException($"Inventory accounts are missing for {item.Code}."); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); if (value > 0) { journalLines.Add(new(item.InventoryAccountId.Value, $"Return {item.Code}", value, 0)); journalLines.Add(new(item.CostAdjustmentAccountId.Value, $"Reverse cost {item.Code}", 0, value)); } }
+        foreach (var issue in issues)
+{
+    var item =
+        invoice.Lines
+            .Select(x => x.ProductItem)
+            .First(x => x?.Id == issue.ProductItemId)!;
+
+    if (item.InventoryAccountId is null ||
+        item.CostAdjustmentAccountId is null)
+    {
+        throw new InvalidOperationException(
+            $"Inventory accounts are missing for {item.Code}.");
+    }
+
+    var accountIds =
+        new[]
+        {
+            item.InventoryAccountId.Value,
+            item.CostAdjustmentAccountId.Value
+        };
+
+    var accounts =
+        await db.LedgerAccounts
+            .Where(x =>
+                x.OrganisationId == request.OrganisationId &&
+                x.IsActive &&
+                accountIds.Contains(x.Id))
+            .ToDictionaryAsync(
+                x => x.Id,
+                ct);
+
+    if (!accounts.TryGetValue(
+            item.InventoryAccountId.Value,
+            out var inventoryAccount) ||
+        inventoryAccount.Type != AccountType.Asset)
+    {
+        throw new InvalidOperationException(
+            $"Inventory account for {item.Code} must be an active Asset account.");
+    }
+
+    if (!accounts.TryGetValue(
+            item.CostAdjustmentAccountId.Value,
+            out var costAccount) ||
+        costAccount.Type != AccountType.Expense)
+    {
+        throw new InvalidOperationException(
+            $"Cost adjustment account for {item.Code} must be an active Expense account.");
+    }
+
+    var value =
+        decimal.Round(
+            -issue.ValueChange * ratio,
+            2,
+            MidpointRounding.AwayFromZero);
+
+    if (value > 0)
+    {
+        journalLines.Add(
+            new(
+                inventoryAccount.Id,
+                $"Return {item.Code}",
+                value,
+                0));
+
+        journalLines.Add(
+            new(
+                costAccount.Id,
+                $"Reverse cost {item.Code}",
+                0,
+                value));
+    }
+}
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines), ct);
         var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, PostedJournalId = journal.Id, CreatedByUserId = userId };
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }

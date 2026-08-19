@@ -54,7 +54,11 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
-        AddInventorySaleLines(invoice.Lines, journalLines);
+        await AddInventorySaleLinesAsync(
+    organisationId,
+    invoice.Lines,
+    journalLines,
+    cancellationToken);
         var journal = await posting.PostAsync(userId, new(organisationId, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.Status = InvoiceStatus.Posted; invoice.PostedJournalId = journal.Id; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
     }
@@ -176,24 +180,101 @@ if (!controlAccounts.TryGetValue(
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
-        AddInventorySaleLines(lines, journalLines);
+        await AddInventorySaleLinesAsync(
+    request.OrganisationId,
+    lines,
+    journalLines,
+    cancellationToken);
         var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) });
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
     }
 
-    private static void AddInventorySaleLines(IEnumerable<SalesInvoiceLine> lines, List<JournalLineInput> journalLines)
+    private async Task AddInventorySaleLinesAsync(
+    Guid organisationId,
+    IEnumerable<SalesInvoiceLine> lines,
+    List<JournalLineInput> journalLines,
+    CancellationToken ct)
+{
+    foreach (var group in lines
+        .Where(x => x.ProductItem?.Kind == ProductKind.TrackedItem)
+        .GroupBy(x => x.ProductItem!))
     {
-        foreach (var group in lines.Where(x => x.ProductItem?.Kind == ProductKind.TrackedItem).GroupBy(x => x.ProductItem!))
+        var item = group.Key;
+        var quantity = group.Sum(x => x.Quantity);
+
+        if (quantity > item.QuantityOnHand)
         {
-            var item = group.Key; var quantity = group.Sum(x => x.Quantity);
-            if (quantity > item.QuantityOnHand) throw new InvalidOperationException($"Insufficient stock for {item.Code}. {item.QuantityOnHand:N4} is available.");
-            if (item.InventoryAccountId is null || item.CostAdjustmentAccountId is null) throw new InvalidOperationException($"Set opening stock and inventory accounts for {item.Code} before selling it.");
-            var value = InventoryValuation.MovementValue(quantity, item.AverageCost);
-            if (value > 0) { journalLines.Add(new(item.CostAdjustmentAccountId.Value, $"Cost of {item.Code}", value, 0)); journalLines.Add(new(item.InventoryAccountId.Value, $"Stock issued {item.Code}", 0, value)); }
+            throw new InvalidOperationException(
+                $"Insufficient stock for {item.Code}. {item.QuantityOnHand:N4} is available.");
+        }
+
+        if (item.InventoryAccountId is null ||
+            item.CostAdjustmentAccountId is null)
+        {
+            throw new InvalidOperationException(
+                $"Set opening stock and inventory accounts for {item.Code} before selling it.");
+        }
+
+        var accountIds =
+            new[]
+            {
+                item.InventoryAccountId.Value,
+                item.CostAdjustmentAccountId.Value
+            };
+
+        var accounts =
+            await db.LedgerAccounts
+                .Where(x =>
+                    x.OrganisationId == organisationId &&
+                    x.IsActive &&
+                    accountIds.Contains(x.Id))
+                .ToDictionaryAsync(
+                    x => x.Id,
+                    ct);
+
+        if (!accounts.TryGetValue(
+                item.InventoryAccountId.Value,
+                out var inventoryAccount) ||
+            inventoryAccount.Type != AccountType.Asset)
+        {
+            throw new InvalidOperationException(
+                $"Inventory account for {item.Code} must be an active Asset account.");
+        }
+
+        if (!accounts.TryGetValue(
+                item.CostAdjustmentAccountId.Value,
+                out var costAccount) ||
+            costAccount.Type != AccountType.Expense)
+        {
+            throw new InvalidOperationException(
+                $"Cost adjustment account for {item.Code} must be an active Expense account.");
+        }
+
+        var value =
+            InventoryValuation.MovementValue(
+                quantity,
+                item.AverageCost);
+
+        if (value > 0)
+        {
+            journalLines.Add(
+                new(
+                    costAccount.Id,
+                    $"Cost of {item.Code}",
+                    value,
+                    0));
+
+            journalLines.Add(
+                new(
+                    inventoryAccount.Id,
+                    $"Stock issued {item.Code}",
+                    0,
+                    value));
         }
     }
+}
 
     private void RecordSaleMovements(SalesInvoice invoice, Guid journalId, string userId)
     {
