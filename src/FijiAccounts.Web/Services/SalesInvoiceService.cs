@@ -27,13 +27,33 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot post invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be posted.");
-        var controls = await db.LedgerAccounts.Where(x => x.OrganisationId == organisationId && (x.Code == "1100" || x.Code == "2100")).ToDictionaryAsync(x => x.Code, cancellationToken);
-        if (!controls.ContainsKey("1100") || !controls.ContainsKey("2100")) throw new InvalidOperationException("Accounts Receivable (1100) and VAT Payable (2100) are required.");
+        var controls = await db.LedgerAccounts
+    .Where(x =>
+        x.OrganisationId == organisationId &&
+        x.IsActive &&
+        (x.Code == "1100" || x.Code == "2100"))
+    .ToDictionaryAsync(
+        x => x.Code,
+        cancellationToken);
+
+if (!controls.TryGetValue("1100", out var receivables) ||
+    receivables.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        "Accounts Receivable (1100) must be an active Asset account.");
+}
+
+if (!controls.TryGetValue("2100", out var vatPayable) ||
+    vatPayable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "VAT Payable (2100) must be an active Liability account.");
+}
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         invoice.InvoiceNumber = $"INV-{invoice.SequenceNumber:D6}";
-        var journalLines = new List<JournalLineInput> { new(controls["1100"].Id, invoice.InvoiceNumber, invoice.Total, 0) };
+        var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
-        if (invoice.VatTotal > 0) journalLines.Add(new(controls["2100"].Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
+        if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
         AddInventorySaleLines(invoice.Lines, journalLines);
         var journal = await posting.PostAsync(userId, new(organisationId, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.Status = InvoiceStatus.Posted; invoice.PostedJournalId = journal.Id; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
@@ -109,8 +129,32 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         var revenueIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray();
         var revenue = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && revenueIds.Contains(x.Id) && x.Type == AccountType.Revenue).ToDictionaryAsync(x => x.Id, cancellationToken);
         if (revenue.Count != revenueIds.Length) throw new InvalidOperationException("Every invoice line must use an active revenue account.");
-        var controlAccounts = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && (x.Code == "1100" || x.Code == "2100")).ToDictionaryAsync(x => x.Code, cancellationToken);
-        if (!controlAccounts.ContainsKey("1100") || !controlAccounts.ContainsKey("2100")) throw new InvalidOperationException("Accounts Receivable (1100) and VAT Payable (2100) are required.");
+        var controlAccounts = await db.LedgerAccounts
+    .Where(x =>
+        x.OrganisationId == request.OrganisationId &&
+        x.IsActive &&
+        (x.Code == "1100" || x.Code == "2100"))
+    .ToDictionaryAsync(
+        x => x.Code,
+        cancellationToken);
+
+if (!controlAccounts.TryGetValue(
+        "1100",
+        out var receivables) ||
+    receivables.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        "Accounts Receivable (1100) must be an active Asset account.");
+}
+
+if (!controlAccounts.TryGetValue(
+        "2100",
+        out var vatPayable) ||
+    vatPayable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "VAT Payable (2100) must be an active Liability account.");
+}
 
         var vatSchedule = new FijiVatSchedule();
         var lines = request.Lines.Select(line =>
@@ -129,9 +173,9 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = $"INV-{sequence:D6}", IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
-        var journalLines = new List<JournalLineInput> { new(controlAccounts["1100"].Id, invoice.InvoiceNumber, invoice.Total, 0) };
+        var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
-        if (invoice.VatTotal > 0) journalLines.Add(new(controlAccounts["2100"].Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
+        if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
         AddInventorySaleLines(lines, journalLines);
         var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;

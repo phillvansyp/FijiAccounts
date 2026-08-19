@@ -1,5 +1,7 @@
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -71,5 +73,181 @@ public sealed class SalesInvoiceAccountingTests
 
         Assert.Equal(0m, vatPayable.Debit);
         Assert.Equal(12.50m, vatPayable.Credit);
+    }
+
+    [Fact]
+    public async Task CreateAndPostAsync_WhenReceivablesControlAccountIsInactive_IsRejected()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var receivables = test.Account("1100");
+        receivables.IsActive = false;
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.SalesInvoices.CreateAndPostAsync(
+                        test.UserId,
+                        new SalesInvoiceRequest(
+                            OrganisationId: test.Organisation.Id,
+                            CustomerId: test.Customer.Id,
+                            IssueDate: new DateOnly(2026, 8, 18),
+                            DueDate: new DateOnly(2026, 9, 17),
+                            Lines:
+                            [
+                                new SalesInvoiceLineRequest(
+                                    Description: "Inactive AR control test",
+                                    Quantity: 1m,
+                                    UnitPrice: 100m,
+                                    VatTreatment: VatTreatment.Standard,
+                                    RevenueAccountId: test.Account("4000").Id)
+                            ])));
+
+        Assert.Contains(
+            "1100",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAndPostAsync_WhenReceivablesControlAccountHasWrongType_IsRejected()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var receivables = test.Account("1100");
+        receivables.Type = AccountType.Liability;
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.SalesInvoices.CreateAndPostAsync(
+                        test.UserId,
+                        new SalesInvoiceRequest(
+                            OrganisationId: test.Organisation.Id,
+                            CustomerId: test.Customer.Id,
+                            IssueDate: new DateOnly(2026, 8, 18),
+                            DueDate: new DateOnly(2026, 9, 17),
+                            Lines:
+                            [
+                                new SalesInvoiceLineRequest(
+                                    Description: "Invalid AR control type test",
+                                    Quantity: 1m,
+                                    UnitPrice: 100m,
+                                    VatTreatment: VatTreatment.Standard,
+                                    RevenueAccountId: test.Account("4000").Id)
+                            ])));
+
+        Assert.Contains(
+            "1100",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAndPostAsync_WhenVatPayableControlAccountIsInactive_IsRejected()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var vatPayable = test.Account("2100");
+        vatPayable.IsActive = false;
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.SalesInvoices.CreateAndPostAsync(
+                        test.UserId,
+                        new SalesInvoiceRequest(
+                            OrganisationId: test.Organisation.Id,
+                            CustomerId: test.Customer.Id,
+                            IssueDate: new DateOnly(2026, 8, 18),
+                            DueDate: new DateOnly(2026, 9, 17),
+                            Lines:
+                            [
+                                new SalesInvoiceLineRequest(
+                                    Description: "Inactive VAT control test",
+                                    Quantity: 1m,
+                                    UnitPrice: 100m,
+                                    VatTreatment: VatTreatment.Standard,
+                                    RevenueAccountId: test.Account("4000").Id)
+                            ])));
+
+        Assert.Contains(
+            "2100",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAndPostAsync_WhenVatPayableControlAccountHasWrongType_IsRejected()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var vatPayable = test.Account("2100");
+        vatPayable.Type = AccountType.Asset;
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.SalesInvoices.CreateAndPostAsync(
+                        test.UserId,
+                        new SalesInvoiceRequest(
+                            OrganisationId: test.Organisation.Id,
+                            CustomerId: test.Customer.Id,
+                            IssueDate: new DateOnly(2026, 8, 18),
+                            DueDate: new DateOnly(2026, 9, 17),
+                            Lines:
+                            [
+                                new SalesInvoiceLineRequest(
+                                    Description: "Invalid VAT control type test",
+                                    Quantity: 1m,
+                                    UnitPrice: 100m,
+                                    VatTreatment: VatTreatment.Standard,
+                                    RevenueAccountId: test.Account("4000").Id)
+                            ])));
+
+        Assert.Contains(
+            "2100",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
     }
 }
