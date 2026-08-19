@@ -405,8 +405,7 @@ else
         LiabilityRows.Sum(x => x.DisplayAmount);
 
     private decimal EquityTotal =>
-        EquityRows.Sum(x => x.DisplayAmount) +
-        NetProfit;
+    EquityRows.Sum(x => x.DisplayAmount);
 
     private decimal TrialDebit =>
         report.TrialBalance.Sum(x => x.Debit);

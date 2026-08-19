@@ -105,31 +105,48 @@ public sealed class FinancialReportService(
                 })
                 .ToListAsync(ct);
 
+        var accumulatedProfit =
+    all
+        .Where(x =>
+            x.Type is AccountType.Revenue or AccountType.Expense)
+        .Sum(x => x.Credit - x.Debit);
+
         var balances =
-            all
-                .Where(x =>
-                    x.Type is AccountType.Asset
-                        or AccountType.Liability
-                        or AccountType.Equity)
-                .Select(x =>
+    all
+        .Where(x =>
+            x.Type is AccountType.Asset
+                or AccountType.Liability
+                or AccountType.Equity)
+        .Select(x =>
+            new FinancialAccountBalance(
+                x.Code,
+                x.Name,
+                x.Type,
+                x.Type == AccountType.Asset
+                    ? x.Debit - x.Credit
+                    : x.Credit - x.Debit))
+        .Concat(
+            accumulatedProfit == 0m
+                ? []
+                :
+                [
                     new FinancialAccountBalance(
-                        x.Code,
-                        x.Name,
-                        x.Type,
-                        x.Type == AccountType.Asset
-                            ? x.Debit - x.Credit
-                            : x.Credit - x.Debit))
-                .Concat(
-                    profit.Select(x =>
-                        new FinancialAccountBalance(
-                            x.Code,
-                            x.Name,
-                            x.Type,
-                            x.Type == AccountType.Revenue
-                                ? x.Credit - x.Debit
-                                : x.Debit - x.Credit)))
-                .OrderBy(x => x.Code)
-                .ToList();
+                        "",
+                        "Accumulated earnings",
+                        AccountType.Equity,
+                        accumulatedProfit)
+                ])
+        .Concat(
+            profit.Select(x =>
+                new FinancialAccountBalance(
+                    x.Code,
+                    x.Name,
+                    x.Type,
+                    x.Type == AccountType.Revenue
+                        ? x.Credit - x.Debit
+                        : x.Debit - x.Credit)))
+        .OrderBy(x => x.Code)
+        .ToList();
 
         return new FinancialReportData(
             balances,
