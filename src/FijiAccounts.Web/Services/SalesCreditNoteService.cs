@@ -29,7 +29,19 @@ public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccess
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines), ct);
         var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, PostedJournalId = journal.Id, CreatedByUserId = userId };
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
-        invoice.AmountCredited += request.Amount; if (invoice.Total - invoice.AmountPaid - invoice.AmountCredited == 0) invoice.Status = InvoiceStatus.Credited;
+        invoice.AmountCredited += request.Amount;
+
+var remaining =
+    invoice.Total -
+    invoice.AmountPaid -
+    invoice.AmountCredited;
+
+invoice.Status =
+    remaining <= 0
+        ? InvoiceStatus.Credited
+        : invoice.AmountPaid > 0 || invoice.AmountCredited > 0
+            ? InvoiceStatus.PartPaid
+            : InvoiceStatus.Posted;
         db.SalesCreditNotes.Add(credit); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, UserId = userId, EventType = "SalesCreditNotePosted", EntityType = nameof(SalesCreditNote), EntityId = credit.Id.ToString(), JsonData = JsonSerializer.Serialize(new { credit.CreditNoteNumber, invoice.InvoiceNumber, credit.Total, credit.VatTotal }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return credit;
     }
 }
