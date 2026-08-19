@@ -9,7 +9,10 @@ namespace FijiAccounts.Web.Services;
 public sealed record JournalLineInput(Guid AccountId, string Description, decimal Debit, decimal Credit);
 public sealed record JournalPostRequest(Guid OrganisationId, DateOnly Date, string Reference, string? Description, IReadOnlyList<JournalLineInput> Lines);
 
-public sealed class JournalPostingService(ApplicationDbContext db, TenantAccessService tenantAccess)
+public sealed class JournalPostingService(
+    ApplicationDbContext db,
+    TenantAccessService tenantAccess,
+    BankReconciliationService reconciliation)
 {
     public async Task<PostedJournal> PostAsync(string userId, JournalPostRequest request, CancellationToken cancellationToken = default)
     {
@@ -28,6 +31,25 @@ public sealed class JournalPostingService(ApplicationDbContext db, TenantAccessS
             .Where(x => accountIds.Contains(x.Id))
             .ToDictionary(x => x.Id);
         if (accounts.Count != accountIds.Length) throw new InvalidOperationException("Every account must be active and belong to the selected organisation.");
+
+        var bankAccountIds =
+    accounts.Values
+        .Where(x => x.IsBankAccount)
+        .Select(x => x.Id)
+        .ToArray();
+
+foreach (var bankAccountId in bankAccountIds)
+{
+    if (await reconciliation.IsInsideCompletedReconciliationAsync(
+            request.OrganisationId,
+            bankAccountId,
+            request.Date,
+            cancellationToken))
+    {
+        throw new InvalidOperationException(
+            "A journal cannot post to a bank account inside a completed reconciliation period.");
+    }
+}
 
         _ = new JournalEntry(request.OrganisationId, request.Date, request.Reference,
             request.Lines.Select(x => new JournalLine(accounts[x.AccountId].Code, x.Description, x.Debit, x.Credit)));

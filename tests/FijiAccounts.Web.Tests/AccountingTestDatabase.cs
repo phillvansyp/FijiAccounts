@@ -30,10 +30,16 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
     new TenantAccessService(
         Db);
 
+    Reconciliation =
+    new BankReconciliationService(
+        Db,
+        Access);
+
 Posting =
     new JournalPostingService(
         Db,
-        Access);
+        Access,
+        Reconciliation);
 
 BankAccounts =
     new BankAccountService(
@@ -46,11 +52,6 @@ SalesInvoices =
         Db,
         Access,
         Posting);
-
-Reconciliation =
-    new BankReconciliationService(
-        Db,
-        Access);
 
 Purchasing =
     new PurchasingService(
