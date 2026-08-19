@@ -30,13 +30,153 @@ else
     private AccessibleOrganisation? access; private BusinessParty? customer; private PeriodModel period = new(); private List<StatementRow> rows = []; private decimal openingBalance, closingBalance; private string? error;
     protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; customer = await Db.BusinessParties.AsNoTracking().SingleOrDefaultAsync(x => x.Id == CustomerId && x.OrganisationId == OrganisationId && (x.Type & PartyType.Customer) != 0); if (customer is not null) await Load(); }
     private async Task Load()
+{
+    error =
+        period.From > period.To
+            ? "The start date must be before the end date."
+            : null;
+
+    if (error is not null)
+        return;
+
+    var invoices =
+        await Db.SalesInvoices
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.CustomerId == CustomerId &&
+                x.Status != InvoiceStatus.Draft &&
+                x.IssueDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.IssueDate,
+                    x.CreatedAt,
+                    x.InvoiceNumber,
+                    "Invoice",
+                    x.Total,
+                    0))
+            .ToListAsync();
+
+    var invoiceVoids =
+        await Db.SalesInvoiceVoids
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.SalesInvoice.CustomerId == CustomerId &&
+                x.VoidDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.VoidDate,
+                    x.CreatedAt,
+                    x.SalesInvoice.InvoiceNumber,
+                    "Invoice void",
+                    0,
+                    x.SalesInvoice.Total))
+            .ToListAsync();
+
+    var receipts =
+        await Db.CustomerReceipts
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.CustomerId == CustomerId &&
+                x.ReceiptDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.ReceiptDate,
+                    x.CreatedAt,
+                    x.Reference,
+                    "Payment received",
+                    0,
+                    x.Amount))
+            .ToListAsync();
+
+    var receiptReversals =
+        await Db.CustomerReceiptReversals
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.CustomerReceipt.CustomerId == CustomerId &&
+                x.ReversalDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.ReversalDate,
+                    x.CreatedAt,
+                    x.CustomerReceipt.Reference,
+                    "Payment reversal",
+                    x.CustomerReceipt.Amount,
+                    0))
+            .ToListAsync();
+
+    var credits =
+        await Db.SalesCreditNotes
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.SalesInvoice.CustomerId == CustomerId &&
+                x.CreditDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.CreditDate,
+                    x.CreatedAt,
+                    x.CreditNoteNumber,
+                    "Credit note",
+                    0,
+                    x.Total))
+            .ToListAsync();
+
+    var creditReversals =
+        await Db.SalesCreditNoteReversals
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                x.SalesCreditNote.SalesInvoice.CustomerId == CustomerId &&
+                x.ReversalDate <= period.To)
+            .Select(x =>
+                new EventRow(
+                    x.ReversalDate,
+                    x.CreatedAt,
+                    x.SalesCreditNote.CreditNoteNumber,
+                    "Credit note reversal",
+                    x.SalesCreditNote.Total,
+                    0))
+            .ToListAsync();
+
+    var all =
+        invoices
+            .Concat(invoiceVoids)
+            .Concat(receipts)
+            .Concat(receiptReversals)
+            .Concat(credits)
+            .Concat(creditReversals)
+            .OrderBy(x => x.Date)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
+
+    openingBalance =
+        all.Where(x => x.Date < period.From)
+            .Sum(x => x.Debit - x.Credit);
+
+    var balance = openingBalance;
+
+    rows = [];
+
+    foreach (var item in all.Where(x => x.Date >= period.From))
     {
-        error = period.From > period.To ? "The start date must be before the end date." : null; if (error is not null) return;
-        var invoices = await Db.SalesInvoices.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CustomerId == CustomerId && x.Status != InvoiceStatus.Draft && x.Status != InvoiceStatus.Voided && x.IssueDate <= period.To).Select(x => new EventRow(x.IssueDate, x.CreatedAt, x.InvoiceNumber, "Invoice", x.Total, 0)).ToListAsync();
-        var receipts = await Db.CustomerReceipts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.CustomerId == CustomerId && x.ReceiptDate <= period.To).Select(x => new EventRow(x.ReceiptDate, x.CreatedAt, x.Reference, "Payment received", 0, x.Amount)).ToListAsync();
-        var credits = await Db.SalesCreditNotes.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.SalesInvoice.CustomerId == CustomerId && x.CreditDate <= period.To).Select(x => new EventRow(x.CreditDate, x.CreatedAt, x.CreditNoteNumber, "Credit note", 0, x.Total)).ToListAsync();
-        var all = invoices.Concat(receipts).Concat(credits).OrderBy(x => x.Date).ThenBy(x => x.CreatedAt).ToList(); openingBalance = all.Where(x => x.Date < period.From).Sum(x => x.Debit - x.Credit); var balance = openingBalance; rows = []; foreach (var item in all.Where(x => x.Date >= period.From)) { balance += item.Debit - item.Credit; rows.Add(new StatementRow(item.Date, item.Reference, item.Description, item.Debit, item.Credit, balance)); } closingBalance = balance;
+        balance += item.Debit - item.Credit;
+
+        rows.Add(
+            new StatementRow(
+                item.Date,
+                item.Reference,
+                item.Description,
+                item.Debit,
+                item.Credit,
+                balance));
     }
+
+    closingBalance = balance;
+}
     private sealed class PeriodModel { public DateOnly From { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddMonths(-1)); public DateOnly To { get; set; } = DateOnly.FromDateTime(DateTime.Today); }
     private sealed record EventRow(DateOnly Date, DateTimeOffset CreatedAt, string Reference, string Description, decimal Debit, decimal Credit); private sealed record StatementRow(DateOnly Date, string Reference, string Description, decimal Debit, decimal Credit, decimal Balance);
 }
