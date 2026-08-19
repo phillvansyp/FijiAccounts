@@ -291,6 +291,14 @@ else
                                                     @(periodReadiness.DraftSupplierBills == 1 ? "bill" : "bills")
                                                 </li>
                                             }
+
+                                            <div class="form-check mt-3">
+    <InputCheckbox class="form-check-input"
+                   @bind-Value="warningsAcknowledged" />
+    <label class="form-check-label">
+        I have reviewed these outstanding items and want to lock the period anyway.
+    </label>
+</div>
                                         </ul>
                                     </div>
                                 }
@@ -299,7 +307,13 @@ else
 
                         <div class="d-flex gap-2">
                             <button class="btn @(item.IsLocked ? "btn-warning" : "btn-danger")"
-                                    disabled="@(!item.IsLocked && loadingReadiness)"
+                                    disabled="@(
+    !item.IsLocked &&
+    (
+        loadingReadiness ||
+        periodReadiness is null ||
+        (!periodReadiness.IsReady && !warningsAcknowledged)
+    ))"
                                     @onclick="() => ConfirmToggle(item)">
                                 @(item.IsLocked ? "Confirm unlock" : "Confirm lock")
                             </button>
@@ -368,6 +382,8 @@ else
     private Guid? confirmingPeriodId;
     private AccountingPeriodReadiness? periodReadiness;
     private bool loadingReadiness;
+
+    private bool warningsAcknowledged;
 
     private string FinancialYearEnd =>
         new DateOnly(
@@ -579,13 +595,19 @@ else
         {
             loadingReadiness = false;
         }
+
+        confirmingPeriodId = item.Id;
+periodReadiness = null;
+warningsAcknowledged = false;
+status = null;
     }
 
     private void CancelConfirmation()
-    {
-        confirmingPeriodId = null;
-        periodReadiness = null;
-    }
+{
+    confirmingPeriodId = null;
+    periodReadiness = null;
+    warningsAcknowledged = false;
+}
 
     private async Task ConfirmToggle(AccountingPeriod item)
     {
@@ -594,10 +616,15 @@ else
             var wasLocked = item.IsLocked;
 
             await PeriodService.SetLockedAsync(
-                userId,
-                OrganisationId,
-                item.Id,
-                !wasLocked);
+    userId,
+    OrganisationId,
+    item.Id,
+    !wasLocked,
+    acknowledgeWarnings:
+        !wasLocked &&
+        periodReadiness is not null &&
+        !periodReadiness.IsReady &&
+        warningsAcknowledged);
 
             statusClass = "alert-success";
             status =
@@ -606,7 +633,8 @@ else
                     : "Accounting period locked.";
 
             confirmingPeriodId = null;
-            periodReadiness = null;
+periodReadiness = null;
+warningsAcknowledged = false;
 
             await Reload();
         }

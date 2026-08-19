@@ -244,11 +244,12 @@ public sealed class AccountingPeriodService(
     }
 
     public async Task SetLockedAsync(
-        string userId,
-        Guid organisationId,
-        Guid periodId,
-        bool locked,
-        CancellationToken ct = default)
+    string userId,
+    Guid organisationId,
+    Guid periodId,
+    bool locked,
+    bool acknowledgeWarnings = false,
+    CancellationToken ct = default)
     {
         if (!await access.CanManageTeamAsync(
                 userId,
@@ -268,6 +269,24 @@ public sealed class AccountingPeriodService(
             ?? throw new InvalidOperationException(
                 "Accounting period not found.");
 
+        AccountingPeriodReadiness? readiness = null;
+
+if (locked)
+{
+    readiness =
+        await GetReadinessAsync(
+            userId,
+            organisationId,
+            periodId,
+            ct);
+
+    if (!readiness.IsReady && !acknowledgeWarnings)
+    {
+        throw new InvalidOperationException(
+            "Review and acknowledge the outstanding period items before locking.");
+    }
+}
+
         period.IsLocked = locked;
         period.LockedAt =
             locked
@@ -279,39 +298,53 @@ public sealed class AccountingPeriodService(
                 : null;
 
         db.AuditEvents.Add(
-            Audit(
-                organisationId,
-                userId,
-                locked
-                    ? "AccountingPeriodLocked"
-                    : "AccountingPeriodUnlocked",
-                period,
-                locked));
+    Audit(
+        organisationId,
+        userId,
+        locked
+            ? "AccountingPeriodLocked"
+            : "AccountingPeriodUnlocked",
+        period,
+        locked,
+        readiness,
+        locked && !readiness!.IsReady && acknowledgeWarnings));
 
         await db.SaveChangesAsync(ct);
     }
 
     private static AuditEvent Audit(
-        Guid organisationId,
-        string userId,
-        string eventType,
-        AccountingPeriod period,
-        bool locked) =>
-        new()
-        {
-            OrganisationId = organisationId,
-            UserId = userId,
-            EventType = eventType,
-            EntityType = nameof(AccountingPeriod),
-            EntityId = period.Id.ToString(),
-            JsonData =
-                JsonSerializer.Serialize(
-                    new
-                    {
-                        period.Name,
-                        period.StartsOn,
-                        period.EndsOn,
-                        Locked = locked
-                    })
-        };
+    Guid organisationId,
+    string userId,
+    string eventType,
+    AccountingPeriod period,
+    bool locked,
+    AccountingPeriodReadiness? readiness = null,
+    bool warningsAcknowledged = false) =>
+    new()
+    {
+        OrganisationId = organisationId,
+        UserId = userId,
+        EventType = eventType,
+        EntityType = nameof(AccountingPeriod),
+        EntityId = period.Id.ToString(),
+        JsonData =
+            JsonSerializer.Serialize(
+                new
+                {
+                    period.Name,
+                    period.StartsOn,
+                    period.EndsOn,
+                    Locked = locked,
+                    UnreconciledBankStatementLines =
+                        readiness?.UnreconciledBankStatementLines ?? 0,
+                    IncompleteBankReconciliations =
+                        readiness?.IncompleteBankReconciliations ?? 0,
+                    DraftSalesInvoices =
+                        readiness?.DraftSalesInvoices ?? 0,
+                    DraftSupplierBills =
+                        readiness?.DraftSupplierBills ?? 0,
+                    WarningsAcknowledged =
+                        warningsAcknowledged
+                })
+    };
 }

@@ -231,6 +231,114 @@ public sealed class AccountingPeriodReadinessTests
         Assert.Equal(0, readiness.WarningCount);
     }
 
+    [Fact]
+public async Task LockPeriod_WithOutstandingItems_RequiresAcknowledgement()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    await test.Reconciliation.AddStatementLineAsync(
+        test.UserId,
+        new StatementLineRequest(
+            OrganisationId: test.Organisation.Id,
+            BankAccountId: test.Account("1000").Id,
+            Date: new DateOnly(2026, 7, 15),
+            Description: "Outstanding close item",
+            Reference: "CLOSE-WARN-001",
+            Amount: 100m));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                service.SetLockedAsync(
+                    test.UserId,
+                    test.Organisation.Id,
+                    period.Id,
+                    true,
+                    acknowledgeWarnings: false));
+
+    Assert.Equal(
+        "Review and acknowledge the outstanding period items before locking.",
+        ex.Message);
+
+    var reloaded =
+        await test.Db.AccountingPeriods
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    Assert.False(reloaded.IsLocked);
+    Assert.Null(reloaded.LockedAt);
+    Assert.Null(reloaded.LockedByUserId);
+}
+
+[Fact]
+public async Task LockPeriod_WithOutstandingItems_CanBeAcknowledged()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    await test.Reconciliation.AddStatementLineAsync(
+        test.UserId,
+        new StatementLineRequest(
+            OrganisationId: test.Organisation.Id,
+            BankAccountId: test.Account("1000").Id,
+            Date: new DateOnly(2026, 7, 15),
+            Description: "Acknowledged close item",
+            Reference: "CLOSE-WARN-002",
+            Amount: 100m));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true,
+        acknowledgeWarnings: true);
+
+    var reloaded =
+        await test.Db.AccountingPeriods
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    Assert.True(reloaded.IsLocked);
+    Assert.NotNull(reloaded.LockedAt);
+    Assert.Equal(
+        test.UserId,
+        reloaded.LockedByUserId);
+
+    var audit =
+        await test.Db.AuditEvents
+            .AsNoTracking()
+            .SingleAsync(
+                x =>
+                    x.EntityType == nameof(AccountingPeriod) &&
+                    x.EntityId == period.Id.ToString() &&
+                    x.EventType == "AccountingPeriodLocked");
+
+    Assert.Contains(
+        "\"UnreconciledBankStatementLines\":1",
+        audit.JsonData);
+
+    Assert.Contains(
+        "\"WarningsAcknowledged\":true",
+        audit.JsonData);
+}
+
     private static async Task<AccountingPeriod> CreatePeriodAsync(
         AccountingTestDatabase test)
     {
