@@ -132,19 +132,38 @@ else
         .Select(x => x.Id)
         .ToArray();
 
-    var paid = await Db.CustomerReceiptAllocations.AsNoTracking()
-        .Where(x =>
-            invoiceIds.Contains(x.SalesInvoiceId) &&
-            x.CustomerReceipt.ReceiptDate <= filter.AsAt)
-        .GroupBy(x => x.SalesInvoiceId)
-        .Select(x => new
-        {
-            x.Key,
-            Amount = x.Sum(y => y.Amount)
-        })
-        .ToDictionaryAsync(
-            x => x.Key,
-            x => x.Amount);
+    var receipts = await Db.CustomerReceiptAllocations
+    .AsNoTracking()
+    .Where(x =>
+        invoiceIds.Contains(x.SalesInvoiceId) &&
+        x.CustomerReceipt.ReceiptDate <= filter.AsAt)
+    .Select(x => new
+    {
+        x.CustomerReceiptId,
+        x.SalesInvoiceId,
+        x.Amount
+    })
+    .ToListAsync();
+
+var receiptIds = receipts
+    .Select(x => x.CustomerReceiptId)
+    .Distinct()
+    .ToArray();
+
+var reversedReceiptIds = await Db.CustomerReceiptReversals
+    .AsNoTracking()
+    .Where(x =>
+        receiptIds.Contains(x.CustomerReceiptId) &&
+        x.ReversalDate <= filter.AsAt)
+    .Select(x => x.CustomerReceiptId)
+    .ToListAsync();
+
+var paid = receipts
+    .Where(x => !reversedReceiptIds.Contains(x.CustomerReceiptId))
+    .GroupBy(x => x.SalesInvoiceId)
+    .ToDictionary(
+        x => x.Key,
+        x => x.Sum(y => y.Amount));
 
     var credits = await Db.SalesCreditNotes
         .AsNoTracking()

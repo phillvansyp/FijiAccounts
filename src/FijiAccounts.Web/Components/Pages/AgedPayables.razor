@@ -131,19 +131,37 @@ else
         .Select(x => x.Id)
         .ToArray();
 
-    var paid = await Db.SupplierPayments.AsNoTracking()
-        .Where(x =>
-            billIds.Contains(x.SupplierBillId) &&
-            x.PaymentDate <= filter.AsAt)
-        .GroupBy(x => x.SupplierBillId)
-        .Select(x => new
-        {
-            x.Key,
-            Amount = x.Sum(y => y.Amount)
-        })
-        .ToDictionaryAsync(
-            x => x.Key,
-            x => x.Amount);
+    var payments = await Db.SupplierPayments
+    .AsNoTracking()
+    .Where(x =>
+        billIds.Contains(x.SupplierBillId) &&
+        x.PaymentDate <= filter.AsAt)
+    .Select(x => new
+    {
+        x.Id,
+        x.SupplierBillId,
+        x.Amount
+    })
+    .ToListAsync();
+
+var paymentIds = payments
+    .Select(x => x.Id)
+    .ToArray();
+
+var reversedPaymentIds = await Db.SupplierPaymentReversals
+    .AsNoTracking()
+    .Where(x =>
+        paymentIds.Contains(x.SupplierPaymentId) &&
+        x.ReversalDate <= filter.AsAt)
+    .Select(x => x.SupplierPaymentId)
+    .ToListAsync();
+
+var paid = payments
+    .Where(x => !reversedPaymentIds.Contains(x.Id))
+    .GroupBy(x => x.SupplierBillId)
+    .ToDictionary(
+        x => x.Key,
+        x => x.Sum(y => y.Amount));
 
     var credits = await Db.SupplierCreditNotes
         .AsNoTracking()

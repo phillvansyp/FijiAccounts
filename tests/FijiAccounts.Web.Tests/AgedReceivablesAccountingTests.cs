@@ -223,4 +223,76 @@ public async Task ReceivableAsAtDate_CreditReversalOnlyRestoresBalanceFromRevers
 
     Assert.True(augustReversed);
 }
+
+    [Fact]
+public async Task ReceivableAsAtDate_ReceiptReversalRestoresBalanceOnlyFromReversalDate()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var invoice =
+        await test.SalesInvoices.CreateAndPostAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                OrganisationId: test.Organisation.Id,
+                CustomerId: test.Customer.Id,
+                IssueDate: new DateOnly(2026, 6, 1),
+                DueDate: new DateOnly(2026, 6, 30),
+                Lines:
+                [
+                    new SalesInvoiceLineRequest(
+                        Description: "Receipt reversal ageing sale",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id)
+                ]));
+
+   var receipts =
+    new CustomerReceiptService(
+        test.Db,
+        test.Access,
+        test.Posting,
+        test.Reconciliation);
+
+var receipt =
+    await receipts.RecordAsync(
+        test.UserId,
+        new CustomerReceiptRequest(
+            OrganisationId: test.Organisation.Id,
+            SalesInvoiceId: invoice.Id,
+            Date: new DateOnly(2026, 7, 10),
+            Reference: "AGING-RECEIPT-001",
+            Amount: invoice.Total,
+            BankAccountId: test.Account("1000").Id));
+
+await receipts.ReverseAsync(
+    test.UserId,
+    test.Organisation.Id,
+    receipt.Id,
+    new DateOnly(2026, 8, 5),
+    "Reverse receipt for ageing test");
+
+    var julyAsAt = new DateOnly(2026, 7, 31);
+
+    var julyReversed =
+        await test.Db.CustomerReceiptReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.CustomerReceiptId == receipt.Id &&
+                x.ReversalDate <= julyAsAt);
+
+    Assert.False(julyReversed);
+
+    var augustAsAt = new DateOnly(2026, 8, 31);
+
+    var augustReversed =
+        await test.Db.CustomerReceiptReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.CustomerReceiptId == receipt.Id &&
+                x.ReversalDate <= augustAsAt);
+
+    Assert.True(augustReversed);
+}
 }

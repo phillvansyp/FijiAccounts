@@ -226,4 +226,70 @@ public async Task PayableAsAtDate_CreditReversalOnlyRestoresBalanceFromReversalD
 
     Assert.True(augustReversed);
 }
+
+    [Fact]
+public async Task PayableAsAtDate_PaymentReversalRestoresBalanceOnlyFromReversalDate()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var bill =
+        await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                OrganisationId: test.Organisation.Id,
+                SupplierId: test.Supplier.Id,
+                SupplierReference: "AGING-PAYMENT-REV-001",
+                BillDate: new DateOnly(2026, 6, 1),
+                DueDate: new DateOnly(2026, 6, 30),
+                Lines:
+                [
+                    new SupplierBillLineRequest(
+                        Description: "Payment reversal ageing purchase",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        ExpenseAccountId: test.Account("6000").Id)
+                ]));
+
+    var payment =
+    await test.Purchasing.PayBillAsync(
+        test.UserId,
+        new SupplierPaymentRequest(
+            OrganisationId: test.Organisation.Id,
+            SupplierBillId: bill.Id,
+            Date: new DateOnly(2026, 7, 10),
+            Reference: "AGING-PAY-001",
+            Amount: bill.Total,
+            BankAccountId: test.Account("1000").Id));
+
+    await test.Purchasing.ReversePaymentAsync(
+        test.UserId,
+        test.Organisation.Id,
+        payment.Id,
+        new DateOnly(2026, 8, 5),
+        "Reverse payment for ageing test");
+
+    var julyAsAt = new DateOnly(2026, 7, 31);
+
+    var julyReversed =
+        await test.Db.SupplierPaymentReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SupplierPaymentId == payment.Id &&
+                x.ReversalDate <= julyAsAt);
+
+    Assert.False(julyReversed);
+
+    var augustAsAt = new DateOnly(2026, 8, 31);
+
+    var augustReversed =
+        await test.Db.SupplierPaymentReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SupplierPaymentId == payment.Id &&
+                x.ReversalDate <= augustAsAt);
+
+    Assert.True(augustReversed);
+}
 }
