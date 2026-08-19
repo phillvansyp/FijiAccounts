@@ -187,8 +187,52 @@ var assetNumber =
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot post depreciation for this organisation.");
         var asset = await db.FixedAssets.Include(x => x.DepreciationEntries).SingleOrDefaultAsync(x => x.Id == assetId && x.OrganisationId == organisationId && x.IsActive, ct) ?? throw new InvalidOperationException("Active fixed asset not found."); if (throughDate < asset.AcquisitionDate) throw new InvalidOperationException("Depreciation date cannot precede acquisition.");
+        var accountIds =
+    new[]
+    {
+        asset.DepreciationExpenseAccountId,
+        asset.AccumulatedDepreciationAccountId
+    };
+
+var accounts =
+    await db.LedgerAccounts
+        .Where(x =>
+            x.OrganisationId == organisationId &&
+            x.IsActive &&
+            accountIds.Contains(x.Id))
+        .ToDictionaryAsync(
+            x => x.Id,
+            ct);
+
+if (!accounts.TryGetValue(
+        asset.DepreciationExpenseAccountId,
+        out var depreciationExpense) ||
+    depreciationExpense.Type != AccountType.Expense)
+{
+    throw new InvalidOperationException(
+        $"Depreciation expense account ({depreciationExpense?.Code ?? asset.DepreciationExpenseAccountId.ToString()}) must be an active Expense account.");
+}
+
+if (!accounts.TryGetValue(
+        asset.AccumulatedDepreciationAccountId,
+        out var accumulatedDepreciation) ||
+    accumulatedDepreciation.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        $"Accumulated depreciation account ({accumulatedDepreciation?.Code ?? asset.AccumulatedDepreciationAccountId.ToString()}) must be an active Asset account.");
+}
         var months = Math.Min(asset.UsefulLifeMonths, (throughDate.Year - asset.AcquisitionDate.Year) * 12 + throughDate.Month - asset.AcquisitionDate.Month + 1); var target = Math.Round((asset.Cost - asset.ResidualValue) * months / asset.UsefulLifeMonths, 2); var posted = asset.DepreciationEntries.Sum(x => x.Amount); var amount = target - posted; if (amount <= 0) throw new InvalidOperationException("No additional book depreciation is due through this date.");
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct); var journal = await posting.PostAsync(userId, new(organisationId, throughDate, $"DEP-{asset.AssetNumber}-{throughDate:yyyyMM}", $"Book depreciation through {throughDate:dd MMM yyyy}", [new(asset.DepreciationExpenseAccountId, asset.Name, amount, 0), new(asset.AccumulatedDepreciationAccountId, asset.Name, 0, amount)]), ct); var entry = new FixedAssetDepreciation { FixedAssetId = asset.Id, ThroughDate = throughDate, Amount = amount, PostedJournalId = journal.Id, PostedByUserId = userId }; db.FixedAssetDepreciations.Add(entry); db.AuditEvents.Add(Audit(organisationId, userId, "FixedAssetDepreciationPosted", asset.Id, new { asset.AssetNumber, throughDate, amount })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return entry;
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct); var journal = await posting.PostAsync(userId, new(organisationId, throughDate, $"DEP-{asset.AssetNumber}-{throughDate:yyyyMM}", $"Book depreciation through {throughDate:dd MMM yyyy}", [new(
+    depreciationExpense.Id,
+    asset.Name,
+    amount,
+    0),
+
+new(
+    accumulatedDepreciation.Id,
+    asset.Name,
+    0,
+    amount)]), ct); var entry = new FixedAssetDepreciation { FixedAssetId = asset.Id, ThroughDate = throughDate, Amount = amount, PostedJournalId = journal.Id, PostedByUserId = userId }; db.FixedAssetDepreciations.Add(entry); db.AuditEvents.Add(Audit(organisationId, userId, "FixedAssetDepreciationPosted", asset.Id, new { asset.AssetNumber, throughDate, amount })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return entry;
     }
 
     public async Task<FixedAssetDisposal> DisposeAsync(
@@ -235,6 +279,51 @@ var assetNumber =
         throw new InvalidOperationException(
             "This asset has already been disposed.");
     }
+
+    var storedAccountIds =
+    new[]
+    {
+        asset.AssetAccountId,
+        asset.DepreciationExpenseAccountId,
+        asset.AccumulatedDepreciationAccountId
+    };
+
+var storedAccounts =
+    await db.LedgerAccounts
+        .Where(x =>
+            x.OrganisationId == request.OrganisationId &&
+            x.IsActive &&
+            storedAccountIds.Contains(x.Id))
+        .ToDictionaryAsync(
+            x => x.Id,
+            ct);
+
+if (!storedAccounts.TryGetValue(
+        asset.AssetAccountId,
+        out var assetAccount) ||
+    assetAccount.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        $"Fixed asset account ({assetAccount?.Code ?? asset.AssetAccountId.ToString()}) must be an active Asset account.");
+}
+
+if (!storedAccounts.TryGetValue(
+        asset.DepreciationExpenseAccountId,
+        out var depreciationExpense) ||
+    depreciationExpense.Type != AccountType.Expense)
+{
+    throw new InvalidOperationException(
+        $"Depreciation expense account ({depreciationExpense?.Code ?? asset.DepreciationExpenseAccountId.ToString()}) must be an active Expense account.");
+}
+
+if (!storedAccounts.TryGetValue(
+        asset.AccumulatedDepreciationAccountId,
+        out var accumulatedDepreciationAccount) ||
+    accumulatedDepreciationAccount.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        $"Accumulated depreciation account ({accumulatedDepreciationAccount?.Code ?? asset.AccumulatedDepreciationAccountId.ToString()}) must be an active Asset account.");
+}
 
     var bank =
         await db.LedgerAccounts.SingleOrDefaultAsync(
@@ -313,7 +402,7 @@ if (depreciationToPost > 0)
                         0),
 
                     new(
-                        asset.AccumulatedDepreciationAccountId,
+                        accumulatedDepreciationAccount.Id,
                         asset.Name,
                         0,
                         depreciationToPost)
@@ -365,7 +454,7 @@ if (accumulatedDepreciation > 0)
 {
     lines.Add(
         new JournalLineInput(
-            asset.AccumulatedDepreciationAccountId,
+            accumulatedDepreciationAccount.Id,
             $"Dispose {asset.AssetNumber}",
             accumulatedDepreciation,
             0));
@@ -373,7 +462,7 @@ if (accumulatedDepreciation > 0)
 
 lines.Add(
     new JournalLineInput(
-        asset.AssetAccountId,
+        assetAccount.Id,
         $"Dispose {asset.AssetNumber}",
         0,
         asset.Cost));

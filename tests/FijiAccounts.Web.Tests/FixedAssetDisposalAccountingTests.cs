@@ -275,4 +275,232 @@ public async Task DisposeAsset_AutomaticallyPostsDepreciationThroughDisposalDate
             asset.Id,
             new DateOnly(2026, 6, 30)));
 }
+
+    [Fact]
+public async Task DisposeAsync_WhenStoredAssetAccountHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    var gainOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "4200",
+            Name = "Gain on Disposal of Assets",
+            Type = AccountType.Revenue,
+            IsActive = true
+        };
+
+    var lossOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6800",
+            Name = "Loss on Disposal of Assets",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense,
+        gainOnDisposal,
+        lossOnDisposal);
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var assetAccount = test.Account("1500");
+
+    var asset =
+        await service.CreateAsync(
+            test.UserId,
+            new FixedAssetRequest(
+                OrganisationId: test.Organisation.Id,
+                Name: "Disposal Account Drift Test",
+                AcquisitionDate: new DateOnly(2026, 1, 1),
+                Cost: 2400m,
+                ResidualValue: 0m,
+                UsefulLifeMonths: 12,
+                AssetAccountId: assetAccount.Id,
+                DepreciationExpenseAccountId: depreciationExpense.Id,
+                AccumulatedDepreciationAccountId: accumulatedDepreciation.Id,
+                AcquisitionBankAccountId: test.Account("1000").Id));
+
+    assetAccount.Type = AccountType.Expense;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                service.DisposeAsync(
+                    test.UserId,
+                    new FixedAssetDisposalRequest(
+                        OrganisationId: test.Organisation.Id,
+                        FixedAssetId: asset.Id,
+                        DisposalDate: new DateOnly(2026, 5, 31),
+                        Proceeds: 1500m,
+                        BankAccountId: test.Account("1000").Id,
+                        GainAccountId: gainOnDisposal.Id,
+                        LossAccountId: lossOnDisposal.Id)));
+
+    Assert.Contains(
+        "1500",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+
+    var saved =
+        await test.Db.FixedAssets
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == asset.Id);
+
+    Assert.True(saved.IsActive);
+}
+
+    [Fact]
+public async Task DisposeAsync_WhenStoredAccumulatedDepreciationAccountHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    var gainOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "4200",
+            Name = "Gain on Disposal of Assets",
+            Type = AccountType.Revenue,
+            IsActive = true
+        };
+
+    var lossOnDisposal =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6800",
+            Name = "Loss on Disposal of Assets",
+            Type = AccountType.Expense,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense,
+        gainOnDisposal,
+        lossOnDisposal);
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var asset =
+        await service.CreateAsync(
+            test.UserId,
+            new FixedAssetRequest(
+                OrganisationId: test.Organisation.Id,
+                Name: "Accumulated Depreciation Drift Test",
+                AcquisitionDate: new DateOnly(2026, 1, 1),
+                Cost: 2400m,
+                ResidualValue: 0m,
+                UsefulLifeMonths: 12,
+                AssetAccountId: test.Account("1500").Id,
+                DepreciationExpenseAccountId: depreciationExpense.Id,
+                AccumulatedDepreciationAccountId: accumulatedDepreciation.Id,
+                AcquisitionBankAccountId: test.Account("1000").Id));
+
+    accumulatedDepreciation.Type = AccountType.Liability;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                service.DisposeAsync(
+                    test.UserId,
+                    new FixedAssetDisposalRequest(
+                        OrganisationId: test.Organisation.Id,
+                        FixedAssetId: asset.Id,
+                        DisposalDate: new DateOnly(2026, 5, 31),
+                        Proceeds: 1500m,
+                        BankAccountId: test.Account("1000").Id,
+                        GainAccountId: gainOnDisposal.Id,
+                        LossAccountId: lossOnDisposal.Id)));
+
+    Assert.Contains(
+        "1510",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+
+    var saved =
+        await test.Db.FixedAssets
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == asset.Id);
+
+    Assert.True(saved.IsActive);
+}
 }
