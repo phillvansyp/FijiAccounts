@@ -398,6 +398,8 @@ else
                                 <th class="text-end">Net</th>
                                 <th class="text-end">VAT</th>
                                 <th class="text-end">Total</th>
+                                <th>Status</th>
+<th class="text-end">Actions</th>
                             </tr>
                         </thead>
 
@@ -412,13 +414,97 @@ else
                                     <td class="text-end">$@credit.Subtotal.ToString("N2")</td>
                                     <td class="text-end">$@credit.VatTotal.ToString("N2")</td>
                                     <td class="text-end"><strong>$@credit.Total.ToString("N2")</strong></td>
-                                </tr>
+                                    @if (creditReversals.TryGetValue(credit.Id, out var reversal))
+{
+    <td>
+        <span class="badge text-bg-secondary">Reversed</span>
+        <div class="small text-muted mt-1">
+            @reversal.ReversalDate.ToString("dd MMM yyyy")
+        </div>
+    </td>
+
+    <td class="text-end">
+        <span class="text-muted small">
+            @reversal.Reason
+        </span>
+    </td>
+}
+else
+{
+    <td>
+        <span class="badge text-bg-success">Posted</span>
+    </td>
+
+    <td class="text-end">
+        @if (canManage)
+        {
+            <button class="btn btn-sm btn-outline-danger"
+                    @onclick="() => OpenCreditReversal(credit.Id)">
+                Reverse
+            </button>
+        }
+    </td>
+}
+</tr>
                             }
                         </tbody>
                     </table>
                 </div>
             </section>
         }
+
+        @if (reversingCreditId is not null)
+{
+    var selectedCredit =
+        credits.FirstOrDefault(x => x.Id == reversingCreditId.Value);
+
+    if (selectedCredit is not null)
+    {
+        <section class="action-card danger-card no-print">
+            <div class="action-card-heading">
+                <span class="eyebrow danger-eyebrow">
+                    Reverse supplier credit
+                </span>
+
+                <h2>
+                    Reverse @selectedCredit.CreditNoteNumber
+                </h2>
+
+                <p>
+                    This posts a reversing journal and restores the supplier
+                    bill balance. Any tracked-stock return created by the
+                    credit note will also be reversed.
+                </p>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Reversal date</label>
+                    <InputDate class="form-control"
+                               @bind-Value="creditReversalDate" />
+                </div>
+
+                <div class="col-md-5">
+                    <label class="form-label">Reason</label>
+                    <InputText class="form-control"
+                               @bind-Value="creditReversalReason" />
+                </div>
+
+                <div class="col-md-4 d-flex align-items-end gap-2">
+                    <button class="btn btn-danger"
+                            @onclick="ReverseCredit">
+                        Post reversal
+                    </button>
+
+                    <button class="btn btn-outline-secondary"
+                            @onclick="CancelCreditReversal">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </section>
+    }
+}
 
         @if (payments.Count > 0)
         {
@@ -784,6 +870,7 @@ else
     private SupplierBill? bill;
     private List<SupplierPayment> payments = [];
     private List<SupplierCreditNote> credits = [];
+    private Dictionary<Guid, SupplierCreditNoteReversal> creditReversals = [];
     private HashSet<Guid> reversedPaymentIds = [];
 
     private string userId = "";
@@ -804,6 +891,10 @@ else
     private string creditReason = "";
     private decimal creditAmount;
     private bool returnTrackedItems;
+    private Guid? reversingCreditId;
+private DateOnly creditReversalDate =
+    DateOnly.FromDateTime(DateTime.Today);
+private string creditReversalReason = "";
 
     private Guid? reversingPaymentId;
     private DateOnly paymentReversalDate = DateOnly.FromDateTime(DateTime.Today);
@@ -871,6 +962,17 @@ else
                      x.OrganisationId == OrganisationId)
             .OrderByDescending(x => x.CreditDate)
             .ToListAsync();
+
+        var creditIds = credits.Select(x => x.Id).ToArray();
+
+creditReversals =
+    (await Db.SupplierCreditNoteReversals
+        .AsNoTracking()
+        .Where(
+            x => x.OrganisationId == OrganisationId &&
+                 creditIds.Contains(x.SupplierCreditNoteId))
+        .ToListAsync())
+    .ToDictionary(x => x.SupplierCreditNoteId);
 
         var ids = payments.Select(x => x.Id).ToArray();
 
@@ -1210,5 +1312,60 @@ private void ToggleAttachmentUploader()
     showAttachmentUploader = !showAttachmentUploader;
     showAttachmentMenu = false;
     documentError = null;
+}
+
+    private void OpenCreditReversal(Guid creditNoteId)
+{
+    reversingCreditId = creditNoteId;
+    creditReversalDate =
+        DateOnly.FromDateTime(DateTime.Today);
+    creditReversalReason = "";
+
+    showCredit = false;
+    showVoid = false;
+    reversingPaymentId = null;
+}
+
+private void CancelCreditReversal()
+{
+    reversingCreditId = null;
+    creditReversalReason = "";
+}
+
+private async Task ReverseCredit()
+{
+    if (reversingCreditId is null)
+    {
+        return;
+    }
+
+    try
+    {
+        var credit =
+            credits.Single(x => x.Id == reversingCreditId.Value);
+
+        await SupplierCredits.ReverseAsync(
+            userId,
+            OrganisationId,
+            reversingCreditId.Value,
+            creditReversalDate,
+            creditReversalReason);
+
+        reversingCreditId = null;
+        creditReversalReason = "";
+
+        statusClass = "alert-success";
+        status =
+            $"Supplier credit {credit.CreditNoteNumber} reversed.";
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+    }
 }
 }
