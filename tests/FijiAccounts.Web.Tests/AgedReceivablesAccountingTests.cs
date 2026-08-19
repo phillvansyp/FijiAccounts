@@ -95,4 +95,132 @@ public sealed class AgedReceivablesAccountingTests
 
         Assert.InRange(daysOverdue, 31, 60);
     }
+
+    [Fact]
+public async Task ReceivableAsAtDate_IncludesInvoiceUntilItsVoidDate()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var invoice =
+        await test.SalesInvoices.CreateAndPostAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                OrganisationId: test.Organisation.Id,
+                CustomerId: test.Customer.Id,
+                IssueDate: new DateOnly(2026, 6, 1),
+                DueDate: new DateOnly(2026, 6, 30),
+                Lines:
+                [
+                    new SalesInvoiceLineRequest(
+                        Description: "Historical ageing sale",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id)
+                ]));
+
+    await test.SalesInvoices.VoidAsync(
+        test.UserId,
+        test.Organisation.Id,
+        invoice.Id,
+        new DateOnly(2026, 8, 5));
+
+    var asAtBeforeVoid =
+        new DateOnly(2026, 7, 31);
+
+    var voidedBeforeAsAt =
+        await test.Db.SalesInvoiceVoids
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SalesInvoiceId == invoice.Id &&
+                x.VoidDate <= asAtBeforeVoid);
+
+    Assert.False(voidedBeforeAsAt);
+
+    var asAtAfterVoid =
+        new DateOnly(2026, 8, 31);
+
+    var voidedAfterAsAt =
+        await test.Db.SalesInvoiceVoids
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SalesInvoiceId == invoice.Id &&
+                x.VoidDate <= asAtAfterVoid);
+
+    Assert.True(voidedAfterAsAt);
+}
+
+[Fact]
+public async Task ReceivableAsAtDate_CreditReversalOnlyRestoresBalanceFromReversalDate()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var invoice =
+        await test.SalesInvoices.CreateAndPostAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                OrganisationId: test.Organisation.Id,
+                CustomerId: test.Customer.Id,
+                IssueDate: new DateOnly(2026, 6, 1),
+                DueDate: new DateOnly(2026, 6, 30),
+                Lines:
+                [
+                    new SalesInvoiceLineRequest(
+                        Description: "Ageing credit reversal sale",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id)
+                ]));
+
+    var credits =
+        new SalesCreditNoteService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var credit =
+        await credits.CreateAsync(
+            test.UserId,
+            new SalesCreditNoteRequest(
+                OrganisationId: test.Organisation.Id,
+                SalesInvoiceId: invoice.Id,
+                Date: new DateOnly(2026, 7, 10),
+                Reason: "Temporary credit",
+                Amount: 56.25m,
+                RestockTrackedItems: false));
+
+    await credits.ReverseAsync(
+        test.UserId,
+        test.Organisation.Id,
+        credit.Id,
+        new DateOnly(2026, 8, 5),
+        "Reverse temporary credit");
+
+    var julyAsAt =
+        new DateOnly(2026, 7, 31);
+
+    var julyReversed =
+        await test.Db.SalesCreditNoteReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SalesCreditNoteId == credit.Id &&
+                x.ReversalDate <= julyAsAt);
+
+    Assert.False(julyReversed);
+
+    var augustAsAt =
+        new DateOnly(2026, 8, 31);
+
+    var augustReversed =
+        await test.Db.SalesCreditNoteReversals
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.SalesCreditNoteId == credit.Id &&
+                x.ReversalDate <= augustAsAt);
+
+    Assert.True(augustReversed);
+}
 }

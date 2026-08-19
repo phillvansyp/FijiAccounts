@@ -103,27 +103,91 @@ else
     }
 
     private async Task Load()
-    {
-        var bills = await Db.SupplierBills.AsNoTracking()
-            .Include(x => x.Supplier)
-            .Where(x => x.OrganisationId == OrganisationId && x.BillDate <= filter.AsAt && x.Status != BillStatus.Voided)
-            .ToListAsync();
+{
+    var bills = await Db.SupplierBills.AsNoTracking()
+        .Include(x => x.Supplier)
+        .Where(x =>
+            x.OrganisationId == OrganisationId &&
+            x.BillDate <= filter.AsAt)
+        .ToListAsync();
 
-        var billIds = bills.Select(x => x.Id).ToArray();
-        var paid = await Db.SupplierPayments.AsNoTracking()
-            .Where(x => billIds.Contains(x.SupplierBillId) && x.PaymentDate <= filter.AsAt)
-            .GroupBy(x => x.SupplierBillId)
-            .Select(x => new { x.Key, Amount = x.Sum(y => y.Amount) })
-            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+    var billIds = bills
+        .Select(x => x.Id)
+        .ToArray();
 
-        var credited = await Db.SupplierCreditNotes.AsNoTracking()
-            .Where(x => billIds.Contains(x.SupplierBillId) && x.CreditDate <= filter.AsAt)
-            .GroupBy(x => x.SupplierBillId)
-            .Select(x => new { x.Key, Amount = x.Sum(y => y.Total) })
-            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+    var voidedBillIds = await Db.SupplierBillVoids
+        .AsNoTracking()
+        .Where(x =>
+            billIds.Contains(x.SupplierBillId) &&
+            x.VoidDate <= filter.AsAt)
+        .Select(x => x.SupplierBillId)
+        .ToListAsync();
 
-        payables = Group(bills.Select(x => new AgingItem(x.Supplier.Name, x.DueDate, Math.Max(0, x.Total - paid.GetValueOrDefault(x.Id) - credited.GetValueOrDefault(x.Id)))));
-    }
+    bills = bills
+        .Where(x => !voidedBillIds.Contains(x.Id))
+        .ToList();
+
+    billIds = bills
+        .Select(x => x.Id)
+        .ToArray();
+
+    var paid = await Db.SupplierPayments.AsNoTracking()
+        .Where(x =>
+            billIds.Contains(x.SupplierBillId) &&
+            x.PaymentDate <= filter.AsAt)
+        .GroupBy(x => x.SupplierBillId)
+        .Select(x => new
+        {
+            x.Key,
+            Amount = x.Sum(y => y.Amount)
+        })
+        .ToDictionaryAsync(
+            x => x.Key,
+            x => x.Amount);
+
+    var credits = await Db.SupplierCreditNotes
+        .AsNoTracking()
+        .Where(x =>
+            billIds.Contains(x.SupplierBillId) &&
+            x.CreditDate <= filter.AsAt)
+        .Select(x => new
+        {
+            x.Id,
+            x.SupplierBillId,
+            x.Total
+        })
+        .ToListAsync();
+
+    var creditIds = credits
+        .Select(x => x.Id)
+        .ToArray();
+
+    var reversedCreditIds = await Db.SupplierCreditNoteReversals
+        .AsNoTracking()
+        .Where(x =>
+            creditIds.Contains(x.SupplierCreditNoteId) &&
+            x.ReversalDate <= filter.AsAt)
+        .Select(x => x.SupplierCreditNoteId)
+        .ToListAsync();
+
+    var credited = credits
+        .Where(x => !reversedCreditIds.Contains(x.Id))
+        .GroupBy(x => x.SupplierBillId)
+        .ToDictionary(
+            x => x.Key,
+            x => x.Sum(y => y.Total));
+
+    payables = Group(
+        bills.Select(x =>
+            new AgingItem(
+                x.Supplier.Name,
+                x.DueDate,
+                Math.Max(
+                    0,
+                    x.Total -
+                    paid.GetValueOrDefault(x.Id) -
+                    credited.GetValueOrDefault(x.Id)))));
+}
 
     private List<AgingRow> Group(IEnumerable<AgingItem> items) => items
         .Where(x => x.Amount > 0)

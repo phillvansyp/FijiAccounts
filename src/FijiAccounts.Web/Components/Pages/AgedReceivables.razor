@@ -103,27 +103,92 @@ else
     }
 
     private async Task Load()
-    {
-        var invoices = await Db.SalesInvoices.AsNoTracking()
-            .Include(x => x.Customer)
-            .Where(x => x.OrganisationId == OrganisationId && x.IssueDate <= filter.AsAt && x.Status != InvoiceStatus.Draft && x.Status != InvoiceStatus.Voided)
-            .ToListAsync();
+{
+    var invoices = await Db.SalesInvoices.AsNoTracking()
+        .Include(x => x.Customer)
+        .Where(x =>
+            x.OrganisationId == OrganisationId &&
+            x.IssueDate <= filter.AsAt &&
+            x.Status != InvoiceStatus.Draft)
+        .ToListAsync();
 
-        var invoiceIds = invoices.Select(x => x.Id).ToArray();
-        var paid = await Db.CustomerReceiptAllocations.AsNoTracking()
-            .Where(x => invoiceIds.Contains(x.SalesInvoiceId) && x.CustomerReceipt.ReceiptDate <= filter.AsAt)
-            .GroupBy(x => x.SalesInvoiceId)
-            .Select(x => new { x.Key, Amount = x.Sum(y => y.Amount) })
-            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+    var invoiceIds = invoices
+        .Select(x => x.Id)
+        .ToArray();
 
-        var credited = await Db.SalesCreditNotes.AsNoTracking()
-            .Where(x => invoiceIds.Contains(x.SalesInvoiceId) && x.CreditDate <= filter.AsAt)
-            .GroupBy(x => x.SalesInvoiceId)
-            .Select(x => new { x.Key, Amount = x.Sum(y => y.Total) })
-            .ToDictionaryAsync(x => x.Key, x => x.Amount);
+    var voidedInvoiceIds = await Db.SalesInvoiceVoids
+        .AsNoTracking()
+        .Where(x =>
+            invoiceIds.Contains(x.SalesInvoiceId) &&
+            x.VoidDate <= filter.AsAt)
+        .Select(x => x.SalesInvoiceId)
+        .ToListAsync();
 
-        receivables = Group(invoices.Select(x => new AgingItem(x.Customer.Name, x.DueDate, Math.Max(0, x.Total - paid.GetValueOrDefault(x.Id) - credited.GetValueOrDefault(x.Id)))));
-    }
+    invoices = invoices
+        .Where(x => !voidedInvoiceIds.Contains(x.Id))
+        .ToList();
+
+    invoiceIds = invoices
+        .Select(x => x.Id)
+        .ToArray();
+
+    var paid = await Db.CustomerReceiptAllocations.AsNoTracking()
+        .Where(x =>
+            invoiceIds.Contains(x.SalesInvoiceId) &&
+            x.CustomerReceipt.ReceiptDate <= filter.AsAt)
+        .GroupBy(x => x.SalesInvoiceId)
+        .Select(x => new
+        {
+            x.Key,
+            Amount = x.Sum(y => y.Amount)
+        })
+        .ToDictionaryAsync(
+            x => x.Key,
+            x => x.Amount);
+
+    var credits = await Db.SalesCreditNotes
+        .AsNoTracking()
+        .Where(x =>
+            invoiceIds.Contains(x.SalesInvoiceId) &&
+            x.CreditDate <= filter.AsAt)
+        .Select(x => new
+        {
+            x.Id,
+            x.SalesInvoiceId,
+            x.Total
+        })
+        .ToListAsync();
+
+    var creditIds = credits
+        .Select(x => x.Id)
+        .ToArray();
+
+    var reversedCreditIds = await Db.SalesCreditNoteReversals
+        .AsNoTracking()
+        .Where(x =>
+            creditIds.Contains(x.SalesCreditNoteId) &&
+            x.ReversalDate <= filter.AsAt)
+        .Select(x => x.SalesCreditNoteId)
+        .ToListAsync();
+
+    var credited = credits
+        .Where(x => !reversedCreditIds.Contains(x.Id))
+        .GroupBy(x => x.SalesInvoiceId)
+        .ToDictionary(
+            x => x.Key,
+            x => x.Sum(y => y.Total));
+
+    receivables = Group(
+        invoices.Select(x =>
+            new AgingItem(
+                x.Customer.Name,
+                x.DueDate,
+                Math.Max(
+                    0,
+                    x.Total -
+                    paid.GetValueOrDefault(x.Id) -
+                    credited.GetValueOrDefault(x.Id)))));
+}
 
     private List<AgingRow> Group(IEnumerable<AgingItem> items) => items
         .Where(x => x.Amount > 0)
