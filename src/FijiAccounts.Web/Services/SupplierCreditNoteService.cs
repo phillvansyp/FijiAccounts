@@ -26,8 +26,32 @@ public sealed class SupplierCreditNoteService(ApplicationDbContext db, TenantAcc
         var ratio = request.Amount / bill.Total;
         var net = decimal.Round(bill.Subtotal * ratio, 2, MidpointRounding.AwayFromZero);
         var vat = request.Amount - net;
-        var controls = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && (x.Code == "1150" || x.Code == "2000")).ToDictionaryAsync(x => x.Code, ct);
-        if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000")) throw new InvalidOperationException("VAT Receivable (1150) and Accounts Payable (2000) are required.");
+        var controls = await db.LedgerAccounts
+    .Where(x =>
+        x.OrganisationId == request.OrganisationId &&
+        x.IsActive &&
+        (x.Code == "1150" || x.Code == "2000"))
+    .ToDictionaryAsync(
+        x => x.Code,
+        ct);
+
+if (!controls.TryGetValue(
+        "1150",
+        out var vatReceivable) ||
+    vatReceivable.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        "VAT Receivable (1150) must be an active Asset account.");
+}
+
+if (!controls.TryGetValue(
+        "2000",
+        out var accountsPayable) ||
+    accountsPayable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "Accounts Payable (2000) must be an active Liability account.");
+}
         var receipts = trackedLines.Count == 0 ? [] : await db.InventoryMovements.Where(x => x.OrganisationId == request.OrganisationId && x.Reference == bill.BillNumber && x.QuantityChange > 0).ToListAsync(ct);
         foreach (var receipt in receipts)
         {
@@ -42,8 +66,8 @@ public sealed class SupplierCreditNoteService(ApplicationDbContext db, TenantAcc
         var journalLines = bill.Lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, number, 0, decimal.Round(x.Sum(y => y.NetAmount) * ratio, 2, MidpointRounding.AwayFromZero))).ToList();
         var allocatedNet = journalLines.Sum(x => x.Credit);
         if (journalLines.Count > 0 && allocatedNet != net) journalLines[0] = journalLines[0] with { Credit = journalLines[0].Credit + net - allocatedNet };
-        journalLines.Add(new(controls["2000"].Id, number, request.Amount, 0));
-        if (vat > 0) journalLines.Add(new(controls["1150"].Id, number, 0, vat));
+        journalLines.Add(new(accountsPayable.Id, number, request.Amount, 0));
+        if (vat > 0) journalLines.Add(new(vatReceivable.Id, number, 0, vat));
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Supplier credit for {bill.BillNumber}: {request.Reason.Trim()}", journalLines), ct);
 
         foreach (var receipt in receipts)
