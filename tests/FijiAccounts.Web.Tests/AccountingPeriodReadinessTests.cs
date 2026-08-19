@@ -1,3 +1,4 @@
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,7 @@ public sealed class AccountingPeriodReadinessTests
         Assert.Equal(0, readiness.IncompleteBankReconciliations);
         Assert.Equal(0, readiness.DraftSalesInvoices);
         Assert.Equal(0, readiness.DraftSupplierBills);
+        Assert.Equal(0, readiness.FixedAssetsRequiringDepreciation);
     }
 
     [Fact]
@@ -358,4 +360,319 @@ public async Task LockPeriod_WithOutstandingItems_CanBeAcknowledged()
 
         return period;
     }
+
+    [Fact]
+public async Task FixedAsset_WithDepreciationDue_IsReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense);
+
+    await test.Db.SaveChangesAsync();
+
+    var fixedAssets =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    await fixedAssets.CreateAsync(
+        test.UserId,
+        new FixedAssetRequest(
+            OrganisationId: test.Organisation.Id,
+            Name: "July Equipment",
+            AcquisitionDate: new DateOnly(2026, 1, 1),
+            Cost: 12_000m,
+            ResidualValue: 0m,
+            UsefulLifeMonths: 12,
+            AssetAccountId: test.Account("1500").Id,
+            DepreciationExpenseAccountId:
+                depreciationExpense.Id,
+            AccumulatedDepreciationAccountId:
+                accumulatedDepreciation.Id));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.False(readiness.IsReady);
+    Assert.Equal(1, readiness.WarningCount);
+    Assert.Equal(
+        1,
+        readiness.FixedAssetsRequiringDepreciation);
+}
+
+    [Fact]
+public async Task FixedAsset_DepreciatedThroughPeriodEnd_IsNotReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense);
+
+    await test.Db.SaveChangesAsync();
+
+    var fixedAssets =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var asset =
+        await fixedAssets.CreateAsync(
+            test.UserId,
+            new FixedAssetRequest(
+                OrganisationId: test.Organisation.Id,
+                Name: "Depreciated Equipment",
+                AcquisitionDate: new DateOnly(2026, 1, 1),
+                Cost: 12_000m,
+                ResidualValue: 0m,
+                UsefulLifeMonths: 12,
+                AssetAccountId: test.Account("1500").Id,
+                DepreciationExpenseAccountId:
+                    depreciationExpense.Id,
+                AccumulatedDepreciationAccountId:
+                    accumulatedDepreciation.Id));
+
+    await fixedAssets.DepreciateThroughAsync(
+        test.UserId,
+        test.Organisation.Id,
+        asset.Id,
+        new DateOnly(2026, 7, 31));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.True(readiness.IsReady);
+    Assert.Equal(
+        0,
+        readiness.FixedAssetsRequiringDepreciation);
+}
+
+    [Fact]
+public async Task FullyDepreciatedFixedAsset_IsNotReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense);
+
+    await test.Db.SaveChangesAsync();
+
+    var fixedAssets =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    var asset =
+        await fixedAssets.CreateAsync(
+            test.UserId,
+            new FixedAssetRequest(
+                OrganisationId: test.Organisation.Id,
+                Name: "Fully Depreciated Equipment",
+                AcquisitionDate: new DateOnly(2025, 1, 1),
+                Cost: 12_000m,
+                ResidualValue: 2_000m,
+                UsefulLifeMonths: 10,
+                AssetAccountId: test.Account("1500").Id,
+                DepreciationExpenseAccountId:
+                    depreciationExpense.Id,
+                AccumulatedDepreciationAccountId:
+                    accumulatedDepreciation.Id));
+
+    await fixedAssets.DepreciateThroughAsync(
+        test.UserId,
+        test.Organisation.Id,
+        asset.Id,
+        new DateOnly(2025, 10, 31));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.True(readiness.IsReady);
+    Assert.Equal(
+        0,
+        readiness.FixedAssetsRequiringDepreciation);
+}
+
+    [Fact]
+public async Task FixedAsset_AcquiredAfterPeriodEnd_IsNotReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var accumulatedDepreciation =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1510",
+            Name = "Accumulated Depreciation",
+            Type = AccountType.Asset,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    var depreciationExpense =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "6700",
+            Name = "Depreciation Expense",
+            Type = AccountType.Expense,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.AddRange(
+        accumulatedDepreciation,
+        depreciationExpense);
+
+    await test.Db.SaveChangesAsync();
+
+    var fixedAssets =
+        new FixedAssetService(
+            test.Db,
+            test.Access,
+            test.Posting);
+
+    await fixedAssets.CreateAsync(
+        test.UserId,
+        new FixedAssetRequest(
+            OrganisationId: test.Organisation.Id,
+            Name: "August Equipment",
+            AcquisitionDate: new DateOnly(2026, 8, 1),
+            Cost: 12_000m,
+            ResidualValue: 0m,
+            UsefulLifeMonths: 12,
+            AssetAccountId: test.Account("1500").Id,
+            DepreciationExpenseAccountId:
+                depreciationExpense.Id,
+            AccumulatedDepreciationAccountId:
+                accumulatedDepreciation.Id));
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.True(readiness.IsReady);
+    Assert.Equal(
+        0,
+        readiness.FixedAssetsRequiringDepreciation);
+}
 }

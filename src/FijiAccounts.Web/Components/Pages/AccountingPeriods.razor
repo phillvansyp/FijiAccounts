@@ -292,6 +292,18 @@ else
                                                 </li>
                                             }
 
+                                            @if (periodReadiness.FixedAssetsRequiringDepreciation > 0)
+{
+    <li>
+        @periodReadiness.FixedAssetsRequiringDepreciation
+        fixed
+        @(periodReadiness.FixedAssetsRequiringDepreciation == 1
+            ? "asset requires"
+            : "assets require")
+        depreciation through the period end
+    </li>
+}
+
                                             <div class="form-check mt-3">
     <InputCheckbox class="form-check-input"
                    @bind-Value="warningsAcknowledged" />

@@ -21,19 +21,22 @@ public sealed record AccountingPeriodReadiness(
     int UnreconciledBankStatementLines,
     int IncompleteBankReconciliations,
     int DraftSalesInvoices,
-    int DraftSupplierBills)
+    int DraftSupplierBills,
+    int FixedAssetsRequiringDepreciation)
 {
     public bool IsReady =>
         UnreconciledBankStatementLines == 0 &&
         IncompleteBankReconciliations == 0 &&
         DraftSalesInvoices == 0 &&
-        DraftSupplierBills == 0;
+        DraftSupplierBills == 0 &&
+        FixedAssetsRequiringDepreciation == 0;
 
     public int WarningCount =>
         UnreconciledBankStatementLines +
         IncompleteBankReconciliations +
         DraftSalesInvoices +
-        DraftSupplierBills;
+        DraftSupplierBills +
+        FixedAssetsRequiringDepreciation;
 }
 
 public sealed class AccountingPeriodService(
@@ -236,11 +239,51 @@ public sealed class AccountingPeriodService(
                     x.BillDate <= period.EndsOn,
                 ct);
 
+        var fixedAssets =
+    await db.FixedAssets
+        .AsNoTracking()
+        .Where(x =>
+            x.OrganisationId == organisationId &&
+            x.IsActive &&
+            x.AcquisitionDate <= period.EndsOn)
+        .Select(x => new
+        {
+            x.AcquisitionDate,
+            x.Cost,
+            x.ResidualValue,
+            x.UsefulLifeMonths,
+            PostedDepreciation =
+                x.DepreciationEntries.Sum(d => (decimal?)d.Amount) ?? 0m
+        })
+        .ToListAsync(ct);
+
+var fixedAssetsRequiringDepreciation =
+    fixedAssets.Count(asset =>
+    {
+        var months =
+            Math.Min(
+                asset.UsefulLifeMonths,
+                (period.EndsOn.Year - asset.AcquisitionDate.Year) * 12 +
+                period.EndsOn.Month -
+                asset.AcquisitionDate.Month +
+                1);
+
+        var targetDepreciation =
+            Math.Round(
+                (asset.Cost - asset.ResidualValue) *
+                months /
+                asset.UsefulLifeMonths,
+                2);
+
+        return targetDepreciation - asset.PostedDepreciation > 0;
+    });
+
         return new AccountingPeriodReadiness(
-            unreconciledBankStatementLines,
-            incompleteBankReconciliations,
-            draftSalesInvoices,
-            draftSupplierBills);
+    unreconciledBankStatementLines,
+    incompleteBankReconciliations,
+    draftSalesInvoices,
+    draftSupplierBills,
+    fixedAssetsRequiringDepreciation);
     }
 
     public async Task SetLockedAsync(
@@ -342,9 +385,11 @@ if (locked)
                     DraftSalesInvoices =
                         readiness?.DraftSalesInvoices ?? 0,
                     DraftSupplierBills =
-                        readiness?.DraftSupplierBills ?? 0,
-                    WarningsAcknowledged =
-                        warningsAcknowledged
+    readiness?.DraftSupplierBills ?? 0,
+FixedAssetsRequiringDepreciation =
+    readiness?.FixedAssetsRequiringDepreciation ?? 0,
+WarningsAcknowledged =
+    warningsAcknowledged
                 })
     };
 }
