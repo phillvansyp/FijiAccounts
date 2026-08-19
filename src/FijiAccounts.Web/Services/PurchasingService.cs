@@ -66,7 +66,31 @@ public sealed class PurchasingService(
         if (string.IsNullOrWhiteSpace(reason)) throw new InvalidOperationException("Enter a reason for voiding the bill.");
         var bill = await db.SupplierBills.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == billId && x.OrganisationId == organisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
         if (bill.Status == BillStatus.Voided) throw new InvalidOperationException("This bill has already been voided.");
-        if (bill.AmountPaid > 0 || bill.AmountCredited > 0 || bill.Status is BillStatus.PartPaid or BillStatus.Paid or BillStatus.Credited) throw new InvalidOperationException("A paid or credited bill cannot be voided. Reverse payments first; supplier credits remain permanent audit records.");
+
+        var hasPaymentHistory =
+    await db.SupplierPayments.AnyAsync(
+        x =>
+            x.SupplierBillId == bill.Id &&
+            x.OrganisationId == organisationId,
+        ct);
+
+var hasCreditHistory =
+    await db.SupplierCreditNotes.AnyAsync(
+        x =>
+            x.SupplierBillId == bill.Id &&
+            x.OrganisationId == organisationId,
+        ct);
+        if (bill.AmountPaid > 0 ||
+    bill.AmountCredited > 0 ||
+    hasPaymentHistory ||
+    hasCreditHistory ||
+    bill.Status is BillStatus.PartPaid or
+        BillStatus.Paid or
+        BillStatus.Credited)
+{
+    throw new InvalidOperationException(
+        "A paid or credited bill cannot be voided. Reverse payments first; supplier credits remain permanent audit records.");
+}
         var receipts = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == bill.BillNumber && x.QuantityChange > 0).ToListAsync(ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; if (item.QuantityOnHand < receipt.QuantityChange) throw new InvalidOperationException($"Cannot void this bill because {item.Code} no longer has all received units on hand."); var remainingValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost) - receipt.ValueChange; if (remainingValue < 0) throw new InvalidOperationException($"Cannot void this bill because it would make the value of {item.Code} negative."); }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
