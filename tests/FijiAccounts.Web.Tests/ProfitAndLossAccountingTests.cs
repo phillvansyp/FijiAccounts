@@ -77,4 +77,66 @@ public sealed class ProfitAndLossAccountingTests
         Assert.Equal(40m, expenses);
         Assert.Equal(60m, netProfit);
     }
+
+        [Fact]
+    public async Task InvoiceVoidedInLaterPeriod_ReversesProfitOnlyInVoidPeriod()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var invoice =
+            await test.SalesInvoices.CreateAndPostAsync(
+                test.UserId,
+                new SalesInvoiceRequest(
+                    OrganisationId: test.Organisation.Id,
+                    CustomerId: test.Customer.Id,
+                    IssueDate: new DateOnly(2026, 7, 15),
+                    DueDate: new DateOnly(2026, 8, 14),
+                    Lines:
+                    [
+                        new SalesInvoiceLineRequest(
+                            Description: "July consulting",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            RevenueAccountId:
+                                test.Account("4000").Id)
+                    ]));
+
+        await test.SalesInvoices.VoidAsync(
+            test.UserId,
+            test.Organisation.Id,
+            invoice.Id,
+            new DateOnly(2026, 8, 5));
+
+        var reports =
+            new FinancialReportService(test.Db);
+
+        var july =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 1),
+                new DateOnly(2026, 7, 31));
+
+        var august =
+            await reports.GetAsync(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31));
+
+        var julyRevenue =
+            july.Balances
+                .Where(x =>
+                    x.Type == AccountType.Revenue)
+                .Sum(x => x.DisplayAmount);
+
+        var augustRevenue =
+            august.Balances
+                .Where(x =>
+                    x.Type == AccountType.Revenue)
+                .Sum(x => x.DisplayAmount);
+
+        Assert.Equal(100m, julyRevenue);
+        Assert.Equal(-100m, augustRevenue);
+    }
 }
