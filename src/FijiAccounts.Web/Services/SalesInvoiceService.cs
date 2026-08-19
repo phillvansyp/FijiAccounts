@@ -53,8 +53,22 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot void invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
-        if (invoice.Status is InvoiceStatus.Paid or InvoiceStatus.PartPaid) throw new InvalidOperationException("An invoice with payments must be handled with a credit note or payment reversal.");
-        if (invoice.Status != InvoiceStatus.Posted || invoice.PostedJournalId is null) throw new InvalidOperationException("Only unpaid posted invoices can be voided.");
+        if (invoice.AmountPaid > 0 ||
+    invoice.AmountCredited > 0 ||
+    invoice.Status is InvoiceStatus.Paid or
+        InvoiceStatus.PartPaid or
+        InvoiceStatus.Credited)
+{
+    throw new InvalidOperationException(
+        "A paid or credited invoice cannot be voided. Reverse payments first; sales credits remain permanent audit records.");
+}
+
+if (invoice.Status != InvoiceStatus.Posted ||
+    invoice.PostedJournalId is null)
+{
+    throw new InvalidOperationException(
+        "Only unpaid posted invoices can be voided.");
+}
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == invoice.PostedJournalId && x.OrganisationId == organisationId, cancellationToken);
         var reversal = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit)).ToList(); var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{invoice.InvoiceNumber}", $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
