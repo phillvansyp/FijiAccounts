@@ -65,7 +65,20 @@ if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000"))
 }
         var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited; if (request.Amount <= 0 || request.Amount > outstanding) throw new InvalidOperationException($"Payment must be between $0.01 and ${outstanding:N2}.");
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, ct) ?? throw new InvalidOperationException("Select an active bank account.");
-        var payable = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == request.OrganisationId && x.Code == "2000" && x.IsActive, ct) ?? throw new InvalidOperationException("Accounts Payable (2000) is required.");
+        var payable =
+    await db.LedgerAccounts.SingleOrDefaultAsync(
+        x =>
+            x.OrganisationId == request.OrganisationId &&
+            x.Code == "2000" &&
+            x.IsActive,
+        ct);
+
+if (payable is null ||
+    payable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "Accounts Payable (2000) must be an active Liability account.");
+}
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)]), ct);
         var payment = new SupplierPayment { OrganisationId = request.OrganisationId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
