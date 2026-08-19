@@ -193,4 +193,103 @@ public sealed class BankTransactionReopenCodingTests
 
         Assert.Equal(test.UserId, reopenAudit.UserId);
     }
+
+    [Fact]
+public async Task ReopenCoding_InsideCompletedReconciliation_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var bank = test.Account("1000");
+
+    var statement =
+        new BankStatementLine
+        {
+            OrganisationId = test.Organisation.Id,
+            BankAccountId = bank.Id,
+            TransactionDate = new DateOnly(2026, 8, 18),
+            Description = "Locked office purchase",
+            Reference = "REOPEN-LOCK-001",
+            Amount = -112.50m,
+            Source = "Test"
+        };
+
+    test.Db.BankStatementLines.Add(statement);
+    await test.Db.SaveChangesAsync();
+
+    var journal =
+        await test.BankCoding.PostAndReconcileAsync(
+            test.UserId,
+            new BankTransactionCodingRequest(
+                OrganisationId: test.Organisation.Id,
+                StatementLineId: statement.Id,
+                TargetAccountCode: "6500",
+                Description: "Locked office purchase",
+                VatTreatment: VatTreatment.Standard));
+
+    var sessionService =
+        new BankReconciliationSessionService(
+            test.Db,
+            test.Access);
+
+    var session =
+        await sessionService.CreateAsync(
+            test.UserId,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                bank.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31),
+                0m,
+                -112.50m));
+
+    await sessionService.CompleteAsync(
+        test.UserId,
+        test.Organisation.Id,
+        session.Id);
+
+    var journalCountBefore =
+        await test.Db.PostedJournals
+            .CountAsync(x =>
+                x.OrganisationId == test.Organisation.Id);
+
+    var exception =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.BankCoding.ReopenCodingAsync(
+                    test.UserId,
+                    test.Organisation.Id,
+                    statement.Id));
+
+    Assert.Contains(
+        "completed reconciliation",
+        exception.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    var reloaded =
+        await test.Db.BankStatementLines
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == statement.Id);
+
+    Assert.NotNull(reloaded.ReconciledAt);
+    Assert.NotNull(reloaded.MatchedPostedJournalLineId);
+    Assert.Equal(
+        test.UserId,
+        reloaded.ReconciledByUserId);
+
+    var journalCountAfter =
+        await test.Db.PostedJournals
+            .CountAsync(x =>
+                x.OrganisationId == test.Organisation.Id);
+
+    Assert.Equal(journalCountBefore, journalCountAfter);
+
+    Assert.DoesNotContain(
+        await test.Db.PostedJournals
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == test.Organisation.Id)
+            .ToListAsync(),
+        x => x.Reference == $"REV-{journal.Reference}");
+}
 }

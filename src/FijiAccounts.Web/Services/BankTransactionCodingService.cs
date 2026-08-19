@@ -47,6 +47,22 @@ public sealed class BankTransactionCodingService(
                 "This statement line is not reconciled.");
         }
 
+    var completedReconciliationExists =
+    await db.BankReconciliationSessions.AnyAsync(
+        x =>
+            x.OrganisationId == organisationId &&
+            x.BankAccountId == statement.BankAccountId &&
+            x.IsCompleted &&
+            statement.TransactionDate >= x.StatementStartDate &&
+            statement.TransactionDate <= x.StatementEndDate,
+        ct);
+
+if (completedReconciliationExists)
+{
+    throw new InvalidOperationException(
+        "Bank coding inside a completed reconciliation period cannot be reopened.");
+}
+
         var matched = await db.PostedJournalLines
             .AsNoTracking()
             .SingleAsync(
