@@ -18,12 +18,44 @@ public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccess
         var available = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; if (request.Amount <= 0 || request.Amount > available) throw new InvalidOperationException($"Credit must be between $0.01 and ${available:N2}.");
         if (string.IsNullOrWhiteSpace(request.Reason)) throw new InvalidOperationException("Enter a reason for the credit note.");
         var ratio = request.Amount / invoice.Total; var net = decimal.Round(invoice.Subtotal * ratio, 2, MidpointRounding.AwayFromZero); var vat = request.Amount - net;
-        var controls = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && (x.Code == "1100" || x.Code == "2100")).ToDictionaryAsync(x => x.Code, ct); if (!controls.ContainsKey("1100") || !controls.ContainsKey("2100")) throw new InvalidOperationException("Required receivables and tax control accounts are missing.");
+        var controls = await db.LedgerAccounts
+    .Where(x =>
+        x.OrganisationId == request.OrganisationId &&
+        x.IsActive &&
+        (x.Code == "1100" || x.Code == "2100"))
+    .ToDictionaryAsync(
+        x => x.Code,
+        ct);
+
+if (!controls.TryGetValue(
+        "1100",
+        out var receivables) ||
+    receivables.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        "Accounts Receivable (1100) must be an active Asset account.");
+}
+
+if (!controls.TryGetValue(
+        "2100",
+        out var vatPayable) ||
+    vatPayable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "VAT Payable (2100) must be an active Liability account.");
+}
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var sequence = (await db.SalesCreditNotes.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1; var number = $"CN-{sequence:D6}";
         var journalLines = invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, number, decimal.Round(x.Sum(y => y.NetAmount) * ratio, 2, MidpointRounding.AwayFromZero), 0)).ToList();
         var allocatedNet = journalLines.Sum(x => x.Debit); if (journalLines.Count > 0 && allocatedNet != net) journalLines[0] = journalLines[0] with { Debit = journalLines[0].Debit + net - allocatedNet };
-        if (vat > 0) journalLines.Add(new(controls["2100"].Id, number, vat, 0)); journalLines.Add(new(controls["1100"].Id, number, 0, request.Amount));
+        if (vat > 0)
+{
+    journalLines.Add(
+        new(vatPayable.Id, number, vat, 0));
+}
+
+journalLines.Add(
+    new(receivables.Id, number, 0, request.Amount));
         var issues = request.RestockTrackedItems ? await db.InventoryMovements.Where(x => x.OrganisationId == request.OrganisationId && x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(ct) : [];
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; if (item.InventoryAccountId is null || item.CostAdjustmentAccountId is null) throw new InvalidOperationException($"Inventory accounts are missing for {item.Code}."); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); if (value > 0) { journalLines.Add(new(item.InventoryAccountId.Value, $"Return {item.Code}", value, 0)); journalLines.Add(new(item.CostAdjustmentAccountId.Value, $"Reverse cost {item.Code}", 0, value)); } }
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines), ct);
