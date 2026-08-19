@@ -23,7 +23,20 @@ public sealed class CustomerReceiptService(
         var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
         if (request.Amount > outstanding) throw new InvalidOperationException($"Receipt exceeds the outstanding balance of ${outstanding:N2}.");
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, cancellationToken) ?? throw new InvalidOperationException("Select an active bank account.");
-        var receivable = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == request.OrganisationId && x.Code == "1100" && x.IsActive, cancellationToken) ?? throw new InvalidOperationException("Accounts Receivable (1100) is required.");
+        var receivable =
+    await db.LedgerAccounts.SingleOrDefaultAsync(
+        x =>
+            x.OrganisationId == request.OrganisationId &&
+            x.Code == "1100" &&
+            x.IsActive,
+        cancellationToken);
+
+if (receivable is null ||
+    receivable.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        "Accounts Receivable (1100) must be an active Asset account.");
+}
 
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.Date, request.Reference, $"Receipt for {invoice.InvoiceNumber}", [new(bank.Id, invoice.InvoiceNumber, request.Amount, 0), new(receivable.Id, invoice.InvoiceNumber, 0, request.Amount)]), cancellationToken);
