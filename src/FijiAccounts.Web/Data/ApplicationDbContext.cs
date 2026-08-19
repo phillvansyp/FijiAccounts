@@ -19,6 +19,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
     public DbSet<SalesInvoiceLine> SalesInvoiceLines => Set<SalesInvoiceLine>();
     public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
+    public DbSet<SalesCreditNoteReversal> SalesCreditNoteReversals =>
+    Set<SalesCreditNoteReversal>();
     public DbSet<CustomerReceipt> CustomerReceipts => Set<CustomerReceipt>();
     public DbSet<CustomerReceiptAllocation> CustomerReceiptAllocations => Set<CustomerReceiptAllocation>();
     public DbSet<CustomerReceiptReversal> CustomerReceiptReversals => Set<CustomerReceiptReversal>();
@@ -29,6 +31,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
     public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
+    public DbSet<SupplierCreditNoteReversal> SupplierCreditNoteReversals =>
+    Set<SupplierCreditNoteReversal>();
     public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
     public DbSet<BankReconciliationSession> BankReconciliationSessions =>
     Set<BankReconciliationSession>();
@@ -90,7 +94,21 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesCreditNote>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
-        builder.Entity<CustomerReceipt>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<CustomerReceipt>().Property(x => x.Amount).HasPrecision(18, 2);builder.Entity<SalesCreditNoteReversal>()
+    .HasIndex(x => x.SalesCreditNoteId)
+    .IsUnique();
+
+builder.Entity<SalesCreditNoteReversal>()
+    .HasOne(x => x.SalesCreditNote)
+    .WithMany()
+    .HasForeignKey(x => x.SalesCreditNoteId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<SalesCreditNoteReversal>()
+    .HasOne(x => x.PostedJournal)
+    .WithMany()
+    .HasForeignKey(x => x.PostedJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
@@ -125,6 +143,21 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<SupplierCreditNote>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierCreditNote>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SupplierCreditNote.Subtotal), nameof(SupplierCreditNote.VatTotal), nameof(SupplierCreditNote.Total) }) builder.Entity<SupplierCreditNote>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SupplierCreditNoteReversal>()
+    .HasIndex(x => x.SupplierCreditNoteId)
+    .IsUnique();
+
+builder.Entity<SupplierCreditNoteReversal>()
+    .HasOne(x => x.SupplierCreditNote)
+    .WithMany()
+    .HasForeignKey(x => x.SupplierCreditNoteId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<SupplierCreditNoteReversal>()
+    .HasOne(x => x.PostedJournal)
+    .WithMany()
+    .HasForeignKey(x => x.PostedJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPaymentReversal>().HasIndex(x => x.SupplierPaymentId).IsUnique(); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.SupplierPayment).WithMany().HasForeignKey(x => x.SupplierPaymentId).OnDelete(DeleteBehavior.Restrict); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().Property(x => x.Amount).HasPrecision(18, 2);
@@ -276,10 +309,21 @@ builder.Entity<FixedAsset>()
             ChangeTracker.Entries<CustomerReceiptAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<CustomerReceiptReversal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<SupplierBill>().Any(x => x.State == EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierBillLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierCreditNote>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierPayment>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierPaymentReversal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
-            throw new InvalidOperationException("Posted journals and audit events are append-only.");
+            ChangeTracker.Entries<SupplierBillLine>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+ChangeTracker.Entries<SupplierCreditNote>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+ChangeTracker.Entries<SupplierPayment>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+ChangeTracker.Entries<SupplierPaymentReversal>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+ChangeTracker.Entries<SalesCreditNoteReversal>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+ChangeTracker.Entries<SupplierCreditNoteReversal>()
+    .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+{
+    throw new InvalidOperationException(
+        "Posted journals and audit events are append-only.");
+}
     }
 }

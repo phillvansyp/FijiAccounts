@@ -44,4 +44,190 @@ invoice.Status =
             : InvoiceStatus.Posted;
         db.SalesCreditNotes.Add(credit); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, UserId = userId, EventType = "SalesCreditNotePosted", EntityType = nameof(SalesCreditNote), EntityId = credit.Id.ToString(), JsonData = JsonSerializer.Serialize(new { credit.CreditNoteNumber, invoice.InvoiceNumber, credit.Total, credit.VatTotal }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return credit;
     }
+
+    public async Task<SalesCreditNoteReversal> ReverseAsync(
+    string userId,
+    Guid organisationId,
+    Guid creditNoteId,
+    DateOnly reversalDate,
+    string reason,
+    CancellationToken ct = default)
+{
+    if (!await access.CanPostJournalsAsync(userId, organisationId))
+        throw new UnauthorizedAccessException(
+            "You cannot reverse credit notes for this organisation.");
+
+    if (string.IsNullOrWhiteSpace(reason))
+        throw new InvalidOperationException(
+            "Enter a reason for reversing the credit note.");
+
+    var credit =
+        await db.SalesCreditNotes
+            .Include(x => x.SalesInvoice)
+                .ThenInclude(x => x.Lines)
+                    .ThenInclude(x => x.ProductItem)
+            .SingleOrDefaultAsync(
+                x =>
+                    x.Id == creditNoteId &&
+                    x.OrganisationId == organisationId,
+                ct)
+        ?? throw new InvalidOperationException(
+            "Sales credit note not found.");
+
+    if (await db.SalesCreditNoteReversals.AnyAsync(
+            x => x.SalesCreditNoteId == creditNoteId,
+            ct))
+    {
+        throw new InvalidOperationException(
+            "This sales credit note has already been reversed.");
+    }
+
+    var stockReturns =
+        await db.InventoryMovements
+            .Include(x => x.ProductItem)
+            .Where(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.PostedJournalId == credit.PostedJournalId &&
+                    x.Reference == credit.CreditNoteNumber &&
+                    x.Type == InventoryMovementType.SalesReturn)
+            .ToListAsync(ct);
+
+    foreach (var movement in stockReturns)
+    {
+        if (movement.ProductItem.QuantityOnHand < movement.QuantityChange)
+        {
+            throw new InvalidOperationException(
+                $"Cannot reverse this sales credit note because " +
+                $"{movement.ProductItem.Code} no longer has all returned units on hand.");
+        }
+    }
+
+    await using var transaction =
+        await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
+
+    var original =
+        await db.PostedJournals
+            .AsNoTracking()
+            .Include(x => x.Lines)
+            .SingleAsync(
+                x =>
+                    x.Id == credit.PostedJournalId &&
+                    x.OrganisationId == organisationId,
+                ct);
+
+    var reference =
+        $"REV-{credit.CreditNoteNumber}";
+
+    var lines =
+        original.Lines
+            .Select(
+                x =>
+                    new JournalLineInput(
+                        x.LedgerAccountId,
+                        $"Reverse {credit.CreditNoteNumber}",
+                        x.Credit,
+                        x.Debit))
+            .ToList();
+
+    var journal =
+        await posting.PostAsync(
+            userId,
+            new JournalPostRequest(
+                organisationId,
+                reversalDate,
+                reference,
+                $"Reverse sales credit note {credit.CreditNoteNumber}: {reason.Trim()}",
+                lines),
+            ct);
+
+    foreach (var movement in stockReturns)
+    {
+        var item = movement.ProductItem;
+
+        item.QuantityOnHand -= movement.QuantityChange;
+
+        db.InventoryMovements.Add(
+            new InventoryMovement
+            {
+                OrganisationId = organisationId,
+                ProductItemId = item.Id,
+                MovementDate = reversalDate,
+                Type = InventoryMovementType.AdjustmentDecrease,
+                QuantityChange = -movement.QuantityChange,
+                UnitCost = movement.UnitCost,
+                ValueChange = -movement.ValueChange,
+                Reference = reference,
+                Note =
+                    $"Stock removed by reversal of {credit.CreditNoteNumber}",
+                PostedJournalId = journal.Id,
+                PostedByUserId = userId
+            });
+    }
+
+    var invoice =
+        credit.SalesInvoice;
+
+    invoice.AmountCredited -= credit.Total;
+
+    if (invoice.AmountCredited < 0)
+    {
+        throw new InvalidOperationException(
+            "Credit note history is inconsistent and cannot be reversed.");
+    }
+
+    var remaining =
+        invoice.Total -
+        invoice.AmountPaid -
+        invoice.AmountCredited;
+
+    invoice.Status =
+        remaining <= 0
+            ? invoice.AmountCredited > 0
+                ? InvoiceStatus.Credited
+                : InvoiceStatus.Paid
+            : invoice.AmountPaid > 0 || invoice.AmountCredited > 0
+                ? InvoiceStatus.PartPaid
+                : InvoiceStatus.Posted;
+
+    var reversal =
+        new SalesCreditNoteReversal
+        {
+            OrganisationId = organisationId,
+            SalesCreditNoteId = credit.Id,
+            ReversalDate = reversalDate,
+            Reason = reason.Trim(),
+            PostedJournalId = journal.Id,
+            CreatedByUserId = userId
+        };
+
+    db.SalesCreditNoteReversals.Add(reversal);
+
+    db.AuditEvents.Add(
+        new AuditEvent
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = "SalesCreditNoteReversed",
+            EntityType = nameof(SalesCreditNoteReversal),
+            EntityId = reversal.Id.ToString(),
+            JsonData =
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        credit.CreditNoteNumber,
+                        credit.Total,
+                        reason,
+                        ReversalJournalId = journal.Id,
+                        StockMovements = stockReturns.Count
+                    })
+        });
+
+    await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
+
+    return reversal;
+}
 }

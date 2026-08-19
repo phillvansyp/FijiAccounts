@@ -95,6 +95,28 @@ public sealed class SupplierCreditNote
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
 }
 
+    public sealed class SupplierCreditNoteReversal
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+
+    public Guid SupplierCreditNoteId { get; set; }
+    public SupplierCreditNote SupplierCreditNote { get; set; } = null!;
+
+    public DateOnly ReversalDate { get; set; }
+
+    [MaxLength(300)]
+    public required string Reason { get; set; }
+
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
 public sealed class SupplierBillLine
 {
     public Guid Id { get; set; } = Guid.NewGuid();
