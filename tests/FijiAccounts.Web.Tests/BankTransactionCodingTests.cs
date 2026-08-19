@@ -1,3 +1,4 @@
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -100,4 +101,124 @@ public sealed class BankTransactionCodingTests
             12.50m,
             await test.AccountBalanceAsync("1150"));
     }
+
+    [Fact]
+    public async Task PostAndReconcileAsync_WhenVatReceivableControlAccountHasWrongType_IsRejected()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bank = test.Account("1000");
+
+        bank.BankAccountKind =
+            FijiAccounts.Web.Data.BankAccountKind.DebitCard;
+
+        var vatReceivable = test.Account("1150");
+        vatReceivable.Type = AccountType.Liability;
+
+        await test.Db.SaveChangesAsync();
+
+        var statement =
+            await test.Reconciliation.AddStatementLineAsync(
+                test.UserId,
+                new StatementLineRequest(
+                    OrganisationId: test.Organisation.Id,
+                    BankAccountId: bank.Id,
+                    Date: new DateOnly(2026, 8, 18),
+                    Description: "Office supplies purchase",
+                    Reference: "CARD-WRONG-1150",
+                    Amount: -112.50m));
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.BankCoding.PostAndReconcileAsync(
+                        test.UserId,
+                        new BankTransactionCodingRequest(
+                            OrganisationId: test.Organisation.Id,
+                            StatementLineId: statement.Id,
+                            TargetAccountCode: "6500",
+                            Description: "Office supplies purchase",
+                            VatTreatment: VatTreatment.Standard)));
+
+        Assert.Contains(
+            "1150",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        var reloadedStatement =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == statement.Id);
+
+        Assert.Null(reloadedStatement.ReconciledAt);
+        Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
+    }
+
+    [Fact]
+public async Task PostAndReconcileAsync_WhenVatPayableControlAccountHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var bank = test.Account("1000");
+
+    bank.BankAccountKind =
+        FijiAccounts.Web.Data.BankAccountKind.DebitCard;
+
+    var vatPayable = test.Account("2100");
+    vatPayable.Type = AccountType.Asset;
+
+    await test.Db.SaveChangesAsync();
+
+    var statement =
+        await test.Reconciliation.AddStatementLineAsync(
+            test.UserId,
+            new StatementLineRequest(
+                OrganisationId: test.Organisation.Id,
+                BankAccountId: bank.Id,
+                Date: new DateOnly(2026, 8, 18),
+                Description: "Customer receipt style bank credit",
+                Reference: "BANK-WRONG-2100",
+                Amount: 112.50m));
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.BankCoding.PostAndReconcileAsync(
+                    test.UserId,
+                    new BankTransactionCodingRequest(
+                        OrganisationId: test.Organisation.Id,
+                        StatementLineId: statement.Id,
+                        TargetAccountCode: "4000",
+                        Description: "Customer receipt style bank credit",
+                        VatTreatment: VatTreatment.Standard)));
+
+    Assert.Contains(
+        "2100",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+
+    var reloadedStatement =
+        await test.Db.BankStatementLines
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == statement.Id);
+
+    Assert.Null(reloadedStatement.ReconciledAt);
+    Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
+}
 }

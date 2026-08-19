@@ -691,21 +691,38 @@ else
     }
 
     private async Task<Guid> ControlAccountId(
-        Guid organisationId,
-        string code,
-        string name,
-        CancellationToken ct)
+    Guid organisationId,
+    string code,
+    string name,
+    CancellationToken ct)
+{
+    var expectedType =
+        code switch
+        {
+            "1150" => AccountType.Asset,
+            "2100" => AccountType.Liability,
+            _ => throw new InvalidOperationException(
+                $"Unsupported VAT control account {code}.")
+        };
+
+    var account =
+        await db.LedgerAccounts
+            .SingleOrDefaultAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.Code == code &&
+                    x.IsActive,
+                ct);
+
+    if (account is null ||
+        account.Type != expectedType)
     {
-        return await db.LedgerAccounts
-            .Where(x =>
-                x.OrganisationId == organisationId &&
-                x.Code == code &&
-                x.IsActive)
-            .Select(x => (Guid?)x.Id)
-            .SingleOrDefaultAsync(ct)
-            ?? throw new InvalidOperationException(
-                $"{name} ({code}) is required for standard VAT coding.");
+        throw new InvalidOperationException(
+            $"{name} ({code}) must be an active {expectedType} account.");
     }
+
+    return account.Id;
+}
 
     private sealed record TransferMatch(
         BankTransfer Transfer,
