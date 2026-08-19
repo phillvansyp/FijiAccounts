@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Services;
 
@@ -73,4 +74,51 @@ public sealed class SupplierBillAccountingTests
         Assert.Equal(0m, payable.Debit);
         Assert.Equal(112.50m, payable.Credit);
     }
+
+    [Fact]
+public async Task PostBill_WhenVatReceivableControlIsMissing_FailsWithoutRecreatingIt()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var vatReceivable =
+        test.Account("1150");
+
+    test.Db.LedgerAccounts.Remove(vatReceivable);
+    await test.Db.SaveChangesAsync();
+
+    var exception =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-MISSING-1150",
+                        BillDate: new DateOnly(2026, 8, 18),
+                        DueDate: new DateOnly(2026, 9, 17),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Office supplies",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: test.Account("6500").Id)
+                        ])));
+
+    Assert.Equal(
+        "VAT Receivable (1150) and Accounts Payable (2000) are required.",
+        exception.Message);
+
+    var recreated =
+        await test.Db.LedgerAccounts
+            .AnyAsync(
+                x =>
+                    x.OrganisationId == test.Organisation.Id &&
+                    x.Code == "1150");
+
+    Assert.False(recreated);
+}
 }

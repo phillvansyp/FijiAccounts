@@ -28,9 +28,17 @@ public sealed class PurchasingService(
         var expenseIds = request.Lines.Select(x => x.ExpenseAccountId).Distinct().ToArray();
         var expenses = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && expenseIds.Contains(x.Id) && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).ToDictionaryAsync(x => x.Id, ct);
         if (expenses.Count != expenseIds.Length) throw new InvalidOperationException("Every bill line must use an active expense or asset account.");
-        var controls = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && (x.Code == "1150" || x.Code == "2000")).ToDictionaryAsync(x => x.Code, ct);
-        if (!controls.ContainsKey("1150")) { var vatReceivable = new LedgerAccount { OrganisationId = request.OrganisationId, Code = "1150", Name = "VAT Receivable", Type = AccountType.Asset, IsSystemAccount = true }; db.LedgerAccounts.Add(vatReceivable); await db.SaveChangesAsync(ct); controls["1150"] = vatReceivable; }
-        if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000")) throw new InvalidOperationException("VAT Receivable (1150) and Accounts Payable (2000) are required.");
+        var controls = await db.LedgerAccounts
+    .Where(x =>
+        x.OrganisationId == request.OrganisationId &&
+        (x.Code == "1150" || x.Code == "2000"))
+    .ToDictionaryAsync(x => x.Code, ct);
+
+if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000"))
+{
+    throw new InvalidOperationException(
+        "VAT Receivable (1150) and Accounts Payable (2000) are required.");
+}
         var schedule = new FijiVatSchedule();
         var lines = request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.BillDate, x.VatTreatment); return new SupplierBillLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }; }).ToList();
         var trackedIds = lines.Where(x => x.ProductItemId != null).Select(x => x.ProductItemId!.Value).Distinct().ToArray(); var tracked = await db.ProductItems.Where(x => x.OrganisationId == request.OrganisationId && x.Kind == ProductKind.TrackedItem && trackedIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct); foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; if (item.InventoryAccountId is null || line.ExpenseAccountId != item.InventoryAccountId) throw new InvalidOperationException($"Set opening stock and inventory accounts for {item.Code} before purchasing it."); }
