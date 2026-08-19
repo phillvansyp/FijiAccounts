@@ -37,8 +37,32 @@ public sealed class CustomerReceiptService(ApplicationDbContext db, TenantAccess
         if (string.IsNullOrWhiteSpace(reason)) throw new InvalidOperationException("Enter a reason for reversing the receipt.");
         var receipt = await db.CustomerReceipts.Include(x => x.Allocations).ThenInclude(x => x.SalesInvoice).SingleOrDefaultAsync(x => x.Id == receiptId && x.OrganisationId == organisationId, ct) ?? throw new InvalidOperationException("Customer receipt not found.");
         if (await db.CustomerReceiptReversals.AnyAsync(x => x.CustomerReceiptId == receiptId, ct)) throw new InvalidOperationException("This receipt has already been reversed.");
-        if (receipt.Allocations.Any(x => x.SalesInvoice.Status == InvoiceStatus.Voided)) throw new InvalidOperationException("A receipt allocated to a voided invoice cannot be reversed here.");
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        if (receipt.Allocations.Any(x => x.SalesInvoice.Status == InvoiceStatus.Voided))
+{
+    throw new InvalidOperationException(
+        "A receipt allocated to a voided invoice cannot be reversed here.");
+}
+
+var completedReconciliationExists =
+    await db.BankReconciliationSessions.AnyAsync(
+        x =>
+            x.OrganisationId == organisationId &&
+            x.BankAccountId == receipt.BankAccountId &&
+            x.IsCompleted &&
+            receipt.ReceiptDate >= x.StatementStartDate &&
+            receipt.ReceiptDate <= x.StatementEndDate,
+        ct);
+
+if (completedReconciliationExists)
+{
+    throw new InvalidOperationException(
+        "A customer receipt inside a completed bank reconciliation period cannot be reversed.");
+}
+
+await using var transaction =
+    await db.Database.BeginTransactionAsync(
+        IsolationLevel.Serializable,
+        ct);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == receipt.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reference = $"REV-{receipt.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse receipt {receipt.Reference}", x.Credit, x.Debit)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse customer receipt: {reason.Trim()}", lines), ct);
