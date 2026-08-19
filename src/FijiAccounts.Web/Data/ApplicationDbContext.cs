@@ -17,6 +17,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
     public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
+    public DbSet<SalesInvoiceVoid> SalesInvoiceVoids =>
+    Set<SalesInvoiceVoid>();
     public DbSet<SalesInvoiceLine> SalesInvoiceLines => Set<SalesInvoiceLine>();
     public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
     public DbSet<SalesCreditNoteReversal> SalesCreditNoteReversals =>
@@ -25,6 +27,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CustomerReceiptAllocation> CustomerReceiptAllocations => Set<CustomerReceiptAllocation>();
     public DbSet<CustomerReceiptReversal> CustomerReceiptReversals => Set<CustomerReceiptReversal>();
     public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
+    public DbSet<SupplierBillVoid> SupplierBillVoids =>
+    Set<SupplierBillVoid>();
     public DbSet<SupplierBillLine> SupplierBillLines => Set<SupplierBillLine>();
     public DbSet<SupplierBillAttachment> SupplierBillAttachments => Set<SupplierBillAttachment>();
     public DbSet<SupplierBillDraft> SupplierBillDrafts => Set<SupplierBillDraft>();
@@ -94,6 +98,21 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesCreditNote>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SalesInvoiceVoid>()
+    .HasIndex(x => x.SalesInvoiceId)
+    .IsUnique();
+
+builder.Entity<SalesInvoiceVoid>()
+    .HasOne(x => x.SalesInvoice)
+    .WithMany()
+    .HasForeignKey(x => x.SalesInvoiceId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<SalesInvoiceVoid>()
+    .HasOne(x => x.PostedJournal)
+    .WithMany()
+    .HasForeignKey(x => x.PostedJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().Property(x => x.Amount).HasPrecision(18, 2);builder.Entity<SalesCreditNoteReversal>()
     .HasIndex(x => x.SalesCreditNoteId)
     .IsUnique();
@@ -123,6 +142,21 @@ builder.Entity<SalesCreditNoteReversal>()
         builder.Entity<SupplierBill>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasOne<PostedJournal>().WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SupplierBill.Subtotal), nameof(SupplierBill.VatTotal), nameof(SupplierBill.Total), nameof(SupplierBill.AmountPaid), nameof(SupplierBill.AmountCredited) }) builder.Entity<SupplierBill>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SupplierBillVoid>()
+    .HasIndex(x => x.SupplierBillId)
+    .IsUnique();
+
+builder.Entity<SupplierBillVoid>()
+    .HasOne(x => x.SupplierBill)
+    .WithMany()
+    .HasForeignKey(x => x.SupplierBillId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<SupplierBillVoid>()
+    .HasOne(x => x.PostedJournal)
+    .WithMany()
+    .HasForeignKey(x => x.PostedJournalId)
+    .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillLine>().Property(x => x.Quantity).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.UnitPrice).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.VatRate).HasPrecision(8, 6); builder.Entity<SupplierBillLine>().Property(x => x.NetAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.VatAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.GrossAmount).HasPrecision(18, 2);
         builder.Entity<SupplierBillLine>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillLine>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
@@ -290,37 +324,61 @@ builder.Entity<FixedAsset>()
 
     private void ProtectAppendOnlyRecords()
     {
-        if (ChangeTracker.Entries<PostedJournal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<PostedJournalLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<AuditEvent>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SalesInvoice>().Any(x => x.State == EntityState.Deleted && x.Entity.Status != InvoiceStatus.Draft) ||
-            ChangeTracker.Entries<SalesInvoiceLine>().Any(x => (x.State is EntityState.Modified or EntityState.Deleted) && x.Entity.SalesInvoice.Status != InvoiceStatus.Draft) ||
-            ChangeTracker.Entries<SalesCreditNote>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SalesQuote>().Any(x => x.State == EntityState.Deleted && x.Entity.Status != QuoteStatus.Draft) ||
-            ChangeTracker.Entries<SalesQuoteLine>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-                        ChangeTracker.Entries<FixedAssetDepreciation>()
-                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<FixedAssetDisposal>()
-                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<InventoryMovement>()
-                .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<BankTransfer>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<CustomerReceipt>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<CustomerReceiptAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<CustomerReceiptReversal>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierBill>().Any(x => x.State == EntityState.Deleted) ||
-            ChangeTracker.Entries<SupplierBillLine>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-ChangeTracker.Entries<SupplierCreditNote>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-ChangeTracker.Entries<SupplierPayment>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-ChangeTracker.Entries<SupplierPaymentReversal>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-ChangeTracker.Entries<SalesCreditNoteReversal>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-ChangeTracker.Entries<SupplierCreditNoteReversal>()
-    .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+        if (
+    ChangeTracker.Entries<PostedJournal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<PostedJournalLine>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<AuditEvent>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SalesInvoice>()
+        .Any(x =>
+            x.State == EntityState.Deleted &&
+            x.Entity.Status != InvoiceStatus.Draft) ||
+    ChangeTracker.Entries<SalesInvoiceLine>()
+        .Any(x =>
+            (x.State is EntityState.Modified or EntityState.Deleted) &&
+            x.Entity.SalesInvoice.Status != InvoiceStatus.Draft) ||
+    ChangeTracker.Entries<SalesCreditNote>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SalesQuote>()
+        .Any(x =>
+            x.State == EntityState.Deleted &&
+            x.Entity.Status != QuoteStatus.Draft) ||
+    ChangeTracker.Entries<SalesQuoteLine>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<FixedAssetDepreciation>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<FixedAssetDisposal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<InventoryMovement>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<BankTransfer>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<CustomerReceipt>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<CustomerReceiptAllocation>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<CustomerReceiptReversal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierBill>()
+        .Any(x => x.State == EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierBillLine>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierCreditNote>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierPayment>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierPaymentReversal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SalesInvoiceVoid>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierBillVoid>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SalesCreditNoteReversal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierCreditNoteReversal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
 {
     throw new InvalidOperationException(
         "Posted journals and audit events are append-only.");

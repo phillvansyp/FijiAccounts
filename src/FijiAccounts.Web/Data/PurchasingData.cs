@@ -31,6 +31,30 @@ public sealed class SupplierBillDraft
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
 }
 
+    public sealed class SupplierBillVoid
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public Guid SupplierBillId { get; set; }
+    public SupplierBill SupplierBill { get; set; } = null!;
+
+    public DateOnly VoidDate { get; set; }
+
+    [MaxLength(300)]
+    public required string Reason { get; set; }
+
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+
+    public DateTimeOffset CreatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
 public sealed class SupplierBill
 {
     public Guid Id { get; set; } = Guid.NewGuid();

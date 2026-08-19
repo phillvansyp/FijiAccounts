@@ -47,6 +47,27 @@ public sealed class SalesInvoice
     public required string CreatedByUserId { get; set; }
 }
 
+    public sealed class SalesInvoiceVoid
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public Guid SalesInvoiceId { get; set; }
+    public SalesInvoice SalesInvoice { get; set; } = null!;
+
+    public DateOnly VoidDate { get; set; }
+
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+
+    public DateTimeOffset CreatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
 public sealed class SalesCreditNote
 {
     public Guid Id { get; set; } = Guid.NewGuid();

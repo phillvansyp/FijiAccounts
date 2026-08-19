@@ -103,6 +103,17 @@ var hasCreditHistory =
         var reversalLines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {bill.BillNumber}", x.Credit, x.Debit)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{bill.BillNumber}", $"Void supplier bill {bill.SupplierReference}: {reason.Trim()}", reversalLines), ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; var oldValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost); item.QuantityOnHand -= receipt.QuantityChange; item.AverageCost = item.QuantityOnHand == 0 ? 0 : decimal.Round((oldValue - receipt.ValueChange) / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero); db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -receipt.QuantityChange, UnitCost = receipt.UnitCost, ValueChange = -receipt.ValueChange, Reference = $"VOID-{bill.BillNumber}", Note = $"Stock removed by supplier bill void: {reason.Trim()}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        var billVoid = new SupplierBillVoid
+{
+    OrganisationId = organisationId,
+    SupplierBillId = bill.Id,
+    VoidDate = voidDate,
+    Reason = reason.Trim(),
+    PostedJournalId = journal.Id,
+    CreatedByUserId = userId
+};
+
+db.SupplierBillVoids.Add(billVoid);
         bill.Status = BillStatus.Voided; db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillVoided", nameof(SupplierBill), bill.Id, new { bill.BillNumber, reason, ReversalJournalId = journal.Id, StockReturns = receipts.Count })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return bill;
     }
 

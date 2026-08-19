@@ -65,8 +65,7 @@ else
                     x.SalesInvoice.OrganisationId == OrganisationId &&
                     x.SalesInvoice.IssueDate >= period.From &&
                     x.SalesInvoice.IssueDate <= period.To &&
-                    x.SalesInvoice.Status != InvoiceStatus.Draft &&
-                    x.SalesInvoice.Status != InvoiceStatus.Voided)
+                    x.SalesInvoice.Status != InvoiceStatus.Draft)
                 .Select(x =>
                     new TaxLine(
                         x.VatTreatment,
@@ -74,20 +73,57 @@ else
                         x.VatAmount))
                 .ToListAsync();
 
+        var salesVoids =
+    await Db.SalesInvoiceLines
+        .AsNoTracking()
+        .Where(x =>
+            x.SalesInvoice.OrganisationId == OrganisationId &&
+            Db.SalesInvoiceVoids.Any(v =>
+                v.OrganisationId == OrganisationId &&
+                v.SalesInvoiceId == x.SalesInvoiceId &&
+                v.VoidDate >= period.From &&
+                v.VoidDate <= period.To))
+        .Select(x =>
+            new TaxLine(
+                x.VatTreatment,
+                -x.NetAmount,
+                -x.VatAmount))
+        .ToListAsync();
+
+sales.AddRange(salesVoids);
+
         purchases =
             await Db.SupplierBillLines
                 .AsNoTracking()
                 .Where(x =>
                     x.SupplierBill.OrganisationId == OrganisationId &&
                     x.SupplierBill.BillDate >= period.From &&
-                    x.SupplierBill.BillDate <= period.To &&
-                    x.SupplierBill.Status != BillStatus.Voided)
+                    x.SupplierBill.BillDate <= period.To)
                 .Select(x =>
                     new TaxLine(
                         x.VatTreatment,
                         x.NetAmount,
                         x.VatAmount))
                 .ToListAsync();
+
+        var purchaseVoids =
+    await Db.SupplierBillLines
+        .AsNoTracking()
+        .Where(x =>
+            x.SupplierBill.OrganisationId == OrganisationId &&
+            Db.SupplierBillVoids.Any(v =>
+                v.OrganisationId == OrganisationId &&
+                v.SupplierBillId == x.SupplierBillId &&
+                v.VoidDate >= period.From &&
+                v.VoidDate <= period.To))
+        .Select(x =>
+            new TaxLine(
+                x.VatTreatment,
+                -x.NetAmount,
+                -x.VatAmount))
+        .ToListAsync();
+
+purchases.AddRange(purchaseVoids);
 
         var credits =
             await Db.SalesCreditNotes

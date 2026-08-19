@@ -74,6 +74,16 @@ if (invoice.Status != InvoiceStatus.Posted ||
         var reversal = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit)).ToList(); var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{invoice.InvoiceNumber}", $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
         var issues = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(cancellationToken);
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = -issue.QuantityChange; item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = -issue.ValueChange, Reference = $"VOID-{invoice.InvoiceNumber}", Note = "Stock restored by invoice void", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        var invoiceVoid = new SalesInvoiceVoid
+{
+    OrganisationId = organisationId,
+    SalesInvoiceId = invoice.Id,
+    VoidDate = voidDate,
+    PostedJournalId = journal.Id,
+    CreatedByUserId = userId
+};
+
+db.SalesInvoiceVoids.Add(invoiceVoid);
         invoice.Status = InvoiceStatus.Voided; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoiceVoided", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, ReversalJournalId = journal.Id, voidDate, StockReturns = issues.Count }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
     }
 
