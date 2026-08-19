@@ -80,6 +80,21 @@ public sealed class PurchasingService(ApplicationDbContext db, TenantAccessServi
         var payment = await db.SupplierPayments.Include(x => x.SupplierBill).SingleOrDefaultAsync(x => x.Id == paymentId && x.OrganisationId == organisationId, ct) ?? throw new InvalidOperationException("Supplier payment not found.");
         if (await db.SupplierPaymentReversals.AnyAsync(x => x.SupplierPaymentId == paymentId, ct)) throw new InvalidOperationException("This payment has already been reversed.");
         if (payment.SupplierBill.Status == BillStatus.Voided) throw new InvalidOperationException("A payment on a voided bill cannot be reversed here.");
+        var completedReconciliationExists =
+    await db.BankReconciliationSessions.AnyAsync(
+        x =>
+            x.OrganisationId == organisationId &&
+            x.BankAccountId == payment.BankAccountId &&
+            x.IsCompleted &&
+            payment.PaymentDate >= x.StatementStartDate &&
+            payment.PaymentDate <= x.StatementEndDate,
+        ct);
+
+if (completedReconciliationExists)
+{
+    throw new InvalidOperationException(
+        "A supplier payment inside a completed bank reconciliation period cannot be reversed.");
+}
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == payment.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reference = $"REV-{payment.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse payment {payment.Reference}", x.Credit, x.Debit)).ToList();
