@@ -34,7 +34,371 @@ public sealed class AccountingPeriodReadinessTests
         Assert.Equal(0, readiness.DraftSalesInvoices);
         Assert.Equal(0, readiness.DraftSupplierBills);
         Assert.Equal(0, readiness.FixedAssetsRequiringDepreciation);
+        Assert.Equal(0, readiness.InventoryIntegrityWarnings);
     }
+
+    [Fact]
+public async Task Inventory_NegativeHistoricalQuantity_IsReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var item = new ProductItem
+    {
+        OrganisationId = test.Organisation.Id,
+        Code = "INV-NEG-QTY",
+        Name = "Negative quantity item",
+        Kind = ProductKind.TrackedItem,
+        SalePrice = 0m,
+        PurchasePrice = 0m,
+        QuantityOnHand = 0m,
+        AverageCost = 0m,
+        ReorderLevel = 0m,
+        IsActive = true
+    };
+
+    test.Db.ProductItems.Add(item);
+    await test.Db.SaveChangesAsync();
+
+    var journal =
+    await test.Posting.PostAsync(
+        test.UserId,
+        new JournalPostRequest(
+            test.Organisation.Id,
+            new DateOnly(2026, 7, 15),
+            "INV-NEG-QTY",
+            "Inventory readiness test",
+            [
+                new JournalLineInput(
+                    test.Account("1000").Id,
+                    "Inventory readiness test",
+                    1m,
+                    0m),
+                new JournalLineInput(
+                    test.Account("2000").Id,
+                    "Inventory readiness test",
+                    0m,
+                    1m)
+            ]));
+
+    test.Db.InventoryMovements.Add(
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 7, 15),
+            Type = InventoryMovementType.AdjustmentDecrease,
+            QuantityChange = -1m,
+            UnitCost = 10m,
+            ValueChange = -10m,
+            Reference = "NEG-QTY",
+            PostedJournalId = journal.Id,
+            PostedByUserId = test.UserId
+        });
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.False(readiness.IsReady);
+    Assert.Equal(1, readiness.InventoryIntegrityWarnings);
+}
+
+    [Fact]
+public async Task Inventory_NegativeHistoricalValue_IsReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var item = new ProductItem
+    {
+        OrganisationId = test.Organisation.Id,
+        Code = "INV-NEG-VALUE",
+        Name = "Negative value item",
+        Kind = ProductKind.TrackedItem,
+        SalePrice = 0m,
+        PurchasePrice = 0m,
+        QuantityOnHand = 1m,
+        AverageCost = 0m,
+        ReorderLevel = 0m,
+        IsActive = true
+    };
+
+    test.Db.ProductItems.Add(item);
+    await test.Db.SaveChangesAsync();
+
+    var journal =
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 15),
+                "INV-NEG-VALUE",
+                "Inventory readiness test",
+                [
+                    new JournalLineInput(
+                        test.Account("1000").Id,
+                        "Inventory readiness test",
+                        1m,
+                        0m),
+                    new JournalLineInput(
+                        test.Account("2000").Id,
+                        "Inventory readiness test",
+                        0m,
+                        1m)
+                ]));
+
+    test.Db.InventoryMovements.Add(
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 7, 15),
+            Type = InventoryMovementType.AdjustmentIncrease,
+            QuantityChange = 1m,
+            UnitCost = 0m,
+            ValueChange = -5m,
+            Reference = "NEG-VALUE",
+            PostedJournalId = journal.Id,
+            PostedByUserId = test.UserId
+        });
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.False(readiness.IsReady);
+    Assert.Equal(1, readiness.InventoryIntegrityWarnings);
+}
+
+    [Fact]
+public async Task Inventory_ZeroQuantityWithResidualValue_IsReported()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var item = new ProductItem
+    {
+        OrganisationId = test.Organisation.Id,
+        Code = "INV-RESIDUAL",
+        Name = "Residual value item",
+        Kind = ProductKind.TrackedItem,
+        SalePrice = 0m,
+        PurchasePrice = 0m,
+        QuantityOnHand = 0m,
+        AverageCost = 0m,
+        ReorderLevel = 0m,
+        IsActive = true
+    };
+
+    test.Db.ProductItems.Add(item);
+    await test.Db.SaveChangesAsync();
+
+    var journal =
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 15),
+                "INV-RESIDUAL",
+                "Inventory readiness test",
+                [
+                    new JournalLineInput(
+                        test.Account("1000").Id,
+                        "Inventory readiness test",
+                        1m,
+                        0m),
+                    new JournalLineInput(
+                        test.Account("2000").Id,
+                        "Inventory readiness test",
+                        0m,
+                        1m)
+                ]));
+
+    test.Db.InventoryMovements.AddRange(
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 7, 10),
+            Type = InventoryMovementType.AdjustmentIncrease,
+            QuantityChange = 1m,
+            UnitCost = 10m,
+            ValueChange = 10m,
+            Reference = "RESIDUAL-IN",
+            PostedJournalId = journal.Id,
+            PostedByUserId = test.UserId
+        },
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 7, 20),
+            Type = InventoryMovementType.AdjustmentDecrease,
+            QuantityChange = -1m,
+            UnitCost = 9m,
+            ValueChange = -9m,
+            Reference = "RESIDUAL-OUT",
+            PostedJournalId = journal.Id,
+            PostedByUserId = test.UserId
+        });
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.False(readiness.IsReady);
+    Assert.Equal(1, readiness.InventoryIntegrityWarnings);
+}
+
+    [Fact]
+public async Task Inventory_MovementAfterPeriodEnd_DoesNotAffectReadiness()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var item = new ProductItem
+    {
+        OrganisationId = test.Organisation.Id,
+        Code = "INV-CUTOFF",
+        Name = "Historical cutoff item",
+        Kind = ProductKind.TrackedItem,
+        SalePrice = 0m,
+        PurchasePrice = 0m,
+        QuantityOnHand = 0m,
+        AverageCost = 0m,
+        ReorderLevel = 0m,
+        IsActive = true
+    };
+
+    test.Db.ProductItems.Add(item);
+    await test.Db.SaveChangesAsync();
+
+    var julyJournal =
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 15),
+                "INV-CUTOFF-JULY",
+                "Inventory readiness test",
+                [
+                    new JournalLineInput(
+                        test.Account("1000").Id,
+                        "Inventory readiness test",
+                        1m,
+                        0m),
+                    new JournalLineInput(
+                        test.Account("2000").Id,
+                        "Inventory readiness test",
+                        0m,
+                        1m)
+                ]));
+
+    var augustJournal =
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 1),
+                "INV-CUTOFF-AUG",
+                "Inventory readiness test",
+                [
+                    new JournalLineInput(
+                        test.Account("1000").Id,
+                        "Inventory readiness test",
+                        1m,
+                        0m),
+                    new JournalLineInput(
+                        test.Account("2000").Id,
+                        "Inventory readiness test",
+                        0m,
+                        1m)
+                ]));
+
+    test.Db.InventoryMovements.AddRange(
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 7, 15),
+            Type = InventoryMovementType.AdjustmentIncrease,
+            QuantityChange = 1m,
+            UnitCost = 10m,
+            ValueChange = 10m,
+            Reference = "CUTOFF-JULY",
+            PostedJournalId = julyJournal.Id,
+            PostedByUserId = test.UserId
+        },
+        new InventoryMovement
+        {
+            OrganisationId = test.Organisation.Id,
+            ProductItemId = item.Id,
+            MovementDate = new DateOnly(2026, 8, 1),
+            Type = InventoryMovementType.AdjustmentDecrease,
+            QuantityChange = -2m,
+            UnitCost = 10m,
+            ValueChange = -20m,
+            Reference = "CUTOFF-AUG",
+            PostedJournalId = augustJournal.Id,
+            PostedByUserId = test.UserId
+        });
+
+    await test.Db.SaveChangesAsync();
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var readiness =
+        await service.GetReadinessAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+
+    Assert.True(readiness.IsReady);
+    Assert.Equal(0, readiness.InventoryIntegrityWarnings);
+}
 
     [Fact]
     public async Task UnreconciledStatementLine_InPeriod_IsReported()

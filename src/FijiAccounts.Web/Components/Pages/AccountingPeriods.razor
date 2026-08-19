@@ -304,6 +304,18 @@ else
     </li>
 }
 
+    @if (periodReadiness.InventoryIntegrityWarnings > 0)
+{
+    <li>
+        @periodReadiness.InventoryIntegrityWarnings
+        inventory
+        @(periodReadiness.InventoryIntegrityWarnings == 1
+            ? "item has"
+            : "items have")
+        an invalid period-end quantity or carrying value
+    </li>
+}
+
                                             <div class="form-check mt-3">
     <InputCheckbox class="form-check-input"
                    @bind-Value="warningsAcknowledged" />
@@ -579,6 +591,7 @@ else
 
         confirmingPeriodId = item.Id;
         periodReadiness = null;
+        warningsAcknowledged = false;
         status = null;
 
         if (item.IsLocked)
@@ -607,11 +620,6 @@ else
         {
             loadingReadiness = false;
         }
-
-        confirmingPeriodId = item.Id;
-periodReadiness = null;
-warningsAcknowledged = false;
-status = null;
     }
 
     private void CancelConfirmation()

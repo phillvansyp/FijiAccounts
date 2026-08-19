@@ -22,21 +22,24 @@ public sealed record AccountingPeriodReadiness(
     int IncompleteBankReconciliations,
     int DraftSalesInvoices,
     int DraftSupplierBills,
-    int FixedAssetsRequiringDepreciation)
+    int FixedAssetsRequiringDepreciation,
+    int InventoryIntegrityWarnings)
 {
     public bool IsReady =>
-        UnreconciledBankStatementLines == 0 &&
-        IncompleteBankReconciliations == 0 &&
-        DraftSalesInvoices == 0 &&
-        DraftSupplierBills == 0 &&
-        FixedAssetsRequiringDepreciation == 0;
+    UnreconciledBankStatementLines == 0 &&
+    IncompleteBankReconciliations == 0 &&
+    DraftSalesInvoices == 0 &&
+    DraftSupplierBills == 0 &&
+    FixedAssetsRequiringDepreciation == 0 &&
+    InventoryIntegrityWarnings == 0;
 
     public int WarningCount =>
-        UnreconciledBankStatementLines +
-        IncompleteBankReconciliations +
-        DraftSalesInvoices +
-        DraftSupplierBills +
-        FixedAssetsRequiringDepreciation;
+    UnreconciledBankStatementLines +
+    IncompleteBankReconciliations +
+    DraftSalesInvoices +
+    DraftSupplierBills +
+    FixedAssetsRequiringDepreciation +
+    InventoryIntegrityWarnings;
 }
 
 public sealed class AccountingPeriodService(
@@ -278,12 +281,34 @@ var fixedAssetsRequiringDepreciation =
         return targetDepreciation - asset.PostedDepreciation > 0;
     });
 
+        var inventoryPositions =
+    await db.InventoryMovements
+        .AsNoTracking()
+        .Where(x =>
+            x.OrganisationId == organisationId &&
+            x.MovementDate <= period.EndsOn)
+        .GroupBy(x => x.ProductItemId)
+        .Select(g => new
+        {
+            Quantity = g.Sum(x => x.QuantityChange),
+            Value = g.Sum(x => x.ValueChange)
+        })
+        .ToListAsync(ct);
+
+var inventoryIntegrityWarnings =
+    inventoryPositions.Count(position =>
+        position.Quantity < 0m ||
+        position.Value < -0.01m ||
+        (position.Quantity == 0m &&
+         Math.Abs(position.Value) > 0.01m));
+
         return new AccountingPeriodReadiness(
     unreconciledBankStatementLines,
     incompleteBankReconciliations,
     draftSalesInvoices,
     draftSupplierBills,
-    fixedAssetsRequiringDepreciation);
+    fixedAssetsRequiringDepreciation,
+    inventoryIntegrityWarnings);
     }
 
     public async Task SetLockedAsync(
@@ -388,6 +413,8 @@ if (locked)
     readiness?.DraftSupplierBills ?? 0,
 FixedAssetsRequiringDepreciation =
     readiness?.FixedAssetsRequiringDepreciation ?? 0,
+    InventoryIntegrityWarnings =
+    readiness?.InventoryIntegrityWarnings ?? 0,
 WarningsAcknowledged =
     warningsAcknowledged
                 })
