@@ -46,6 +46,42 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot import statements for this organisation.");
         if (!await db.LedgerAccounts.AnyAsync(x => x.Id == bankAccountId && x.OrganisationId == organisationId && x.IsActive && x.IsBankAccount, ct)) throw new InvalidOperationException("Select an active bank account.");
+        if (lines.Count > 0)
+{
+    var earliestDate =
+        lines.Min(x => x.Date);
+
+    var latestDate =
+        lines.Max(x => x.Date);
+
+    var completedPeriods =
+        await db.BankReconciliationSessions
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.BankAccountId == bankAccountId &&
+                x.IsCompleted &&
+                x.StatementStartDate <= latestDate &&
+                x.StatementEndDate >= earliestDate)
+            .Select(x => new
+            {
+                x.StatementStartDate,
+                x.StatementEndDate
+            })
+            .ToListAsync(ct);
+
+    var containsClosedDate =
+        lines.Any(line =>
+            completedPeriods.Any(period =>
+                line.Date >= period.StatementStartDate &&
+                line.Date <= period.StatementEndDate));
+
+    if (containsClosedDate)
+    {
+        throw new InvalidOperationException(
+            "Statement transactions cannot be imported inside a completed reconciliation period.");
+    }
+}
         var batchId = Guid.NewGuid(); var imported = 0; var skipped = 0;
         foreach (var row in lines)
         {
