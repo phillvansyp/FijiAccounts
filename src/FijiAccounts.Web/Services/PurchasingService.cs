@@ -31,13 +31,28 @@ public sealed class PurchasingService(
         var controls = await db.LedgerAccounts
     .Where(x =>
         x.OrganisationId == request.OrganisationId &&
+        x.IsActive &&
         (x.Code == "1150" || x.Code == "2000"))
-    .ToDictionaryAsync(x => x.Code, ct);
+    .ToDictionaryAsync(
+        x => x.Code,
+        ct);
 
-if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000"))
+if (!controls.TryGetValue(
+        "1150",
+        out var vatReceivable) ||
+    vatReceivable.Type != AccountType.Asset)
 {
     throw new InvalidOperationException(
-        "VAT Receivable (1150) and Accounts Payable (2000) are required.");
+        "VAT Receivable (1150) must be an active Asset account.");
+}
+
+if (!controls.TryGetValue(
+        "2000",
+        out var accountsPayable) ||
+    accountsPayable.Type != AccountType.Liability)
+{
+    throw new InvalidOperationException(
+        "Accounts Payable (2000) must be an active Liability account.");
 }
         var schedule = new FijiVatSchedule();
         var lines = request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.BillDate, x.VatTreatment); return new SupplierBillLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }; }).ToList();
@@ -47,7 +62,22 @@ if (!controls.ContainsKey("1150") || !controls.ContainsKey("2000"))
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
         var bill = new SupplierBill { OrganisationId = request.OrganisationId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var journalLines = lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, bill.BillNumber, x.Sum(y => y.NetAmount), 0)).ToList();
-        if (bill.VatTotal > 0) journalLines.Add(new(controls["1150"].Id, bill.BillNumber, bill.VatTotal, 0)); journalLines.Add(new(controls["2000"].Id, bill.BillNumber, 0, bill.Total));
+        if (bill.VatTotal > 0)
+{
+    journalLines.Add(
+        new(
+            vatReceivable.Id,
+            bill.BillNumber,
+            bill.VatTotal,
+            0));
+}
+
+journalLines.Add(
+    new(
+        accountsPayable.Id,
+        bill.BillNumber,
+        0,
+        bill.Total));
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", journalLines), ct); bill.PostedJournalId = journal.Id;
         foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; item.AverageCost = InventoryValuation.WeightedAverage(item.QuantityOnHand, item.AverageCost, line.Quantity, line.UnitPrice); item.QuantityOnHand += line.Quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.BillDate, Type = InventoryMovementType.AdjustmentIncrease, QuantityChange = line.Quantity, UnitCost = line.UnitPrice, ValueChange = InventoryValuation.MovementValue(line.Quantity, line.UnitPrice), Reference = bill.BillNumber, Note = "Automatic stock receipt from supplier bill", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         db.SupplierBills.Add(bill); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierBillPosted", nameof(SupplierBill), bill.Id, new { bill.BillNumber, bill.Total, bill.VatTotal }));

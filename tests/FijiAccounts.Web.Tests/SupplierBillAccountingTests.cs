@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Domain.Tax;
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Services;
 
 namespace FijiAccounts.Web.Tests;
@@ -109,8 +110,8 @@ public async Task PostBill_WhenVatReceivableControlIsMissing_FailsWithoutRecreat
                         ])));
 
     Assert.Equal(
-        "VAT Receivable (1150) and Accounts Payable (2000) are required.",
-        exception.Message);
+    "VAT Receivable (1150) must be an active Asset account.",
+    exception.Message);
 
     var recreated =
         await test.Db.LedgerAccounts
@@ -120,5 +121,185 @@ public async Task PostBill_WhenVatReceivableControlIsMissing_FailsWithoutRecreat
                     x.Code == "1150");
 
     Assert.False(recreated);
+}
+
+[Fact]
+public async Task PostBill_WhenVatReceivableControlIsInactive_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var vatReceivable = test.Account("1150");
+    vatReceivable.IsActive = false;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-INACTIVE-1150",
+                        BillDate: new DateOnly(2026, 8, 18),
+                        DueDate: new DateOnly(2026, 9, 17),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Office supplies",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: test.Account("6500").Id)
+                        ])));
+
+    Assert.Contains(
+        "1150",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+}
+
+[Fact]
+public async Task PostBill_WhenVatReceivableControlHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var vatReceivable = test.Account("1150");
+    vatReceivable.Type = AccountType.Liability;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-WRONG-1150",
+                        BillDate: new DateOnly(2026, 8, 18),
+                        DueDate: new DateOnly(2026, 9, 17),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Office supplies",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: test.Account("6500").Id)
+                        ])));
+
+    Assert.Contains(
+        "1150",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+}
+
+[Fact]
+public async Task PostBill_WhenAccountsPayableControlIsInactive_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var payable = test.Account("2000");
+    payable.IsActive = false;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-INACTIVE-2000",
+                        BillDate: new DateOnly(2026, 8, 18),
+                        DueDate: new DateOnly(2026, 9, 17),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Office supplies",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: test.Account("6500").Id)
+                        ])));
+
+    Assert.Contains(
+        "2000",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+}
+
+[Fact]
+public async Task PostBill_WhenAccountsPayableControlHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var payable = test.Account("2000");
+    payable.Type = AccountType.Asset;
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-WRONG-2000",
+                        BillDate: new DateOnly(2026, 8, 18),
+                        DueDate: new DateOnly(2026, 9, 17),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Office supplies",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: test.Account("6500").Id)
+                        ])));
+
+    Assert.Contains(
+        "2000",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
 }
 }
