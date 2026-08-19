@@ -40,10 +40,11 @@ public sealed class CustomerReceiptReconciliationIntegrityTests
                     ]));
 
         var receipts =
-            new CustomerReceiptService(
-                test.Db,
-                test.Access,
-                test.Posting);
+    new CustomerReceiptService(
+        test.Db,
+        test.Access,
+        test.Posting,
+        test.Reconciliation);
 
         var receipt =
             await receipts.RecordAsync(
@@ -148,10 +149,11 @@ public async Task ReverseAsync_AllowsReceiptOutsideCompletedReconciliation()
                 ]));
 
     var receipts =
-        new CustomerReceiptService(
-            test.Db,
-            test.Access,
-            test.Posting);
+    new CustomerReceiptService(
+        test.Db,
+        test.Access,
+        test.Posting,
+        test.Reconciliation);
 
     var receipt =
         await receipts.RecordAsync(

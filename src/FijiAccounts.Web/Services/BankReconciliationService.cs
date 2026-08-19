@@ -10,6 +10,22 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
 {
     private const decimal AmountTolerance = 0.01m;
 
+    public Task<bool> IsInsideCompletedReconciliationAsync(
+    Guid organisationId,
+    Guid bankAccountId,
+    DateOnly transactionDate,
+    CancellationToken ct = default)
+{
+    return db.BankReconciliationSessions.AnyAsync(
+        x =>
+            x.OrganisationId == organisationId &&
+            x.BankAccountId == bankAccountId &&
+            x.IsCompleted &&
+            transactionDate >= x.StatementStartDate &&
+            transactionDate <= x.StatementEndDate,
+        ct);
+}
+
     public async Task<BankStatementLine> AddStatementLineAsync(
     string userId,
     StatementLineRequest request,
@@ -42,14 +58,11 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
     }
 
     var completedReconciliationExists =
-        await db.BankReconciliationSessions.AnyAsync(
-            x =>
-                x.OrganisationId == request.OrganisationId &&
-                x.BankAccountId == request.BankAccountId &&
-                x.IsCompleted &&
-                request.Date >= x.StatementStartDate &&
-                request.Date <= x.StatementEndDate,
-            ct);
+    await IsInsideCompletedReconciliationAsync(
+        request.OrganisationId,
+        request.BankAccountId,
+        request.Date,
+        ct);
 
     if (completedReconciliationExists)
     {
@@ -114,15 +127,11 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
             "Statement line not found.");
 
     var completedReconciliationExists =
-        await db.BankReconciliationSessions
-            .AnyAsync(
-                x =>
-                    x.OrganisationId == organisationId &&
-                    x.BankAccountId == statement.BankAccountId &&
-                    x.IsCompleted &&
-                    statement.TransactionDate >= x.StatementStartDate &&
-                    statement.TransactionDate <= x.StatementEndDate,
-                ct);
+    await IsInsideCompletedReconciliationAsync(
+        organisationId,
+        statement.BankAccountId,
+        statement.TransactionDate,
+        ct);
 
     if (completedReconciliationExists)
     {

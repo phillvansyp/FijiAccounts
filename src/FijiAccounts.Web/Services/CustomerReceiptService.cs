@@ -8,7 +8,11 @@ namespace FijiAccounts.Web.Services;
 
 public sealed record CustomerReceiptRequest(Guid OrganisationId, Guid SalesInvoiceId, DateOnly Date, string Reference, decimal Amount, Guid BankAccountId);
 
-public sealed class CustomerReceiptService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
+public sealed class CustomerReceiptService(
+    ApplicationDbContext db,
+    TenantAccessService access,
+    JournalPostingService posting,
+    BankReconciliationService reconciliation)
 {
     public async Task<CustomerReceipt> RecordAsync(string userId, CustomerReceiptRequest request, CancellationToken cancellationToken = default)
     {
@@ -44,13 +48,10 @@ public sealed class CustomerReceiptService(ApplicationDbContext db, TenantAccess
 }
 
 var completedReconciliationExists =
-    await db.BankReconciliationSessions.AnyAsync(
-        x =>
-            x.OrganisationId == organisationId &&
-            x.BankAccountId == receipt.BankAccountId &&
-            x.IsCompleted &&
-            receipt.ReceiptDate >= x.StatementStartDate &&
-            receipt.ReceiptDate <= x.StatementEndDate,
+    await reconciliation.IsInsideCompletedReconciliationAsync(
+        organisationId,
+        receipt.BankAccountId,
+        receipt.ReceiptDate,
         ct);
 
 if (completedReconciliationExists)

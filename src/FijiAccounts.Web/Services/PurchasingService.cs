@@ -11,7 +11,11 @@ public sealed record SupplierBillLineRequest(string Description, decimal Quantit
 public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines);
 public sealed record SupplierPaymentRequest(Guid OrganisationId, Guid SupplierBillId, DateOnly Date, string Reference, decimal Amount, Guid BankAccountId);
 
-public sealed class PurchasingService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
+public sealed class PurchasingService(
+    ApplicationDbContext db,
+    TenantAccessService access,
+    JournalPostingService posting,
+    BankReconciliationService reconciliation)
 {
     public async Task<SupplierBill> PostBillAsync(string userId, SupplierBillRequest request, CancellationToken ct = default)
     {
@@ -81,13 +85,10 @@ public sealed class PurchasingService(ApplicationDbContext db, TenantAccessServi
         if (await db.SupplierPaymentReversals.AnyAsync(x => x.SupplierPaymentId == paymentId, ct)) throw new InvalidOperationException("This payment has already been reversed.");
         if (payment.SupplierBill.Status == BillStatus.Voided) throw new InvalidOperationException("A payment on a voided bill cannot be reversed here.");
         var completedReconciliationExists =
-    await db.BankReconciliationSessions.AnyAsync(
-        x =>
-            x.OrganisationId == organisationId &&
-            x.BankAccountId == payment.BankAccountId &&
-            x.IsCompleted &&
-            payment.PaymentDate >= x.StatementStartDate &&
-            payment.PaymentDate <= x.StatementEndDate,
+    await reconciliation.IsInsideCompletedReconciliationAsync(
+        organisationId,
+        payment.BankAccountId,
+        payment.PaymentDate,
         ct);
 
 if (completedReconciliationExists)

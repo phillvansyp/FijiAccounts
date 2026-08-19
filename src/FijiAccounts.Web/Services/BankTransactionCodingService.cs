@@ -48,13 +48,10 @@ public sealed class BankTransactionCodingService(
         }
 
     var completedReconciliationExists =
-    await db.BankReconciliationSessions.AnyAsync(
-        x =>
-            x.OrganisationId == organisationId &&
-            x.BankAccountId == statement.BankAccountId &&
-            x.IsCompleted &&
-            statement.TransactionDate >= x.StatementStartDate &&
-            statement.TransactionDate <= x.StatementEndDate,
+    await reconciliation.IsInsideCompletedReconciliationAsync(
+        organisationId,
+        statement.BankAccountId,
+        statement.TransactionDate,
         ct);
 
 if (completedReconciliationExists)

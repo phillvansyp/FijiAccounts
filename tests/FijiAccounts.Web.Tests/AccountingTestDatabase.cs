@@ -26,22 +26,45 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
         Customer = customer;
         Supplier = supplier;
 
-        Access = new TenantAccessService(Db);
-        Posting = new JournalPostingService(Db, Access);
-        BankAccounts =
+        Access =
+    new TenantAccessService(
+        Db);
+
+Posting =
+    new JournalPostingService(
+        Db,
+        Access);
+
+BankAccounts =
     new BankAccountService(
         Db,
         Access,
         Posting);
-        SalesInvoices = new SalesInvoiceService(Db, Access, Posting);
-        Purchasing = new PurchasingService(Db, Access, Posting);
-        Reconciliation = new BankReconciliationService(Db, Access);
 
-BankCoding = new BankTransactionCodingService(
-    Db,
-    Access,
-    Posting,
-    Reconciliation);
+SalesInvoices =
+    new SalesInvoiceService(
+        Db,
+        Access,
+        Posting);
+
+Reconciliation =
+    new BankReconciliationService(
+        Db,
+        Access);
+
+Purchasing =
+    new PurchasingService(
+        Db,
+        Access,
+        Posting,
+        Reconciliation);
+
+BankCoding =
+    new BankTransactionCodingService(
+        Db,
+        Access,
+        Posting,
+        Reconciliation);
     }
 
     public ApplicationDbContext Db { get; }
