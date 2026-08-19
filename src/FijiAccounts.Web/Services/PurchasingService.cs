@@ -50,6 +50,11 @@ public sealed class PurchasingService(
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
         var bill = await db.SupplierBills.Include(x => x.Supplier).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
+        if (bill.Status is BillStatus.Voided or BillStatus.Credited)
+{
+    throw new InvalidOperationException(
+        "Only outstanding posted supplier bills can be paid.");
+}
         var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited; if (request.Amount <= 0 || request.Amount > outstanding) throw new InvalidOperationException($"Payment must be between $0.01 and ${outstanding:N2}.");
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, ct) ?? throw new InvalidOperationException("Select an active bank account.");
         var payable = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == request.OrganisationId && x.Code == "2000" && x.IsActive, ct) ?? throw new InvalidOperationException("Accounts Payable (2000) is required.");
