@@ -329,4 +329,69 @@ public sealed class BankReconciliationSessionAccountingTests
             exception.Message,
             StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+public async Task RefreshSession_RecalculatesLedgerBalanceAndDifference()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var bank = test.Account("1000");
+
+    var service =
+        new BankReconciliationSessionService(
+            test.Db,
+            test.Access);
+
+    var session =
+        await service.CreateAsync(
+            test.UserId,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                bank.Id,
+                new DateOnly(2026, 8, 1),
+                new DateOnly(2026, 8, 31),
+                0m,
+                1000m));
+
+    Assert.Equal(0m, session.LedgerBalance);
+    Assert.Equal(1000m, session.Difference);
+
+    await test.Posting.PostAsync(
+        test.UserId,
+        new JournalPostRequest(
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 15),
+            "BANK-REFRESH-001",
+            "Deposit after reconciliation started",
+            [
+                new(
+                    bank.Id,
+                    "Bank deposit",
+                    600m,
+                    0m),
+                new(
+                    test.Account("3000").Id,
+                    "Equity",
+                    0m,
+                    600m)
+            ]));
+
+    var refreshed =
+        await service.RefreshAsync(
+            test.UserId,
+            test.Organisation.Id,
+            session.Id);
+
+    Assert.Equal(600m, refreshed.LedgerBalance);
+    Assert.Equal(400m, refreshed.Difference);
+
+    var persisted =
+        await test.Db.BankReconciliationSessions
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == session.Id);
+
+    Assert.Equal(600m, persisted.LedgerBalance);
+    Assert.Equal(400m, persisted.Difference);
+}
 }
