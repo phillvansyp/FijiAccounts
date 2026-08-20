@@ -362,4 +362,205 @@ public sealed class InternalBankTransferAccountingTests
                     x.OrganisationId == test.Organisation.Id &&
                     x.Reference == "TRF-PERIOD-LOCKED-001"));
     }
+
+    [Fact]
+    public async Task BankCodingTransfer_WhenStatementDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA =
+            test.Account("1000");
+
+        var bankB =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1001",
+                Name = "Second Bank",
+                Type = AccountType.Asset,
+                IsBankAccount = true,
+                BankAccountKind = BankAccountKind.Bank,
+                IsSystemAccount = false,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(bankB);
+
+        var statement =
+            new BankStatementLine
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bankA.Id,
+                TransactionDate = new DateOnly(2026, 8, 20),
+                Description = "TRANSFER TO SECOND BANK",
+                Reference = "BANK-TRF-LOCKED-001",
+                Amount = -500m,
+                Source = "Test"
+            };
+
+        test.Db.BankStatementLines.Add(statement);
+
+        test.Db.AccountingPeriods.Add(
+            new AccountingPeriod
+            {
+                OrganisationId = test.Organisation.Id,
+                Name = "August 2026",
+                StartsOn = new DateOnly(2026, 8, 1),
+                EndsOn = new DateOnly(2026, 8, 31),
+                IsLocked = true
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var transferCountBefore =
+            await test.Db.BankTransfers.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.BankCoding.PostAndReconcileAsync(
+                        test.UserId,
+                        new BankTransactionCodingRequest(
+                            OrganisationId: test.Organisation.Id,
+                            StatementLineId: statement.Id,
+                            TargetAccountCode: "",
+                            Description: "Transfer to Second Bank",
+                            VatTreatment: VatTreatment.Exempt,
+                            TransferToBankAccountId: bankB.Id)));
+
+        Assert.Contains(
+            "locked",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            transferCountBefore,
+            await test.Db.BankTransfers.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        var reloadedStatement =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == statement.Id);
+
+        Assert.Null(reloadedStatement.ReconciledAt);
+        Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
+        Assert.Null(reloadedStatement.ReconciledByUserId);
+    }
+
+    [Fact]
+    public async Task BankCodingTransfer_WhenStatementIsInsideCompletedReconciliation_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA =
+            test.Account("1000");
+
+        bankA.BankAccountKind =
+            BankAccountKind.DebitCard;
+
+        var bankB =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1001",
+                Name = "Second Bank",
+                Type = AccountType.Asset,
+                IsBankAccount = true,
+                BankAccountKind = BankAccountKind.Bank,
+                IsSystemAccount = false,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(bankB);
+
+        var statement =
+            new BankStatementLine
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bankA.Id,
+                TransactionDate = new DateOnly(2026, 8, 20),
+                Description = "TRANSFER TO SECOND BANK",
+                Reference = "BANK-TRF-RECON-001",
+                Amount = -500m,
+                Source = "Test"
+            };
+
+        test.Db.BankStatementLines.Add(statement);
+
+        test.Db.BankReconciliationSessions.Add(
+            new BankReconciliationSession
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bankA.Id,
+                StatementStartDate = new DateOnly(2026, 8, 1),
+                StatementEndDate = new DateOnly(2026, 8, 31),
+                IsCompleted = true,
+                CreatedByUserId = test.UserId
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var transferCountBefore =
+            await test.Db.BankTransfers.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.BankCoding.PostAndReconcileAsync(
+                        test.UserId,
+                        new BankTransactionCodingRequest(
+                            OrganisationId: test.Organisation.Id,
+                            StatementLineId: statement.Id,
+                            TargetAccountCode: "",
+                            Description: "Transfer to Second Bank",
+                            VatTreatment: VatTreatment.Exempt,
+                            TransferToBankAccountId: bankB.Id)));
+
+        Assert.Equal(
+            "A journal cannot post to a bank account inside a completed reconciliation period.",
+            exception.Message);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            transferCountBefore,
+            await test.Db.BankTransfers.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        var reloadedStatement =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == statement.Id);
+
+        Assert.Null(reloadedStatement.ReconciledAt);
+        Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
+        Assert.Null(reloadedStatement.ReconciledByUserId);
+    }
 }
