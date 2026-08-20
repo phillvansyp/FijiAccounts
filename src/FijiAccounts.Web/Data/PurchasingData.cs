@@ -202,6 +202,12 @@ public enum RecurringSupplierBillFrequency
     Yearly
 }
 
+public enum RecurringSupplierBillStatus
+{
+    Active = 0,
+    Paused = 1,
+    Ended = 2
+}
 public sealed class RecurringSupplierBill
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -221,6 +227,9 @@ public sealed class RecurringSupplierBill
     public int DueDays { get; set; }
 
     public bool IsActive { get; set; } = true;
+
+    public RecurringSupplierBillStatus Status { get; set; } =
+        RecurringSupplierBillStatus.Active;
 
     public List<RecurringSupplierBillLine> Lines { get; set; } = [];
     public List<RecurringSupplierBillGeneration> Generations { get; set; } = [];

@@ -487,4 +487,427 @@ public sealed class RecurringSupplierBillServiceTests
             countBefore,
             await test.Db.RecurringSupplierBills.CountAsync());
     }
+
+    [Fact]
+    public async Task UpdateAsync_ReplacesTemplateLinesAndPreservesGenerationHistory()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "RENT",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2026, 9, 1),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Monthly rent",
+                            Quantity: 1m,
+                            UnitPrice: 1_000m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        var generated =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2026, 9, 1));
+
+        Assert.Single(generated);
+
+        var generation =
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .SingleAsync(x =>
+                    x.RecurringSupplierBillId == recurring.Id);
+
+        var originalSupplierBillId =
+            generation.SupplierBillId;
+
+        await service.UpdateAsync(
+            test.UserId,
+            recurring.Id,
+            new RecurringSupplierBillRequest(
+                OrganisationId: test.Organisation.Id,
+                SupplierId: test.Supplier.Id,
+                SupplierReference: "UPDATED-RENT",
+                Frequency: RecurringSupplierBillFrequency.Quarterly,
+                StartDate: new DateOnly(2026, 10, 1),
+                DueDays: 30,
+                Lines:
+                [
+                    new RecurringSupplierBillLineRequest(
+                        Description: "Updated rent",
+                        Quantity: 2m,
+                        UnitPrice: 750m,
+                        VatTreatment: VatTreatment.Standard,
+                        ExpenseAccountId: test.Account("6500").Id)
+                ]));
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .Include(x => x.Lines)
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.Equal(
+            "UPDATED-RENT",
+            reloaded.SupplierReference);
+
+        Assert.Equal(
+            RecurringSupplierBillFrequency.Quarterly,
+            reloaded.Frequency);
+
+        Assert.Equal(
+            new DateOnly(2026, 10, 1),
+            reloaded.StartDate);
+
+        Assert.Equal(
+            new DateOnly(2026, 10, 1),
+            reloaded.NextBillDate);
+
+        Assert.Equal(
+            30,
+            reloaded.DueDays);
+
+        var line =
+            Assert.Single(reloaded.Lines);
+
+        Assert.Equal(
+            "Updated rent",
+            line.Description);
+
+        Assert.Equal(
+            2m,
+            line.Quantity);
+
+        Assert.Equal(
+            750m,
+            line.UnitPrice);
+
+        var reloadedGeneration =
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .SingleAsync(x =>
+                    x.RecurringSupplierBillId == recurring.Id);
+
+        Assert.Equal(
+            originalSupplierBillId,
+            reloadedGeneration.SupplierBillId);
+
+        Assert.True(
+            await test.Db.SupplierBills
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.Id == originalSupplierBillId));
+    }
+
+    [Fact]
+    public async Task SetActiveAsync_WhenPaused_PreventsGeneration()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "PAUSED",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2026, 9, 1),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Paused bill",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        await service.SetActiveAsync(
+            test.UserId,
+            test.Organisation.Id,
+            recurring.Id,
+            false);
+
+        var generated =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2026, 12, 1));
+
+        Assert.Empty(generated);
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.False(reloaded.IsActive);
+
+        Assert.Equal(
+            new DateOnly(2026, 9, 1),
+            reloaded.NextBillDate);
+
+        Assert.False(
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.RecurringSupplierBillId == recurring.Id));
+    }
+
+    [Fact]
+    public async Task SetActiveAsync_WhenResumedFromLaterDate_SkipsMissedOccurrences()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "RESUME",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2026, 9, 1),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Resume bill",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        await service.SetActiveAsync(
+            test.UserId,
+            test.Organisation.Id,
+            recurring.Id,
+            false);
+
+        await service.SetActiveAsync(
+            test.UserId,
+            test.Organisation.Id,
+            recurring.Id,
+            true,
+            new DateOnly(2026, 12, 1));
+
+        var generated =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2026, 12, 1));
+
+        var bill =
+            Assert.Single(generated);
+
+        Assert.Equal(
+            new DateOnly(2026, 12, 1),
+            bill.BillDate);
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.True(reloaded.IsActive);
+
+        Assert.Equal(
+            new DateOnly(2027, 1, 1),
+            reloaded.NextBillDate);
+
+        var generations =
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .Where(x =>
+                    x.RecurringSupplierBillId == recurring.Id)
+                .OrderBy(x => x.ScheduledDate)
+                .ToListAsync();
+
+        Assert.Single(generations);
+
+        Assert.Equal(
+            new DateOnly(2026, 12, 1),
+            generations[0].ScheduledDate);
+    }
+
+    [Fact]
+    public async Task EndAsync_DeactivatesTemplateAndPreservesGenerationHistory()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "ENDED",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2026, 9, 1),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Ended recurring bill",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        var generated =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2026, 9, 1));
+
+        var originalBill =
+            Assert.Single(generated);
+
+        await service.EndAsync(
+            test.UserId,
+            test.Organisation.Id,
+            recurring.Id);
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.False(reloaded.IsActive);
+
+        Assert.True(
+            await test.Db.SupplierBills
+                .AsNoTracking()
+                .AnyAsync(x => x.Id == originalBill.Id));
+
+        var generation =
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .SingleAsync(x =>
+                    x.RecurringSupplierBillId == recurring.Id);
+
+        Assert.Equal(
+            originalBill.Id,
+            generation.SupplierBillId);
+
+        var future =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2026, 12, 1));
+
+        Assert.Empty(future);
+
+        Assert.Single(
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .Where(x =>
+                    x.RecurringSupplierBillId == recurring.Id)
+                .ToListAsync());
+    }
+
+    [Fact]
+    public async Task SetActiveAsync_WhenEnded_CannotBeResumed()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "ENDED-NO-RESUME",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2026, 9, 1),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Ended recurring bill",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        await service.EndAsync(
+            test.UserId,
+            test.Organisation.Id,
+            recurring.Id);
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.SetActiveAsync(
+                        test.UserId,
+                        test.Organisation.Id,
+                        recurring.Id,
+                        true,
+                        new DateOnly(2026, 10, 1)));
+
+        Assert.Contains(
+            "cannot be resumed",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.False(reloaded.IsActive);
+
+        Assert.Equal(
+            RecurringSupplierBillStatus.Ended,
+            reloaded.Status);
+    }
 }

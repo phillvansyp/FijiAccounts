@@ -32,42 +32,313 @@ public sealed class RecurringSupplierBillService(
         RecurringSupplierBillRequest request,
         CancellationToken ct = default)
     {
-        if (!await access.CanPostJournalsAsync(
+        await RequireMaintenanceAccessAsync(
+            userId,
+            request.OrganisationId,
+            "create recurring bills",
+            ct);
+
+        await ValidateRequestAsync(
+            request,
+            ct);
+
+        var recurring =
+            new RecurringSupplierBill
+            {
+                OrganisationId = request.OrganisationId,
+                SupplierId = request.SupplierId,
+                SupplierReference = request.SupplierReference.Trim(),
+                Frequency = request.Frequency,
+                StartDate = request.StartDate,
+                NextBillDate = request.StartDate,
+                DueDays = request.DueDays,
+                CreatedByUserId = userId,
+                Lines = BuildLines(request)
+            };
+
+        db.RecurringSupplierBills.Add(recurring);
+
+        db.AuditEvents.Add(
+            Audit(
+                request.OrganisationId,
                 userId,
-                request.OrganisationId))
+                "RecurringSupplierBillCreated",
+                nameof(RecurringSupplierBill),
+                recurring.Id,
+                new
+                {
+                    recurring.SupplierId,
+                    recurring.SupplierReference,
+                    recurring.Frequency,
+                    recurring.StartDate,
+                    recurring.NextBillDate,
+                    recurring.DueDays
+                }));
+
+        await db.SaveChangesAsync(ct);
+
+        return recurring;
+    }
+
+    public async Task<RecurringSupplierBill> UpdateAsync(
+        string userId,
+        Guid recurringSupplierBillId,
+        RecurringSupplierBillRequest request,
+        CancellationToken ct = default)
+    {
+        await RequireMaintenanceAccessAsync(
+            userId,
+            request.OrganisationId,
+            "update recurring bills",
+            ct);
+
+        await ValidateRequestAsync(
+            request,
+            ct);
+
+        db.ChangeTracker.Clear();
+
+        var recurring =
+            await db.RecurringSupplierBills
+                .Include(x => x.Lines)
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == recurringSupplierBillId &&
+                        x.OrganisationId == request.OrganisationId,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Recurring supplier bill not found.");
+
+        var existingLines =
+            recurring.Lines.ToList();
+
+        db.RecurringSupplierBillLines.RemoveRange(
+            existingLines);
+
+        await db.SaveChangesAsync(ct);
+
+        db.ChangeTracker.Clear();
+
+        recurring =
+            await db.RecurringSupplierBills
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == recurringSupplierBillId &&
+                        x.OrganisationId == request.OrganisationId,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Recurring supplier bill not found.");
+
+        recurring.SupplierId = request.SupplierId;
+        recurring.SupplierReference =
+            request.SupplierReference.Trim();
+        recurring.Frequency = request.Frequency;
+        recurring.StartDate = request.StartDate;
+        recurring.NextBillDate = request.StartDate;
+        recurring.DueDays = request.DueDays;
+
+        var replacementLines =
+            BuildLines(request);
+
+        foreach (var line in replacementLines)
         {
-            throw new UnauthorizedAccessException(
-                "You cannot create recurring bills for this organisation.");
+            line.RecurringSupplierBillId =
+                recurring.Id;
+
+            db.RecurringSupplierBillLines.Add(line);
         }
 
-        if (string.IsNullOrWhiteSpace(request.SupplierReference))
+        db.AuditEvents.Add(
+            Audit(
+                request.OrganisationId,
+                userId,
+                "RecurringSupplierBillUpdated",
+                nameof(RecurringSupplierBill),
+                recurring.Id,
+                new
+                {
+                    recurring.SupplierId,
+                    recurring.SupplierReference,
+                    recurring.Frequency,
+                    recurring.StartDate,
+                    recurring.NextBillDate,
+                    recurring.DueDays,
+                    LineCount = replacementLines.Count
+                }));
+
+        await db.SaveChangesAsync(ct);
+
+        return recurring;
+    }
+    public async Task<RecurringSupplierBill> SetActiveAsync(
+        string userId,
+        Guid organisationId,
+        Guid recurringSupplierBillId,
+        bool isActive,
+        DateOnly? resumeFromDate = null,
+        CancellationToken ct = default)
+    {
+        await RequireMaintenanceAccessAsync(
+            userId,
+            organisationId,
+            "maintain recurring bills",
+            ct);
+
+        db.ChangeTracker.Clear();
+
+var recurring =
+    await db.RecurringSupplierBills
+        .Include(x => x.Lines)
+        .SingleOrDefaultAsync(
+            x =>
+                x.Id == recurringSupplierBillId &&
+                x.OrganisationId == organisationId,
+            ct)
+    ?? throw new InvalidOperationException(
+        "Recurring supplier bill not found.");
+
+        if (isActive &&
+            recurring.Status == RecurringSupplierBillStatus.Ended)
+        {
+            throw new InvalidOperationException(
+                "An ended recurring supplier bill cannot be resumed.");
+        }
+
+        if (isActive &&
+            resumeFromDate is DateOnly resumeDate &&
+            recurring.NextBillDate < resumeDate)
+        {
+            recurring.NextBillDate =
+                resumeDate;
+        }
+
+        recurring.IsActive = isActive;
+        recurring.Status =
+            isActive
+                ? RecurringSupplierBillStatus.Active
+                : RecurringSupplierBillStatus.Paused;
+
+        db.AuditEvents.Add(
+            Audit(
+                organisationId,
+                userId,
+                isActive
+                    ? "RecurringSupplierBillResumed"
+                    : "RecurringSupplierBillPaused",
+                nameof(RecurringSupplierBill),
+                recurring.Id,
+                new
+                {
+                    recurring.IsActive,
+                    recurring.NextBillDate
+                }));
+
+        await db.SaveChangesAsync(ct);
+
+        return recurring;
+    }
+
+    public async Task<RecurringSupplierBill> EndAsync(
+        string userId,
+        Guid organisationId,
+        Guid recurringSupplierBillId,
+        CancellationToken ct = default)
+    {
+        await RequireMaintenanceAccessAsync(
+            userId,
+            organisationId,
+            "end recurring bills",
+            ct);
+
+        var recurring =
+            await db.RecurringSupplierBills
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == recurringSupplierBillId &&
+                        x.OrganisationId == organisationId,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Recurring supplier bill not found.");
+
+        recurring.IsActive = false;
+        recurring.Status =
+            RecurringSupplierBillStatus.Ended;
+
+        db.AuditEvents.Add(
+            Audit(
+                organisationId,
+                userId,
+                "RecurringSupplierBillEnded",
+                nameof(RecurringSupplierBill),
+                recurring.Id,
+                new
+                {
+                    recurring.NextBillDate
+                }));
+
+        await db.SaveChangesAsync(ct);
+
+        return recurring;
+    }
+
+    private async Task RequireMaintenanceAccessAsync(
+        string userId,
+        Guid organisationId,
+        string action,
+        CancellationToken ct)
+    {
+        if (!await access.CanPostJournalsAsync(
+                userId,
+                organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                $"You cannot {action} for this organisation.");
+        }
+    }
+
+    private async Task ValidateRequestAsync(
+        RecurringSupplierBillRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(
+                request.SupplierReference))
+        {
             throw new InvalidOperationException(
                 "Enter a supplier reference.");
+        }
 
         if (request.DueDays < 0)
+        {
             throw new InvalidOperationException(
                 "Due days cannot be negative.");
+        }
 
         if (request.Lines.Count == 0)
+        {
             throw new InvalidOperationException(
                 "Enter at least one recurring bill line.");
+        }
 
         var supplierExists =
             await db.BusinessParties.AnyAsync(
                 x =>
                     x.Id == request.SupplierId &&
-                    x.OrganisationId == request.OrganisationId &&
+                    x.OrganisationId ==
+                        request.OrganisationId &&
                     x.IsActive &&
                     (x.Type & PartyType.Supplier) != 0,
                 ct);
 
         if (!supplierExists)
+        {
             throw new InvalidOperationException(
                 "Select an active supplier in this organisation.");
+        }
 
-                foreach (var line in request.Lines)
+        foreach (var line in request.Lines)
         {
-            if (string.IsNullOrWhiteSpace(line.Description) ||
+            if (string.IsNullOrWhiteSpace(
+                    line.Description) ||
                 line.Quantity <= 0 ||
                 line.UnitPrice < 0)
             {
@@ -85,14 +356,18 @@ public sealed class RecurringSupplierBillService(
         var expenseAccounts =
             await db.LedgerAccounts
                 .Where(x =>
-                    x.OrganisationId == request.OrganisationId &&
+                    x.OrganisationId ==
+                        request.OrganisationId &&
                     x.IsActive &&
                     expenseAccountIds.Contains(x.Id) &&
                     (x.Type == AccountType.Expense ||
                      x.Type == AccountType.Asset))
-                .ToDictionaryAsync(x => x.Id, ct);
+                .ToDictionaryAsync(
+                    x => x.Id,
+                    ct);
 
-        if (expenseAccounts.Count != expenseAccountIds.Length)
+        if (expenseAccounts.Count !=
+            expenseAccountIds.Length)
         {
             throw new InvalidOperationException(
                 "Every recurring bill line must use an active expense or asset account.");
@@ -108,12 +383,16 @@ public sealed class RecurringSupplierBillService(
         var productItems =
             await db.ProductItems
                 .Where(x =>
-                    x.OrganisationId == request.OrganisationId &&
+                    x.OrganisationId ==
+                        request.OrganisationId &&
                     x.IsActive &&
                     productItemIds.Contains(x.Id))
-                .ToDictionaryAsync(x => x.Id, ct);
+                .ToDictionaryAsync(
+                    x => x.Id,
+                    ct);
 
-        if (productItems.Count != productItemIds.Length)
+        if (productItems.Count !=
+            productItemIds.Length)
         {
             throw new InvalidOperationException(
                 "A selected catalogue item is unavailable.");
@@ -123,62 +402,38 @@ public sealed class RecurringSupplierBillService(
                      x => x.ProductItemId != null))
         {
             var item =
-                productItems[line.ProductItemId!.Value];
+                productItems[
+                    line.ProductItemId!.Value];
 
-            if (item.Kind == ProductKind.TrackedItem &&
+            if (item.Kind ==
+                    ProductKind.TrackedItem &&
                 (item.InventoryAccountId is null ||
-                 line.ExpenseAccountId != item.InventoryAccountId))
+                 line.ExpenseAccountId !=
+                    item.InventoryAccountId))
             {
                 throw new InvalidOperationException(
                     $"Set opening stock and inventory accounts for {item.Code} before using it on a recurring supplier bill.");
             }
         }
+    }
 
-        var recurring = new RecurringSupplierBill
-        {
-            OrganisationId = request.OrganisationId,
-            SupplierId = request.SupplierId,
-            SupplierReference = request.SupplierReference.Trim(),
-            Frequency = request.Frequency,
-            StartDate = request.StartDate,
-            NextBillDate = request.StartDate,
-            DueDays = request.DueDays,
-            CreatedByUserId = userId,
-            Lines = request.Lines.Select(x =>
+    private static List<RecurringSupplierBillLine> BuildLines(
+        RecurringSupplierBillRequest request) =>
+        request.Lines
+            .Select(x =>
                 new RecurringSupplierBillLine
                 {
-                    Description = x.Description.Trim(),
+                    Description =
+                        x.Description.Trim(),
                     Quantity = x.Quantity,
                     UnitPrice = x.UnitPrice,
                     VatTreatment = x.VatTreatment,
-                    ExpenseAccountId = x.ExpenseAccountId,
-                    ProductItemId = x.ProductItemId
-                }).ToList()
-        };
-
-        db.RecurringSupplierBills.Add(recurring);
-
-        db.AuditEvents.Add(
-            Audit(
-                request.OrganisationId,
-                userId,
-                "RecurringSupplierBillCreated",
-                nameof(RecurringSupplierBill),
-                recurring.Id,
-                new
-                {
-                    recurring.SupplierId,
-                    recurring.SupplierReference,
-                    recurring.Frequency,
-                    recurring.StartDate,
-                    recurring.DueDays
-                }));
-
-        await db.SaveChangesAsync(ct);
-
-        return recurring;
-    }
-
+                    ExpenseAccountId =
+                        x.ExpenseAccountId,
+                    ProductItemId =
+                        x.ProductItemId
+                })
+            .ToList();
     public async Task<IReadOnlyList<SupplierBill>> GenerateDueAsync(
         string userId,
         Guid organisationId,
