@@ -690,4 +690,94 @@ public async Task DepreciateThrough_WhenAccumulatedDepreciationAccountHasWrongTy
 
         Assert.True(reloadedAsset.IsActive);
     }
+
+        [Fact]
+    public async Task CreateAsync_WhenBankAcquisitionIsInsideCompletedReconciliation_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bank =
+            test.Account("1000");
+
+        bank.BankAccountKind =
+            BankAccountKind.DebitCard;
+
+        var accumulatedDepreciation =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1510",
+                Name = "Accumulated Depreciation",
+                Type = AccountType.Asset,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(
+            accumulatedDepreciation);
+
+        test.Db.BankReconciliationSessions.Add(
+            new BankReconciliationSession
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bank.Id,
+                StatementStartDate = new DateOnly(2026, 8, 1),
+                StatementEndDate = new DateOnly(2026, 8, 31),
+                IsCompleted = true,
+                CreatedByUserId = test.UserId
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var assetCountBefore =
+            await test.Db.FixedAssets.CountAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var service =
+            new FixedAssetService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.CreateAsync(
+                        test.UserId,
+                        new FixedAssetRequest(
+                            OrganisationId: test.Organisation.Id,
+                            Name: "Reconciled Bank Acquisition",
+                            AcquisitionDate: new DateOnly(2026, 8, 18),
+                            Cost: 2400m,
+                            ResidualValue: 400m,
+                            UsefulLifeMonths: 36,
+                            AssetAccountId: test.Account("1500").Id,
+                            DepreciationExpenseAccountId:
+                                test.Account("6900").Id,
+                            AccumulatedDepreciationAccountId:
+                                accumulatedDepreciation.Id,
+                            AcquisitionBankAccountId:
+                                bank.Id)));
+
+        Assert.Equal(
+            "A journal cannot post to a bank account inside a completed reconciliation period.",
+            exception.Message);
+
+        Assert.Equal(
+            assetCountBefore,
+            await test.Db.FixedAssets.CountAsync());
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+    }
 }
