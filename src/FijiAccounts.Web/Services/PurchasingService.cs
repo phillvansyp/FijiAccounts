@@ -56,7 +56,54 @@ if (!controls.TryGetValue(
 }
         var schedule = new FijiVatSchedule();
         var lines = request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.BillDate, x.VatTreatment); return new SupplierBillLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }; }).ToList();
-        var trackedIds = lines.Where(x => x.ProductItemId != null).Select(x => x.ProductItemId!.Value).Distinct().ToArray(); var tracked = await db.ProductItems.Where(x => x.OrganisationId == request.OrganisationId && x.Kind == ProductKind.TrackedItem && trackedIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct); foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; if (item.InventoryAccountId is null || line.ExpenseAccountId != item.InventoryAccountId) throw new InvalidOperationException($"Set opening stock and inventory accounts for {item.Code} before purchasing it."); }
+        var trackedIds =
+    lines
+        .Where(x => x.ProductItemId != null)
+        .Select(x => x.ProductItemId!.Value)
+        .Distinct()
+        .ToArray();
+
+var tracked =
+    await db.ProductItems
+        .Where(x =>
+            x.OrganisationId == request.OrganisationId &&
+            x.Kind == ProductKind.TrackedItem &&
+            trackedIds.Contains(x.Id))
+        .ToDictionaryAsync(
+            x => x.Id,
+            ct);
+
+foreach (var line in lines.Where(
+    x =>
+        x.ProductItemId != null &&
+        tracked.ContainsKey(x.ProductItemId.Value)))
+{
+    var item =
+        tracked[line.ProductItemId!.Value];
+
+    if (item.InventoryAccountId is null ||
+        line.ExpenseAccountId != item.InventoryAccountId)
+    {
+        throw new InvalidOperationException(
+            $"Set opening stock and inventory accounts for {item.Code} before purchasing it.");
+    }
+
+    var inventoryAccount =
+    await db.LedgerAccounts
+        .SingleOrDefaultAsync(
+            x =>
+                x.Id == item.InventoryAccountId.Value &&
+                x.OrganisationId == request.OrganisationId,
+            ct);
+
+if (inventoryAccount is null ||
+    !inventoryAccount.IsActive ||
+    inventoryAccount.Type != AccountType.Asset)
+{
+    throw new InvalidOperationException(
+        $"Inventory account for {item.Code} ({inventoryAccount?.Code ?? item.InventoryAccountId.Value.ToString()}) must be an active Asset account.");
+}
+}
 
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;

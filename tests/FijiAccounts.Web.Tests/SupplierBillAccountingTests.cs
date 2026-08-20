@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Domain.Accounting;
+using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 
 namespace FijiAccounts.Web.Tests;
@@ -295,6 +296,76 @@ public async Task PostBill_WhenAccountsPayableControlHasWrongType_IsRejected()
 
     Assert.Contains(
         "2000",
+        ex.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+}
+
+    [Fact]
+public async Task PostBill_WhenTrackedItemInventoryAccountHasWrongType_IsRejected()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var inventoryAccount =
+        new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1210",
+            Name = "Inventory Control Test",
+            Type = AccountType.Asset,
+            IsActive = true
+        };
+
+    test.Db.LedgerAccounts.Add(inventoryAccount);
+    await test.Db.SaveChangesAsync();
+
+    var item =
+        new ProductItem
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "TRACK-PURCHASE-001",
+            Name = "Tracked Purchase Test",
+            Kind = ProductKind.TrackedItem,
+            InventoryAccountId = inventoryAccount.Id
+        };
+
+    test.Db.ProductItems.Add(item);
+    await test.Db.SaveChangesAsync();
+
+    inventoryAccount.Type = AccountType.Expense;
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var ex =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.PostBillAsync(
+                    test.UserId,
+                    new SupplierBillRequest(
+                        OrganisationId: test.Organisation.Id,
+                        SupplierId: test.Supplier.Id,
+                        SupplierReference: "SUP-TRACK-WRONG-INVENTORY",
+                        BillDate: new DateOnly(2026, 8, 20),
+                        DueDate: new DateOnly(2026, 9, 19),
+                        Lines:
+                        [
+                            new SupplierBillLineRequest(
+                                Description: "Tracked purchase",
+                                Quantity: 1m,
+                                UnitPrice: 100m,
+                                VatTreatment: VatTreatment.Standard,
+                                ExpenseAccountId: inventoryAccount.Id,
+                                ProductItemId: item.Id)
+                        ])));
+
+    Assert.Contains(
+        "1210",
         ex.Message,
         StringComparison.OrdinalIgnoreCase);
 
