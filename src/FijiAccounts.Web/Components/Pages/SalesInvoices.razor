@@ -11,6 +11,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject SalesInvoiceService InvoiceService
+@inject RecurringSalesInvoiceService RecurringInvoices
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -41,6 +42,150 @@ else
         <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div>
     }
 
+    @if (canPost)
+    {
+        <section class="invoice-list mb-4">
+            <div class="list-heading">
+                <div>
+                    <h2>Recurring invoices</h2>
+                    <p>Active and paused customer invoice schedules</p>
+                </div>
+
+                <button type="button"
+                        class="btn btn-outline-primary"
+                        @onclick="GenerateRecurringInvoices">
+                    Generate due invoices
+                </button>
+            </div>
+
+            @if (recurringStatus is not null)
+            {
+                <div class="alert @recurringStatusClass">
+                    @recurringStatus
+                </div>
+            }
+
+            @if (recurringInvoices.Count == 0)
+            {
+                <div class="empty-state">
+                    <strong>No recurring invoices yet</strong>
+                    <span>Create a recurring invoice to automate regular customer billing.</span>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th>Status</th>
+                                <th>Frequency</th>
+                                <th>Next invoice</th>
+                                <th>Due terms</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in recurringInvoices)
+                            {
+                                <tr>
+                                    <td>@item.Customer.Name</td>
+
+                                    <td>
+                                        @if (item.Status == RecurringSalesInvoiceStatus.Active)
+                                        {
+                                            <span class="status-badge status-paid">
+                                                Active
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="status-badge status-draft">
+                                                Paused
+                                            </span>
+                                        }
+                                    </td>
+
+                                    <td>@item.Frequency</td>
+
+                                    <td>
+                                        @item.NextInvoiceDate.ToString("dd MMM yyyy")
+                                    </td>
+
+                                    <td>
+                                        @item.DueDays day@(item.DueDays == 1 ? "" : "s")
+                                    </td>
+
+                                    <td>
+                                        <div class="d-flex flex-wrap gap-1">
+                                            <a class="btn btn-sm btn-outline-primary"
+                                               href="o/@OrganisationId/sales/recurring/@item.Id/edit">
+                                                Edit
+                                            </a>
+
+                                            @if (item.Status == RecurringSalesInvoiceStatus.Active)
+                                            {
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-secondary"
+                                                        @onclick="() => PauseRecurringInvoice(item)">
+                                                    Pause
+                                                </button>
+
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-danger"
+                                                        @onclick="() => EndRecurringInvoice(item)">
+                                                    End
+                                                </button>
+                                            }
+                                            else if (item.Status == RecurringSalesInvoiceStatus.Paused)
+                                            {
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-success"
+                                                        @onclick="() => ResumeRecurringInvoice(item)">
+                                                    Resume
+                                                </button>
+
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-danger"
+                                                        @onclick="() => EndRecurringInvoice(item)">
+                                                    End
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+
+                                @if (item.Generations.Count > 0)
+                                {
+                                    <tr>
+                                        <td colspan="6">
+                                            <div class="small text-muted">
+                                                <strong>Generated invoices</strong>
+                                            </div>
+
+                                            <ul class="mb-0 mt-2">
+                                                @foreach (var generation in item.Generations.OrderByDescending(x => x.ScheduledDate))
+                                                {
+                                                    <li>
+                                                        @generation.ScheduledDate.ToString("dd MMM yyyy")
+                                                        —
+                                                        <a href="o/@OrganisationId/sales/@generation.SalesInvoiceId">
+                                                            @generation.SalesInvoice.InvoiceNumber
+                                                        </a>
+                                                    </li>
+                                                }
+                                            </ul>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
     <section class="invoice-list">
         <div class="list-heading">
             <div>
@@ -99,6 +244,9 @@ else
     private bool canPost;
     private List<BusinessParty> customers = [];
     private List<SalesInvoice> invoices = [];
+    private List<RecurringSalesInvoice> recurringInvoices = [];
+    private string? recurringStatus;
+    private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -115,13 +263,135 @@ else
         await Reload();
     }
 
-    private async Task Reload() => invoices = await Db.SalesInvoices.AsNoTracking()
-        .Include(x => x.Customer)
-        .Where(x => x.OrganisationId == OrganisationId)
-        .OrderByDescending(x => x.SequenceNumber)
-        .Take(100)
-        .ToListAsync();
+    private async Task Reload()
+    {
+        invoices =
+            await Db.SalesInvoices
+                .AsNoTracking()
+                .Include(x => x.Customer)
+                .Where(x => x.OrganisationId == OrganisationId)
+                .OrderByDescending(x => x.SequenceNumber)
+                .Take(100)
+                .ToListAsync();
 
+        recurringInvoices =
+            await Db.RecurringSalesInvoices
+                .AsNoTracking()
+                .Include(x => x.Customer)
+                .Include(x => x.Lines)
+.Include(x => x.Generations)
+    .ThenInclude(x => x.SalesInvoice)
+.AsSplitQuery()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.Status != RecurringSalesInvoiceStatus.Ended)
+                .OrderBy(x => x.Status)
+                .ThenBy(x => x.NextInvoiceDate)
+                .ToListAsync();
+    }
+
+    private async Task GenerateRecurringInvoices()
+    {
+        try
+        {
+            var generated =
+                await RecurringInvoices.GenerateDueAsync(
+                    userId,
+                    OrganisationId,
+                    DateOnly.FromDateTime(DateTime.Today));
+
+            await Reload();
+
+            recurringStatusClass = "alert-success";
+            recurringStatus =
+                generated.Count == 0
+                    ? "No recurring invoices are due."
+                    : $"Generated {generated.Count} recurring invoice{(generated.Count == 1 ? "" : "s")}.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DomainException)
+        {
+            recurringStatusClass = "alert-danger";
+            recurringStatus = ex.Message;
+        }
+    }
+
+    private async Task PauseRecurringInvoice(
+        RecurringSalesInvoice item)
+    {
+        try
+        {
+            await RecurringInvoices.SetActiveAsync(
+                userId,
+                OrganisationId,
+                item.Id,
+                false);
+
+            await Reload();
+
+            recurringStatusClass = "alert-success";
+            recurringStatus = "Recurring invoice paused.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException)
+        {
+            recurringStatusClass = "alert-danger";
+            recurringStatus = ex.Message;
+        }
+    }
+
+    private async Task ResumeRecurringInvoice(
+        RecurringSalesInvoice item)
+    {
+        try
+        {
+            await RecurringInvoices.SetActiveAsync(
+                userId,
+                OrganisationId,
+                item.Id,
+                true,
+                DateOnly.FromDateTime(DateTime.Today));
+
+            await Reload();
+
+            recurringStatusClass = "alert-success";
+            recurringStatus = "Recurring invoice resumed.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException)
+        {
+            recurringStatusClass = "alert-danger";
+            recurringStatus = ex.Message;
+        }
+    }
+
+    private async Task EndRecurringInvoice(
+        RecurringSalesInvoice item)
+    {
+        try
+        {
+            await RecurringInvoices.EndAsync(
+                userId,
+                OrganisationId,
+                item.Id);
+
+            await Reload();
+
+            recurringStatusClass = "alert-success";
+            recurringStatus = "Recurring invoice ended.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException)
+        {
+            recurringStatusClass = "alert-danger";
+            recurringStatus = ex.Message;
+        }
+    }
     private static bool IsOverdue(SalesInvoice invoice) =>
         invoice.Status is not InvoiceStatus.Paid and not InvoiceStatus.Voided and not InvoiceStatus.Credited &&
         invoice.DueDate < DateOnly.FromDateTime(DateTime.Today) &&

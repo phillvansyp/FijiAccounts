@@ -14,7 +14,13 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
 {
     public async Task<SalesInvoice> CreateDraftAsync(string userId, SalesInvoiceRequest request, CancellationToken cancellationToken = default)
     {
-        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot create invoices for this organisation.");
+        if (!await access.CanPostJournalsAsync(
+                userId,
+                request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot create invoices for this organisation.");
+        }
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
         var sequence = (await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1;
@@ -137,9 +143,31 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.IssueDate, x.VatTreatment); return new SalesInvoiceLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId }; }).ToList();
     }
 
-    public async Task<SalesInvoice> CreateAndPostAsync(string userId, SalesInvoiceRequest request, CancellationToken cancellationToken = default)
+    internal Task<SalesInvoice> CreateAndPostAutomaticallyAsync(
+        Guid organisationId,
+        SalesInvoiceRequest request,
+        CancellationToken cancellationToken = default)
     {
-        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot create invoices for this organisation.");
+        return CreateAndPostAsync(
+            "system",
+            request,
+            cancellationToken,
+            skipPermissionCheck: true);
+    }
+    public async Task<SalesInvoice> CreateAndPostAsync(
+    string userId,
+    SalesInvoiceRequest request,
+    CancellationToken cancellationToken = default,
+    bool skipPermissionCheck = false)
+    {
+        if (!skipPermissionCheck &&
+            !await access.CanPostJournalsAsync(
+                userId,
+                request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot create invoices for this organisation.");
+        }
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
@@ -202,7 +230,25 @@ if (!controlAccounts.TryGetValue(
     lines,
     journalLines,
     cancellationToken);
-        var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
+        var journal =
+            skipPermissionCheck
+                ? await posting.PostAutomaticallyAsync(
+                    new JournalPostRequest(
+                        request.OrganisationId,
+                        request.IssueDate,
+                        invoice.InvoiceNumber,
+                        $"Sales invoice {invoice.InvoiceNumber}",
+                        journalLines),
+                    cancellationToken)
+                : await posting.PostAsync(
+                    userId,
+                    new JournalPostRequest(
+                        request.OrganisationId,
+                        request.IssueDate,
+                        invoice.InvoiceNumber,
+                        $"Sales invoice {invoice.InvoiceNumber}",
+                        journalLines),
+                    cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) });
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;

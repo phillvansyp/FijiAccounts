@@ -23,6 +23,113 @@ public sealed class BusinessParty
     public bool IsActive { get; set; } = true;
 }
 
+public enum RecurringSalesInvoiceFrequency
+{
+    Weekly,
+    Monthly,
+    Quarterly,
+    Yearly
+}
+
+public enum RecurringSalesInvoiceStatus
+{
+    Active = 0,
+    Paused = 1,
+    Ended = 2
+}
+
+public sealed class RecurringSalesInvoice
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+
+    public Guid CustomerId { get; set; }
+    public BusinessParty Customer { get; set; } = null!;
+
+    public RecurringSalesInvoiceFrequency Frequency { get; set; }
+
+    public DateOnly StartDate { get; set; }
+    public DateOnly NextInvoiceDate { get; set; }
+
+    public int DueDays { get; set; }
+
+    public bool IsActive { get; set; } = true;
+
+    public RecurringSalesInvoiceStatus Status { get; set; } =
+        RecurringSalesInvoiceStatus.Active;
+
+    public List<RecurringSalesInvoiceLine> Lines { get; set; } = [];
+    public List<RecurringSalesInvoiceGeneration> Generations { get; set; } = [];
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
+public sealed class RecurringSalesInvoiceLine
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid RecurringSalesInvoiceId { get; set; }
+    public RecurringSalesInvoice RecurringSalesInvoice { get; set; } = null!;
+
+    [MaxLength(300)]
+    public required string Description { get; set; }
+
+    public decimal Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public VatTreatment VatTreatment { get; set; }
+
+    public Guid RevenueAccountId { get; set; }
+    public LedgerAccount RevenueAccount { get; set; } = null!;
+
+    public Guid? ProductItemId { get; set; }
+    public ProductItem? ProductItem { get; set; }
+}
+
+public sealed class RecurringSalesInvoiceGeneration
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public Guid RecurringSalesInvoiceId { get; set; }
+    public RecurringSalesInvoice RecurringSalesInvoice { get; set; } = null!;
+
+    public DateOnly ScheduledDate { get; set; }
+
+    public Guid SalesInvoiceId { get; set; }
+    public SalesInvoice SalesInvoice { get; set; } = null!;
+
+    public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string GeneratedByUserId { get; set; }
+}
+
+
+public sealed class RecurringInvoiceAutomationRun
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public DateOnly RunDate { get; set; }
+
+    public DateTimeOffset StartedAtUtc { get; set; }
+
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+
+    public int GeneratedCount { get; set; }
+
+    [MaxLength(32)]
+    public required string Status { get; set; }
+
+    [MaxLength(1000)]
+    public string? ErrorMessage { get; set; }
+}
+
 public sealed class SalesInvoice
 {
     public Guid Id { get; set; } = Guid.NewGuid();

@@ -14,9 +14,31 @@ public sealed class JournalPostingService(
     TenantAccessService tenantAccess,
     BankReconciliationService reconciliation)
 {
-    public async Task<PostedJournal> PostAsync(string userId, JournalPostRequest request, CancellationToken cancellationToken = default)
+    internal Task<PostedJournal> PostAutomaticallyAsync(
+        JournalPostRequest request,
+        CancellationToken cancellationToken = default)
     {
-        if (!await tenantAccess.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot post journals for this organisation.");
+        return PostAsync(
+            "system",
+            request,
+            cancellationToken,
+            skipPermissionCheck: true);
+    }
+
+    public async Task<PostedJournal> PostAsync(
+        string userId,
+        JournalPostRequest request,
+        CancellationToken cancellationToken = default,
+        bool skipPermissionCheck = false)
+    {
+        if (!skipPermissionCheck &&
+            !await tenantAccess.CanPostJournalsAsync(
+                userId,
+                request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot post journals for this organisation.");
+        }
         if (await db.AccountingPeriods.AnyAsync(x => x.OrganisationId == request.OrganisationId && x.IsLocked && request.Date >= x.StartsOn && request.Date <= x.EndsOn, cancellationToken)) throw new InvalidOperationException("The accounting period is locked.");
 
         var accountIds = request.Lines.Select(x => x.AccountId).Distinct().ToArray();

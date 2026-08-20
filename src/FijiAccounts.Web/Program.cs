@@ -62,6 +62,8 @@ builder.Services.ConfigureApplicationCookie(options =>
 builder.Services.AddScoped<TenantAccessService>();
 builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
+builder.Services.AddScoped<RecurringSalesInvoiceService>();
+builder.Services.AddHostedService<RecurringInvoiceGenerationWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<PurchasingService>();
 builder.Services.AddScoped<RecurringSupplierBillService>();

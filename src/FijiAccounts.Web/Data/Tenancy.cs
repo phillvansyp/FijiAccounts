@@ -16,6 +16,11 @@ public sealed class Organisation
     [MaxLength(2)] public string CountryCode { get; set; } = "FJ";
     [MaxLength(3)] public string BaseCurrency { get; set; } = "FJD";
     [MaxLength(64)] public string TimeZoneId { get; set; } = "Pacific/Fiji";
+
+    public bool RecurringInvoiceAutomationEnabled { get; set; } = true;
+
+    public TimeOnly RecurringInvoiceAutomationTime { get; set; } =
+        new(6, 0);
     [MaxLength(32)] public string TaxLabel { get; set; } = "VAT";
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;

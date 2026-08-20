@@ -20,6 +20,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SalesInvoiceVoid> SalesInvoiceVoids =>
     Set<SalesInvoiceVoid>();
     public DbSet<SalesInvoiceLine> SalesInvoiceLines => Set<SalesInvoiceLine>();
+    public DbSet<RecurringSalesInvoice> RecurringSalesInvoices =>
+        Set<RecurringSalesInvoice>();
+
+    public DbSet<RecurringSalesInvoiceLine> RecurringSalesInvoiceLines =>
+        Set<RecurringSalesInvoiceLine>();
+
+    public DbSet<RecurringSalesInvoiceGeneration> RecurringSalesInvoiceGenerations =>
+        Set<RecurringSalesInvoiceGeneration>();
     public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
     public DbSet<SalesCreditNoteReversal> SalesCreditNoteReversals =>
     Set<SalesCreditNoteReversal>();
@@ -27,6 +35,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CustomerReceiptAllocation> CustomerReceiptAllocations => Set<CustomerReceiptAllocation>();
     public DbSet<CustomerReceiptReversal> CustomerReceiptReversals => Set<CustomerReceiptReversal>();
     public DbSet<SupplierBill> SupplierBills => Set<SupplierBill>();
+    public DbSet<RecurringInvoiceAutomationRun> RecurringInvoiceAutomationRuns =>
+        Set<RecurringInvoiceAutomationRun>();
     public DbSet<RecurringSupplierBill> RecurringSupplierBills =>
     Set<RecurringSupplierBill>();
 
@@ -174,7 +184,69 @@ builder.Entity<SupplierBillVoid>()
         builder.Entity<SupplierBillDraft>().Property(x => x.Quantity).HasPrecision(18, 4);
         builder.Entity<SupplierBillDraft>().Property(x => x.UnitPrice).HasPrecision(18, 4);
         builder.Entity<SupplierBillDraft>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
-        builder.Entity<RecurringSupplierBill>()
+        builder.Entity<RecurringSalesInvoice>()
+    .HasIndex(x => new { x.OrganisationId, x.NextInvoiceDate });
+
+builder.Entity<RecurringSalesInvoice>()
+    .HasOne(x => x.Customer)
+    .WithMany()
+    .HasForeignKey(x => x.CustomerId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .Property(x => x.Quantity)
+    .HasPrecision(18, 4);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .Property(x => x.UnitPrice)
+    .HasPrecision(18, 4);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .HasOne(x => x.RecurringSalesInvoice)
+    .WithMany(x => x.Lines)
+    .HasForeignKey(x => x.RecurringSalesInvoiceId)
+    .OnDelete(DeleteBehavior.Cascade);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .HasOne(x => x.RevenueAccount)
+    .WithMany()
+    .HasForeignKey(x => x.RevenueAccountId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .HasOne(x => x.ProductItem)
+    .WithMany()
+    .HasForeignKey(x => x.ProductItemId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoiceGeneration>()
+    .HasIndex(x => new
+    {
+        x.RecurringSalesInvoiceId,
+        x.ScheduledDate
+    })
+    .IsUnique();
+
+builder.Entity<RecurringSalesInvoiceGeneration>()
+    .HasOne(x => x.RecurringSalesInvoice)
+    .WithMany(x => x.Generations)
+    .HasForeignKey(x => x.RecurringSalesInvoiceId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoiceGeneration>()
+    .HasOne(x => x.SalesInvoice)
+    .WithMany()
+    .HasForeignKey(x => x.SalesInvoiceId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringInvoiceAutomationRun>()
+    .HasIndex(x => new
+    {
+        x.OrganisationId,
+        x.RunDate
+    })
+    .IsUnique();
+builder.Entity<RecurringSupplierBill>()
     .HasIndex(x => new { x.OrganisationId, x.NextBillDate });
 
 builder.Entity<RecurringSupplierBill>()

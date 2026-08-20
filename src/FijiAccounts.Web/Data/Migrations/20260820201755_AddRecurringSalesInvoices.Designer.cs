@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260820201755_AddRecurringSalesInvoices")]
+    partial class AddRecurringSalesInvoices
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -941,12 +944,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("TEXT");
 
-                    b.Property<bool>("RecurringInvoiceAutomationEnabled")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<TimeOnly>("RecurringInvoiceAutomationTime")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TaxLabel")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1233,44 +1230,6 @@ namespace FijiAccounts.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("ProductItems");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.RecurringInvoiceAutomationRun", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset?>("CompletedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("GeneratedCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("OrganisationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateOnly>("RunDate")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("StartedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrganisationId", "RunDate")
-                        .IsUnique();
-
-                    b.ToTable("RecurringInvoiceAutomationRuns");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.RecurringSalesInvoice", b =>
