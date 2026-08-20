@@ -239,21 +239,21 @@ public sealed class SupplierBillVoidTests
                     RevenueAccountId: test.Account("4000").Id,
                     ExpenseAccountId: test.Account("5000").Id));
         
-        // Establish the tracked item's inventory accounts and
-// one unit of pre-existing stock.
-await inventory.AdjustAsync(
-    test.UserId,
-    new InventoryAdjustmentRequest(
-        OrganisationId: test.Organisation.Id,
-        ProductItemId: item.Id,
-        Date: new DateOnly(2026, 8, 17),
-        QuantityChange: 1m,
-        UnitCost: 30m,
-        ReorderLevel: 0m,
-        InventoryAccountId: test.Account("1200").Id,
-        AdjustmentAccountId: test.Account("5000").Id,
-        Reference: "VOID-STOCK-002-OPENING",
-        Note: "Existing stock"));
+                // Establish the tracked item's inventory accounts and
+        // one unit of pre-existing stock.
+        await inventory.AdjustAsync(
+            test.UserId,
+            new InventoryAdjustmentRequest(
+                OrganisationId: test.Organisation.Id,
+                ProductItemId: item.Id,
+                Date: new DateOnly(2026, 8, 17),
+                QuantityChange: 1m,
+                UnitCost: 30m,
+                ReorderLevel: 0m,
+                InventoryAccountId: test.Account("1200").Id,
+                AdjustmentAccountId: test.Account("5000").Id,
+                Reference: "VOID-STOCK-002-OPENING",
+                Note: "Existing stock"));
 
         var bill =
             await test.Purchasing.PostBillAsync(
@@ -275,7 +275,8 @@ await inventory.AdjustAsync(
                             ProductItemId: item.Id)
                     ]));
 
-        // Consume one of the two units after the supplier receipt.
+                // Consume two units so only one remains on hand,
+        // which is fewer than the two units received by the bill.
         await inventory.AdjustAsync(
             test.UserId,
             new InventoryAdjustmentRequest(
