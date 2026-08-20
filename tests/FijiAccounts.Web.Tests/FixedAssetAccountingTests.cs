@@ -581,4 +581,113 @@ public async Task DepreciateThrough_WhenAccumulatedDepreciationAccountHasWrongTy
             .Where(x => x.FixedAssetId == asset.Id)
             .ToListAsync());
 }
+
+    [Fact]
+    public async Task DepreciateThrough_WhenThroughDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new FixedAssetService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var accumulatedDepreciation =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1510",
+                Name = "Accumulated Depreciation",
+                Type = AccountType.Asset,
+                IsActive = true
+            };
+
+        var depreciationExpense =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "6700",
+                Name = "Depreciation Expense",
+                Type = AccountType.Expense,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.AddRange(
+            accumulatedDepreciation,
+            depreciationExpense);
+
+        await test.Db.SaveChangesAsync();
+
+        var asset =
+            await service.CreateAsync(
+                test.UserId,
+                new FixedAssetRequest(
+                    OrganisationId: test.Organisation.Id,
+                    Name: "Locked Period Depreciation Test",
+                    AcquisitionDate: new DateOnly(2026, 1, 1),
+                    Cost: 12_000m,
+                    ResidualValue: 0m,
+                    UsefulLifeMonths: 12,
+                    AssetAccountId: test.Account("1500").Id,
+                    DepreciationExpenseAccountId:
+                        depreciationExpense.Id,
+                    AccumulatedDepreciationAccountId:
+                        accumulatedDepreciation.Id));
+
+        test.Db.AccountingPeriods.Add(
+            new AccountingPeriod
+            {
+                OrganisationId = test.Organisation.Id,
+                Name = "March 2026",
+                StartsOn = new DateOnly(2026, 3, 1),
+                EndsOn = new DateOnly(2026, 3, 31),
+                IsLocked = true
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var depreciationCountBefore =
+            await test.Db.FixedAssetDepreciations.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.DepreciateThroughAsync(
+                        test.UserId,
+                        test.Organisation.Id,
+                        asset.Id,
+                        new DateOnly(2026, 3, 31)));
+
+        Assert.Contains(
+            "locked",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            depreciationCountBefore,
+            await test.Db.FixedAssetDepreciations.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        var reloadedAsset =
+            await test.Db.FixedAssets
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == asset.Id);
+
+        Assert.True(reloadedAsset.IsActive);
+    }
 }
