@@ -65,6 +65,39 @@ else
                 </div>
             }
 
+            @if (latestAutomationRun is not null)
+            {
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            Automation status
+                        </h5>
+
+                        <p class="mb-1">
+                            <strong>Last run:</strong>
+                            @latestAutomationRun.RunDate.ToString("dd MMM yyyy")
+                        </p>
+
+                        <p class="mb-1">
+                            <strong>Status:</strong>
+                            @latestAutomationRun.Status
+                        </p>
+
+                        <p class="mb-1">
+                            <strong>Generated:</strong>
+                            @latestAutomationRun.GeneratedCount invoice@(latestAutomationRun.GeneratedCount == 1 ? "" : "s")
+                        </p>
+
+                        @if (latestAutomationRun.ErrorMessage is not null)
+                        {
+                            <div class="alert alert-danger mt-2 mb-0">
+                                @latestAutomationRun.ErrorMessage
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
             @if (recurringInvoices.Count == 0)
             {
                 <div class="empty-state">
@@ -245,6 +278,7 @@ else
     private List<BusinessParty> customers = [];
     private List<SalesInvoice> invoices = [];
     private List<RecurringSalesInvoice> recurringInvoices = [];
+    private RecurringInvoiceAutomationRun? latestAutomationRun;
     private string? recurringStatus;
     private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
@@ -288,6 +322,14 @@ else
                 .OrderBy(x => x.Status)
                 .ThenBy(x => x.NextInvoiceDate)
                 .ToListAsync();
+
+        latestAutomationRun =
+            await Db.RecurringInvoiceAutomationRuns
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId)
+                .OrderByDescending(x => x.RunDate)
+                .FirstOrDefaultAsync();
     }
 
     private async Task GenerateRecurringInvoices()
