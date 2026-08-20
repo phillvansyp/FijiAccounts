@@ -16,6 +16,23 @@ public sealed class BankRuleService(ApplicationDbContext db, TenantAccessService
     public async Task ApplyAsync(string userId, Guid organisationId, Guid ruleId, Guid statementLineId, CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot apply bank rules for this organisation."); var rule = await db.BankRules.SingleOrDefaultAsync(x => x.Id == ruleId && x.OrganisationId == organisationId && x.IsActive, ct) ?? throw new InvalidOperationException("Active bank rule not found."); var line = await db.BankStatementLines.SingleOrDefaultAsync(x => x.Id == statementLineId && x.OrganisationId == organisationId && x.ReconciledAt == null, ct) ?? throw new InvalidOperationException("Unreconciled statement line not found.");
+
+        var target =
+    await db.LedgerAccounts
+        .SingleOrDefaultAsync(
+            x =>
+                x.Id == rule.TargetAccountId &&
+                x.OrganisationId == organisationId,
+            ct);
+
+if (target is null ||
+    !target.IsActive ||
+    target.IsBankAccount)
+{
+    throw new InvalidOperationException(
+        $"Bank rule target account ({target?.Code ?? rule.TargetAccountId.ToString()}) must be an active non-bank account.");
+}
+
         if (!Matches(rule, line)) throw new InvalidOperationException("The selected rule does not match this statement line."); await using var transaction = await db.Database.BeginTransactionAsync(ct); var amount = Math.Abs(line.Amount); var journalLines = line.Amount > 0 ? new[] { new JournalLineInput(line.BankAccountId, line.Description, amount, 0), new JournalLineInput(rule.TargetAccountId, line.Description, 0, amount) } : new[] { new JournalLineInput(rule.TargetAccountId, line.Description, amount, 0), new JournalLineInput(line.BankAccountId, line.Description, 0, amount) }; var journal = await posting.PostAsync(userId, new(organisationId, line.TransactionDate, line.Reference ?? $"BANK-{line.Id.ToString()[..8]}", $"Bank rule: {rule.Name} (tax out of scope)", journalLines), ct); var bankLine = journal.Lines.Single(x => x.LedgerAccountId == line.BankAccountId); await reconciliation.ReconcileAsync(userId, organisationId, line.Id, bankLine.Id, ct); db.AuditEvents.Add(Audit(organisationId, userId, "BankRuleApplied", rule.Id, new { rule.Name, StatementLineId = line.Id, line.Amount })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     }
     public static bool Matches(BankRule rule, BankStatementLine line) => line.Description.Contains(rule.DescriptionContains, StringComparison.OrdinalIgnoreCase) && (rule.Direction == BankRuleDirection.Any || rule.Direction == BankRuleDirection.MoneyIn && line.Amount > 0 || rule.Direction == BankRuleDirection.MoneyOut && line.Amount < 0);
