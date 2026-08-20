@@ -1,5 +1,6 @@
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
+using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -221,4 +222,103 @@ public async Task PostAndReconcileAsync_WhenVatPayableControlAccountHasWrongType
     Assert.Null(reloadedStatement.ReconciledAt);
     Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
 }
+
+    [Fact]
+    public async Task ReopenCodingAsync_WhenStatementDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bank = test.Account("1000");
+
+        var statement =
+            await test.Reconciliation.AddStatementLineAsync(
+                test.UserId,
+                new StatementLineRequest(
+                    OrganisationId: test.Organisation.Id,
+                    BankAccountId: bank.Id,
+                    Date: new DateOnly(2026, 8, 18),
+                    Description: "Locked period coded transaction",
+                    Reference: "BANK-LOCKED-001",
+                    Amount: -100m));
+
+        var journal =
+            await test.BankCoding.PostAndReconcileAsync(
+                test.UserId,
+                new BankTransactionCodingRequest(
+                    OrganisationId: test.Organisation.Id,
+                    StatementLineId: statement.Id,
+                    TargetAccountCode: "6500",
+                    Description: "Locked period coded transaction",
+                    VatTreatment: VatTreatment.Exempt));
+
+        var reconciledStatement =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == statement.Id);
+
+        Assert.NotNull(reconciledStatement.ReconciledAt);
+        Assert.NotNull(reconciledStatement.MatchedPostedJournalLineId);
+
+        test.Db.AccountingPeriods.Add(
+            new AccountingPeriod
+            {
+                OrganisationId = test.Organisation.Id,
+                Name = "August 2026",
+                StartsOn = new DateOnly(2026, 8, 1),
+                EndsOn = new DateOnly(2026, 8, 31),
+                IsLocked = true
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.BankCoding.ReopenCodingAsync(
+                        test.UserId,
+                        test.Organisation.Id,
+                        statement.Id));
+
+        Assert.Contains(
+            "locked",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        var reloadedStatement =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == statement.Id);
+
+        Assert.Equal(
+            reconciledStatement.ReconciledAt,
+            reloadedStatement.ReconciledAt);
+
+        Assert.Equal(
+            reconciledStatement.MatchedPostedJournalLineId,
+            reloadedStatement.MatchedPostedJournalLineId);
+
+        Assert.Equal(
+            reconciledStatement.ReconciledByUserId,
+            reloadedStatement.ReconciledByUserId);
+
+        Assert.True(
+            await test.Db.PostedJournals
+                .AsNoTracking()
+                .AnyAsync(x => x.Id == journal.Id));
+    }
 }
