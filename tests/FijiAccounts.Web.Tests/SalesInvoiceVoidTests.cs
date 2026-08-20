@@ -248,4 +248,85 @@ journals = journals
             InvoiceStatus.Voided,
             reloadedInvoice.Status);
     }
+
+    [Fact]
+public async Task VoidInvoice_WhenVoidDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var invoice =
+        await test.SalesInvoices.CreateAndPostAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                OrganisationId: test.Organisation.Id,
+                CustomerId: test.Customer.Id,
+                IssueDate: new DateOnly(2026, 8, 18),
+                DueDate: new DateOnly(2026, 9, 17),
+                Lines:
+                [
+                    new SalesInvoiceLineRequest(
+                        Description: "Locked period invoice",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id)
+                ]));
+
+    test.Db.AccountingPeriods.Add(
+        new AccountingPeriod
+{
+    OrganisationId = test.Organisation.Id,
+    Name = "August 2026",
+    StartsOn = new DateOnly(2026, 8, 1),
+    EndsOn = new DateOnly(2026, 8, 31),
+    IsLocked = true
+});
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var voidCountBefore =
+        await test.Db.SalesInvoiceVoids.CountAsync();
+
+    var auditCountBefore =
+        await test.Db.AuditEvents.CountAsync();
+
+    var exception =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.SalesInvoices.VoidAsync(
+                    test.UserId,
+                    test.Organisation.Id,
+                    invoice.Id,
+                    new DateOnly(2026, 8, 20)));
+
+    Assert.Contains(
+        "locked",
+        exception.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    var reloadedInvoice =
+        await test.Db.SalesInvoices
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == invoice.Id);
+
+    Assert.Equal(
+        InvoiceStatus.Posted,
+        reloadedInvoice.Status);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+
+    Assert.Equal(
+        voidCountBefore,
+        await test.Db.SalesInvoiceVoids.CountAsync());
+
+    Assert.Equal(
+        auditCountBefore,
+        await test.Db.AuditEvents.CountAsync());
+}
 }

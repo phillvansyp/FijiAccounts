@@ -355,4 +355,87 @@ public sealed class SupplierBillVoidTests
                         x.ProductItemId == item.Id &&
                         x.Type == InventoryMovementType.PurchaseReturn));
     }
+
+    [Fact]
+public async Task VoidSupplierBill_WhenVoidDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var bill =
+        await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                OrganisationId: test.Organisation.Id,
+                SupplierId: test.Supplier.Id,
+                SupplierReference: "SUP-VOID-LOCKED-001",
+                BillDate: new DateOnly(2026, 8, 18),
+                DueDate: new DateOnly(2026, 9, 17),
+                Lines:
+                [
+                    new SupplierBillLineRequest(
+                        Description: "Locked period supplier bill",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        ExpenseAccountId: test.Account("6500").Id)
+                ]));
+
+    test.Db.AccountingPeriods.Add(
+        new AccountingPeriod
+{
+    OrganisationId = test.Organisation.Id,
+    Name = "August 2026",
+    StartsOn = new DateOnly(2026, 8, 1),
+    EndsOn = new DateOnly(2026, 8, 31),
+    IsLocked = true
+});
+
+    await test.Db.SaveChangesAsync();
+
+    var journalCountBefore =
+        await test.Db.PostedJournals.CountAsync();
+
+    var voidCountBefore =
+        await test.Db.SupplierBillVoids.CountAsync();
+
+    var auditCountBefore =
+        await test.Db.AuditEvents.CountAsync();
+
+    var exception =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () =>
+                test.Purchasing.VoidBillAsync(
+                    test.UserId,
+                    test.Organisation.Id,
+                    bill.Id,
+                    new DateOnly(2026, 8, 20),
+                    "Locked period regression"));
+
+    Assert.Contains(
+        "locked",
+        exception.Message,
+        StringComparison.OrdinalIgnoreCase);
+
+    var reloadedBill =
+        await test.Db.SupplierBills
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == bill.Id);
+
+    Assert.Equal(
+        BillStatus.Posted,
+        reloadedBill.Status);
+
+    Assert.Equal(
+        journalCountBefore,
+        await test.Db.PostedJournals.CountAsync());
+
+    Assert.Equal(
+        voidCountBefore,
+        await test.Db.SupplierBillVoids.CountAsync());
+
+    Assert.Equal(
+        auditCountBefore,
+        await test.Db.AuditEvents.CountAsync());
+}
 }
