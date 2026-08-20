@@ -252,4 +252,123 @@ public sealed class InventoryAccountingTests
                 .Where(x => x.ProductItemId == item.Id)
                 .ToListAsync());
     }
+
+    [Fact]
+    public async Task AdjustAsync_WhenAdjustmentDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var catalog =
+            new ProductCatalogService(
+                test.Db,
+                test.Access);
+
+        var inventory =
+            new InventoryService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var item =
+            await catalog.CreateAsync(
+                test.UserId,
+                new ProductItemRequest(
+                    OrganisationId: test.Organisation.Id,
+                    Code: "STOCK-LOCKED-001",
+                    Name: "Locked Period Stock",
+                    Description: "Locked period inventory regression",
+                    Kind: ProductKind.TrackedItem,
+                    SalePrice: 50m,
+                    PurchasePrice: 20m,
+                    SaleTaxTreatment: VatTreatment.Standard,
+                    PurchaseTaxTreatment: VatTreatment.Standard,
+                    RevenueAccountId: test.Account("4000").Id,
+                    ExpenseAccountId: test.Account("5000").Id));
+
+        test.Db.AccountingPeriods.Add(
+            new AccountingPeriod
+            {
+                OrganisationId = test.Organisation.Id,
+                Name = "August 2026",
+                StartsOn = new DateOnly(2026, 8, 1),
+                EndsOn = new DateOnly(2026, 8, 31),
+                IsLocked = true
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var beforeAdjustment =
+            await test.Db.ProductItems
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == item.Id);
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var movementCountBefore =
+            await test.Db.InventoryMovements.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    inventory.AdjustAsync(
+                        test.UserId,
+                        new InventoryAdjustmentRequest(
+                            OrganisationId: test.Organisation.Id,
+                            ProductItemId: item.Id,
+                            Date: new DateOnly(2026, 8, 20),
+                            QuantityChange: 10m,
+                            UnitCost: 20m,
+                            ReorderLevel: 2m,
+                            InventoryAccountId: test.Account("1200").Id,
+                            AdjustmentAccountId: test.Account("5000").Id,
+                            Reference: "STOCK-LOCKED-001",
+                            Note: "Must not post")));
+
+        Assert.Contains(
+            "locked",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        var afterRejectedAdjustment =
+            await test.Db.ProductItems
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == item.Id);
+
+        Assert.Equal(
+            beforeAdjustment.QuantityOnHand,
+            afterRejectedAdjustment.QuantityOnHand);
+
+        Assert.Equal(
+            beforeAdjustment.AverageCost,
+            afterRejectedAdjustment.AverageCost);
+
+        Assert.Equal(
+            beforeAdjustment.ReorderLevel,
+            afterRejectedAdjustment.ReorderLevel);
+
+        Assert.Equal(
+            beforeAdjustment.InventoryAccountId,
+            afterRejectedAdjustment.InventoryAccountId);
+
+        Assert.Equal(
+            beforeAdjustment.CostAdjustmentAccountId,
+            afterRejectedAdjustment.CostAdjustmentAccountId);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            movementCountBefore,
+            await test.Db.InventoryMovements.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+    }
 }
