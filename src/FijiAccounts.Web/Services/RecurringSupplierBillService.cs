@@ -479,7 +479,8 @@ var recurring =
                     template.NextBillDate =
                         GetNextDate(
                             scheduledDate,
-                            template.Frequency);
+                            template.Frequency,
+                            template.StartDate);
 
                     continue;
                 }
@@ -523,7 +524,8 @@ var recurring =
                 template.NextBillDate =
                     GetNextDate(
                         scheduledDate,
-                        template.Frequency);
+                        template.Frequency,
+                        template.StartDate);
 
                 db.AuditEvents.Add(
                     Audit(
@@ -550,7 +552,8 @@ var recurring =
 
     internal static DateOnly GetNextDate(
         DateOnly date,
-        RecurringSupplierBillFrequency frequency)
+        RecurringSupplierBillFrequency frequency,
+        DateOnly startDate)
     {
         return frequency switch
         {
@@ -558,19 +561,69 @@ var recurring =
                 date.AddDays(7),
 
             RecurringSupplierBillFrequency.Monthly =>
-                date.AddMonths(1),
+                AddMonthsPreservingDay(
+                    date,
+                    1,
+                    startDate.Day),
 
             RecurringSupplierBillFrequency.Quarterly =>
-                date.AddMonths(3),
+                AddMonthsPreservingDay(
+                    date,
+                    3,
+                    startDate.Day),
 
             RecurringSupplierBillFrequency.Yearly =>
-                date.AddYears(1),
+                AddYearsPreservingDay(
+                    date,
+                    1,
+                    startDate),
 
             _ => throw new ArgumentOutOfRangeException(
                 nameof(frequency))
         };
     }
 
+    private static DateOnly AddMonthsPreservingDay(
+        DateOnly date,
+        int months,
+        int preferredDay)
+    {
+        var target =
+            date.AddMonths(months);
+
+        var day =
+            Math.Min(
+                preferredDay,
+                DateTime.DaysInMonth(
+                    target.Year,
+                    target.Month));
+
+        return new DateOnly(
+            target.Year,
+            target.Month,
+            day);
+    }
+
+    private static DateOnly AddYearsPreservingDay(
+        DateOnly date,
+        int years,
+        DateOnly startDate)
+    {
+        var targetYear =
+            date.Year + years;
+
+        var day =
+            Math.Min(
+                startDate.Day,
+                DateTime.DaysInMonth(
+                    targetYear,
+                    startDate.Month));
+
+        return new DateOnly(
+            targetYear,
+            startDate.Month,
+            day);
+    }
     private static string BuildSupplierReference(
         string reference,
         DateOnly scheduledDate)

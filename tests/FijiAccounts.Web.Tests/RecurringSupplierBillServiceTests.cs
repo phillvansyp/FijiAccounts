@@ -910,4 +910,75 @@ public sealed class RecurringSupplierBillServiceTests
             RecurringSupplierBillStatus.Ended,
             reloaded.Status);
     }
+
+    [Fact]
+    public async Task GenerateDueAsync_MonthlyOnThirtyFirst_ReturnsToThirtyFirstAfterShortMonth()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new RecurringSupplierBillService(
+                test.Db,
+                test.Access,
+                test.Purchasing);
+
+        var recurring =
+            await service.CreateAsync(
+                test.UserId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "MONTH-END",
+                    Frequency: RecurringSupplierBillFrequency.Monthly,
+                    StartDate: new DateOnly(2027, 1, 31),
+                    DueDays: 14,
+                    Lines:
+                    [
+                        new RecurringSupplierBillLineRequest(
+                            Description: "Month end bill",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        var generated =
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2027, 3, 31));
+
+        Assert.Equal(
+            3,
+            generated.Count);
+
+        var generations =
+            await test.Db.RecurringSupplierBillGenerations
+                .AsNoTracking()
+                .Where(x =>
+                    x.RecurringSupplierBillId == recurring.Id)
+                .OrderBy(x => x.ScheduledDate)
+                .ToListAsync();
+
+        Assert.Equal(
+            [
+                new DateOnly(2027, 1, 31),
+                new DateOnly(2027, 2, 28),
+                new DateOnly(2027, 3, 31)
+            ],
+            generations
+                .Select(x => x.ScheduledDate)
+                .ToArray());
+
+        var reloaded =
+            await test.Db.RecurringSupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == recurring.Id);
+
+        Assert.Equal(
+            new DateOnly(2027, 4, 30),
+            reloaded.NextBillDate);
+    }
+
 }
