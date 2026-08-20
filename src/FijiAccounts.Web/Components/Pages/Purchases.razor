@@ -18,6 +18,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
+@inject RecurringSupplierBillService RecurringBills
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -33,14 +34,123 @@ else
     </div>
     @if (showBillForm && canPost && suppliers.Count > 0 && expenseAccounts.Count > 0)
     {
-        <div class="setup-card mb-5" id="new-bill"><div class="d-flex justify-content-between align-items-start"><div><h2>@(editingDraftId is null ? "New supplier bill" : "Edit draft bill")</h2><p class="text-muted">Enter the bill or attach a document to prefill it. Nothing is posted until you approve it.</p></div><button type="button" class="btn btn-outline-secondary" @onclick="CloseBillForm">Close</button></div><EditForm Model="bill" OnValidSubmit="PostBill" FormName="supplier-bill"><DataAnnotationsValidator /><ValidationSummary /><CatalogProductPicker OrganisationId="OrganisationId" ForPurchases="true" OnSelected="AddPurchaseProduct" />
+        <div class="setup-card mb-5" id="new-bill">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+                <div>
+                    <h2>@(editingDraftId is null ? "New supplier bill" : "Edit draft bill")</h2>
+                    <p class="text-muted">Enter the bill or attach a document to prefill it. Nothing is posted until you approve it.</p>
+                </div>
+                <div class="d-flex gap-2">
+                    @if (editingDraftId is null)
+                    {
+                        <button type="button"
+                                class="btn @(isRecurringBill ? "btn-primary" : "btn-outline-primary")"
+                                @onclick="ToggleRecurringBill">
+                            @(isRecurringBill ? "Recurring bill" : "Make recurring")
+                        </button>
+                    }
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @onclick="CloseBillForm">
+                        Close
+                    </button>
+                </div>
+            </div>
+
+            <EditForm Model="bill"
+                      OnValidSubmit="SubmitBill"
+                      FormName="supplier-bill">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <CatalogProductPicker OrganisationId="OrganisationId"
+                                      ForPurchases="true"
+                                      OnSelected="AddPurchaseProduct" />
             <div class="mb-3"><label class="form-label">Supplier</label><InputSelect class="form-select" @bind-Value="bill.SupplierId" @bind-Value:after="ApplySelectedSupplierDefaults"><option value="@Guid.Empty">Choose a supplier</option>@foreach (var supplier in suppliers) { <option value="@supplier.Id">@supplier.Name</option> }</InputSelect></div>
             <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Supplier reference</label><InputText class="form-control" @bind-Value="bill.SupplierReference" /></div><div class="col-md-4 mb-3"><label class="form-label">Bill date</label><InputDate class="form-control" @bind-Value="bill.BillDate" /></div><div class="col-md-4 mb-3"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="bill.DueDate" /></div></div>
+
+            @if (isRecurringBill)
+            {
+                <div class="border rounded p-3 mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <strong>Recurring options</strong>
+                            <div class="text-muted small">
+                                These settings control future bills generated from this template.
+                            </div>
+                        </div>
+
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                @onclick="ToggleRecurringBill">
+                            Remove recurring
+                        </button>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Frequency</label>
+                            <InputSelect class="form-select"
+                                         @bind-Value="recurringBill.Frequency">
+                                @foreach (var frequency in Enum.GetValues<RecurringSupplierBillFrequency>())
+                                {
+                                    <option value="@frequency">@frequency</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Start date</label>
+                            <InputDate class="form-control"
+                                       @bind-Value="recurringBill.StartDate" />
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Due days</label>
+                            <InputNumber class="form-control"
+                                         @bind-Value="recurringBill.DueDays" />
+                        </div>
+                    </div>
+                </div>
+            }
             <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="bill.Description" /></div>
             <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="bill.Quantity" /></div><div class="col-md-3 mb-3"><label class="form-label">Unit price excl. VAT</label><InputNumber class="form-control" @bind-Value="bill.UnitPrice" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div></div>
             @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><InputText class="form-control" @bind-Value="line.Description" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="line.Quantity" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price</label><InputNumber class="form-control" @bind-Value="line.UnitPrice" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div> }
-            <div class="bill-attachment mb-4"><label class="bill-drop-zone"><InputFile class="bill-file-input" OnChange="SelectBillAttachment" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv" /><strong>Drop the supplier invoice or receipt here</strong><span>or click to choose a file. Searchable PDFs and CSV files will be read to prefill the form. Maximum 10 MB.</span></label>@if (pendingAttachment is not null) { <div class="selected-attachment"><div><strong>@pendingAttachment.FileName</strong><span>@FormatBytes(pendingAttachment.OriginalSize) · @(pendingAttachment.IsCompressed ? $"compressed to {FormatBytes(pendingAttachment.Content.LongLength)}" : "already compact")</span></div><button type="button" class="btn btn-sm btn-outline-danger" @onclick="RemoveAttachment">Remove</button></div> }@if (documentReadMessage is not null) { <div class="alert alert-info mt-2 mb-0">@documentReadMessage</div> }@if (attachmentError is not null) { <div class="text-danger mt-2">@attachmentError</div> }</div>
-            <div class="d-flex justify-content-between align-items-center"><button type="button" class="btn btn-outline-primary" @onclick="AddBillLine">+ Add bill line</button><div><strong class="me-3">Subtotal $@BillSubtotal.ToString("N2")</strong><button type="button" class="btn btn-outline-primary me-2" @onclick="SaveDraft">@(editingDraftId is null ? "Save draft" : "Update draft")</button><button class="btn btn-primary">Approve and post bill</button></div></div>
+            @if (!isRecurringBill)
+            {
+                <div class="bill-attachment mb-4"><label class="bill-drop-zone"><InputFile class="bill-file-input" OnChange="SelectBillAttachment" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv" /><strong>Drop the supplier invoice or receipt here</strong><span>or click to choose a file. Searchable PDFs and CSV files will be read to prefill the form. Maximum 10 MB.</span></label>@if (pendingAttachment is not null) { <div class="selected-attachment"><div><strong>@pendingAttachment.FileName</strong><span>@FormatBytes(pendingAttachment.OriginalSize) · @(pendingAttachment.IsCompressed ? $"compressed to {FormatBytes(pendingAttachment.Content.LongLength)}" : "already compact")</span></div><button type="button" class="btn btn-sm btn-outline-danger" @onclick="RemoveAttachment">Remove</button></div> }@if (documentReadMessage is not null) { <div class="alert alert-info mt-2 mb-0">@documentReadMessage</div> }@if (attachmentError is not null) { <div class="text-danger mt-2">@attachmentError</div> }</div>
+            }
+            <div class="d-flex justify-content-between align-items-center">
+                <button type="button"
+                        class="btn btn-outline-primary"
+                        @onclick="AddBillLine">
+                    + Add bill line
+                </button>
+
+                <div>
+                    <strong class="me-3">
+                        Subtotal $@BillSubtotal.ToString("N2")
+                    </strong>
+
+                    @if (!isRecurringBill)
+                    {
+                        <button type="button"
+                                class="btn btn-outline-primary me-2"
+                                @onclick="SaveDraft">
+                            @(editingDraftId is null ? "Save draft" : "Update draft")
+                        </button>
+
+                        <button class="btn btn-primary">
+                            Approve and post bill
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary">
+                            Create recurring bill
+                        </button>
+                    }
+                </div>
+            </div>
         </EditForm></div>
     }
     else if (showBillForm && suppliers.Count == 0) { <div class="alert alert-info">Add a supplier first. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
@@ -52,6 +162,61 @@ else
             <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="payment.Date" /></div><div class="col-md-3 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="payment.Reference" /></div><div class="col-md-3 mb-3"><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="payment.BankAccountId">@foreach (var account in bankAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="payment.Amount" /></div></div>
             <button class="btn btn-primary">Record payment</button>
         </EditForm></div>
+    }
+    @if (canPost)
+    {
+        <div class="setup-card mb-5">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h2>Recurring bills</h2>
+                    <p class="text-muted mb-0">
+                        Existing supplier bill schedules.
+                    </p>
+                </div>
+
+                <button type="button"
+                        class="btn btn-outline-primary"
+                        @onclick="GenerateRecurringBills">
+                    Generate due bills
+                </button>
+            </div>
+
+            @if (recurringBills.Count == 0)
+            {
+                <div class="empty-state">
+                    <strong>No recurring supplier bills yet</strong>
+                    <span>Open New bill and choose Make recurring to create one.</span>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Supplier</th>
+                                <th>Reference</th>
+                                <th>Frequency</th>
+                                <th>Next bill</th>
+                                <th>Due terms</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in recurringBills)
+                            {
+                                <tr>
+                                    <td>@item.Supplier.Name</td>
+                                    <td>@item.SupplierReference</td>
+                                    <td>@item.Frequency</td>
+                                    <td>@item.NextBillDate.ToString("dd MMM yyyy")</td>
+                                    <td>@item.DueDays day@(item.DueDays == 1 ? "" : "s")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
     }
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
 <section class="bill-list bill-register">
@@ -108,15 +273,19 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private Guid? editingDraftId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
-protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync(); expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Code == "1200" || x.Code == "1500")).OrderBy(x => x.Code).ToListAsync(); bankAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync(); await Reload(); ResetBillForm(); ResetPayment(); showBillForm = false; }
-    private async Task Reload() { bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool isRecurringBill; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
+protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync(); expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Code == "1200" || x.Code == "1500")).OrderBy(x => x.Code).ToListAsync(); bankAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync(); await Reload(); ResetBillForm(); ResetPayment(); ResetRecurringBill(); showBillForm = false; }
+    private async Task Reload() { bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.IsActive).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
 
     private static decimal Outstanding(SupplierBill item) => Math.Max(0m, item.Total - item.AmountPaid - item.AmountCredited);
     private string BillRegisterStatus(SupplierBill item) => IsOverdue(item) ? "Overdue" : item.Status switch { BillStatus.Posted => "Awaiting payment", BillStatus.PartPaid => "Part paid", BillStatus.Paid => "Paid", BillStatus.Credited => "Credited", BillStatus.Voided => "Voided", _ => item.Status.ToString() };
     private string BillRegisterStatusClass(SupplierBill item) => IsOverdue(item) ? "status-overdue" : item.Status switch { BillStatus.Posted => "status-awaiting", BillStatus.PartPaid => "status-partpaid", BillStatus.Paid => "status-paid", BillStatus.Credited => "status-credited", BillStatus.Voided => "status-voided", _ => "status-draft" };
-    private void ResetBillForm() { bill = new BillModel { SupplierId = Guid.Empty, ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; }
+    private void ResetBillForm() { bill = new BillModel { SupplierId = Guid.Empty, ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; isRecurringBill = false; ResetRecurringBill(); }
     private void ResetPayment() { payment = new(); if (openBills.Count > 0) { payment.BillId = openBills[0].Id; SetOutstanding(); } if (bankAccounts.Count > 0) payment.BankAccountId = bankAccounts[0].Id; }
+    private void ResetRecurringBill()
+    {
+        recurringBill = new RecurringBillModel();
+    }
     private async Task ApplySelectedSupplierDefaults()
     {
         var suggestion = await GetSupplierCodingSuggestionAsync(bill.SupplierId);
@@ -127,6 +296,26 @@ protected override async Task OnParametersSetAsync() { var state = await Authent
     }
 private void StartNewBill() { ResetBillForm(); status = null; showBillForm = true; }
 private void CloseBillForm() { ResetBillForm(); showBillForm = false; }
+private void ToggleRecurringBill()
+{
+    isRecurringBill = !isRecurringBill;
+
+    if (isRecurringBill)
+    {
+        pendingAttachment = null;
+        attachmentError = null;
+        documentReadMessage = null;
+
+        recurringBill.StartDate = bill.BillDate;
+
+        var dueDays =
+            bill.DueDate.DayNumber -
+            bill.BillDate.DayNumber;
+
+        recurringBill.DueDays =
+            Math.Max(0, dueDays);
+    }
+}
     private void AddBillLine() => additionalBillLines.Add(new BillLineModel { ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty });
     private void AddPurchaseProduct(ProductItem item)
     {
@@ -407,6 +596,99 @@ private void CloseBillForm() { ResetBillForm(); showBillForm = false; }
             VatTreatment: fallbackVat,
             Source: combinedSource);
     }
+    private async Task CreateRecurringBill()
+    {
+        try
+        {
+            var lines =
+                new List<RecurringSupplierBillLineRequest>
+                {
+                    new(
+                        bill.Description,
+                        bill.Quantity,
+                        bill.UnitPrice,
+                        bill.VatTreatment,
+                        bill.ExpenseAccountId,
+                        bill.ProductItemId)
+                };
+
+            lines.AddRange(
+                additionalBillLines.Select(
+                    x =>
+                        new RecurringSupplierBillLineRequest(
+                            x.Description,
+                            x.Quantity,
+                            x.UnitPrice,
+                            x.VatTreatment,
+                            x.ExpenseAccountId,
+                            x.ProductItemId)));
+
+            await RecurringBills.CreateAsync(
+                userId,
+                new RecurringSupplierBillRequest(
+                    OrganisationId,
+                    bill.SupplierId,
+                    bill.SupplierReference,
+                    recurringBill.Frequency,
+                    recurringBill.StartDate,
+                    recurringBill.DueDays,
+                    lines));
+
+            await Reload();
+
+            ResetBillForm();
+            showBillForm = false;
+
+            statusClass = "alert-success";
+            status = "Recurring supplier bill created.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DbUpdateException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+    private async Task GenerateRecurringBills()
+    {
+        try
+        {
+            var generated =
+                await RecurringBills.GenerateDueAsync(
+                    userId,
+                    OrganisationId,
+                    DateOnly.FromDateTime(DateTime.Today));
+
+            await Reload();
+            ResetPayment();
+
+            statusClass = "alert-success";
+            status = generated.Count == 0
+                ? "No recurring supplier bills are due today."
+                : $"Generated {generated.Count} supplier bill{(generated.Count == 1 ? "" : "s")}.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DomainException or
+            DbUpdateException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+    private async Task SubmitBill()
+    {
+        if (isRecurringBill)
+        {
+            await CreateRecurringBill();
+            return;
+        }
+
+        await PostBill();
+    }
     private async Task PostBill() { try { var draftId = editingDraftId; var lines = new List<SupplierBillLineRequest> { new(bill.Description, bill.Quantity, bill.UnitPrice, bill.VatTreatment, bill.ExpenseAccountId, bill.ProductItemId) }; lines.AddRange(additionalBillLines.Select(x => new SupplierBillLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.ExpenseAccountId, x.ProductItemId))); var result = await Purchasing.PostBillAsync(userId, new(OrganisationId, bill.SupplierId, bill.SupplierReference, bill.BillDate, bill.DueDate, lines)); var supplier = await Db.BusinessParties.FirstOrDefaultAsync(x => x.Id == bill.SupplierId && x.OrganisationId == OrganisationId); if (supplier is not null && supplier.DefaultPurchaseAccountId is null) { supplier.DefaultPurchaseAccountId = bill.ExpenseAccountId; supplier.DefaultPurchaseVatTreatment = bill.VatTreatment; } var hadAttachment = pendingAttachment is not null; if (pendingAttachment is not null) { Db.SupplierBillAttachments.Add(new SupplierBillAttachment { OrganisationId = OrganisationId, SupplierBillId = result.Id, FileName = pendingAttachment.FileName, ContentType = pendingAttachment.ContentType, OriginalSize = pendingAttachment.OriginalSize, StoredSize = pendingAttachment.Content.LongLength, IsCompressed = pendingAttachment.IsCompressed, Content = pendingAttachment.Content, UploadedByUserId = userId }); } if (draftId is Guid id) { var draft = await Db.SupplierBillDrafts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId); if (draft is not null) Db.SupplierBillDrafts.Remove(draft); } await Db.SaveChangesAsync(); ResetBillForm(); showBillForm = false; await Reload(); ResetPayment(); statusClass="alert-success"; status=$"{result.BillNumber} posted for ${result.Total:N2}{(hadAttachment ? " with its attachment." : ".")}"; } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException or DbUpdateException) { statusClass="alert-danger"; status=ex.Message; } }
     private async Task PayBill() { try { var result = await Purchasing.PayBillAsync(userId, new(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId)); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
@@ -414,6 +696,17 @@ private void CloseBillForm() { ResetBillForm(); showBillForm = false; }
     private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);
     private sealed class BillModel { public Guid SupplierId {get;set;} [Required,StringLength(80)] public string SupplierReference {get;set;}=""; public DateOnly BillDate {get;set;}=DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate {get;set;}=DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
     private sealed class BillLineModel { [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
+    private sealed class RecurringBillModel
+    {
+        public RecurringSupplierBillFrequency Frequency { get; set; } =
+            RecurringSupplierBillFrequency.Monthly;
+
+        public DateOnly StartDate { get; set; } =
+            DateOnly.FromDateTime(DateTime.Today);
+
+        [Range(0, 365)]
+        public int DueDays { get; set; } = 30;
+    }
     private sealed class PaymentModel { public Guid BillId {get;set;} public DateOnly Date {get;set;}=DateOnly.FromDateTime(DateTime.Today); [Required,StringLength(80)] public string Reference {get;set;}=""; [Range(.01,999999999)] public decimal Amount {get;set;} public Guid BankAccountId {get;set;} }
     private sealed record SupplierCodingSuggestion(Guid? ExpenseAccountId, VatTreatment? VatTreatment, string Source);
     private sealed record PendingAttachment(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
