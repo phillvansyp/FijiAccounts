@@ -69,7 +69,24 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         var invoice = await db.SalesInvoices.Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be edited.");
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken); var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
-        db.SalesInvoiceLines.RemoveRange(invoice.Lines); invoice.Lines = lines; invoice.CustomerId = request.CustomerId; invoice.IssueDate = request.IssueDate; invoice.DueDate = request.DueDate; invoice.Subtotal = lines.Sum(x => x.NetAmount); invoice.VatTotal = lines.Sum(x => x.VatAmount); invoice.Total = lines.Sum(x => x.GrossAmount);
+        var existingLines =
+    invoice.Lines.ToList();
+
+db.SalesInvoiceLines.RemoveRange(existingLines);
+
+foreach (var line in lines)
+{
+    line.SalesInvoiceId = invoice.Id;
+    line.SalesInvoice = invoice;
+    db.SalesInvoiceLines.Add(line);
+}
+
+invoice.CustomerId = request.CustomerId;
+invoice.IssueDate = request.IssueDate;
+invoice.DueDate = request.DueDate;
+invoice.Subtotal = lines.Sum(x => x.NetAmount);
+invoice.VatTotal = lines.Sum(x => x.VatAmount);
+invoice.Total = lines.Sum(x => x.GrossAmount);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoiceDraftUpdated", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, Lines = lines.Count }) }); await db.SaveChangesAsync(cancellationToken); return invoice;
     }
 

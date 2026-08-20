@@ -336,9 +336,9 @@ builder.Entity<FixedAsset>()
             x.State == EntityState.Deleted &&
             x.Entity.Status != InvoiceStatus.Draft) ||
     ChangeTracker.Entries<SalesInvoiceLine>()
-        .Any(x =>
-            (x.State is EntityState.Modified or EntityState.Deleted) &&
-            x.Entity.SalesInvoice.Status != InvoiceStatus.Draft) ||
+    .Any(x =>
+        (x.State is EntityState.Modified or EntityState.Deleted) &&
+        !IsDraftSalesInvoiceLine(x)) ||
     ChangeTracker.Entries<SalesCreditNote>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesQuote>()
@@ -384,4 +384,18 @@ builder.Entity<FixedAsset>()
         "Posted journals and audit events are append-only.");
 }
     }
+
+    private bool IsDraftSalesInvoiceLine(
+    Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<SalesInvoiceLine> entry)
+{
+    if (entry.Entity.SalesInvoice is not null)
+    {
+        return entry.Entity.SalesInvoice.Status == InvoiceStatus.Draft;
+    }
+
+    return ChangeTracker.Entries<SalesInvoice>()
+        .Any(x =>
+            x.Entity.Id == entry.Entity.SalesInvoiceId &&
+            x.Entity.Status == InvoiceStatus.Draft);
+}
 }
