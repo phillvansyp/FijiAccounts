@@ -272,4 +272,94 @@ public sealed class InternalBankTransferAccountingTests
             auditCountBefore,
             await test.Db.AuditEvents.CountAsync());
     }
+
+    [Fact]
+    public async Task PostAsync_WhenTransferDateIsInsideLockedAccountingPeriod_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA =
+            test.Account("1000");
+
+        var bankB =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1001",
+                Name = "Second Bank",
+                Type = AccountType.Asset,
+                IsBankAccount = true,
+                BankAccountKind = BankAccountKind.Bank,
+                IsSystemAccount = false,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(bankB);
+
+        test.Db.AccountingPeriods.Add(
+            new AccountingPeriod
+            {
+                OrganisationId = test.Organisation.Id,
+                Name = "August 2026",
+                StartsOn = new DateOnly(2026, 8, 1),
+                EndsOn = new DateOnly(2026, 8, 31),
+                IsLocked = true
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var transferCountBefore =
+            await test.Db.BankTransfers.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var service =
+            new BankTransferService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.PostAsync(
+                        test.UserId,
+                        new BankTransferRequest(
+                            OrganisationId: test.Organisation.Id,
+                            FromAccountId: bankA.Id,
+                            ToAccountId: bankB.Id,
+                            Date: new DateOnly(2026, 8, 20),
+                            Reference: "TRF-PERIOD-LOCKED-001",
+                            Description: "Locked period transfer",
+                            Amount: 100m)));
+
+        Assert.Contains(
+            "locked",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            transferCountBefore,
+            await test.Db.BankTransfers.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        Assert.False(
+            await test.Db.BankTransfers
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.OrganisationId == test.Organisation.Id &&
+                    x.Reference == "TRF-PERIOD-LOCKED-001"));
+    }
 }
