@@ -64,6 +64,7 @@ builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<PurchasingService>();
+builder.Services.AddScoped<RecurringSupplierBillService>();
 builder.Services.AddScoped<SupplierCreditNoteService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankTransferService>();

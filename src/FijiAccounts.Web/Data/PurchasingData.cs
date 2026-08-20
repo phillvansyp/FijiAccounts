@@ -193,3 +193,81 @@ public sealed class SupplierPaymentReversal
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
 }
+
+public enum RecurringSupplierBillFrequency
+{
+    Weekly,
+    Monthly,
+    Quarterly,
+    Yearly
+}
+
+public sealed class RecurringSupplierBill
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+
+    public Guid SupplierId { get; set; }
+    public BusinessParty Supplier { get; set; } = null!;
+
+    [MaxLength(80)]
+    public required string SupplierReference { get; set; }
+
+    public RecurringSupplierBillFrequency Frequency { get; set; }
+
+    public DateOnly StartDate { get; set; }
+    public DateOnly NextBillDate { get; set; }
+
+    public int DueDays { get; set; }
+
+    public bool IsActive { get; set; } = true;
+
+    public List<RecurringSupplierBillLine> Lines { get; set; } = [];
+    public List<RecurringSupplierBillGeneration> Generations { get; set; } = [];
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
+public sealed class RecurringSupplierBillLine
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid RecurringSupplierBillId { get; set; }
+    public RecurringSupplierBill RecurringSupplierBill { get; set; } = null!;
+
+    [MaxLength(300)]
+    public required string Description { get; set; }
+
+    public decimal Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public VatTreatment VatTreatment { get; set; }
+
+    public Guid ExpenseAccountId { get; set; }
+    public LedgerAccount ExpenseAccount { get; set; } = null!;
+
+    public Guid? ProductItemId { get; set; }
+    public ProductItem? ProductItem { get; set; }
+}
+
+public sealed class RecurringSupplierBillGeneration
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public Guid RecurringSupplierBillId { get; set; }
+    public RecurringSupplierBill RecurringSupplierBill { get; set; } = null!;
+
+    public DateOnly ScheduledDate { get; set; }
+
+    public Guid SupplierBillId { get; set; }
+    public SupplierBill SupplierBill { get; set; } = null!;
+
+    public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string GeneratedByUserId { get; set; }
+}
