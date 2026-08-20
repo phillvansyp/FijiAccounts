@@ -1039,4 +1039,115 @@ public async Task FixedAsset_AcquiredAfterPeriodEnd_IsNotReported()
         0,
         readiness.FixedAssetsRequiringDepreciation);
 }
+
+    [Fact]
+public async Task LockPeriod_WhenAlreadyLocked_IsIdempotent()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true);
+
+    var firstState =
+        await test.Db.AccountingPeriods
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    var firstLockedAt =
+        firstState.LockedAt;
+
+    var firstAuditCount =
+        await test.Db.AuditEvents
+            .CountAsync(
+                x =>
+                    x.EntityType == nameof(AccountingPeriod) &&
+                    x.EntityId == period.Id.ToString() &&
+                    x.EventType == "AccountingPeriodLocked");
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true);
+
+    var secondState =
+        await test.Db.AccountingPeriods
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    var secondAuditCount =
+        await test.Db.AuditEvents
+            .CountAsync(
+                x =>
+                    x.EntityType == nameof(AccountingPeriod) &&
+                    x.EntityId == period.Id.ToString() &&
+                    x.EventType == "AccountingPeriodLocked");
+
+    Assert.True(secondState.IsLocked);
+    Assert.Equal(firstLockedAt, secondState.LockedAt);
+    Assert.Equal(
+        firstState.LockedByUserId,
+        secondState.LockedByUserId);
+    Assert.Equal(1, firstAuditCount);
+    Assert.Equal(firstAuditCount, secondAuditCount);
+}
+
+[Fact]
+public async Task UnlockPeriod_WhenAlreadyUnlocked_IsIdempotent()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    var beforeAuditCount =
+        await test.Db.AuditEvents
+            .CountAsync(
+                x =>
+                    x.EntityType == nameof(AccountingPeriod) &&
+                    x.EntityId == period.Id.ToString() &&
+                    x.EventType == "AccountingPeriodUnlocked");
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        false);
+
+    var reloaded =
+        await test.Db.AccountingPeriods
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    var afterAuditCount =
+        await test.Db.AuditEvents
+            .CountAsync(
+                x =>
+                    x.EntityType == nameof(AccountingPeriod) &&
+                    x.EntityId == period.Id.ToString() &&
+                    x.EventType == "AccountingPeriodUnlocked");
+
+    Assert.False(reloaded.IsLocked);
+    Assert.Null(reloaded.LockedAt);
+    Assert.Null(reloaded.LockedByUserId);
+    Assert.Equal(beforeAuditCount, afterAuditCount);
+}
 }

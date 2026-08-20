@@ -337,6 +337,11 @@ var inventoryIntegrityWarnings =
             ?? throw new InvalidOperationException(
                 "Accounting period not found.");
 
+                if (period.IsLocked == locked)
+        {
+            return;
+        }
+
         AccountingPeriodReadiness? readiness = null;
 
 if (locked)
