@@ -189,4 +189,87 @@ public sealed class InternalBankTransferAccountingTests
 
         Assert.Equal(0m, totalBankMovement);
     }
+
+        [Fact]
+    public async Task PostAsync_WhenDestinationBankIsInsideCompletedReconciliation_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA = test.Account("1000");
+
+        var bankB =
+            new LedgerAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                Code = "1001",
+                Name = "Second Bank",
+                Type = AccountType.Asset,
+                IsBankAccount = true,
+                BankAccountKind = BankAccountKind.Bank,
+                IsSystemAccount = false,
+                IsActive = true
+            };
+
+        test.Db.LedgerAccounts.Add(bankB);
+        await test.Db.SaveChangesAsync();
+
+        test.Db.BankReconciliationSessions.Add(
+            new BankReconciliationSession
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bankB.Id,
+                StatementStartDate = new DateOnly(2026, 8, 1),
+                StatementEndDate = new DateOnly(2026, 8, 31),
+                IsCompleted = true,
+                CreatedByUserId = test.UserId
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var transferCountBefore =
+            await test.Db.BankTransfers.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var service =
+            new BankTransferService(
+                test.Db,
+                test.Access,
+                test.Posting);
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.PostAsync(
+                        test.UserId,
+                        new BankTransferRequest(
+                            OrganisationId: test.Organisation.Id,
+                            FromAccountId: bankA.Id,
+                            ToAccountId: bankB.Id,
+                            Date: new DateOnly(2026, 8, 20),
+                            Reference: "TRF-LOCKED-001",
+                            Description: "Locked reconciliation transfer",
+                            Amount: 100m)));
+
+        Assert.Equal(
+            "A journal cannot post to a bank account inside a completed reconciliation period.",
+            ex.Message);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            transferCountBefore,
+            await test.Db.BankTransfers.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+    }
 }

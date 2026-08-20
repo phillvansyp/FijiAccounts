@@ -159,4 +159,91 @@ public async Task PayBillAsync_WhenAccountsPayableControlAccountHasWrongType_IsR
     Assert.Equal(0m, afterRejected.AmountPaid);
     Assert.Equal(BillStatus.Posted, afterRejected.Status);
 }
+
+        [Fact]
+    public async Task PayBillAsync_InsideCompletedReconciliation_IsRejectedWithoutMutation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bank = test.Account("1000");
+
+        var bill =
+            await test.Purchasing.PostBillAsync(
+                test.UserId,
+                new SupplierBillRequest(
+                    OrganisationId: test.Organisation.Id,
+                    SupplierId: test.Supplier.Id,
+                    SupplierReference: "SUP-PAY-LOCKED-001",
+                    BillDate: new DateOnly(2026, 8, 18),
+                    DueDate: new DateOnly(2026, 9, 17),
+                    Lines:
+                    [
+                        new SupplierBillLineRequest(
+                            Description: "Locked reconciliation payment test",
+                            Quantity: 1m,
+                            UnitPrice: 100m,
+                            VatTreatment: VatTreatment.Standard,
+                            ExpenseAccountId: test.Account("6500").Id)
+                    ]));
+
+        test.Db.BankReconciliationSessions.Add(
+            new BankReconciliationSession
+            {
+                OrganisationId = test.Organisation.Id,
+                BankAccountId = bank.Id,
+                StatementStartDate = new DateOnly(2026, 8, 1),
+                StatementEndDate = new DateOnly(2026, 8, 31),
+                IsCompleted = true,
+                CreatedByUserId = test.UserId
+            });
+
+        await test.Db.SaveChangesAsync();
+
+        var journalCountBefore =
+            await test.Db.PostedJournals.CountAsync();
+
+        var paymentCountBefore =
+            await test.Db.SupplierPayments.CountAsync();
+
+        var auditCountBefore =
+            await test.Db.AuditEvents.CountAsync();
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    test.Purchasing.PayBillAsync(
+                        test.UserId,
+                        new SupplierPaymentRequest(
+                            OrganisationId: test.Organisation.Id,
+                            SupplierBillId: bill.Id,
+                            Date: new DateOnly(2026, 8, 20),
+                            Reference: "PAY-LOCKED-001",
+                            Amount: 50m,
+                            BankAccountId: bank.Id)));
+
+        Assert.Equal(
+            "A journal cannot post to a bank account inside a completed reconciliation period.",
+            ex.Message);
+
+        Assert.Equal(
+            journalCountBefore,
+            await test.Db.PostedJournals.CountAsync());
+
+        Assert.Equal(
+            paymentCountBefore,
+            await test.Db.SupplierPayments.CountAsync());
+
+        Assert.Equal(
+            auditCountBefore,
+            await test.Db.AuditEvents.CountAsync());
+
+        var afterRejected =
+            await test.Db.SupplierBills
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == bill.Id);
+
+        Assert.Equal(0m, afterRejected.AmountPaid);
+        Assert.Equal(BillStatus.Posted, afterRejected.Status);
+    }
 }
