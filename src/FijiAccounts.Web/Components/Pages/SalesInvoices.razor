@@ -52,12 +52,31 @@ else
                 </div>
 
                 <button type="button"
-                        class="btn btn-outline-primary"
-                        @onclick="GenerateRecurringInvoices">
-                    Generate due invoices
+                        class="btn btn-outline-secondary"
+                        @onclick="() => showRecurringInvoices = !showRecurringInvoices">
+                    @(showRecurringInvoices
+                        ? "Hide recurring invoices"
+                        : "Open recurring invoices")
                 </button>
             </div>
 
+            @if (showRecurringInvoices)
+            {
+                <div class="d-flex justify-content-end gap-2 flex-wrap mb-3">
+                    <button type="button"
+                            class="btn btn-outline-primary"
+                            @onclick="GenerateRecurringInvoices">
+                        Generate due invoices
+                    </button>
+
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @onclick="() => showAutomationSettings = !showAutomationSettings">
+                        @(showAutomationSettings
+                            ? "Hide automation settings"
+                            : "Automation settings")
+                    </button>
+                </div>
             @if (recurringStatus is not null)
             {
                 <div class="alert @recurringStatusClass">
@@ -98,6 +117,53 @@ else
                 </div>
             }
 
+            @if (showAutomationSettings)
+            {
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            Automation settings
+                        </h5>
+
+                        @if (automationStatus is not null)
+                        {
+                            <div class="alert alert-success">
+                                @automationStatus
+                            </div>
+                        }
+
+                        <label class="form-check mb-3">
+                            <InputCheckbox class="form-check-input"
+                                           @bind-Value="automationEnabled" />
+                            <span class="form-check-label">
+                                Generate recurring invoices automatically
+                            </span>
+                        </label>
+
+                        <div class="mb-3">
+                            <label class="form-label">
+                                Daily run time
+                            </label>
+
+                            <input type="time"
+                                   class="form-control"
+                                   value="@automationTime.ToString("HH:mm")"
+                                   @onchange="AutomationTimeChanged" />
+                        </div>
+
+                        <p class="text-muted">
+                            Timezone:
+                            @access.Organisation.TimeZoneId
+                        </p>
+
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                @onclick="SaveAutomationSettings">
+                            Save automation settings
+                        </button>
+                    </div>
+                </div>
+            }
             @if (recurringInvoices.Count == 0)
             {
                 <div class="empty-state">
@@ -217,6 +283,7 @@ else
                     </table>
                 </div>
             }
+            }
         </section>
     }
     <section class="invoice-list">
@@ -275,10 +342,15 @@ else
     private AccessibleOrganisation? access;
     private string userId = string.Empty;
     private bool canPost;
+    private bool showRecurringInvoices;
     private List<BusinessParty> customers = [];
     private List<SalesInvoice> invoices = [];
     private List<RecurringSalesInvoice> recurringInvoices = [];
     private RecurringInvoiceAutomationRun? latestAutomationRun;
+    private bool automationEnabled;
+    private TimeOnly automationTime;
+    private bool showAutomationSettings;
+    private string? automationStatus;
     private string? recurringStatus;
     private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
@@ -287,6 +359,12 @@ else
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is null) return;
+
+        automationEnabled =
+            access.Organisation.RecurringInvoiceAutomationEnabled;
+
+        automationTime =
+            access.Organisation.RecurringInvoiceAutomationTime;
 
         canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         customers = await Db.BusinessParties.AsNoTracking()
@@ -332,6 +410,40 @@ else
                 .FirstOrDefaultAsync();
     }
 
+    private void AutomationTimeChanged(
+        ChangeEventArgs e)
+    {
+        if (TimeOnly.TryParse(
+                e.Value?.ToString(),
+                out var value))
+        {
+            automationTime = value;
+        }
+    }
+
+    private async Task SaveAutomationSettings()
+    {
+        if (access is null)
+        {
+            return;
+        }
+
+        var organisation =
+            await Db.Organisations
+                .SingleAsync(
+                    x => x.Id == OrganisationId);
+
+        organisation.RecurringInvoiceAutomationEnabled =
+            automationEnabled;
+
+        organisation.RecurringInvoiceAutomationTime =
+            automationTime;
+
+        await Db.SaveChangesAsync();
+
+        automationStatus =
+            "Automation settings saved.";
+    }
     private async Task GenerateRecurringInvoices()
     {
         try
