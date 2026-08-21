@@ -280,3 +280,116 @@ public sealed class RecurringSupplierBillGeneration
     [MaxLength(450)]
     public required string GeneratedByUserId { get; set; }
 }
+
+public enum PurchaseOrderStatus
+{
+    Draft,
+    Approved,
+    Sent,
+    PartiallyReceived,
+    Received,
+    Closed,
+    Cancelled
+}
+
+public sealed class PurchaseOrder
+{
+    public Guid Id { get; set; } =
+        Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+
+    public Organisation Organisation { get; set; } =
+        null!;
+
+    public Guid SupplierId { get; set; }
+
+    public BusinessParty Supplier { get; set; } =
+        null!;
+
+    public long SequenceNumber { get; set; }
+
+    [MaxLength(40)]
+    public required string PurchaseOrderNumber { get; set; }
+
+    public DateOnly OrderDate { get; set; }
+
+    public DateOnly? ExpectedDate { get; set; }
+
+    [MaxLength(80)]
+    public string SupplierReference { get; set; } = "";
+
+    [MaxLength(500)]
+    public string Notes { get; set; } = "";
+
+    [MaxLength(3)]
+    public string Currency { get; set; } = "FJD";
+
+    public PurchaseOrderStatus Status { get; set; } =
+        PurchaseOrderStatus.Draft;
+
+    public decimal Subtotal { get; set; }
+
+    public decimal VatTotal { get; set; }
+
+    public decimal Total { get; set; }
+
+    public Guid? SupplierBillDraftId { get; set; }
+
+    public SupplierBillDraft? SupplierBillDraft { get; set; }
+
+    public Guid? SupplierBillId { get; set; }
+
+    public SupplierBill? SupplierBill { get; set; }
+
+    public List<PurchaseOrderLine> Lines { get; set; } =
+        [];
+
+    public DateTimeOffset CreatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}
+
+public sealed class PurchaseOrderLine
+{
+    public Guid Id { get; set; } =
+        Guid.NewGuid();
+
+    public Guid PurchaseOrderId { get; set; }
+
+    public PurchaseOrder PurchaseOrder { get; set; } =
+        null!;
+
+    [MaxLength(300)]
+    public required string Description { get; set; }
+
+    public decimal Quantity { get; set; }
+
+    public decimal QuantityReceived { get; set; }
+
+    public decimal UnitPrice { get; set; }
+
+    public VatTreatment VatTreatment { get; set; }
+
+    public decimal VatRate { get; set; }
+
+    public decimal NetAmount { get; set; }
+
+    public decimal VatAmount { get; set; }
+
+    public decimal GrossAmount { get; set; }
+
+    public Guid ExpenseAccountId { get; set; }
+
+    public LedgerAccount ExpenseAccount { get; set; } =
+        null!;
+
+    public Guid? ProductItemId { get; set; }
+
+    public ProductItem? ProductItem { get; set; }
+}

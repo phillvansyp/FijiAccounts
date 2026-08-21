@@ -126,6 +126,16 @@ else
 
                 </div>
 
+                @if (canManage &&
+     AmountDue > 0 &&
+     bill.Status is BillStatus.Posted or BillStatus.PartPaid)
+{
+    <button class="btn btn-primary"
+            @onclick="OpenPayment">
+        Record payment
+    </button>
+}
+
                 @if (canManage && AmountDue > 0 && bill.Status != BillStatus.Voided)
                 {
                     <button class="btn btn-outline-primary" @onclick="OpenCredit">
@@ -148,6 +158,80 @@ else
                 </button>
             </div>
         </div>
+
+        @if (showPayment)
+{
+    <section class="action-card no-print">
+
+        <div class="action-card-heading">
+            <span class="eyebrow">Supplier payment</span>
+            <h2>Record payment</h2>
+            <p>
+                Record a payment against this supplier bill.
+            </p>
+        </div>
+
+        <div class="row g-3">
+
+            <div class="col-md-2">
+                <label class="form-label">Payment date</label>
+
+                <InputDate class="form-control"
+                           @bind-Value="paymentDate" />
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">Bank account</label>
+
+                <InputSelect class="form-select"
+                             @bind-Value="paymentBankAccountId">
+
+                    <option value="@Guid.Empty">
+                        Choose bank account
+                    </option>
+
+                    @foreach (var account in bankAccounts)
+                    {
+                        <option value="@account.Id">
+                            @account.Code - @account.Name
+                        </option>
+                    }
+
+                </InputSelect>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label">Reference</label>
+
+                <InputText class="form-control"
+                           @bind-Value="paymentReference" />
+            </div>
+
+            <div class="col-md-2">
+                <label class="form-label">Amount</label>
+
+                <InputNumber class="form-control"
+                             @bind-Value="paymentAmount" />
+            </div>
+
+            <div class="col-md-2 d-flex align-items-end gap-2">
+
+                <button class="btn btn-primary"
+                        @onclick="RecordPayment">
+                    Record payment
+                </button>
+
+                <button class="btn btn-outline-secondary"
+                        @onclick="() => showPayment = false">
+                    Cancel
+                </button>
+
+            </div>
+
+        </div>
+
+    </section>
+}
 
         @if (showCredit)
         {
@@ -909,6 +993,16 @@ private string creditReversalReason = "";
         "image/jpeg"
     ];
 
+    private bool showPayment;
+private List<LedgerAccount> bankAccounts = [];
+
+private DateOnly paymentDate =
+    DateOnly.FromDateTime(DateTime.Today);
+
+private string paymentReference = "";
+private decimal paymentAmount;
+private Guid paymentBankAccountId;
+
     private decimal AmountDue =>
         bill is null
             ? 0
@@ -934,6 +1028,57 @@ private string creditReversalReason = "";
         await Reload();
     }
 
+    private void OpenPayment()
+{
+    showPayment = true;
+    showCredit = false;
+    showVoid = false;
+    reversingPaymentId = null;
+    reversingCreditId = null;
+
+    paymentDate =
+        DateOnly.FromDateTime(DateTime.Today);
+
+    paymentReference = "";
+    paymentAmount = AmountDue;
+
+    paymentBankAccountId =
+        bankAccounts.Count == 1
+            ? bankAccounts[0].Id
+            : Guid.Empty;
+}
+
+private async Task RecordPayment()
+{
+    try
+    {
+        await Purchasing.PayBillAsync(
+            userId,
+            new SupplierPaymentRequest(
+                OrganisationId,
+                BillId,
+                paymentDate,
+                paymentReference,
+                paymentAmount,
+                paymentBankAccountId));
+
+        showPayment = false;
+
+        statusClass = "alert-success";
+        status =
+            $"Supplier payment of ${paymentAmount:N2} recorded.";
+
+        await Reload();
+    }
+    catch (Exception ex)
+        when (ex is InvalidOperationException
+              or UnauthorizedAccessException)
+    {
+        statusClass = "alert-danger";
+        status = ex.Message;
+    }
+}
+
     private async Task Reload()
     {
         bill = await Db.SupplierBills
@@ -945,6 +1090,17 @@ private string creditReversalReason = "";
             .SingleOrDefaultAsync(
                 x => x.Id == BillId &&
                      x.OrganisationId == OrganisationId);
+
+        bankAccounts =
+    await Db.LedgerAccounts
+        .AsNoTracking()
+        .Where(
+            x =>
+                x.OrganisationId == OrganisationId &&
+                x.IsActive &&
+                x.IsBankAccount)
+        .OrderBy(x => x.Code)
+        .ToListAsync();        
 
         payments = await Db.SupplierPayments
             .AsNoTracking()

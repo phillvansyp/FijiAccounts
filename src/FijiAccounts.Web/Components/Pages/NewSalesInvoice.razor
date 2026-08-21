@@ -18,7 +18,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 
-<PageTitle>New invoice · Account Island</PageTitle>
+<PageTitle>New invoice Â· Account Island</PageTitle>
 @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
 else if (customers.Count == 0) { <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
 else
@@ -26,9 +26,9 @@ else
     <div class="editor-heading"><div><p class="eyebrow">Money in</p><h1>@(RecurringInvoiceId is not null ? "Edit recurring invoice" : InvoiceId is null ? "New sales invoice" : "Edit draft invoice")</h1><p>Create a draft or post it to the ledger when ready.</p></div><a class="btn btn-outline-secondary" href="o/@OrganisationId/sales">Cancel</a></div>
     @if (status is not null) { <div class="alert alert-danger">@status</div> }
     <EditForm Model="model" OnValidSubmit="Post" FormName="advanced-sales-invoice" class="invoice-editor"><DataAnnotationsValidator /><ValidationSummary /><CatalogProductPicker OrganisationId="OrganisationId" OnSelected="AddProductLine" />
-        <section class="invoice-parties"><div><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId" @bind-Value:after="ApplySelectedCustomerDefaultsAsync">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div><label class="form-label">Issue date</label><InputDate class="form-control" @bind-Value="model.IssueDate" /></div><div><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="model.DueDate" /></div><div><label class="form-label">Currency</label><input class="form-control" value="@access.Organisation.BaseCurrency" disabled /></div></section>
-        <section class="line-editor"><div class="line-header"><span>Description</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
-            @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> }
+        <section class="invoice-parties"><div><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId" @bind-Value:after="ApplySelectedCustomerDefaultsAsync">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div><label class="form-label">Issue date</label><InputDate class="form-control" @bind-Value="model.IssueDate" @bind-Value:after="ApplySelectedCustomerPaymentTerms" /></div><div><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="model.DueDate" /></div><div><label class="form-label">Currency</label><input class="form-control" value="@access.Organisation.BaseCurrency" disabled /></div></section>
+        <section class="line-editor"><div class="line-header"><span>Description</span><span>Customer PO</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
+            @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputText class="form-control" @bind-Value="line.CustomerPurchaseOrderNumber" placeholder="PO number" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> }
             <button type="button" class="add-line" @onclick="AddLine">+ Add another line</button>
         </section>
         @if (InvoiceId is null)
@@ -265,6 +265,8 @@ else
                                 {
                                     Description =
                                         x.Description,
+                                    CustomerPurchaseOrderNumber =
+                                        x.CustomerPurchaseOrderNumber,
                                     Quantity =
                                         x.Quantity,
                                     UnitPrice =
@@ -293,7 +295,7 @@ else
         }
     }
     private void AddLine() => model.Lines.Add(new InvoiceLineModel { RevenueAccountId = revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty }); private void AddProductLine(ProductItem item) { var line = model.Lines.Count == 1 && string.IsNullOrWhiteSpace(model.Lines[0].Description) ? model.Lines[0] : new InvoiceLineModel(); line.Description = string.IsNullOrWhiteSpace(item.Description) ? item.Name : item.Description; line.Quantity = 1; line.UnitPrice = item.SalePrice; line.VatTreatment = item.SaleTaxTreatment; line.RevenueAccountId = item.RevenueAccountId ?? revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty; line.ProductItemId = item.Id; if (!model.Lines.Contains(line)) model.Lines.Add(line); } private void RemoveLine(int index) { if (model.Lines.Count > 1) model.Lines.RemoveAt(index); }
-    private SalesInvoiceRequest Request() => new(OrganisationId, model.CustomerId, model.IssueDate, model.DueDate, model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId, x.ProductItemId)).ToList());
+    private SalesInvoiceRequest Request() => new(OrganisationId, model.CustomerId, model.IssueDate, model.DueDate, model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId, x.ProductItemId, x.CustomerPurchaseOrderNumber)).ToList());
     private async Task CreateRecurringInvoice()
     {
         try
@@ -345,10 +347,52 @@ else
     private async Task SaveDraft() { try { var invoice = InvoiceId is null ? await InvoiceService.CreateDraftAsync(userId, Request()) : await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request()); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}"); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { status = ex.Message; } }
     private async Task ApplySelectedCustomerDefaultsAsync()
     {
-        var suggestion = await GetCustomerCodingSuggestionAsync(model.CustomerId);
-        if (suggestion is null || model.Lines.Count == 0) return;
-        if (suggestion.RevenueAccountId is not null) model.Lines[0].RevenueAccountId = suggestion.RevenueAccountId.Value;
-        if (suggestion.VatTreatment is not null) model.Lines[0].VatTreatment = suggestion.VatTreatment.Value;
+        ApplySelectedCustomerPaymentTerms();
+
+        var suggestion =
+            await GetCustomerCodingSuggestionAsync(
+                model.CustomerId);
+
+        if (suggestion is null ||
+            model.Lines.Count == 0)
+        {
+            return;
+        }
+
+        if (suggestion.RevenueAccountId is not null)
+        {
+            model.Lines[0].RevenueAccountId =
+                suggestion.RevenueAccountId.Value;
+        }
+
+        if (suggestion.VatTreatment is not null)
+        {
+            model.Lines[0].VatTreatment =
+                suggestion.VatTreatment.Value;
+        }
+    }
+
+    private void ApplySelectedCustomerPaymentTerms()
+    {
+        var customer =
+            customers.FirstOrDefault(
+                x => x.Id == model.CustomerId);
+
+        var termType =
+            customer?.DefaultSalesInvoicePaymentTermType
+            ?? access?.Organisation.DefaultSalesInvoicePaymentTermType
+            ?? PaymentTermType.DaysAfterDocumentDate;
+
+        var termValue =
+            customer?.DefaultSalesInvoiceDueDays
+            ?? access?.Organisation.DefaultSalesInvoiceDueDays
+            ?? 30;
+
+        model.DueDate =
+            PaymentTermCalculator.CalculateDueDate(
+                model.IssueDate,
+                termType,
+                termValue);
     }
     private async Task<SalesInvoiceCodingSuggestion?> GetCustomerCodingSuggestionAsync(Guid customerId)
     {
@@ -411,6 +455,6 @@ else
 }
 
     private sealed class InvoiceEditorModel { public Guid CustomerId { get; set; } public DateOnly IssueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); public List<InvoiceLineModel> Lines { get; set; } = []; }
-    private sealed class InvoiceLineModel { [Required, StringLength(300)] public string Description { get; set; } = ""; [Range(.0001, 999999999)] public decimal Quantity { get; set; } = 1; [Range(0, 999999999)] public decimal UnitPrice { get; set; } public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard; public Guid RevenueAccountId { get; set; } public Guid? ProductItemId { get; set; } }
+    private sealed class InvoiceLineModel { [Required, StringLength(300)] public string Description { get; set; } = ""; [StringLength(80)] public string? CustomerPurchaseOrderNumber { get; set; } [Range(.0001, 999999999)] public decimal Quantity { get; set; } = 1; [Range(0, 999999999)] public decimal UnitPrice { get; set; } public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard; public Guid RevenueAccountId { get; set; } public Guid? ProductItemId { get; set; } }
     private sealed record SalesInvoiceCodingSuggestion(Guid? RevenueAccountId, VatTreatment? VatTreatment, string Source);
 }

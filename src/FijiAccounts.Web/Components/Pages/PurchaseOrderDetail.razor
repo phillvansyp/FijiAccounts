@@ -1,0 +1,577 @@
+@page "/o/{OrganisationId:guid}/purchase-orders/{PurchaseOrderId:guid}"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject PurchaseOrderService PurchaseOrderService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>@(order?.PurchaseOrderNumber ?? "Purchase order") Ãƒâ€šÃ‚Â· Account Island</PageTitle>
+
+@if (order is null || access is null)
+{
+    <div class="alert alert-danger">
+        Purchase order not found or access denied.
+    </div>
+}
+else
+{
+    <div class="bill-page">
+
+        <div class="bill-heading no-print">
+
+            <div>
+
+                <a class="back-link"
+                   href="/o/@OrganisationId/purchase-orders">
+                    ÃƒÂ¢Ã¢â‚¬Â Ã‚Â Purchase orders
+                </a>
+
+                <span class="eyebrow">
+                    Purchases
+                </span>
+
+                <div class="title-row">
+
+                    <h1>
+                        @order.PurchaseOrderNumber
+                    </h1>
+
+                    <span class="bill-status">
+                        @order.Status
+                    </span>
+
+                    @if (order.Status == PurchaseOrderStatus.Approved)
+{
+    <button type="button"
+            class="btn btn-primary"
+            @onclick="MarkPurchaseOrderSent">
+        Mark as sent
+    </button>
+}
+
+@if (order.Status == PurchaseOrderStatus.Received)
+{
+    <button type="button"
+            class="btn btn-primary"
+            @onclick="CreateSupplierBillDraft">
+        Create supplier bill draft
+    </button>
+}
+
+@if (order.Status != PurchaseOrderStatus.Closed &&
+    order.Status != PurchaseOrderStatus.Cancelled)
+{
+    <button type="button"
+            class="btn btn-outline-danger"
+            @onclick="CancelPurchaseOrder">
+        Cancel
+    </button>
+}
+
+                </div>
+
+            </div>
+
+            @if (order.Status == PurchaseOrderStatus.Draft)
+            {
+                <div>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="ApprovePurchaseOrder">
+                        Approve purchase order
+                    </button>
+                </div>
+            }
+
+        </div>
+
+
+        <section class="setup-card">
+
+            <h2>
+                Supplier details
+            </h2>
+
+            <p>
+                <strong>Supplier:</strong>
+                @order.Supplier.Name
+            </p>
+
+            <p>
+                <strong>Order date:</strong>
+                @order.OrderDate
+            </p>
+
+            @if (order.ExpectedDate is not null)
+            {
+                <p>
+                    <strong>Expected:</strong>
+                    @order.ExpectedDate
+                </p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(order.Notes))
+            {
+                <p>
+                    <strong>Notes:</strong>
+                    @order.Notes
+                </p>
+            }
+
+        </section>
+
+
+        <section class="setup-card">
+
+            <h2>
+                Order lines
+            </h2>
+
+            <div class="table-responsive">
+
+                <table class="table">
+
+                    <thead>
+                        <tr>
+                            <th>Description</th>
+                            <th>Quantity</th>
+                            <th class="text-end">Unit price</th>
+                            <th class="text-end">Total</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        @foreach (var line in order.Lines)
+                        {
+                            <tr>
+
+                                <td>
+                                    @line.Description
+                                </td>
+
+                                <td>
+                                    @line.Quantity
+                                </td>
+
+                                <td class="text-end">
+                                    $@line.UnitPrice.ToString("N2")
+                                </td>
+
+                                <td class="text-end">
+                                    $@line.GrossAmount.ToString("N2")
+                                </td>
+
+                            </tr>
+                        }
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
+        @if (order.Status is PurchaseOrderStatus.Sent or PurchaseOrderStatus.PartiallyReceived)
+{
+    <section class="setup-card">
+
+        <h2>
+            Receive items
+        </h2>
+
+        <p class="text-muted">
+            Enter the quantities received from the supplier.
+        </p>
+
+        <div class="table-responsive">
+
+            <table class="table">
+
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th>Ordered</th>
+                        <th>Received</th>
+                        <th>Receive now</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    @foreach (var line in order.Lines)
+                    {
+                        <tr>
+
+                            <td>
+                                @line.Description
+                            </td>
+
+                            <td>
+                                @line.Quantity
+                            </td>
+
+                            <td>
+                                @line.QuantityReceived
+                            </td>
+
+                            <td>
+                                <input type="number"
+       class="form-control"
+       value="@GetReceiveQuantity(line.Id)"
+       @onchange="@(e => SetReceiveQuantity(line.Id, e.Value?.ToString()))" />
+                            </td>
+
+                        </tr>
+                    }
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+        <button type="button"
+                class="btn btn-primary"
+                @onclick="ReceivePurchaseOrder">
+            Receive items
+        </button>
+
+    </section>
+}
+
+        <section class="setup-card">
+
+            <h2>
+                Totals
+            </h2>
+
+            <p>
+                Subtotal:
+                <strong>
+                    $@order.Subtotal.ToString("N2")
+                </strong>
+            </p>
+
+            <p>
+                VAT:
+                <strong>
+                    $@order.VatTotal.ToString("N2")
+                </strong>
+            </p>
+
+            <p>
+                Total:
+                <strong>
+                    $@order.Total.ToString("N2")
+                </strong>
+            </p>
+
+        </section>
+
+    </div>
+}
+
+@code {
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    [Parameter]
+    public Guid PurchaseOrderId { get; set; }
+
+    private AccessibleOrganisation? access;
+
+    private PurchaseOrder? order;
+
+    private Dictionary<Guid, decimal> receiveQuantities = [];
+
+    private async Task ApprovePurchaseOrder()
+{
+    if (access is null)
+    {
+        return;
+    }
+
+    var state =
+        await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+    var userId =
+        UserManager.GetUserId(state.User)!;
+
+    await PurchaseOrderService.ApproveAsync(
+        userId,
+        OrganisationId,
+        PurchaseOrderId);
+
+    order =
+        await Db.PurchaseOrders
+            .AsNoTracking()
+            .Include(x => x.Supplier)
+            .Include(x => x.Lines)
+            .SingleAsync(
+                x =>
+                    x.Id == PurchaseOrderId &&
+                    x.OrganisationId == OrganisationId);
+}
+
+    private async Task MarkPurchaseOrderSent()
+{
+    if (access is null)
+    {
+        return;
+    }
+
+    var state =
+        await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+    var userId =
+        UserManager.GetUserId(state.User)!;
+
+    await PurchaseOrderService.MarkSentAsync(
+        userId,
+        OrganisationId,
+        PurchaseOrderId);
+
+    await ReloadOrder();
+}
+
+private async Task CancelPurchaseOrder()
+{
+    if (access is null)
+    {
+        return;
+    }
+
+    var state =
+        await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+    var userId =
+        UserManager.GetUserId(state.User)!;
+
+    await PurchaseOrderService.CancelAsync(
+        userId,
+        OrganisationId,
+        PurchaseOrderId);
+
+    await ReloadOrder();
+}
+
+private async Task CreateSupplierBillDraft()
+{
+    if (order is null || access is null || order.Lines.Count == 0)
+    {
+        return;
+    }
+
+    if (order.Status != PurchaseOrderStatus.Received)
+    {
+        throw new InvalidOperationException(
+            "Only fully received purchase orders can be converted to a supplier bill draft.");
+    }
+
+    var trackedOrder =
+        await Db.PurchaseOrders
+            .Include(x => x.Lines)
+            .SingleAsync(
+                x =>
+                    x.Id == PurchaseOrderId &&
+                    x.OrganisationId == OrganisationId);
+
+    if (trackedOrder.SupplierBillDraftId is Guid existingDraftId)
+    {
+        var existingDraftExists =
+            await Db.SupplierBillDrafts
+                .AnyAsync(
+                    x =>
+                        x.Id == existingDraftId &&
+                        x.OrganisationId == OrganisationId);
+
+        if (existingDraftExists)
+        {
+            Navigation.NavigateTo(
+                $"/o/{OrganisationId}/purchases?draft={existingDraftId}#draft-editor");
+
+            return;
+        }
+
+        trackedOrder.SupplierBillDraftId = null;
+    }
+
+    var state =
+        await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+    var userId =
+        UserManager.GetUserId(state.User)!;
+
+    var firstLine =
+        trackedOrder.Lines.First();
+
+    var additionalLines =
+        trackedOrder.Lines
+            .Skip(1)
+            .Select(x => new
+            {
+                x.Description,
+                x.Quantity,
+                x.UnitPrice,
+                x.VatTreatment,
+                x.ExpenseAccountId,
+                x.ProductItemId
+            })
+            .ToList();
+
+    var draft =
+        new SupplierBillDraft
+        {
+            OrganisationId = OrganisationId,
+            SupplierId = trackedOrder.SupplierId,
+            SupplierReference =
+                string.IsNullOrWhiteSpace(trackedOrder.SupplierReference)
+                    ? trackedOrder.PurchaseOrderNumber
+                    : trackedOrder.SupplierReference,
+            BillDate = trackedOrder.OrderDate,
+            DueDate = trackedOrder.ExpectedDate ?? trackedOrder.OrderDate,
+            Description = firstLine.Description,
+            Quantity = firstLine.Quantity,
+            UnitPrice = firstLine.UnitPrice,
+            VatTreatment = firstLine.VatTreatment,
+            ExpenseAccountId = firstLine.ExpenseAccountId,
+            ProductItemId = firstLine.ProductItemId,
+            AdditionalLinesJson =
+                System.Text.Json.JsonSerializer.Serialize(
+                    additionalLines),
+            CreatedByUserId = userId,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+    Db.SupplierBillDrafts.Add(draft);
+
+    trackedOrder.SupplierBillDraftId = draft.Id;
+    trackedOrder.UpdatedAt = DateTimeOffset.UtcNow;
+
+    await Db.SaveChangesAsync();
+
+    Navigation.NavigateTo(
+        $"/o/{OrganisationId}/purchases?draft={draft.Id}#draft-editor");
+}
+
+private async Task ReloadOrder()
+{
+    order =
+        await Db.PurchaseOrders
+            .AsNoTracking()
+            .Include(x => x.Supplier)
+            .Include(x => x.Lines)
+            .SingleAsync(
+                x =>
+                    x.Id == PurchaseOrderId &&
+                    x.OrganisationId == OrganisationId);
+}
+
+    private decimal GetReceiveQuantity(Guid lineId)
+{
+    return receiveQuantities.TryGetValue(
+        lineId,
+        out var quantity)
+        ? quantity
+        : 0m;
+}
+
+private void SetReceiveQuantity(
+    Guid lineId,
+    string? value)
+{
+    if (decimal.TryParse(value, out var quantity))
+    {
+        receiveQuantities[lineId] = quantity;
+    }
+    else
+    {
+        receiveQuantities[lineId] = 0m;
+    }
+}
+
+    private async Task ReceivePurchaseOrder()
+{
+    if (access is null)
+    {
+        return;
+    }
+
+    var state =
+        await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+    var userId =
+        UserManager.GetUserId(state.User)!;
+
+    await PurchaseOrderService.ReceiveAsync(
+        userId,
+        OrganisationId,
+        PurchaseOrderId,
+        receiveQuantities);
+
+    order =
+        await Db.PurchaseOrders
+            .AsNoTracking()
+            .Include(x => x.Supplier)
+            .Include(x => x.Lines)
+            .SingleAsync(
+                x =>
+                    x.Id == PurchaseOrderId &&
+                    x.OrganisationId == OrganisationId);
+}
+
+        protected override async Task OnParametersSetAsync()
+    {
+        var state =
+            await AuthenticationStateProvider
+                .GetAuthenticationStateAsync();
+
+        var userId =
+            UserManager.GetUserId(state.User)!;
+
+        access =
+            await TenantAccess.FindAsync(
+                userId,
+                OrganisationId);
+
+        if (access is null)
+        {
+            return;
+        }
+
+        order =
+            await Db.PurchaseOrders
+                .AsNoTracking()
+                .Include(x => x.Supplier)
+                .Include(x => x.Lines)
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == PurchaseOrderId &&
+                        x.OrganisationId == OrganisationId);
+
+        if (order is not null)
+        {
+            receiveQuantities =
+                order.Lines.ToDictionary(
+                    x => x.Id,
+                    x => 0m);
+        }
+        }
+}

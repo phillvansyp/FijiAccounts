@@ -1,54 +1,763 @@
 @page "/o/{OrganisationId:guid}/journals/{JournalId:guid}"
 @attribute [Authorize]
+
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 @using System.Text.Json
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
+
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>@(journal is null ? "Journal" : $"J-{journal.SequenceNumber:D6}") · Account Island</PageTitle>
-@if (access is null || journal is null) { <div class="alert alert-danger">Journal not found or access denied.</div> }
+<PageTitle>@(journal is null ? "Journal" : $"J-{journal.SequenceNumber:D6}") - Account Island</PageTitle>
+
+@if (access is null || journal is null)
+{
+    <div class="alert alert-danger">
+        Journal not found or access denied.
+    </div>
+}
 else
 {
-    <div class="detail-actions no-print"><a href="o/@OrganisationId/general-ledger">← General ledger</a><button class="btn btn-outline-secondary" onclick="window.print()">Print journal</button></div>
-    <article class="invoice-document"><header><div><span class="document-brand">Account Island</span><h1>Posted Journal</h1></div><div class="document-number"><strong>J-@journal.SequenceNumber.ToString("D6")</strong><span class="status-badge">Posted</span></div></header>
-        <section class="invoice-meta"><div><small>Organisation</small><strong>@access.Organisation.LegalName</strong><span>@access.Organisation.BaseCurrency</span></div><div><small>Posted by</small><strong>@(postedBy ?? journal.PostedByUserId)</strong><span>@journal.PostedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm zzz")</span></div><dl><dt>Entry date</dt><dd>@journal.EntryDate.ToString("dd MMM yyyy")</dd><dt>Reference</dt><dd>@journal.Reference</dd><dt>Description</dt><dd>@journal.Description</dd></dl></section>
-        <table class="document-lines"><thead><tr><th>Account</th><th>Description</th><th class="number">Debit</th><th class="number">Credit</th></tr></thead><tbody>@foreach (var line in journal.Lines.OrderByDescending(x => x.Debit)) { <tr><td><strong>@line.LedgerAccount.Code</strong> — @line.LedgerAccount.Name</td><td>@line.Description</td><td class="number">@(line.Debit == 0 ? "—" : $"${line.Debit:N2}")</td><td class="number">@(line.Credit == 0 ? "—" : $"${line.Credit:N2}")</td></tr> }</tbody><tfoot><tr><th colspan="2">Totals</th><th class="number">$@DebitTotal.ToString("N2")</th><th class="number">$@CreditTotal.ToString("N2")</th></tr></tfoot></table>
-        <section class="document-totals"><div class="grand-total"><span>Balance check</span><strong>@(DebitTotal == CreditTotal ? "Balanced" : $"Difference ${Math.Abs(DebitTotal - CreditTotal):N2}")</strong></div></section>
-        <footer>Immutable accounting record · Journal ID @journal.Id</footer>
-    </article>
-    <section class="detail-card mt-4 no-print"><div class="card-heading"><div><span class="eyebrow">Audit evidence</span><h2>Related events</h2></div><span>@events.Count events</span></div>@if (events.Count == 0) { <div class="empty-state"><strong>No additional source event</strong><span>The journal posting event remains recorded.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>User</th><th>Evidence</th></tr></thead><tbody>@foreach (var item in events) { <tr><td>@item.OccurredAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</td><td>@Friendly(item.EventType)</td><td>@item.EntityType · @item.EntityId</td><td>@item.UserId</td><td><code>@PrettyJson(item.JsonData)</code></td></tr> }</tbody></table></div> }</section>
+    <div class="journal-page">
+
+        <div class="journal-toolbar no-print">
+            <a class="back-link"
+               href="/o/@OrganisationId/general-ledger">
+                &larr; General ledger
+            </a>
+
+            <button class="btn btn-outline-secondary"
+                    onclick="window.print()">
+                Print journal
+            </button>
+        </div>
+
+        <article class="journal-document">
+
+            <header class="journal-document-header">
+
+                <div>
+                    <span class="document-brand">
+                        Account Island
+                    </span>
+
+                    <h1>
+                        Posted Journal
+                    </h1>
+                </div>
+
+                <div class="journal-identity">
+
+                    <strong>
+                        J-@journal.SequenceNumber.ToString("D6")
+                    </strong>
+
+                    <span class="status-badge">
+                        Posted
+                    </span>
+
+                </div>
+
+            </header>
+
+            <section class="journal-meta">
+
+                <div class="meta-panel">
+
+                    <span class="meta-label">
+                        Organisation
+                    </span>
+
+                    <strong>
+                        @access.Organisation.LegalName
+                    </strong>
+
+                    <span>
+                        @access.Organisation.BaseCurrency
+                    </span>
+
+                </div>
+
+                <div class="meta-panel">
+
+                    <span class="meta-label">
+                        Posted by
+                    </span>
+
+                    <strong>
+                        @(postedBy ?? journal.PostedByUserId)
+                    </strong>
+
+                    <span>
+                        @journal.PostedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm zzz")
+                    </span>
+
+                </div>
+
+                <div class="meta-panel">
+
+                    <span class="meta-label">
+                        Entry date
+                    </span>
+
+                    <strong>
+                        @journal.EntryDate.ToString("dd MMM yyyy")
+                    </strong>
+
+                </div>
+
+                <div class="meta-panel">
+
+                    <span class="meta-label">
+                        Reference
+                    </span>
+
+                    <strong>
+                        @journal.Reference
+                    </strong>
+
+                </div>
+
+            </section>
+
+            <section class="journal-description">
+
+                <span class="meta-label">
+                    Description
+                </span>
+
+                <strong>
+                    @journal.Description
+                </strong>
+
+            </section>
+
+            <section class="journal-lines-section">
+
+                <div class="section-heading">
+
+                    <span class="eyebrow">
+                        Accounting
+                    </span>
+
+                    <h2>
+                        Journal lines
+                    </h2>
+
+                </div>
+
+                <div class="table-responsive">
+
+                    <table class="journal-lines">
+
+                        <thead>
+                            <tr>
+                                <th>Account</th>
+                                <th>Description</th>
+                                <th class="number">Debit</th>
+                                <th class="number">Credit</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+
+                            @foreach (var line in journal.Lines
+                                .OrderByDescending(x => x.Debit))
+                            {
+                                <tr>
+
+                                    <td>
+                                        <strong>
+                                            @line.LedgerAccount.Code
+                                        </strong>
+                                        <span class="account-name">
+                                            @line.LedgerAccount.Name
+                                        </span>
+                                    </td>
+
+                                    <td>
+                                        @line.Description
+                                    </td>
+
+                                    <td class="number">
+                                        @(line.Debit == 0
+                                            ? "-"
+                                            : $"${line.Debit:N2}")
+                                    </td>
+
+                                    <td class="number">
+                                        @(line.Credit == 0
+                                            ? "-"
+                                            : $"${line.Credit:N2}")
+                                    </td>
+
+                                </tr>
+                            }
+
+                        </tbody>
+
+                        <tfoot>
+                            <tr>
+                                <th colspan="2">
+                                    Totals
+                                </th>
+
+                                <th class="number">
+                                    $@DebitTotal.ToString("N2")
+                                </th>
+
+                                <th class="number">
+                                    $@CreditTotal.ToString("N2")
+                                </th>
+                            </tr>
+                        </tfoot>
+
+                    </table>
+
+                </div>
+
+            </section>
+
+            <section class="journal-balance">
+
+                <span>
+                    Balance check
+                </span>
+
+                <strong class="@(DebitTotal == CreditTotal ? "balanced" : "unbalanced")">
+                    @(DebitTotal == CreditTotal
+                        ? "Balanced"
+                        : $"Difference ${Math.Abs(DebitTotal - CreditTotal):N2}")
+                </strong>
+
+            </section>
+
+            <footer class="journal-footer">
+    Immutable accounting record
+    <span>-</span>
+    Journal J-@journal.SequenceNumber.ToString("D6")
+</footer>
+
+        </article>
+
+        @if (auditEvents.Count > 0)
+        {
+            <section class="audit-card">
+
+                <div class="audit-heading">
+
+                    <div>
+                        <span class="eyebrow">
+                            Audit evidence
+                        </span>
+
+                        <h2>
+                            Related events
+                        </h2>
+                    </div>
+
+                    <span>
+                        @auditEvents.Count events
+                    </span>
+
+                </div>
+
+                <div class="table-responsive">
+
+                    <table class="table audit-table">
+
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Event</th>
+                                <th>Entity</th>
+                                <th>User</th>
+                                <th>Evidence</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+
+    @foreach (var audit in auditEvents)
+    {
+        <tr>
+
+            <td>
+                @audit.OccurredAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+            </td>
+
+            <td>
+                @FormatAuditEvent(audit)
+            </td>
+
+            <td>
+                J-@journal.SequenceNumber.ToString("D6")
+            </td>
+
+            <td>
+                @(postedBy ?? audit.UserId)
+            </td>
+
+            <td>
+                @FormatAuditEvidence(audit)
+            </td>
+
+        </tr>
+    }
+
+</tbody>
+
+                    </table>
+
+                </div>
+
+            </section>
+        }
+
+    </div>
 }
 
+<style>
+
+    .journal-page {
+        width: 100%;
+        padding-bottom: 2rem;
+    }
+
+    .journal-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .back-link {
+        color: #0d6efd;
+        text-decoration: none;
+        font-size: .9rem;
+    }
+
+    .back-link:hover {
+        text-decoration: underline;
+    }
+
+    .journal-document,
+    .audit-card {
+        background: #fff;
+        border: 1px solid #dfe8ec;
+        border-radius: .9rem;
+        box-shadow: 0 6px 20px rgba(16,42,67,.05);
+    }
+
+    .journal-document {
+        overflow: hidden;
+    }
+
+    .journal-document-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 2rem;
+        padding: 1.5rem 1.6rem;
+        border-bottom: 1px solid #e3ebef;
+    }
+
+    .document-brand,
+    .eyebrow,
+    .meta-label {
+        display: block;
+        color: #087f5b;
+        font-size: .72rem;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+    }
+
+    .journal-document-header h1 {
+        margin: .3rem 0 0;
+        color: #102a43;
+        font-size: 1.75rem;
+        font-weight: 500;
+    }
+
+    .journal-identity {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: .4rem;
+        text-align: right;
+    }
+
+    .journal-identity strong {
+        color: #102a43;
+        font-size: 1.35rem;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        width: fit-content;
+        padding: .3rem .65rem;
+        border-radius: 999px;
+        background: #e8f5ef;
+        color: #087f5b;
+        font-size: .72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+    }
+
+    .journal-meta {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1rem;
+        padding: 1.25rem 1.6rem;
+        background: #f8fafb;
+        border-bottom: 1px solid #e3ebef;
+    }
+
+    .meta-panel {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    .meta-panel strong {
+        margin-top: .35rem;
+        color: #17324d;
+    }
+
+    .meta-panel > span:last-child {
+        margin-top: .15rem;
+        color: #667985;
+        font-size: .82rem;
+    }
+
+    .journal-description {
+        display: flex;
+        flex-direction: column;
+        gap: .35rem;
+        padding: 1.15rem 1.6rem;
+        border-bottom: 1px solid #e3ebef;
+    }
+
+    .journal-description strong {
+        color: #17324d;
+        font-size: 1rem;
+    }
+
+    .journal-lines-section {
+        padding: 1.5rem 1.6rem .5rem;
+    }
+
+    .section-heading {
+        margin-bottom: .85rem;
+    }
+
+    .section-heading h2 {
+        margin: .2rem 0 0;
+        color: #17324d;
+        font-size: 1.15rem;
+    }
+
+    .journal-lines {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .journal-lines th {
+        padding: .75rem;
+        background: #f7fafb;
+        border-top: 1px solid #e3ebef;
+        border-bottom: 1px solid #e3ebef;
+        color: #526b78;
+        font-size: .72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+    }
+
+    .journal-lines td {
+        padding: .9rem .75rem;
+        border-bottom: 1px solid #edf1f3;
+        color: #17324d;
+        vertical-align: middle;
+    }
+
+    .journal-lines .number {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .account-name {
+        display: block;
+        margin-top: .1rem;
+        color: #667985;
+        font-size: .82rem;
+    }
+
+    .journal-lines tfoot th {
+        padding: .9rem .75rem;
+        border-top: 2px solid #dfe8ec;
+        color: #102a43;
+    }
+
+    .journal-balance {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem 1.6rem;
+        border-top: 1px solid #e3ebef;
+        background: #f8fafb;
+    }
+
+    .journal-balance span {
+        color: #526b78;
+    }
+
+    .balanced {
+        color: #087f5b;
+    }
+
+    .unbalanced {
+        color: #b42318;
+    }
+
+    .journal-footer {
+        padding: .9rem 1.6rem;
+        border-top: 1px solid #e3ebef;
+        color: #667985;
+        font-size: .78rem;
+        overflow-wrap: anywhere;
+    }
+
+    .audit-card {
+        margin-top: 1rem;
+        overflow: hidden;
+    }
+
+    .audit-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: 1.15rem 1.25rem;
+        border-bottom: 1px solid #e3ebef;
+    }
+
+    .audit-heading h2 {
+        margin: .2rem 0 0;
+        color: #17324d;
+        font-size: 1.1rem;
+    }
+
+    .audit-heading > span {
+        color: #667985;
+        font-size: .8rem;
+    }
+
+    .audit-table {
+        margin: 0;
+    }
+
+    .audit-table th {
+        background: #f7fafb;
+    }
+
+    .audit-table code {
+        color: #087f5b;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    @@media (max-width: 900px) {
+        .journal-meta {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @@media (max-width: 650px) {
+        .journal-document-header,
+        .journal-toolbar {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .journal-identity {
+            align-items: flex-start;
+            text-align: left;
+        }
+
+        .journal-meta {
+            grid-template-columns: 1fr;
+        }
+
+        .journal-document-header,
+        .journal-meta,
+        .journal-description,
+        .journal-lines-section,
+        .journal-balance,
+        .journal-footer {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+    }
+
+    @@media print {
+        .no-print,
+        header,
+        nav {
+            display: none !important;
+        }
+
+        .journal-page {
+            padding: 0;
+        }
+
+        .journal-document,
+        .audit-card {
+            border: 0;
+            box-shadow: none;
+        }
+
+        body {
+            background: #fff !important;
+        }
+    }
+
+</style>
+
 @code {
-    [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid JournalId { get; set; }
-    private AccessibleOrganisation? access; private PostedJournal? journal; private string? postedBy; private List<AuditEvent> events = []; private decimal DebitTotal => journal?.Lines.Sum(x => x.Debit) ?? 0; private decimal CreditTotal => journal?.Lines.Sum(x => x.Credit) ?? 0;
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    [Parameter]
+    public Guid JournalId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private PostedJournal? journal;
+    private string? postedBy;
+    private List<AuditEvent> auditEvents = [];
+
+    private decimal DebitTotal =>
+        journal?.Lines.Sum(x => x.Debit) ?? 0;
+
+    private decimal CreditTotal =>
+        journal?.Lines.Sum(x => x.Credit) ?? 0;
+    private string FormatAuditEvent(AuditEvent audit) =>
+        audit.EventType switch
+        {
+            "JournalPosted" => "Journal posted",
+            _ => audit.EventType
+        };
+
+    private string FormatAuditEvidence(AuditEvent audit)
+    {
+        if (string.IsNullOrWhiteSpace(audit.JsonData))
+        {
+            return "-";
+        }
+
+        try
+        {
+            using var document =
+                JsonDocument.Parse(audit.JsonData);
+
+            var root =
+                document.RootElement;
+
+            var parts =
+                new List<string>();
+
+            if (root.TryGetProperty(
+                    "EntryDate",
+                    out var entryDate))
+            {
+                parts.Add(
+                    $"Entry date: {entryDate.GetString()}");
+            }
+
+            if (root.TryGetProperty(
+                    "Reference",
+                    out var reference))
+            {
+                parts.Add(
+                    $"Reference: {reference.GetString()}");
+            }
+
+            if (root.TryGetProperty(
+                    "SequenceNumber",
+                    out var sequence))
+            {
+                parts.Add(
+                    $"Journal: J-{sequence.GetInt64():D6}");
+            }
+
+            return parts.Count == 0
+                ? "Audit record"
+                : string.Join(" | ", parts);
+        }
+        catch (JsonException)
+        {
+            return "Audit record";
+        }
+    }
+
     protected override async Task OnParametersSetAsync()
     {
-        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var userId = UserManager.GetUserId(state.User)!;
-        access = await TenantAccess.FindAsync(userId, OrganisationId);
-        if (access is null) return;
+        var state =
+            await AuthenticationStateProvider
+                .GetAuthenticationStateAsync();
 
-        journal = await Db.PostedJournals.AsNoTracking()
-            .Include(x => x.Lines)
-            .ThenInclude(x => x.LedgerAccount)
-            .SingleOrDefaultAsync(x => x.Id == JournalId && x.OrganisationId == OrganisationId);
-        if (journal is null) return;
+        var userId =
+            UserManager.GetUserId(state.User)!;
 
-        postedBy = await Db.Users.Where(x => x.Id == journal.PostedByUserId).Select(x => x.Email).SingleOrDefaultAsync();
-        // SQLite does not support ORDER BY DateTimeOffset in this query path.
-        events = (await Db.AuditEvents.AsNoTracking()
-            .Where(x => x.OrganisationId == OrganisationId && (x.EntityId == JournalId.ToString() || x.JsonData.Contains(JournalId.ToString())))
-            .ToListAsync())
-            .OrderBy(x => x.OccurredAt)
+        access =
+            await TenantAccess.FindAsync(
+                userId,
+                OrganisationId);
+
+        if (access is null)
+        {
+            return;
+        }
+
+        journal =
+            await Db.PostedJournals
+                .AsNoTracking()
+                .Include(x => x.Lines)
+                .ThenInclude(x => x.LedgerAccount)
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == JournalId &&
+                        x.OrganisationId == OrganisationId);
+
+        if (journal is null)
+        {
+            return;
+        }
+
+        postedBy =
+            await Db.Users
+                .Where(x => x.Id == journal.PostedByUserId)
+                .Select(x => x.Email)
+                .SingleOrDefaultAsync();
+
+        auditEvents =
+            (await Db.AuditEvents
+                .AsNoTracking()
+                .Where(
+                    x =>
+                        x.OrganisationId == OrganisationId &&
+                        x.EntityType == nameof(PostedJournal) &&
+                        x.EntityId == journal.Id.ToString())
+                .ToListAsync())
+            .OrderByDescending(x => x.OccurredAt)
             .ToList();
     }
-    private static string Friendly(string value) { var result = new System.Text.StringBuilder(); foreach (var c in value) { if (char.IsUpper(c) && result.Length > 0) result.Append(' '); result.Append(c); } return result.ToString(); }
-    private static string PrettyJson(string json) { try { using var document = JsonDocument.Parse(json); return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = false }); } catch { return json; } }
 }

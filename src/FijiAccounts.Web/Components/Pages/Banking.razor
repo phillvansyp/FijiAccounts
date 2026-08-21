@@ -19,7 +19,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject BankAccountService BankAccounts
 
-<PageTitle>Banking · Account Island</PageTitle>
+<PageTitle>Banking - Account Island</PageTitle>
     @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
 else
 {
@@ -86,7 +86,7 @@ else
     <article class="bank-card bank-card-clickable @(selectedBankAccountId is null ? "selected" : null)"
              @onclick="() => SelectBankAccount(null)">
         <div>
-            <span class="bank-icon">Σ</span>
+            <span class="bank-icon">$</span>
             <div>
                 <h2>All accounts</h2>
                 <small>Full banking ledger</small>
@@ -133,10 +133,10 @@ else
     }
 </div>
     @if (accounts.Count == 0) { <div class="empty-state"><strong>No bank accounts configured</strong><span>Add a bank account to receive customer payments and pay supplier bills.</span></div> }
-    @if (showStatement && accounts.Count > 0) { <section class="add-bank"><h2>Add statement line</h2><EditForm Model="statementModel" OnValidSubmit="AddStatement" FormName="add-statement-line"><DataAnnotationsValidator /><ValidationSummary /><div class="statement-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="statementModel.BankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="statementModel.Date" /></div><div><label class="form-label">Description</label><InputText class="form-control" @bind-Value="statementModel.Description" /></div><div><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="statementModel.Reference" /></div><div><label class="form-label">Amount (+ in / − out)</label><InputNumber class="form-control" @bind-Value="statementModel.Amount" /></div><button class="btn btn-primary">Add line</button></div></EditForm></section> }
+    @if (showStatement && accounts.Count > 0) { <section class="add-bank"><h2>Add statement line</h2><EditForm Model="statementModel" OnValidSubmit="AddStatement" FormName="add-statement-line"><DataAnnotationsValidator /><ValidationSummary /><div class="statement-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="statementModel.BankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="statementModel.Date" /></div><div><label class="form-label">Description</label><InputText class="form-control" @bind-Value="statementModel.Description" /></div><div><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="statementModel.Reference" /></div><div><label class="form-label">Amount (+ in / - out)</label><InputNumber class="form-control" @bind-Value="statementModel.Amount" /></div><button class="btn btn-primary">Add line</button></div></EditForm></section> }
     @if (showFeeds) { <section class="add-bank import-panel"><h2>Fiji bank connections</h2><p>Connection availability depends on the bank, account type and a bank-approved agreement.</p><div class="table-responsive"><table class="table"><thead><tr><th>Bank</th><th>Available method</th><th>Account Island option</th></tr></thead><tbody><tr><td><strong>ANZ Fiji</strong></td><td>Transactive/Fileactive corporate statement delivery</td><td>Contact ANZ relationship manager to approve host-to-host access</td></tr><tr><td><strong>BSP Fiji</strong></td><td>Online banking statement exports</td><td>Download and use Read statement</td></tr><tr><td>Westpac Fiji, BRED, HFC, Bank of Baroda</td><td>Statement export; direct API not publicly confirmed</td><td>Download and use Read statement</td></tr></tbody></table></div><small>Account Island never asks for or stores internet-banking passwords.</small></section> }
-    @if (showImport && accounts.Count > 0) { <section class="add-bank import-panel"><h2>Read bank statement</h2><p>Drop in or select a PDF, CSV, OFX, QFX or QIF statement. We read and preview it before anything is imported. Maximum 5 MB.</p>@if (statementError is not null) { <div class="alert alert-danger">@statementError</div> }<div class="import-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="importBankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Statement file</label><InputFile class="form-control" OnChange="SelectStatement" accept=".csv,.txt,.ofx,.qfx,.qif,.pdf" />@if (selectedStatement is not null) { <small class="d-block mt-2 text-muted">@selectedStatement.Name · @FormatFileSize(selectedStatement.Size)</small> }</div><div class="d-flex align-items-end"><button type="button" class="btn btn-primary" disabled="@(selectedStatement is null || readingStatement)" @onclick="ReadSelectedStatement">@(readingStatement ? "Reading…" : "Upload and read statement")</button></div></div>
-        @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement · @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
+    @if (showImport && accounts.Count > 0) { <section class="add-bank import-panel"><h2>Read bank statement</h2><p>Drop in or select a PDF, CSV, OFX, QFX or QIF statement. We read and preview it before anything is imported. Maximum 5 MB.</p>@if (statementError is not null) { <div class="alert alert-danger">@statementError</div> }<div class="import-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="importBankAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Statement file</label><InputFile class="form-control" OnChange="SelectStatement" accept=".csv,.txt,.ofx,.qfx,.qif,.pdf" />@if (selectedStatement is not null) { <small class="d-block mt-2 text-muted">@selectedStatement.Name - @FormatFileSize(selectedStatement.Size)</small> }</div><div class="d-flex align-items-end"><button type="button" class="btn btn-primary" disabled="@(selectedStatement is null || readingStatement)" @onclick="ReadSelectedStatement">@(readingStatement ? "Reading..." : "Upload and read statement")</button></div></div>
+        @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement - @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
     </section> }
     <section class="add-bank">
     <div class="reconcile-heading">
@@ -212,7 +212,7 @@ else
                             class="btn btn-primary"
                             disabled="@savingReconciliationSession">
                         @(savingReconciliationSession
-                            ? "Creating…"
+                            ? "Creating..."
                             : "Create reconciliation")
                     </button>
 
@@ -280,7 +280,7 @@ else
 
                             <td>
                                 @session.StatementStartDate.ToString("dd MMM yyyy")
-                                –
+                                -
                                 @session.StatementEndDate.ToString("dd MMM yyyy")
                             </td>
 
@@ -338,7 +338,7 @@ else
 </section>
     <section class="reconciliation"><div class="reconcile-heading"><div><h2>Reconciliation</h2><p>Match statement activity to the ledger</p></div><span>@VisibleStatementLines.Count(x => x.ReconciledAt is null) unreconciled</span></div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>Add a statement line to begin reconciling.</span></div> }
-        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "✓" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") · @item.BankAccount.Name · @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code — @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "—")</small> } else { <span>—</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">✐</button> } } else if (match is not null) { <small>Suggested: @match.PostedJournal.Reference</small><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }</div></div>
+        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }</div></div>
             @if (codingStatementId == item.Id)
             {
                 <div class="coding-panel" @key="item.Id">
@@ -370,7 +370,7 @@ else
     </option>
                                         @foreach (var account in accounts.Where(a => a.Id != item.BankAccountId))
                                         {
-                                            <option value="@account.Id">@account.Code — @account.Name</option>
+                                            <option value="@account.Id">@account.Code ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â @account.Name</option>
                                         }
                                     </InputSelect>
                                 </div>
@@ -382,7 +382,7 @@ else
                                     <InputSelect class="form-select" @bind-Value="codingModel.TargetAccountCode">
                                         @foreach (var account in codingAccounts)
                                         {
-                                            <option value="@account.Code">@account.Code — @account.Name</option>
+                                            <option value="@account.Code">@account.Code - @account.Name</option>
                                         }
                                     </InputSelect>
                                     @if (codingSuggestion is not null) { <small>Suggested from the last matching transaction.</small> }
@@ -404,7 +404,7 @@ else
                             }
                             <div class="coding-actions">
                                 <button type="button" class="btn btn-outline-secondary" disabled="@postingCoding" @onclick="CancelCoding">Cancel</button>
-                                <button type="button" class="btn btn-primary" disabled="@postingCoding" @onclick="PostCoding">@(postingCoding ? "Posting…" : "Post & reconcile")</button>
+                                <button type="button" class="btn btn-primary" disabled="@postingCoding" @onclick="PostCoding">@(postingCoding ? "PostingÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" : "Post & reconcile")</button>
                             </div>
                         </div>
                     </EditForm>
@@ -483,13 +483,13 @@ else
                             <td class="text-end money-in">
                                 @(line.Debit > 0
                                     ? $"${line.Debit:N2}"
-                                    : "—")
+                                    : "-")
                             </td>
 
                             <td class="text-end money-out">
                                 @(line.Credit > 0
                                     ? $"${line.Credit:N2}"
-                                    : "—")
+                                    : "-")
                             </td>
                         </tr>
                     }
@@ -504,7 +504,7 @@ else
 }
 
 <style>
-    .edit-coding { border: 0; background: transparent; color: #0d6efd; font-size: 1.25rem; line-height: 1; padding: .15rem .35rem; transform: rotate(180deg); }
+    .edit-coding { border: 0; background: transparent; color: #0d6efd; font-size: 1.25rem; line-height: 1; padding: .15rem .35rem; }
     .edit-coding:hover { color: #084298; }
     .included-vat { text-transform: none !important; margin-top: .15rem; }
 </style>
@@ -634,13 +634,63 @@ reconciliationSessions =
     private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
     private PostedJournalLine? SuggestedMatch(BankStatementLine item)
     {
-        return transactions.FirstOrDefault(x =>
-            x.LedgerAccountId == item.BankAccountId &&
-            x.PostedJournal.EntryDate == item.TransactionDate &&
-            AmountMatches(x.Debit - x.Credit, item.Amount) &&
-            !statementLines.Any(s => s.MatchedPostedJournalLineId == x.Id));
+        var candidates =
+            transactions
+                .Where(x =>
+                    x.LedgerAccountId == item.BankAccountId &&
+                    AmountMatches(
+                        x.Debit - x.Credit,
+                        item.Amount) &&
+                    !statementLines.Any(
+                        s =>
+                            s.MatchedPostedJournalLineId ==
+                            x.Id))
+                .Select(x => new
+                {
+                    Line = x,
+                    DateDifference = Math.Abs(
+                        x.PostedJournal.EntryDate.DayNumber -
+                        item.TransactionDate.DayNumber)
+                })
+                .Where(x => x.DateDifference <= 3)
+                .OrderBy(x => x.DateDifference)
+                .ThenByDescending(x =>
+                    x.Line.PostedJournal.SequenceNumber)
+                .ToList();
+
+        return candidates
+            .FirstOrDefault()?
+            .Line;
     }
-    private async Task Reconcile(Guid statementId, Guid journalLineId) { try { await Reconciliation.ReconcileAsync(userId, OrganisationId, statementId, journalLineId); statusClass = "alert-success"; status = "Bank statement line reconciled."; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private async Task Reconcile(Guid statementId, Guid journalLineId)
+    {
+        try
+        {
+            codingStatementId = null;
+            codingError = null;
+            codingSuggestion = null;
+
+            await Reconciliation.ReconcileAsync(
+                userId,
+                OrganisationId,
+                statementId,
+                journalLineId);
+
+            statusClass = "alert-success";
+            status = "Bank statement line reconciled.";
+
+            await Reload();
+
+            codingStatementId = null;
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
     private async Task BeginCoding(BankStatementLine item)
     {
         codingError = null;

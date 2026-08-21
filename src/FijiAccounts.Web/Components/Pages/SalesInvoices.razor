@@ -178,7 +178,8 @@ else
                         <thead>
                             <tr>
                                 <th>Customer</th>
-                                <th>Status</th>
+                                <th>Customer PO</th>
+                            <th>Status</th>
                                 <th>Frequency</th>
                                 <th>Next invoice</th>
                                 <th>Due terms</th>
@@ -290,7 +291,25 @@ else
         <div class="list-heading">
             <div>
                 <h2>Invoice activity</h2>
-                <p>Most recent 100 invoices</p>
+                <p>@FilteredInvoices.Count() of @invoices.Count invoice@(invoices.Count == 1 ? "" : "s")</p>
+            </div>
+
+            <div class="invoice-filters">
+                <input class="form-control"
+                       @bind="invoiceSearch"
+                       @bind:event="oninput"
+                       placeholder="Search invoice or customer" />
+
+                <InputSelect class="form-select"
+                             @bind-Value="invoiceStatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Posted">Posted</option>
+                    <option value="PartPaid">Part paid</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Overdue">Overdue</option>
+                    <option value="Voided">Voided</option>
+                </InputSelect>
             </div>
         </div>
         @if (invoices.Count == 0)
@@ -303,19 +322,56 @@ else
                 <table class="table">
                     <thead>
                         <tr>
-                            <th>Invoice</th>
-                            <th>Date</th>
-                            <th>Due</th>
-                            <th>Customer</th>
+                            <th>
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Invoice")'>
+                                    Invoice
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Date")'>
+                                    Date
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Due")'>
+                                    Due
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Customer")'>
+                                    Customer
+                                </button>
+                            </th>
+                            <th>Customer PO</th>
                             <th>Status</th>
                             <th class="text-end">Net</th>
                             <th class="text-end">VAT</th>
-                            <th class="text-end">Total</th>
-                            <th class="text-end">Outstanding</th>
+                            <th class="text-end">
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Total")'>
+                                    Total
+                                </button>
+                            </th>
+                            <th class="text-end">
+                                <button type="button"
+                                        class="btn btn-link p-0 fw-semibold"
+                                        @onclick='() => SortInvoicesBy("Outstanding")'>
+                                    Outstanding
+                                </button>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
-                    @foreach (var invoice in invoices)
+                    @foreach (var invoice in SortedFilteredInvoices)
                     {
                         var overdue = IsOverdue(invoice);
                         <tr class="@(overdue ? "overdue-row" : null)">
@@ -323,6 +379,9 @@ else
                             <td>@invoice.IssueDate.ToString("dd MMM yyyy")</td>
                             <td>@invoice.DueDate.ToString("dd MMM yyyy")</td>
                             <td>@invoice.Customer.Name</td>
+                            <td class="customer-po-summary">
+                                @FormatCustomerPurchaseOrders(invoice)
+                            </td>
                             <td><span class="status-badge status-@invoice.Status.ToString().ToLowerInvariant()">@(overdue ? "Overdue" : invoice.Status)</span></td>
                             <td class="text-end">$@invoice.Subtotal.ToString("N2")</td>
                             <td class="text-end">$@invoice.VatTotal.ToString("N2")</td>
@@ -345,6 +404,10 @@ else
     private bool showRecurringInvoices;
     private List<BusinessParty> customers = [];
     private List<SalesInvoice> invoices = [];
+    private string invoiceSearch = string.Empty;
+    private string invoiceStatusFilter = string.Empty;
+    private string invoiceSort = "Invoice";
+    private bool invoiceSortDescending = true;
     private List<RecurringSalesInvoice> recurringInvoices = [];
     private RecurringInvoiceAutomationRun? latestAutomationRun;
     private bool automationEnabled;
@@ -381,6 +444,7 @@ else
             await Db.SalesInvoices
                 .AsNoTracking()
                 .Include(x => x.Customer)
+                .Include(x => x.Lines)
                 .Where(x => x.OrganisationId == OrganisationId)
                 .OrderByDescending(x => x.SequenceNumber)
                 .Take(100)
@@ -546,6 +610,102 @@ else
             recurringStatus = ex.Message;
         }
     }
+    private IEnumerable<SalesInvoice> FilteredInvoices =>
+        invoices.Where(invoice =>
+            (
+                string.IsNullOrWhiteSpace(invoiceSearch) ||
+                invoice.InvoiceNumber.Contains(
+                    invoiceSearch,
+                    StringComparison.OrdinalIgnoreCase) ||
+                invoice.Customer.Name.Contains(
+                    invoiceSearch,
+                    StringComparison.OrdinalIgnoreCase) ||
+                invoice.Lines.Any(line =>
+                    !string.IsNullOrWhiteSpace(
+                        line.CustomerPurchaseOrderNumber) &&
+                    line.CustomerPurchaseOrderNumber.Contains(
+                        invoiceSearch,
+                        StringComparison.OrdinalIgnoreCase))
+            ) &&
+            (
+                string.IsNullOrWhiteSpace(invoiceStatusFilter) ||
+                (
+                    invoiceStatusFilter == "Overdue"
+                        ? IsOverdue(invoice)
+                        : invoice.Status.ToString() == invoiceStatusFilter
+                )
+            ));
+
+    private IEnumerable<SalesInvoice> SortedFilteredInvoices =>
+        invoiceSort switch
+        {
+            "Date" => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(x => x.IssueDate)
+                : FilteredInvoices.OrderBy(x => x.IssueDate),
+
+            "Due" => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(x => x.DueDate)
+                : FilteredInvoices.OrderBy(x => x.DueDate),
+
+            "Customer" => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(x => x.Customer.Name)
+                : FilteredInvoices.OrderBy(x => x.Customer.Name),
+
+            "Total" => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(x => x.Total)
+                : FilteredInvoices.OrderBy(x => x.Total),
+
+            "Outstanding" => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(
+                    x => x.Total - x.AmountPaid - x.AmountCredited)
+                : FilteredInvoices.OrderBy(
+                    x => x.Total - x.AmountPaid - x.AmountCredited),
+
+            _ => invoiceSortDescending
+                ? FilteredInvoices.OrderByDescending(x => x.SequenceNumber)
+                : FilteredInvoices.OrderBy(x => x.SequenceNumber)
+        };
+
+    private void SortInvoicesBy(string sort)
+    {
+        if (invoiceSort == sort)
+        {
+            invoiceSortDescending =
+                !invoiceSortDescending;
+
+            return;
+        }
+
+        invoiceSort = sort;
+        invoiceSortDescending = false;
+    }
+
+    private static string FormatCustomerPurchaseOrders(
+        SalesInvoice invoice)
+    {
+        var purchaseOrders =
+            invoice.Lines
+                .Select(x => x.CustomerPurchaseOrderNumber?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Cast<string>()
+                .ToList();
+
+        if (purchaseOrders.Count == 0)
+        {
+            return "—";
+        }
+
+        if (purchaseOrders.Count <= 2)
+        {
+            return string.Join(", ", purchaseOrders);
+        }
+
+        return
+            $"{purchaseOrders[0]}, {purchaseOrders[1]} " +
+            $"+{purchaseOrders.Count - 2} more";
+    }
+
     private static bool IsOverdue(SalesInvoice invoice) =>
         invoice.Status is not InvoiceStatus.Paid and not InvoiceStatus.Voided and not InvoiceStatus.Credited &&
         invoice.DueDate < DateOnly.FromDateTime(DateTime.Today) &&

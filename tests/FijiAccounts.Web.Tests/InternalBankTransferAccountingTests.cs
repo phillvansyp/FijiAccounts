@@ -1,4 +1,4 @@
-using FijiAccounts.Domain.Accounting;
+﻿using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
@@ -562,5 +562,249 @@ public sealed class InternalBankTransferAccountingTests
         Assert.Null(reloadedStatement.ReconciledAt);
         Assert.Null(reloadedStatement.MatchedPostedJournalLineId);
         Assert.Null(reloadedStatement.ReconciledByUserId);
+    }
+
+    [Fact]
+    public async Task ReopenOneSideOfMatchedTransfer_DoesNotLeaveOtherSideReconciledToReversedJournal()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA = test.Account("1000");
+
+        var bankB = new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1001",
+            Name = "Second Bank",
+            Type = AccountType.Asset,
+            IsBankAccount = true,
+            BankAccountKind = BankAccountKind.Bank,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+        test.Db.LedgerAccounts.Add(bankB);
+        await test.Db.SaveChangesAsync();
+
+        var outgoingStatement = new BankStatementLine
+        {
+            OrganisationId = test.Organisation.Id,
+            BankAccountId = bankA.Id,
+            TransactionDate = new DateOnly(2026, 8, 19),
+            Description = "Transfer to Second Bank",
+            Reference = "TRF-REOPEN-001",
+            Amount = -500m,
+            Source = "Test"
+        };
+
+        test.Db.BankStatementLines.Add(outgoingStatement);
+        await test.Db.SaveChangesAsync();
+
+        var journal =
+            await test.BankCoding.PostAndReconcileAsync(
+                test.UserId,
+                new BankTransactionCodingRequest(
+                    OrganisationId: test.Organisation.Id,
+                    StatementLineId: outgoingStatement.Id,
+                    TargetAccountCode: "",
+                    Description: "Transfer to Second Bank",
+                    VatTreatment: VatTreatment.Exempt,
+                    TransferToBankAccountId: bankB.Id));
+
+        var incomingStatement = new BankStatementLine
+        {
+            OrganisationId = test.Organisation.Id,
+            BankAccountId = bankB.Id,
+            TransactionDate = new DateOnly(2026, 8, 19),
+            Description = "Transfer from Bank",
+            Reference = "TRF-REOPEN-001",
+            Amount = 500m,
+            Source = "Test"
+        };
+
+        test.Db.BankStatementLines.Add(incomingStatement);
+        await test.Db.SaveChangesAsync();
+
+        await test.BankCoding.PostAndReconcileAsync(
+            test.UserId,
+            new BankTransactionCodingRequest(
+                OrganisationId: test.Organisation.Id,
+                StatementLineId: incomingStatement.Id,
+                TargetAccountCode: "",
+                Description: "Transfer from Bank",
+                VatTreatment: VatTreatment.Exempt,
+                TransferToBankAccountId: bankA.Id));
+
+        var beforeReopen =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .Where(x =>
+                    x.Id == outgoingStatement.Id ||
+                    x.Id == incomingStatement.Id)
+                .ToListAsync();
+
+        Assert.All(
+            beforeReopen,
+            x =>
+            {
+                Assert.NotNull(x.ReconciledAt);
+                Assert.NotNull(x.MatchedPostedJournalLineId);
+            });
+
+        await test.BankCoding.ReopenCodingAsync(
+            test.UserId,
+            test.Organisation.Id,
+            outgoingStatement.Id);
+
+        var afterReopen =
+            await test.Db.BankStatementLines
+                .AsNoTracking()
+                .Where(x =>
+                    x.Id == outgoingStatement.Id ||
+                    x.Id == incomingStatement.Id)
+                .ToListAsync();
+
+        Assert.All(
+            afterReopen,
+            x =>
+            {
+                Assert.Null(x.ReconciledAt);
+                Assert.Null(x.MatchedPostedJournalLineId);
+                Assert.Null(x.ReconciledByUserId);
+            });
+
+        var originalTransfer =
+            await test.Db.BankTransfers
+                .AsNoTracking()
+                .SingleAsync(
+                    x => x.PostedJournalId == journal.Id);
+
+        var transferReversal =
+            await test.Db.BankTransferReversals
+                .AsNoTracking()
+                .SingleAsync(
+                    x => x.BankTransferId == originalTransfer.Id);
+
+        Assert.Equal(
+            test.Organisation.Id,
+            transferReversal.OrganisationId);
+
+        Assert.NotEqual(
+            journal.Id,
+            transferReversal.PostedJournalId);
+    }
+
+
+    [Fact]
+    public async Task ReversedTransfer_IsNotReusedForLaterStatementMatch()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var bankA = test.Account("1000");
+
+        var bankB = new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1001",
+            Name = "Second Bank",
+            Type = AccountType.Asset,
+            IsBankAccount = true,
+            BankAccountKind = BankAccountKind.Bank,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+
+        test.Db.LedgerAccounts.Add(bankB);
+        await test.Db.SaveChangesAsync();
+
+        var outgoingStatement = new BankStatementLine
+        {
+            OrganisationId = test.Organisation.Id,
+            BankAccountId = bankA.Id,
+            TransactionDate = new DateOnly(2026, 8, 19),
+            Description = "Transfer to Second Bank",
+            Reference = "TRF-REVERSED-001",
+            Amount = -500m,
+            Source = "Test"
+        };
+
+        test.Db.BankStatementLines.Add(outgoingStatement);
+        await test.Db.SaveChangesAsync();
+
+        var originalJournal =
+            await test.BankCoding.PostAndReconcileAsync(
+                test.UserId,
+                new BankTransactionCodingRequest(
+                    OrganisationId: test.Organisation.Id,
+                    StatementLineId: outgoingStatement.Id,
+                    TargetAccountCode: "",
+                    Description: "Transfer to Second Bank",
+                    VatTreatment: VatTreatment.Exempt,
+                    TransferToBankAccountId: bankB.Id));
+
+        var originalTransfer =
+            await test.Db.BankTransfers
+                .AsNoTracking()
+                .SingleAsync(
+                    x => x.PostedJournalId == originalJournal.Id);
+
+        await test.BankCoding.ReopenCodingAsync(
+            test.UserId,
+            test.Organisation.Id,
+            outgoingStatement.Id);
+
+        Assert.True(
+            await test.Db.BankTransferReversals
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.BankTransferId == originalTransfer.Id));
+
+        var incomingStatement = new BankStatementLine
+        {
+            OrganisationId = test.Organisation.Id,
+            BankAccountId = bankB.Id,
+            TransactionDate = new DateOnly(2026, 8, 19),
+            Description = "Transfer from Bank",
+            Reference = "TRF-REVERSED-002",
+            Amount = 500m,
+            Source = "Test"
+        };
+
+        test.Db.BankStatementLines.Add(incomingStatement);
+        await test.Db.SaveChangesAsync();
+
+        var newJournal =
+            await test.BankCoding.PostAndReconcileAsync(
+                test.UserId,
+                new BankTransactionCodingRequest(
+                    OrganisationId: test.Organisation.Id,
+                    StatementLineId: incomingStatement.Id,
+                    TargetAccountCode: "",
+                    Description: "Transfer from Bank",
+                    VatTreatment: VatTreatment.Exempt,
+                    TransferToBankAccountId: bankA.Id));
+
+        Assert.NotEqual(
+            originalJournal.Id,
+            newJournal.Id);
+
+        var transfers =
+            await test.Db.BankTransfers
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == test.Organisation.Id)
+                .ToListAsync();
+
+        Assert.Equal(2, transfers.Count);
+
+        Assert.Contains(
+            transfers,
+            x => x.Id == originalTransfer.Id);
+
+        Assert.Contains(
+            transfers,
+            x => x.PostedJournalId == newJournal.Id);
     }
 }

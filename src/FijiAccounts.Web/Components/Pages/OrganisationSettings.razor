@@ -23,6 +23,89 @@ else
                 <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">
+                            Default customer invoice payment terms
+                        </label>
+
+                        <InputSelect class="form-select mb-2"
+                                     @bind-Value="model.DefaultSalesInvoicePaymentTermType"
+                                     disabled="@(!canManage)">
+                            <option value="@PaymentTermType.DaysAfterDocumentDate">Days after invoice date</option>
+                            <option value="@PaymentTermType.DayOfFollowingMonth">Day of following month</option>
+                            <option value="@PaymentTermType.EndOfCurrentMonth">End of current month</option>
+                            <option value="@PaymentTermType.EndOfFollowingMonth">End of following month</option>
+                        </InputSelect>
+
+                        @if (model.DefaultSalesInvoicePaymentTermType ==
+                            PaymentTermType.DaysAfterDocumentDate)
+                        {
+                            <div class="input-group">
+                                <InputNumber class="form-control"
+                                             @bind-Value="model.DefaultSalesInvoiceDueDays"
+                                             disabled="@(!canManage)" />
+                                <span class="input-group-text">days</span>
+                            </div>
+                        }
+                        else if (model.DefaultSalesInvoicePaymentTermType ==
+                                 PaymentTermType.DayOfFollowingMonth)
+                        {
+                            <div class="input-group">
+                                <InputNumber class="form-control"
+                                             @bind-Value="model.DefaultSalesInvoiceDueDays"
+                                             disabled="@(!canManage)" />
+                                <span class="input-group-text">day</span>
+                            </div>
+                        }
+
+                        <div class="form-text">
+                            Used as the starting payment term for new customers.
+                        </div>
+                    </div>
+
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">
+                            Default supplier bill payment terms
+                        </label>
+
+                        <InputSelect class="form-select mb-2"
+                                     @bind-Value="model.DefaultSupplierBillPaymentTermType"
+                                     disabled="@(!canManage)">
+                            <option value="@PaymentTermType.DaysAfterDocumentDate">Days after bill date</option>
+                            <option value="@PaymentTermType.DayOfFollowingMonth">Day of following month</option>
+                            <option value="@PaymentTermType.EndOfCurrentMonth">End of current month</option>
+                            <option value="@PaymentTermType.EndOfFollowingMonth">End of following month</option>
+                        </InputSelect>
+
+                        @if (model.DefaultSupplierBillPaymentTermType ==
+                            PaymentTermType.DaysAfterDocumentDate)
+                        {
+                            <div class="input-group">
+                                <InputNumber class="form-control"
+                                             @bind-Value="model.DefaultSupplierBillDueDays"
+                                             disabled="@(!canManage)" />
+                                <span class="input-group-text">days</span>
+                            </div>
+                        }
+                        else if (model.DefaultSupplierBillPaymentTermType ==
+                                 PaymentTermType.DayOfFollowingMonth)
+                        {
+                            <div class="input-group">
+                                <InputNumber class="form-control"
+                                             @bind-Value="model.DefaultSupplierBillDueDays"
+                                             disabled="@(!canManage)" />
+                                <span class="input-group-text">day</span>
+                            </div>
+                        }
+
+                        <div class="form-text">
+                            Used as the starting payment term for new suppliers.
+                        </div>
+                    </div>
+                </div>
+
                 @if (canManage) { <button class="btn btn-primary">Save business details</button> }
             </EditForm>
         </section>
@@ -65,7 +148,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access; private bool canManage, canChangeJurisdiction; private SettingsModel model = new(); private UnitModel departmentModel = new(); private UnitModel branchModel = new(); private List<OrganisationUnit> departments = []; private List<OrganisationUnit> branches = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin }; await LoadUnits(); }
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadUnits(); }
     private async Task Save()
     {
         if (!canManage || access is null) return;
@@ -79,11 +162,23 @@ else
                 .ExecuteUpdateAsync(update => update
                     .SetProperty(x => x.LegalName, legalName)
                     .SetProperty(x => x.TradingName, tradingName)
-                    .SetProperty(x => x.Tin, tin));
+                    .SetProperty(x => x.Tin, tin)
+                    .SetProperty(
+                        x => x.DefaultSalesInvoicePaymentTermType,
+                        model.DefaultSalesInvoicePaymentTermType)
+                    .SetProperty(
+                        x => x.DefaultSalesInvoiceDueDays,
+                        model.DefaultSalesInvoiceDueDays)
+                    .SetProperty(
+                        x => x.DefaultSupplierBillPaymentTermType,
+                        model.DefaultSupplierBillPaymentTermType)
+                    .SetProperty(
+                        x => x.DefaultSupplierBillDueDays,
+                        model.DefaultSupplierBillDueDays));
             if (changed != 1) throw new InvalidOperationException("The organisation could not be updated.");
 
             var stored = await Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == OrganisationId);
-            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin };
+            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays };
             access = access with { Organisation = stored };
             statusClass = "alert-success";
             status = "Business details saved and verified.";
@@ -110,6 +205,6 @@ else
         status = $"{type} added."; await LoadUnits();
     }
     private async Task ToggleUnit(OrganisationUnit item) { if (!canManage) return; var stored = await Db.OrganisationUnits.SingleAsync(x => x.Id == item.Id && x.OrganisationId == OrganisationId); stored.IsActive = !stored.IsActive; await Db.SaveChangesAsync(); status = $"{stored.Name} is now {(stored.IsActive ? "active" : "inactive")}."; await LoadUnits(); }
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } }
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
     private sealed class UnitModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
 }

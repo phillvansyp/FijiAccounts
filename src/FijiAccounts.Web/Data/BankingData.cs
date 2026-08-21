@@ -76,3 +76,26 @@ public sealed class BankTransfer
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
 }
+
+public sealed class BankTransferReversal
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+
+    public Guid BankTransferId { get; set; }
+    public BankTransfer BankTransfer { get; set; } = null!;
+
+    public DateOnly ReversalDate { get; set; }
+
+    [MaxLength(300)]
+    public required string Reason { get; set; }
+
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+
+    public DateTimeOffset CreatedAt { get; set; } =
+        DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string CreatedByUserId { get; set; }
+}

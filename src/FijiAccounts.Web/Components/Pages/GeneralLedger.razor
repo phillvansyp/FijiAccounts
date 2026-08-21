@@ -12,21 +12,227 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
 
-<PageTitle>General ledger · Account Island</PageTitle>
+<PageTitle>General ledger - Account Island</PageTitle>
 @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
 else
 {
     <div class="page-heading"><div><p class="eyebrow">Reporting</p><h1>General ledger</h1><p class="page-intro">Trace every account balance to its posted journal evidence.</p></div><div class="d-flex gap-2 no-print"><button class="btn btn-outline-secondary" @onclick="ExportCsv">Export CSV</button><button class="btn btn-outline-secondary" onclick="window.print()">Print</button></div></div>
-    <section class="report-controls no-print"><EditForm Model="filter" OnValidSubmit="Load" FormName="ledger-filter"><div><label class="form-label">From</label><InputDate class="form-control" @bind-Value="filter.From" /></div><div><label class="form-label">To</label><InputDate class="form-control" @bind-Value="filter.To" /></div><div><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="filter.AccountId"><option value="">All accounts</option>@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div><label class="form-label">Reference or description</label><InputText class="form-control" @bind-Value="filter.Search" /></div><button class="btn btn-primary">Update</button></EditForm></section>
+    <section class="report-controls no-print">
+        <EditForm Model="filter"
+                  OnValidSubmit="Load"
+                  FormName="ledger-filter">
+
+            <div>
+                <label class="form-label">From</label>
+                <InputDate class="form-control"
+                           @bind-Value="filter.From" />
+            </div>
+
+            <div>
+                <label class="form-label">To</label>
+                <InputDate class="form-control"
+                           @bind-Value="filter.To" />
+            </div>
+
+            <div>
+                <label class="form-label">Account</label>
+                <InputSelect class="form-select"
+                             @bind-Value="filter.AccountId">
+
+                    <option value="">
+                        All accounts
+                    </option>
+
+                    @foreach (var account in accounts)
+                    {
+                        <option value="@account.Id">
+                            @account.Code - @account.Name
+                        </option>
+                    }
+
+                </InputSelect>
+            </div>
+
+            <div>
+                <label class="form-label">
+                    Reference or description
+                </label>
+
+                <InputText class="form-control"
+                           @bind-Value="filter.Search" />
+            </div>
+
+            <button class="btn btn-primary">
+                Update
+            </button>
+
+        </EditForm>
+    </section>
     <div class="row g-3 mb-4"><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Opening balance</span><h2>$@OpeningBalance.ToString("N2")</h2></div></div><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Period movement</span><h2>$@PeriodMovement.ToString("N2")</h2></div></div><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Closing balance</span><h2>$@ClosingBalance.ToString("N2")</h2></div></div></div>
-    <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Posted evidence</span><h2>Journal lines</h2></div><span>@rows.Count lines</span></div>@if (rows.Count == 0) { <div class="empty-state"><strong>No journal lines found</strong><span>Adjust the dates, account, or search text.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Journal</th><th>Reference</th><th>Account</th><th>Description</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Running balance</th></tr></thead><tbody>@foreach (var row in rows) { <tr><td>@row.Date.ToString("dd MMM yyyy")</td><td><a href="o/@OrganisationId/journals/@row.JournalId">J-@row.Sequence.ToString("D6")</a></td><td>@row.Reference</td><td><strong>@row.AccountCode</strong><small class="d-block text-muted">@row.AccountName</small></td><td>@row.Description</td><td class="text-end">@(row.Debit == 0 ? "—" : $"${row.Debit:N2}")</td><td class="text-end">@(row.Credit == 0 ? "—" : $"${row.Credit:N2}")</td><td class="text-end"><strong>$@row.RunningBalance.ToString("N2")</strong></td></tr> }</tbody><tfoot><tr><th colspan="5">Period totals</th><th class="text-end">$@rows.Sum(x => x.Debit).ToString("N2")</th><th class="text-end">$@rows.Sum(x => x.Credit).ToString("N2")</th><th class="text-end">$@ClosingBalance.ToString("N2")</th></tr></tfoot></table></div> }</section>
+    <section class="detail-card">
+
+        <div class="card-heading">
+
+            <div>
+                <span class="eyebrow">
+                    Posted evidence
+                </span>
+
+                <h2>
+                    Journal lines
+                </h2>
+            </div>
+
+            <span>
+                @rows.Count lines
+            </span>
+
+        </div>
+
+        @if (rows.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No journal lines found</strong>
+                <span>
+                    Adjust the dates, account, or search text.
+                </span>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+
+                <table class="table">
+
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Journal</th>
+                            <th>Reference</th>
+                            <th>Account</th>
+                            <th>Description</th>
+                            <th class="text-end">Debit</th>
+                            <th class="text-end">Credit</th>
+                            <th class="text-end">Running balance</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        @foreach (var row in rows)
+                        {
+                            <tr>
+
+                                <td>
+                                    @row.Date.ToString("dd MMM yyyy")
+                                </td>
+
+                                <td>
+                                    <a href="o/@OrganisationId/journals/@row.JournalId">
+                                        J-@row.Sequence.ToString("D6")
+                                    </a>
+                                </td>
+
+                                <td>
+                                    @row.Reference
+                                </td>
+
+                                <td>
+                                    <strong>
+                                        @row.AccountCode
+                                    </strong>
+
+                                    <small class="d-block text-muted">
+                                        @row.AccountName
+                                    </small>
+                                </td>
+
+                                <td>
+                                    @row.Description
+                                </td>
+
+                                <td class="text-end">
+                                    @(row.Debit == 0
+                                        ? "-"
+                                        : $"${row.Debit:N2}")
+                                </td>
+
+                                <td class="text-end">
+                                    @(row.Credit == 0
+                                        ? "-"
+                                        : $"${row.Credit:N2}")
+                                </td>
+
+                                <td class="text-end">
+                                    <strong>
+                                        $@row.RunningBalance.ToString("N2")
+                                    </strong>
+                                </td>
+
+                            </tr>
+                        }
+
+                    </tbody>
+
+                    <tfoot>
+                        <tr>
+                            <th colspan="5">
+                                Period totals
+                            </th>
+
+                            <th class="text-end">
+                                $@rows.Sum(x => x.Debit).ToString("N2")
+                            </th>
+
+                            <th class="text-end">
+                                $@rows.Sum(x => x.Credit).ToString("N2")
+                            </th>
+
+                            <th class="text-end">
+                                $@ClosingBalance.ToString("N2")
+                            </th>
+                        </tr>
+                    </tfoot>
+
+                </table>
+
+            </div>
+        }
+
+    </section>
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<LedgerRow> rows = []; private FilterModel filter = new(); private decimal OpeningBalance; private decimal PeriodMovement => rows.Sum(x => x.Debit - x.Credit); private decimal ClosingBalance => OpeningBalance + PeriodMovement;
     protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); filter.To = DateOnly.FromDateTime(DateTime.Today); filter.From = filter.To.AddMonths(-1).AddDays(1); await Load(); }
-    private async Task Load() { if (filter.From > filter.To) return; var query = Db.PostedJournalLines.AsNoTracking().Where(x => x.PostedJournal.OrganisationId == OrganisationId); if (filter.AccountId is not null) query = query.Where(x => x.LedgerAccountId == filter.AccountId); OpeningBalance = await query.Where(x => x.PostedJournal.EntryDate < filter.From).SumAsync(x => x.Debit - x.Credit); var period = query.Where(x => x.PostedJournal.EntryDate >= filter.From && x.PostedJournal.EntryDate <= filter.To); if (!string.IsNullOrWhiteSpace(filter.Search)) { var term = filter.Search.Trim(); period = period.Where(x => x.PostedJournal.Reference.Contains(term) || (x.PostedJournal.Description != null && x.PostedJournal.Description.Contains(term)) || x.Description.Contains(term)); } var raw = await period.OrderBy(x => x.PostedJournal.EntryDate).ThenBy(x => x.PostedJournal.SequenceNumber).ThenBy(x => x.Id).Select(x => new { JournalId = x.PostedJournalId, x.PostedJournal.EntryDate, x.PostedJournal.SequenceNumber, x.PostedJournal.Reference, AccountCode = x.LedgerAccount.Code, AccountName = x.LedgerAccount.Name, x.Description, x.Debit, x.Credit }).Take(5000).ToListAsync(); var running = OpeningBalance; rows = raw.Select(x => { running += x.Debit - x.Credit; return new LedgerRow(x.JournalId, x.EntryDate, x.SequenceNumber, x.Reference, x.AccountCode, x.AccountName, x.Description, x.Debit, x.Credit, running); }).ToList(); }
+    private async Task Load() { if (filter.From > filter.To) return; var query = Db.PostedJournalLines.AsNoTracking().Where(x => x.PostedJournal.OrganisationId == OrganisationId); if (filter.AccountId is not null) query = query.Where(x => x.LedgerAccountId == filter.AccountId); OpeningBalance = await query.Where(x => x.PostedJournal.EntryDate < filter.From).SumAsync(x => x.Debit - x.Credit); var period = query.Where(x => x.PostedJournal.EntryDate >= filter.From && x.PostedJournal.EntryDate <= filter.To); if (!string.IsNullOrWhiteSpace(filter.Search)) { var term = filter.Search.Trim(); period = period.Where(x => x.PostedJournal.Reference.Contains(term) || (x.PostedJournal.Description != null && x.PostedJournal.Description.Contains(term)) || x.Description.Contains(term)); } var raw = await period.OrderBy(x => x.PostedJournal.EntryDate).ThenBy(x => x.PostedJournal.SequenceNumber).ThenBy(x => x.Id).Select(x => new { JournalId = x.PostedJournalId, x.PostedJournal.EntryDate, x.PostedJournal.SequenceNumber, x.PostedJournal.Reference, AccountCode = x.LedgerAccount.Code, AccountName = x.LedgerAccount.Name, x.Description, x.Debit, x.Credit }).Take(5000).ToListAsync(); var running = OpeningBalance;
+
+var chronologicalRows =
+    raw.Select(
+        x =>
+        {
+            running += x.Debit - x.Credit;
+
+            return new LedgerRow(
+                x.JournalId,
+                x.EntryDate,
+                x.SequenceNumber,
+                x.Reference,
+                x.AccountCode,
+                x.AccountName,
+                x.Description,
+                x.Debit,
+                x.Credit,
+                running);
+        })
+    .ToList();
+
+rows =
+    chronologicalRows
+        .OrderByDescending(x => x.Date)
+        .ThenByDescending(x => x.Sequence)
+        .ToList(); }
     private async Task ExportCsv() { var csv = new StringBuilder("Date,Journal,Reference,Account Code,Account Name,Description,Debit,Credit,Running Balance\r\n"); foreach (var x in rows) csv.AppendLine(string.Join(',', Q(x.Date.ToString("yyyy-MM-dd")), Q($"J-{x.Sequence:D6}"), Q(x.Reference), Q(x.AccountCode), Q(x.AccountName), Q(x.Description), x.Debit, x.Credit, x.RunningBalance)); await JS.InvokeVoidAsync("accountIsland.downloadText", $"general-ledger-{filter.From:yyyyMMdd}-{filter.To:yyyyMMdd}.csv", csv.ToString(), "text/csv;charset=utf-8"); }
     private static string Q(string? value) => $"\"{(value ?? "").Replace("\"", "\"\"")}\"";
     private sealed class FilterModel { public DateOnly From { get; set; } public DateOnly To { get; set; } public Guid? AccountId { get; set; } public string Search { get; set; } = ""; }

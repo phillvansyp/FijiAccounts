@@ -17,12 +17,75 @@ public sealed class BusinessParty
     [MaxLength(32)] public string? Tin { get; set; }
     [MaxLength(500)] public string? Address { get; set; }
     public PartyType Type { get; set; }
+    public List<BusinessPartyDocument> Documents { get; set; } = [];
     public Guid? DefaultPurchaseAccountId { get; set; }
     public LedgerAccount? DefaultPurchaseAccount { get; set; }
     public VatTreatment? DefaultPurchaseVatTreatment { get; set; }
+
+    public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } =
+        PaymentTermType.DaysAfterDocumentDate;
+
+    [Range(0, 365)]
+    public int DefaultSalesInvoiceDueDays { get; set; } = 30;
+
+    public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } =
+        PaymentTermType.DaysAfterDocumentDate;
+
+    [Range(0, 365)]
+    public int DefaultSupplierBillDueDays { get; set; } = 30;
+
     public bool IsActive { get; set; } = true;
 }
 
+public enum BusinessPartyDocumentType
+{
+    Contract,
+    Agreement,
+    Insurance,
+    Certificate,
+    Compliance,
+    Pricing,
+    Other
+}
+
+public sealed class BusinessPartyDocument
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+
+    public Guid BusinessPartyId { get; set; }
+    public BusinessParty BusinessParty { get; set; } = null!;
+
+    public BusinessPartyDocumentType Type { get; set; }
+
+    [MaxLength(200)]
+    public required string Name { get; set; }
+
+    [MaxLength(500)]
+    public string? Description { get; set; }
+
+    [MaxLength(260)]
+    public required string FileName { get; set; }
+
+    [MaxLength(200)]
+    public required string ContentType { get; set; }
+
+    public byte[] Content { get; set; } = [];
+
+    public bool IsCompressed { get; set; }
+
+    public long OriginalSize { get; set; }
+
+    public DateOnly? ExpiryDate { get; set; }
+
+    public DateTimeOffset UploadedAtUtc { get; set; }
+        = DateTimeOffset.UtcNow;
+
+    [MaxLength(450)]
+    public required string UploadedByUserId { get; set; }
+}
 public enum RecurringSalesInvoiceFrequency
 {
     Weekly,
@@ -223,6 +286,10 @@ public sealed class SalesInvoiceLine
     public Guid SalesInvoiceId { get; set; }
     public SalesInvoice SalesInvoice { get; set; } = null!;
     [MaxLength(300)] public required string Description { get; set; }
+
+    [MaxLength(80)]
+    public string? CustomerPurchaseOrderNumber { get; set; }
+
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public VatTreatment VatTreatment { get; set; }

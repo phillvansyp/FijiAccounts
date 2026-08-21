@@ -411,3 +411,67 @@
         flex: 1;
     }
 }
+/* RECONCILIATION WIDE ROW LAYOUT */
+
+@media (min-width: 1351px) {
+    .statement-row {
+        grid-template-columns:
+            34px
+            minmax(320px, 1.4fr)
+            120px
+            minmax(220px, 1fr)
+            minmax(330px, 420px);
+        column-gap: 1.25rem;
+    }
+
+    .match-action {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        min-width: 0;
+    }
+
+    .match-action > div {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .match-action .btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+
+    .match-action small,
+    .match-action strong {
+        white-space: nowrap;
+    }
+}
+
+@media (min-width: 851px) and (max-width: 1350px) {
+    .statement-row {
+        grid-template-columns:
+            34px
+            minmax(260px, 1fr)
+            110px
+            minmax(240px, 1fr);
+        column-gap: 1rem;
+    }
+
+    .coded-account {
+        grid-column: 2 / 4;
+    }
+
+    .match-action {
+        grid-column: 4;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+    }
+
+    .match-action .btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+}

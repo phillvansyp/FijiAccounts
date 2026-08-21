@@ -17,10 +17,41 @@ public sealed class Organisation
     [MaxLength(3)] public string BaseCurrency { get; set; } = "FJD";
     [MaxLength(64)] public string TimeZoneId { get; set; } = "Pacific/Fiji";
 
+    [MaxLength(20)] public string SalesInvoicePrefix { get; set; } = "INV-";
+    public long NextSalesInvoiceNumber { get; set; } = 1;
+
+    [MaxLength(20)] public string SalesQuotePrefix { get; set; } = "QU-";
+    public long NextSalesQuoteNumber { get; set; } = 1;
+
+    [MaxLength(20)] public string SalesCreditNotePrefix { get; set; } = "CN-";
+    public long NextSalesCreditNoteNumber { get; set; } = 1;
+
+    [MaxLength(20)] public string PurchaseOrderPrefix { get; set; } = "PO-";
+    public long NextPurchaseOrderNumber { get; set; } = 1;
+
+    [MaxLength(20)] public string SupplierBillPrefix { get; set; } = "BILL-";
+    public long NextSupplierBillNumber { get; set; } = 1;
+
+    [MaxLength(20)] public string SupplierCreditNotePrefix { get; set; } = "SCN-";
+    public long NextSupplierCreditNoteNumber { get; set; } = 1;
+
     public bool RecurringInvoiceAutomationEnabled { get; set; } = true;
 
     public TimeOnly RecurringInvoiceAutomationTime { get; set; } =
         new(6, 0);
+
+    public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } =
+        PaymentTermType.DaysAfterDocumentDate;
+
+    [Range(0, 365)]
+    public int DefaultSalesInvoiceDueDays { get; set; } = 30;
+
+    public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } =
+        PaymentTermType.DaysAfterDocumentDate;
+
+    [Range(0, 365)]
+    public int DefaultSupplierBillDueDays { get; set; } = 30;
+
     [MaxLength(32)] public string TaxLabel { get; set; } = "VAT";
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;

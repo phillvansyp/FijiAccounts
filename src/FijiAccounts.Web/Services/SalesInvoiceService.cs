@@ -7,7 +7,7 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record SalesInvoiceLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid RevenueAccountId, Guid? ProductItemId = null);
+public sealed record SalesInvoiceLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid RevenueAccountId, Guid? ProductItemId = null, string? CustomerPurchaseOrderNumber = null);
 public sealed record SalesInvoiceRequest(Guid OrganisationId, Guid CustomerId, DateOnly IssueDate, DateOnly DueDate, IReadOnlyList<SalesInvoiceLineRequest> Lines);
 
 public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
@@ -56,7 +56,14 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         "VAT Payable (2100) must be an active Liability account.");
 }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        invoice.InvoiceNumber = $"INV-{invoice.SequenceNumber:D6}";
+
+        var organisation =
+            await db.Organisations.SingleAsync(
+                x => x.Id == organisationId,
+                cancellationToken);
+
+        invoice.InvoiceNumber =
+            AllocateSalesInvoiceNumber(organisation);
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
@@ -140,7 +147,7 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         if (request.DueDate < request.IssueDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter valid invoice dates and at least one line.");
         if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer in this organisation.");
         var accountIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray(); if (await db.LedgerAccounts.CountAsync(x => x.OrganisationId == request.OrganisationId && x.IsActive && accountIds.Contains(x.Id) && x.Type == AccountType.Revenue, cancellationToken) != accountIds.Length) throw new InvalidOperationException("Every line must use an active revenue account.");
-        var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.IssueDate, x.VatTreatment); return new SalesInvoiceLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId }; }).ToList();
+        var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.IssueDate, x.VatTreatment); return new SalesInvoiceLine { Description = x.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(x.CustomerPurchaseOrderNumber) ? null : x.CustomerPurchaseOrderNumber.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId }; }).ToList();
     }
 
     internal Task<SalesInvoice> CreateAndPostAutomaticallyAsync(
@@ -210,7 +217,7 @@ if (!controlAccounts.TryGetValue(
         {
             if (line.Quantity <= 0 || line.UnitPrice < 0) throw new InvalidOperationException("Invoice quantities must be positive and prices cannot be negative.");
             var net = new Money(line.Quantity * line.UnitPrice, organisation.BaseCurrency).Round(); var tax = vatSchedule.CalculateFromExclusive(net, request.IssueDate, line.VatTreatment);
-            return new SalesInvoiceLine { Description = line.Description.Trim(), Quantity = line.Quantity, UnitPrice = line.UnitPrice, VatTreatment = line.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = line.RevenueAccountId, ProductItemId = line.ProductItemId };
+            return new SalesInvoiceLine { Description = line.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? null : line.CustomerPurchaseOrderNumber.Trim(), Quantity = line.Quantity, UnitPrice = line.UnitPrice, VatTreatment = line.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = line.RevenueAccountId, ProductItemId = line.ProductItemId };
         }).ToList();
 
         var productIds = lines.Where(x => x.ProductItemId != null).Select(x => x.ProductItemId!.Value).Distinct().ToArray();
@@ -218,8 +225,16 @@ if (!controlAccounts.TryGetValue(
         foreach (var line in lines.Where(x => x.ProductItemId != null)) line.ProductItem = products.GetValueOrDefault(line.ProductItemId!.Value) ?? throw new InvalidOperationException("A selected catalogue item is unavailable.");
 
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+        await db.Entry(organisation)
+            .ReloadAsync(cancellationToken);
+
         var sequence = (await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1;
-        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = $"INV-{sequence:D6}", IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+
+        var invoiceNumber =
+            AllocateSalesInvoiceNumber(organisation);
+
+        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = invoiceNumber, IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
@@ -338,6 +353,23 @@ if (!controlAccounts.TryGetValue(
         }
     }
 }
+
+    private static string AllocateSalesInvoiceNumber(
+        Organisation organisation)
+    {
+        if (organisation.NextSalesInvoiceNumber < 1)
+        {
+            throw new InvalidOperationException(
+                "The next sales invoice number must be at least 1.");
+        }
+
+        var invoiceNumber =
+            $"{organisation.SalesInvoicePrefix}{organisation.NextSalesInvoiceNumber:D6}";
+
+        organisation.NextSalesInvoiceNumber++;
+
+        return invoiceNumber;
+    }
 
     private void RecordSaleMovements(SalesInvoice invoice, Guid journalId, string userId)
     {

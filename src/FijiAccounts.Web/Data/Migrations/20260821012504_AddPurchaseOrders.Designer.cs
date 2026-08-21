@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821012504_AddPurchaseOrders")]
+    partial class AddPurchaseOrders
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -458,47 +461,6 @@ namespace FijiAccounts.Web.Migrations
                     b.ToTable("BankTransfers");
                 });
 
-            modelBuilder.Entity("FijiAccounts.Web.Data.BankTransferReversal", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("BankTransferId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CreatedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("OrganisationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("PostedJournalId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateOnly>("ReversalDate")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BankTransferId")
-                        .IsUnique();
-
-                    b.HasIndex("PostedJournalId");
-
-                    b.ToTable("BankTransferReversals");
-                });
-
             modelBuilder.Entity("FijiAccounts.Web.Data.BusinessParty", b =>
                 {
                     b.Property<Guid>("Id")
@@ -513,18 +475,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("DefaultPurchaseVatTreatment")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSalesInvoiceDueDays")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSalesInvoicePaymentTermType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSupplierBillDueDays")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSupplierBillPaymentTermType")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Email")
@@ -560,70 +510,6 @@ namespace FijiAccounts.Web.Migrations
                     b.HasIndex("OrganisationId", "Name");
 
                     b.ToTable("BusinessParties");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.BusinessPartyDocument", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("BusinessPartyId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("Content")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateOnly?>("ExpiryDate")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FileName")
-                        .IsRequired()
-                        .HasMaxLength(260)
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsCompressed")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("OrganisationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("OriginalSize")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset>("UploadedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UploadedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BusinessPartyId");
-
-                    b.HasIndex("OrganisationId");
-
-                    b.ToTable("BusinessPartyDocuments");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.CustomerReceipt", b =>
@@ -1044,18 +930,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("DefaultSalesInvoiceDueDays")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSalesInvoicePaymentTermType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSupplierBillDueDays")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DefaultSupplierBillPaymentTermType")
-                        .HasColumnType("INTEGER");
-
                     b.Property<int>("FinancialYearEndDay")
                         .HasColumnType("INTEGER");
 
@@ -1070,58 +944,10 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("TEXT");
 
-                    b.Property<long>("NextPurchaseOrderNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("NextSalesCreditNoteNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("NextSalesInvoiceNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("NextSalesQuoteNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("NextSupplierBillNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("NextSupplierCreditNoteNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("PurchaseOrderPrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
                     b.Property<bool>("RecurringInvoiceAutomationEnabled")
                         .HasColumnType("INTEGER");
 
                     b.Property<TimeOnly>("RecurringInvoiceAutomationTime")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SalesCreditNotePrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SalesInvoicePrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SalesQuotePrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SupplierBillPrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SupplierCreditNotePrefix")
-                        .IsRequired()
-                        .HasMaxLength(20)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TaxLabel")
@@ -1460,12 +1286,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SupplierBillDraftId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("SupplierBillId")
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("SupplierId")
                         .HasColumnType("TEXT");
 
@@ -1486,10 +1306,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("SupplierBillDraftId");
-
-                    b.HasIndex("SupplierBillId");
 
                     b.HasIndex("SupplierId");
 
@@ -2047,10 +1863,6 @@ namespace FijiAccounts.Web.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CustomerPurchaseOrderNumber")
-                        .HasMaxLength(80)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Description")
@@ -3086,25 +2898,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("ToBankAccount");
                 });
 
-            modelBuilder.Entity("FijiAccounts.Web.Data.BankTransferReversal", b =>
-                {
-                    b.HasOne("FijiAccounts.Web.Data.BankTransfer", "BankTransfer")
-                        .WithMany()
-                        .HasForeignKey("BankTransferId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("FijiAccounts.Web.Data.PostedJournal", "PostedJournal")
-                        .WithMany()
-                        .HasForeignKey("PostedJournalId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("BankTransfer");
-
-                    b.Navigation("PostedJournal");
-                });
-
             modelBuilder.Entity("FijiAccounts.Web.Data.BusinessParty", b =>
                 {
                     b.HasOne("FijiAccounts.Web.Data.LedgerAccount", "DefaultPurchaseAccount")
@@ -3119,25 +2912,6 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("DefaultPurchaseAccount");
-
-                    b.Navigation("Organisation");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.BusinessPartyDocument", b =>
-                {
-                    b.HasOne("FijiAccounts.Web.Data.BusinessParty", "BusinessParty")
-                        .WithMany("Documents")
-                        .HasForeignKey("BusinessPartyId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
-                        .WithMany()
-                        .HasForeignKey("OrganisationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("BusinessParty");
 
                     b.Navigation("Organisation");
                 });
@@ -3474,16 +3248,6 @@ namespace FijiAccounts.Web.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("FijiAccounts.Web.Data.SupplierBillDraft", "SupplierBillDraft")
-                        .WithMany()
-                        .HasForeignKey("SupplierBillDraftId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("FijiAccounts.Web.Data.SupplierBill", "SupplierBill")
-                        .WithMany()
-                        .HasForeignKey("SupplierBillId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("FijiAccounts.Web.Data.BusinessParty", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId")
@@ -3493,10 +3257,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("Organisation");
 
                     b.Navigation("Supplier");
-
-                    b.Navigation("SupplierBill");
-
-                    b.Navigation("SupplierBillDraft");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.PurchaseOrderLine", b =>
@@ -4083,11 +3843,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.BusinessParty", b =>
-                {
-                    b.Navigation("Documents");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.CustomerReceipt", b =>

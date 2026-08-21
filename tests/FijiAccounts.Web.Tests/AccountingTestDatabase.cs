@@ -41,6 +41,12 @@ Posting =
         Access,
         Reconciliation);
 
+
+PurchaseOrders =
+    new PurchaseOrderService(
+        Db,
+        Access);
+
 BankAccounts =
     new BankAccountService(
         Db,
@@ -85,6 +91,8 @@ BankCoding =
     public SalesInvoiceService SalesInvoices { get; }
 
     public PurchasingService Purchasing { get; }
+
+    public PurchaseOrderService PurchaseOrders { get; }
 
     public BankReconciliationService Reconciliation { get; }
 

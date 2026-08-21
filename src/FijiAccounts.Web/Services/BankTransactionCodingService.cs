@@ -101,7 +101,21 @@ if (completedReconciliationExists)
                     .ToList()),
             ct);
 
+        /*
+         * The reversal journal has now been posted.
+         *
+         * Journal and audit records are append-only, so do not carry
+         * tracked posted-journal entities into the mutable cleanup below.
+         */
+        var originalLineIds =
+            original.Lines
+                .Select(x => x.Id)
+                .ToArray();
+
+        db.ChangeTracker.Clear();
+
         var linkedTransfer = await db.BankTransfers
+            .AsNoTracking()
             .SingleOrDefaultAsync(
                 x => x.OrganisationId == organisationId &&
                      x.PostedJournalId == original.Id,
@@ -109,12 +123,51 @@ if (completedReconciliationExists)
 
         if (linkedTransfer is not null)
         {
-            db.BankTransfers.Remove(linkedTransfer);
+            var existingTransferReversal =
+                await db.BankTransferReversals
+                    .AsNoTracking()
+                    .AnyAsync(
+                        x => x.BankTransferId == linkedTransfer.Id,
+                        ct);
+
+            if (!existingTransferReversal)
+            {
+                db.BankTransferReversals.Add(
+                    new BankTransferReversal
+                    {
+                        OrganisationId = organisationId,
+                        BankTransferId = linkedTransfer.Id,
+                        ReversalDate = statement.TransactionDate,
+                        Reason =
+                            $"Bank coding reopened: {statement.Description}",
+                        PostedJournalId = reversal.Id,
+                        CreatedByUserId = userId
+                    });
+            }
         }
 
-        statement.MatchedPostedJournalLineId = null;
-        statement.ReconciledAt = null;
-        statement.ReconciledByUserId = null;
+        /*
+         * An internal transfer can have both statement sides reconciled
+         * against different bank lines in this same journal.
+         *
+         * Because the journal has just been reversed, every statement
+         * line linked to it must be reopened.
+         */
+        var statementsToReopen =
+            await db.BankStatementLines
+                .Where(x =>
+                    x.OrganisationId == organisationId &&
+                    x.MatchedPostedJournalLineId.HasValue &&
+                    originalLineIds.Contains(
+                        x.MatchedPostedJournalLineId.Value))
+                .ToListAsync(ct);
+
+        foreach (var statementToReopen in statementsToReopen)
+        {
+            statementToReopen.MatchedPostedJournalLineId = null;
+            statementToReopen.ReconciledAt = null;
+            statementToReopen.ReconciledByUserId = null;
+        }
 
         db.AuditEvents.Add(new AuditEvent
         {
@@ -493,6 +546,11 @@ else
         var earliestDate = statement.TransactionDate.AddDays(-3);
         var latestDate = statement.TransactionDate.AddDays(3);
 
+        var reversedTransferIds =
+            db.BankTransferReversals
+                .AsNoTracking()
+                .Select(x => x.BankTransferId);
+
         var possibleTransfers = await db.BankTransfers
             .AsNoTracking()
             .Where(x =>
@@ -501,7 +559,8 @@ else
                 x.ToBankAccountId == toBankAccountId &&
                 x.Amount == amount &&
                 x.TransferDate >= earliestDate &&
-                x.TransferDate <= latestDate)
+                x.TransferDate <= latestDate &&
+                !reversedTransferIds.Contains(x.Id))
             .OrderBy(x => x.TransferDate)
             .ToListAsync(ct);
 

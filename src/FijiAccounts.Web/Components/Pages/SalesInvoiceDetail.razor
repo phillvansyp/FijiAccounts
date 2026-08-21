@@ -11,18 +11,39 @@
 @inject SalesCreditNoteService CreditNoteService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
 
 <PageTitle>@(invoice?.InvoiceNumber ?? "Invoice") · Account Island</PageTitle>
 @if (invoice is null || access is null) { <div class="alert alert-danger">Invoice not found or access denied.</div> }
 else
 {
-    <div class="detail-actions no-print"><a href="o/@OrganisationId/sales">← Invoices</a><div>@if (invoice.Status == InvoiceStatus.Draft && canPost) { <a class="btn btn-outline-primary" href="o/@OrganisationId/sales/@InvoiceId/edit">Edit draft</a><button class="btn btn-primary" @onclick="PostDraft">Approve and post</button> }@if (invoice.Status == InvoiceStatus.Posted && canPost) { <button class="btn btn-outline-primary" @onclick="OpenCredit">Credit note</button><button class="btn btn-outline-danger" @onclick="() => showVoid = !showVoid">Void invoice</button> }<button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+    <div class="detail-actions no-print"><a href="o/@OrganisationId/sales">← Invoices</a><div>@if (invoice.Status == InvoiceStatus.Draft && canPost) { <a class="btn btn-outline-primary" href="o/@OrganisationId/sales/@InvoiceId/edit">Edit draft</a><button class="btn btn-primary" @onclick="PostDraft">Approve and post</button> }@if (canPost &&
+    invoice.Status is InvoiceStatus.Posted or
+        InvoiceStatus.PartPaid or
+        InvoiceStatus.Paid)
+{
+    <button class="btn btn-outline-primary"
+            @onclick="OpenCredit">
+        Credit note
+    </button>
+}
+
+@if (canPost &&
+    invoice.Status == InvoiceStatus.Posted &&
+    invoice.AmountPaid == 0 &&
+    invoice.AmountCredited == 0)
+{
+    <button class="btn btn-outline-danger"
+            @onclick="() => showVoid = !showVoid">
+        Void invoice
+    </button>
+}<button class="btn btn-outline-secondary" @onclick="CopyInvoice">Copy invoice</button><button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
     @if (showVoid) { <div class="void-panel no-print"><div><strong>Void this invoice?</strong><span>A reversing journal will be posted and retained in the audit trail.</span></div><InputDate class="form-control" @bind-Value="voidDate" /><button class="btn btn-danger" @onclick="VoidInvoice">Post reversal</button><button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button></div> }
     @if (showCredit) { <div class="void-panel credit-panel no-print"><div><strong>Issue credit note</strong><span>Maximum: $@AvailableCredit.ToString("N2")</span></div><InputDate class="form-control" @bind-Value="creditDate" /><InputText class="form-control reason" @bind-Value="creditReason" placeholder="Reason" /><InputNumber class="form-control" @bind-Value="creditAmount" /><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="restockTrackedItems" /><span class="form-check-label">Return tracked items to stock</span></label><button class="btn btn-primary" @onclick="CreateCredit">Post credit</button><button class="btn btn-outline-secondary" @onclick="() => showCredit = false">Cancel</button></div> }
     @if (status is not null) { <div class="alert alert-danger no-print">@status</div> }
-    <article class="invoice-document"><header><div><span class="document-brand">Account Island</span><h1>Tax Invoice</h1></div><div class="document-number"><strong>@invoice.InvoiceNumber</strong><span class="status-badge">@invoice.Status</span></div></header>
+    <article class="invoice-document"><header><div><span class="document-brand">Account Island</span><h1>Tax Invoice</h1></div><div class="document-number"><strong>@invoice.InvoiceNumber</strong><span class="status-badge">@(invoice.Status == InvoiceStatus.PartPaid ? "Part paid" : invoice.Status.ToString())</span></div></header>
         <section class="invoice-meta"><div><small>From</small><strong>@access.Organisation.LegalName</strong><span>@access.Organisation.Tin</span></div><div><small>Bill to</small><strong>@invoice.Customer.Name</strong><span>@invoice.Customer.Address</span><span>@invoice.Customer.Tin</span></div><dl><dt>Issue date</dt><dd>@invoice.IssueDate.ToString("dd MMM yyyy")</dd><dt>Due date</dt><dd>@invoice.DueDate.ToString("dd MMM yyyy")</dd><dt>Currency</dt><dd>@invoice.Currency</dd></dl></section>
-        <table class="document-lines"><thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Unit price</th><th>Tax</th><th class="number">Amount</th></tr></thead><tbody>@foreach (var line in invoice.Lines) { <tr><td>@line.Description</td><td class="number">@line.Quantity.ToString("N2")</td><td class="number">$@line.UnitPrice.ToString("N2")</td><td>@line.VatTreatment</td><td class="number">$@line.NetAmount.ToString("N2")</td></tr> }</tbody></table>
+        <table class="document-lines"><thead><tr><th>Description</th><th>Customer PO</th><th class="number">Qty</th><th class="number">Unit price</th><th>Tax</th><th class="number">Amount</th></tr></thead><tbody>@foreach (var line in invoice.Lines) { <tr><td>@line.Description</td><td>@(string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber)</td><td class="number">@line.Quantity.ToString("N2")</td><td class="number">$@line.UnitPrice.ToString("N2")</td><td>@line.VatTreatment</td><td class="number">$@line.NetAmount.ToString("N2")</td></tr> }</tbody></table>
         <section class="document-totals"><div><span>Subtotal</span><strong>$@invoice.Subtotal.ToString("N2")</strong></div><div><span>@access.Organisation.TaxLabel</span><strong>$@invoice.VatTotal.ToString("N2")</strong></div><div class="grand-total"><span>Total</span><strong>$@invoice.Total.ToString("N2")</strong></div><div><span>Credits</span><strong>$@invoice.AmountCredited.ToString("N2")</strong></div><div><span>Paid</span><strong>$@invoice.AmountPaid.ToString("N2")</strong></div><div><span>Amount due</span><strong>$@AvailableCredit.ToString("N2")</strong></div></section>
         @if (invoice.Status == InvoiceStatus.Draft) { <footer>DRAFT — Not posted to the ledger</footer> }
     </article>
@@ -253,6 +274,56 @@ else
                         creditIds.Contains(x.SalesCreditNoteId))
                 .ToListAsync())
             .ToDictionary(x => x.SalesCreditNoteId);
+    }
+
+    private async Task CopyInvoice()
+    {
+        if (invoice is null || !canPost)
+        {
+            return;
+        }
+
+        try
+        {
+            var issueDate =
+                DateOnly.FromDateTime(DateTime.Today);
+
+            var dueDate =
+                issueDate.AddDays(
+                    invoice.Customer.DefaultSalesInvoiceDueDays);
+
+            var request =
+                new SalesInvoiceRequest(
+                    OrganisationId,
+                    invoice.CustomerId,
+                    issueDate,
+                    dueDate,
+                    invoice.Lines
+                        .Select(line =>
+                            new SalesInvoiceLineRequest(
+                                line.Description,
+                                line.Quantity,
+                                line.UnitPrice,
+                                line.VatTreatment,
+                                line.RevenueAccountId,
+                                line.ProductItemId,
+                                line.CustomerPurchaseOrderNumber))
+                        .ToList());
+
+            var copied =
+                await InvoiceService.CreateDraftAsync(
+                    userId,
+                    request);
+
+            Navigation.NavigateTo(
+                $"o/{OrganisationId}/sales/{copied.Id}/edit");
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                  or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+        }
     }
 
     private async Task PostDraft()

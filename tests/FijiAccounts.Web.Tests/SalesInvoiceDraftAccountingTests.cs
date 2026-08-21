@@ -1,4 +1,4 @@
-using FijiAccounts.Domain.Tax;
+﻿using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -423,5 +423,81 @@ public sealed class SalesInvoiceDraftAccountingTests
                     VatTreatment: VatTreatment.Standard,
                     RevenueAccountId: test.Account("4000").Id)
             ]);
+    }
+
+    [Fact]
+    public async Task InvoiceLines_CanPersistDifferentCustomerPurchaseOrderNumbers()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var request =
+            new SalesInvoiceRequest(
+                OrganisationId: test.Organisation.Id,
+                CustomerId: test.Customer.Id,
+                IssueDate: new DateOnly(2026, 8, 20),
+                DueDate: new DateOnly(2026, 9, 19),
+                Lines:
+                [
+                    new SalesInvoiceLineRequest(
+                        Description: "Service one",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id,
+                        CustomerPurchaseOrderNumber: "PO-1001"),
+
+                    new SalesInvoiceLineRequest(
+                        Description: "Service two",
+                        Quantity: 1m,
+                        UnitPrice: 200m,
+                        VatTreatment: VatTreatment.Standard,
+                        RevenueAccountId: test.Account("4000").Id,
+                        CustomerPurchaseOrderNumber: "PO-2002")
+                ]);
+
+        var draft =
+            await test.SalesInvoices.CreateDraftAsync(
+                test.UserId,
+                request);
+
+        var storedDraft =
+            await test.Db.SalesInvoices
+                .AsNoTracking()
+                .Include(x => x.Lines)
+                .SingleAsync(x => x.Id == draft.Id);
+
+        Assert.Equal(2, storedDraft.Lines.Count);
+
+        Assert.Contains(
+            storedDraft.Lines,
+            x => x.CustomerPurchaseOrderNumber == "PO-1001");
+
+        Assert.Contains(
+            storedDraft.Lines,
+            x => x.CustomerPurchaseOrderNumber == "PO-2002");
+
+        await test.SalesInvoices.PostDraftAsync(
+            test.UserId,
+            test.Organisation.Id,
+            draft.Id);
+
+        var storedPosted =
+            await test.Db.SalesInvoices
+                .AsNoTracking()
+                .Include(x => x.Lines)
+                .SingleAsync(x => x.Id == draft.Id);
+
+        Assert.Equal(
+            InvoiceStatus.Posted,
+            storedPosted.Status);
+
+        Assert.Contains(
+            storedPosted.Lines,
+            x => x.CustomerPurchaseOrderNumber == "PO-1001");
+
+        Assert.Contains(
+            storedPosted.Lines,
+            x => x.CustomerPurchaseOrderNumber == "PO-2002");
     }
 }
