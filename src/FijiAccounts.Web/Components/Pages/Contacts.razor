@@ -115,6 +115,11 @@ else
                                             @onclick="() => EditCustomerSettings(party)">
                                         Customer settings
                                     </button>
+
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="o/@OrganisationId/contacts/@party.Id/documents">
+                                    Documents
+                                </a>
                                 }
                             }
 
@@ -126,6 +131,11 @@ else
                                         @onclick="() => EditDefaults(party)">
                                     Supplier settings
                                 </button>
+
+                                <a class="btn btn-sm btn-outline-secondary ms-2"
+                                   href="o/@OrganisationId/contacts/@party.Id/documents">
+                                    Documents
+                                </a>
                             }
                         </td>
                     </tr>

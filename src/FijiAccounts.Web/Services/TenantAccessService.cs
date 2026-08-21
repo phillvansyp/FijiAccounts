@@ -41,4 +41,39 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             e.Access != EngagementAccess.ReadOnly && db.OrganisationMemberships.Any(m => m.OrganisationId == e.PracticeOrganisationId && m.UserId == userId &&
                 (m.Role == OrganisationRole.Owner || m.Role == OrganisationRole.Administrator || m.Role == OrganisationRole.Accountant || m.Role == OrganisationRole.Bookkeeper)));
     }
+
+    public async Task<bool> CanManageContactsAsync(
+    string userId,
+    Guid organisationId)
+{
+    if (await db.OrganisationMemberships.AnyAsync(
+        x =>
+            x.UserId == userId &&
+            x.OrganisationId == organisationId &&
+            (
+                x.Role == OrganisationRole.Owner ||
+                x.Role == OrganisationRole.Administrator ||
+                x.Role == OrganisationRole.Accountant ||
+                x.Role == OrganisationRole.Bookkeeper
+            )))
+    {
+        return true;
+    }
+
+    return await db.AccountantEngagements.AnyAsync(
+        e =>
+            e.ClientOrganisationId == organisationId &&
+            e.RevokedAt == null &&
+            e.Access != EngagementAccess.ReadOnly &&
+            db.OrganisationMemberships.Any(
+                m =>
+                    m.OrganisationId == e.PracticeOrganisationId &&
+                    m.UserId == userId &&
+                    (
+                        m.Role == OrganisationRole.Owner ||
+                        m.Role == OrganisationRole.Administrator ||
+                        m.Role == OrganisationRole.Accountant ||
+                        m.Role == OrganisationRole.Bookkeeper
+                    )));
+}
 }

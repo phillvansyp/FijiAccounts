@@ -65,6 +65,7 @@ builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<RecurringSalesInvoiceService>();
 builder.Services.AddHostedService<RecurringInvoiceGenerationWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
+builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<PurchasingService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<RecurringSupplierBillService>();
@@ -113,6 +114,7 @@ app.MapAdditionalIdentityEndpoints();
 
 // Supplier bill attachment endpoint (single registration only).
 app.MapSupplierBillAttachmentEndpoints();
+app.MapBusinessPartyDocumentEndpoints();
 
 if (app.Environment.IsDevelopment())
 {

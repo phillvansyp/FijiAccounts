@@ -1,0 +1,72 @@
+﻿using System.IO.Compression;
+using FijiAccounts.Web.Data;
+using Microsoft.EntityFrameworkCore;
+
+public static class BusinessPartyDocumentEndpoints
+{
+    public static IEndpointRouteBuilder MapBusinessPartyDocumentEndpoints(
+        this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapGet(
+            "/api/o/{organisationId:guid}/contacts/{partyId:guid}/documents/{documentId:guid}",
+            async (
+                Guid organisationId,
+                Guid partyId,
+                Guid documentId,
+                ApplicationDbContext db,
+                CancellationToken cancellationToken) =>
+            {
+                var document =
+                    await db.BusinessPartyDocuments
+                        .AsNoTracking()
+                        .SingleOrDefaultAsync(
+                            x =>
+                                x.Id == documentId &&
+                                x.BusinessPartyId == partyId &&
+                                x.OrganisationId == organisationId,
+                            cancellationToken);
+
+                if (document is null)
+                {
+                    return Results.NotFound();
+                }
+
+                byte[] content;
+
+                if (document.IsCompressed)
+                {
+                    using var input =
+                        new MemoryStream(document.Content);
+
+                    using var brotli =
+                        new BrotliStream(
+                            input,
+                            CompressionMode.Decompress);
+
+                    using var output =
+                        new MemoryStream();
+
+                    await brotli.CopyToAsync(
+                        output,
+                        cancellationToken);
+
+                    content =
+                        output.ToArray();
+                }
+                else
+                {
+                    content =
+                        document.Content;
+                }
+
+                return Results.File(
+                    content,
+                    document.ContentType,
+                    document.FileName,
+                    enableRangeProcessing: true);
+            })
+            .RequireAuthorization();
+
+        return endpoints;
+    }
+}

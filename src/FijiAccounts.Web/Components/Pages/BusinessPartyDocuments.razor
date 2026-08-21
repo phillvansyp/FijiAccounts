@@ -1,0 +1,369 @@
+@page "/o/{OrganisationId:guid}/contacts/{PartyId:guid}/documents"
+
+@using System.IO.Compression
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+
+@attribute [Authorize]
+
+@inject ApplicationDbContext Db
+@inject BusinessPartyDocumentService Documents
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+
+<PageTitle>Documents · Account Island</PageTitle>
+
+@if (party is null)
+{
+    <div class="alert alert-danger">
+        Contact not found.
+    </div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Contact documents</p>
+            <h1>@party.Name</h1>
+            <p class="page-intro">
+                Contracts, agreements, certificates and supporting documents.
+            </p>
+        </div>
+    </div>
+
+    <section class="setup-card mb-4">
+        <h2>Add document</h2>
+
+        <div class="mb-3">
+            <label class="form-label">Document name</label>
+            <InputText class="form-control"
+                       @bind-Value="name" />
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Type</label>
+            <InputSelect class="form-select"
+                         @bind-Value="type">
+                @foreach (var item in Enum.GetValues<BusinessPartyDocumentType>())
+                {
+                    <option value="@item">@item</option>
+                }
+            </InputSelect>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Expiry date</label>
+            <InputDate class="form-control"
+                       @bind-Value="expiryDate" />
+        </div>
+
+        <div class="document-drop-zone"
+>
+
+    <InputFile id="documentUpload"
+               class="document-file-input"
+               OnChange="Upload"
+               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+               multiple />
+
+    <strong>
+        Drop documents here
+    </strong>
+
+    <span>
+        or click to choose files. Maximum 10 MB per file.
+    </span>
+
+</div>
+
+        @if (!string.IsNullOrWhiteSpace(message))
+        {
+            <div class="mt-3 alert alert-info">
+                @message
+            </div>
+        }
+    </section>
+
+    <section class="setup-card">
+
+        <h2>Documents</h2>
+
+        <table class="table align-middle">
+
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Uploaded</th>
+                    <th>Original Size</th>
+                    <th>Stored Size</th>
+                    <th>Status</th>
+                    <th>Expiry Date</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+            @foreach (var document in documents)
+            {
+                <tr>
+
+                    <td>
+                        <strong>@document.Name</strong>
+                    </td>
+
+                    <td>
+                        <span class="badge bg-primary">
+                            @document.Type
+                        </span>
+                    </td>
+
+                    <td>
+                        @document.UploadedAtUtc.ToLocalTime().ToString("dd MMM yyyy")
+                    </td>
+
+                    <td>
+                        @((document.OriginalSize / 1024m / 1024m).ToString("N2")) MB
+                    </td>
+
+                    <td>
+                        @((document.StoredSize / 1024m / 1024m).ToString("N2")) MB
+
+                        @if (document.IsCompressed)
+                        {
+                            <div class="text-success small">
+                                Compressed
+                            </div>
+                        }
+                    </td>
+
+                    <td>
+                        <span class="badge bg-success">
+                            Active
+                        </span>
+                    </td>
+
+                    <td>
+                        @if (document.ExpiryDate.HasValue)
+                        {
+                            @document.ExpiryDate.Value.ToString("dd MMM yyyy")
+                        }
+                        else
+                        {
+                            <span>-</span>
+                        }
+                    </td>
+
+                    <td class="text-end">
+
+                        <a class="btn btn-sm btn-outline-primary me-1"
+                           target="_blank"
+                           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@document.Id">
+                            View
+                        </a>
+
+                        <a class="btn btn-sm btn-outline-secondary me-1"
+                           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@document.Id">
+                            Download
+                        </a>
+
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                @onclick="() => DeleteDocument(document.Id)">
+                            Delete
+                        </button>
+
+                    </td>
+
+                </tr>
+            }
+
+            </tbody>
+
+        </table>
+
+    </section>
+}
+
+@code {
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    [Parameter]
+    public Guid PartyId { get; set; }
+
+    private string userId = "";
+    private BusinessParty? party;
+    private List<BusinessPartyDocument> documents = [];
+
+    private string name = "";
+    private BusinessPartyDocumentType type =
+        BusinessPartyDocumentType.Contract;
+
+    private DateOnly? expiryDate;
+
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state =
+            await AuthenticationStateProvider
+                .GetAuthenticationStateAsync();
+
+        userId =
+            UserManager.GetUserId(state.User)!;
+
+        party =
+            await Db.BusinessParties
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == PartyId &&
+                        x.OrganisationId == OrganisationId);
+
+        if (party is not null)
+        {
+            documents =
+                await Documents.GetForPartyAsync(
+                    OrganisationId,
+                    PartyId);
+        }
+    }
+
+
+    private async Task Upload(
+    InputFileChangeEventArgs e)
+{
+    try
+    {
+        var files =
+            e.GetMultipleFiles(10);
+
+        foreach (var file in files)
+        {
+            if (file.Size <= 0)
+            {
+                continue;
+            }
+
+            if (file.Size > 10 * 1024 * 1024)
+            {
+                message =
+                    $"{file.Name} is larger than the 10 MB limit.";
+
+                continue;
+            }
+
+            var contentType =
+                string.IsNullOrWhiteSpace(file.ContentType)
+                    ? "application/octet-stream"
+                    : file.ContentType.ToLowerInvariant();
+
+            var allowed =
+                new[]
+                {
+                    "application/pdf",
+                    "application/msword",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "image/jpeg",
+                    "image/png"
+                };
+
+            if (!allowed.Contains(contentType))
+            {
+                message =
+                    $"{file.Name} is not a supported file type.";
+
+                continue;
+            }
+
+            await using var stream =
+                file.OpenReadStream(10 * 1024 * 1024);
+
+            using var input =
+                new MemoryStream();
+
+            await stream.CopyToAsync(input);
+
+            var original =
+                input.ToArray();
+
+            using var compressed =
+                new MemoryStream();
+
+            using (var brotli =
+                new BrotliStream(
+                    compressed,
+                    CompressionLevel.Optimal,
+                    true))
+            {
+                await brotli.WriteAsync(original);
+            }
+
+            var stored =
+                compressed.Length < original.Length
+                    ? compressed.ToArray()
+                    : original;
+
+            await Documents.AddAsync(
+                userId,
+                new BusinessPartyDocumentUploadRequest(
+                    OrganisationId,
+                    PartyId,
+                    type,
+                    string.IsNullOrWhiteSpace(name)
+                        ? Path.GetFileNameWithoutExtension(file.Name)
+                        : name,
+                    null,
+                    file.Name,
+                    contentType,
+                    stored,
+                    original.LongLength,
+                    stored.Length < original.Length,
+                    expiryDate));
+        }
+
+        name = "";
+        expiryDate = null;
+
+        documents =
+            await Documents.GetForPartyAsync(
+                OrganisationId,
+                PartyId);
+
+        StateHasChanged();
+
+        message =
+    $"{files.Count} document(s) uploaded. Total documents now: {documents.Count}";
+    }
+    catch (Exception ex)
+    {
+        message =
+            $"Upload failed: {ex.Message}";
+    }
+    }
+
+    private async Task DeleteDocument(Guid id)
+    {
+        await Documents.DeleteAsync(
+            userId,
+            OrganisationId,
+            id);
+
+        documents =
+            await Documents.GetForPartyAsync(
+                OrganisationId,
+                PartyId);
+
+        message =
+            "Document deleted.";
+    }}

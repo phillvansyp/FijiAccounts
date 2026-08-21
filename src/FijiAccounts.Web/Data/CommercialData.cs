@@ -66,17 +66,19 @@ public sealed class BusinessPartyDocument
     [MaxLength(500)]
     public string? Description { get; set; }
 
-    [MaxLength(260)]
+    [MaxLength(255)]
     public required string FileName { get; set; }
 
-    [MaxLength(200)]
+    [MaxLength(100)]
     public required string ContentType { get; set; }
 
-    public byte[] Content { get; set; } = [];
+    public long OriginalSize { get; set; }
+
+    public long StoredSize { get; set; }
 
     public bool IsCompressed { get; set; }
 
-    public long OriginalSize { get; set; }
+    public required byte[] Content { get; set; }
 
     public DateOnly? ExpiryDate { get; set; }
 
