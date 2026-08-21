@@ -156,7 +156,7 @@ else
 
     </text>;
 
-    @if (showBillForm && editingRecurringBillId is null && canPost && suppliers.Count > 0 && expenseAccounts.Count > 0)
+    @if (showBillForm && editingDraftId is null && editingRecurringBillId is null && canPost && suppliers.Count > 0 && expenseAccounts.Count > 0)
     {
         @supplierBillEditor
     }    else if (showBillForm && suppliers.Count == 0) { <div class="alert alert-info">Add a supplier first. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
@@ -288,49 +288,207 @@ else
         </div>
     }
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
+@if (drafts.Count > 0)
+{
+    <section class="bill-list bill-register mb-4">
+        <div class="list-heading">
+            <div>
+                <h2>Drafts</h2>
+                <p>Supplier bills saved for later</p>
+            </div>
+
+            <div class="d-flex align-items-center gap-2">
+                <span class="status-badge status-draft">
+                    @drafts.Count draft@(drafts.Count == 1 ? "" : "s")
+                </span>
+
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        @onclick="() => showDrafts = !showDrafts">
+                    @(showDrafts
+                        ? "Hide drafts"
+                        : "Open drafts")
+                </button>
+            </div>
+        </div>
+
+        @if (showDrafts)
+        {
+            <div class="table-responsive">
+                <table class="table bill-register-table">
+                    <thead>
+                        <tr>
+                            <th>View</th>
+                            <th>From</th>
+                            <th>Status</th>
+                            <th>Reference</th>
+                            <th>Date</th>
+                            <th>Due date</th>
+                            <th class="text-end">Due</th>
+                            <th class="text-center">Files</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in drafts)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="bill-view-actions">
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-primary"
+                                                title="Open draft"
+                                                @onclick="() => EditDraft(item)">
+                                            View
+                                        </button>
+
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-danger"
+                                                title="Delete draft"
+                                                @onclick="() => DeleteDraft(item.Id)">
+                                            ×
+                                        </button>
+                                    </div>
+                                </td>
+
+                                <td class="bill-register-from">
+                                    @(item.Supplier?.Name ?? "Supplier not selected")
+                                </td>
+
+                                <td>
+                                    <span class="status-badge status-draft">
+                                        Draft
+                                    </span>
+                                </td>
+
+                                <td>
+                                    @(string.IsNullOrWhiteSpace(item.SupplierReference)
+                                        ? "—"
+                                        : item.SupplierReference)
+                                </td>
+
+                                <td>@item.BillDate.ToString("dd MMM yyyy")</td>
+                                <td>@item.DueDate.ToString("dd MMM yyyy")</td>
+
+                                <td class="text-end outstanding">
+                                    $@DraftTotal(item).ToString("N2")
+                                </td>
+
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="bill-file-link"
+                                            title="Open draft attachments"
+                                            @onclick="() => EditDraft(item)">
+                                        <span>@(item.AttachmentContent is null ? 0 : 1)</span>
+                                        <span aria-hidden="true">&#128196;</span>
+                                    </button>
+                                </td>
+                            </tr>
+
+                            @if (showBillForm &&
+                                 editingDraftId == item.Id)
+                            {
+                                <tr>
+                                    <td colspan="8"
+                                        class="p-0 border-0">
+                                        <div class="mt-3 mb-4">
+                                            @supplierBillEditor
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
 <section class="bill-list bill-register">
     <div class="list-heading">
-        <div><h2>Bills</h2><p>Draft, awaiting payment and paid supplier bills</p></div>
-        <span class="status-badge status-draft">@(bills.Count + drafts.Count) total</span>
+        <div>
+            <h2>Bills</h2>
+            <p>Awaiting payment and paid supplier bills</p>
+        </div>
+
+        <span class="status-badge status-draft">
+            @bills.Count total
+        </span>
     </div>
-    @if (bills.Count == 0 && drafts.Count == 0)
+
+    @if (bills.Count == 0)
     {
-        <div class="empty-state"><strong>No supplier bills yet</strong><span>Create a new bill or save one as a draft.</span></div>
+        <div class="empty-state">
+            <strong>No posted supplier bills yet</strong>
+            <span>Create a new bill and approve it when ready.</span>
+        </div>
     }
     else
     {
         <div class="table-responsive">
             <table class="table bill-register-table">
-                <thead><tr><th>View</th><th>From</th><th>Status</th><th>Reference</th><th>Date</th><th>Due date</th><th class="text-end">Paid</th><th class="text-end">Due</th><th class="text-center">Files</th></tr></thead>
-                <tbody>
-                @foreach (var item in drafts)
-                {
+                <thead>
                     <tr>
-                        <td><div class="bill-view-actions"><button type="button" class="btn btn-sm btn-outline-primary" title="Open draft" @onclick="() => EditDraft(item)">View</button><button type="button" class="btn btn-sm btn-outline-danger" title="Delete draft" @onclick="() => DeleteDraft(item.Id)">×</button></div></td>
-                        <td class="bill-register-from">@(item.Supplier?.Name ?? "Supplier not selected")</td>
-                        <td><span class="status-badge status-draft">Draft</span></td>
-                        <td>@(string.IsNullOrWhiteSpace(item.SupplierReference) ? "—" : item.SupplierReference)</td>
-                        <td>@item.BillDate.ToString("dd MMM yyyy")</td>
-                        <td>@item.DueDate.ToString("dd MMM yyyy")</td>
-                        <td class="text-end">$0.00</td>
-                        <td class="text-end outstanding">$@DraftTotal(item).ToString("N2")</td>
-                        <td class="text-center"><button type="button" class="bill-file-link" title="Open draft attachments" @onclick="() => EditDraft(item)"><span>@(item.AttachmentContent is null ? 0 : 1)</span><span aria-hidden="true">&#128196;</span></button></td>
+                        <th>View</th>
+                        <th>From</th>
+                        <th>Status</th>
+                        <th>Reference</th>
+                        <th>Date</th>
+                        <th>Due date</th>
+                        <th class="text-end">Paid</th>
+                        <th class="text-end">Due</th>
+                        <th class="text-center">Files</th>
                     </tr>
-                }
-                @foreach (var item in bills)
-                {
-                    <tr class="@(IsOverdue(item) ? "overdue-row" : null)">
-                        <td><a class="btn btn-sm btn-outline-primary" title="View bill" href="o/@OrganisationId/purchases/@item.Id">View</a></td>
-                        <td class="bill-register-from">@item.Supplier.Name</td>
-                        <td><span class="status-badge @BillRegisterStatusClass(item)">@BillRegisterStatus(item)</span></td>
-                        <td>@(string.IsNullOrWhiteSpace(item.SupplierReference) ? item.BillNumber : item.SupplierReference)</td>
-                        <td>@item.BillDate.ToString("dd MMM yyyy")</td>
-                        <td>@item.DueDate.ToString("dd MMM yyyy")</td>
-                        <td class="text-end">$@item.AmountPaid.ToString("N2")</td>
-                        <td class="text-end outstanding">$@Outstanding(item).ToString("N2")</td>
-                        <td class="text-center"><a class="bill-file-link" title="View bill attachments" href="o/@OrganisationId/purchases/@item.Id"><span>@item.Attachments.Count</span><span aria-hidden="true">&#128196;</span></a></td>
-                    </tr>
-                }
+                </thead>
+                <tbody>
+                    @foreach (var item in bills)
+                    {
+                        <tr class="@(IsOverdue(item) ? "overdue-row" : null)">
+                            <td>
+                                <a class="btn btn-sm btn-outline-primary"
+                                   title="View bill"
+                                   href="o/@OrganisationId/purchases/@item.Id">
+                                    View
+                                </a>
+                            </td>
+
+                            <td class="bill-register-from">
+                                @item.Supplier.Name
+                            </td>
+
+                            <td>
+                                <span class="status-badge @BillRegisterStatusClass(item)">
+                                    @BillRegisterStatus(item)
+                                </span>
+                            </td>
+
+                            <td>
+                                @(string.IsNullOrWhiteSpace(item.SupplierReference)
+                                    ? item.BillNumber
+                                    : item.SupplierReference)
+                            </td>
+
+                            <td>@item.BillDate.ToString("dd MMM yyyy")</td>
+                            <td>@item.DueDate.ToString("dd MMM yyyy")</td>
+
+                            <td class="text-end">
+                                $@item.AmountPaid.ToString("N2")
+                            </td>
+
+                            <td class="text-end outstanding">
+                                $@Outstanding(item).ToString("N2")
+                            </td>
+
+                            <td class="text-center">
+                                <a class="bill-file-link"
+                                   title="View bill attachments"
+                                   href="o/@OrganisationId/purchases/@item.Id">
+                                    <span>@item.Attachments.Count</span>
+                                    <span aria-hidden="true">&#128196;</span>
+                                </a>
+                            </td>
+                        </tr>
+                    }
                 </tbody>
             </table>
         </div>
@@ -342,7 +500,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool isRecurringBill; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showDrafts; private bool isRecurringBill; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
 protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync(); expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Code == "1200" || x.Code == "1500")).OrderBy(x => x.Code).ToListAsync(); bankAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync(); await Reload(); ResetBillForm(); ResetPayment(); ResetRecurringBill(); showBillForm = false; }
     private async Task Reload() { bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
 
