@@ -1095,7 +1095,155 @@ private void ToggleRecurringBill()
 
         await PostBill();
     }
-    private async Task PostBill() { try { var draftId = editingDraftId; var lines = new List<SupplierBillLineRequest> { new(bill.Description, bill.Quantity, bill.UnitPrice, bill.VatTreatment, bill.ExpenseAccountId, bill.ProductItemId) }; lines.AddRange(additionalBillLines.Select(x => new SupplierBillLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.ExpenseAccountId, x.ProductItemId))); var result = await Purchasing.PostBillAsync(userId, new(OrganisationId, bill.SupplierId, bill.SupplierReference, bill.BillDate, bill.DueDate, lines)); var supplier = await Db.BusinessParties.FirstOrDefaultAsync(x => x.Id == bill.SupplierId && x.OrganisationId == OrganisationId); if (supplier is not null && supplier.DefaultPurchaseAccountId is null) { supplier.DefaultPurchaseAccountId = bill.ExpenseAccountId; supplier.DefaultPurchaseVatTreatment = bill.VatTreatment; } var hadAttachment = pendingAttachment is not null; if (pendingAttachment is not null) { Db.SupplierBillAttachments.Add(new SupplierBillAttachment { OrganisationId = OrganisationId, SupplierBillId = result.Id, FileName = pendingAttachment.FileName, ContentType = pendingAttachment.ContentType, OriginalSize = pendingAttachment.OriginalSize, StoredSize = pendingAttachment.Content.LongLength, IsCompressed = pendingAttachment.IsCompressed, Content = pendingAttachment.Content, UploadedByUserId = userId }); } if (draftId is Guid id) { var draft = await Db.SupplierBillDrafts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId); if (draft is not null) Db.SupplierBillDrafts.Remove(draft); } await Db.SaveChangesAsync(); ResetBillForm(); showBillForm = false; await Reload(); ResetPayment(); statusClass="alert-success"; status=$"{result.BillNumber} posted for ${result.Total:N2}{(hadAttachment ? " with its attachment." : ".")}"; } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException or DbUpdateException) { statusClass="alert-danger"; status=ex.Message; } }
+    private async Task PostBill()
+    {
+        try
+        {
+            var lines =
+                new List<SupplierBillLineRequest>
+                {
+                    new(
+                        bill.Description,
+                        bill.Quantity,
+                        bill.UnitPrice,
+                        bill.VatTreatment,
+                        bill.ExpenseAccountId,
+                        bill.ProductItemId)
+                };
+
+            lines.AddRange(
+                additionalBillLines.Select(
+                    x =>
+                        new SupplierBillLineRequest(
+                            x.Description,
+                            x.Quantity,
+                            x.UnitPrice,
+                            x.VatTreatment,
+                            x.ExpenseAccountId,
+                            x.ProductItemId)));
+
+            var request =
+                new SupplierBillRequest(
+                    OrganisationId,
+                    bill.SupplierId,
+                    bill.SupplierReference,
+                    bill.BillDate,
+                    bill.DueDate,
+                    lines);
+
+            SupplierBill result;
+
+            if (editingDraftId is Guid draftId)
+            {
+                SupplierBillAttachmentRequest? attachment =
+                    pendingAttachment is null
+                        ? null
+                        : new SupplierBillAttachmentRequest(
+                            pendingAttachment.FileName,
+                            pendingAttachment.ContentType,
+                            pendingAttachment.OriginalSize,
+                            pendingAttachment.Content,
+                            pendingAttachment.IsCompressed);
+
+                result =
+                    await Purchasing.PostDraftBillAsync(
+                        userId,
+                        draftId,
+                        request,
+                        attachment);
+            }
+            else
+            {
+                result =
+                    await Purchasing.PostBillAsync(
+                        userId,
+                        request);
+
+                if (pendingAttachment is not null)
+                {
+                    Db.SupplierBillAttachments.Add(
+                        new SupplierBillAttachment
+                        {
+                            OrganisationId =
+                                OrganisationId,
+
+                            SupplierBillId =
+                                result.Id,
+
+                            FileName =
+                                pendingAttachment.FileName,
+
+                            ContentType =
+                                pendingAttachment.ContentType,
+
+                            OriginalSize =
+                                pendingAttachment.OriginalSize,
+
+                            StoredSize =
+                                pendingAttachment.Content.LongLength,
+
+                            IsCompressed =
+                                pendingAttachment.IsCompressed,
+
+                            Content =
+                                pendingAttachment.Content,
+
+                            UploadedByUserId =
+                                userId
+                        });
+                }
+            }
+
+            var supplier =
+                await Db.BusinessParties
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.Id == bill.SupplierId &&
+                            x.OrganisationId == OrganisationId);
+
+            if (supplier is not null &&
+                supplier.DefaultPurchaseAccountId is null)
+            {
+                supplier.DefaultPurchaseAccountId =
+                    bill.ExpenseAccountId;
+
+                supplier.DefaultPurchaseVatTreatment =
+                    bill.VatTreatment;
+            }
+
+            var hadAttachment =
+                pendingAttachment is not null;
+
+            await Db.SaveChangesAsync();
+
+            ResetBillForm();
+            showBillForm = false;
+
+            await Reload();
+            ResetPayment();
+
+            statusClass =
+                "alert-success";
+
+            status =
+                $"{result.BillNumber} posted for ${result.Total:N2}" +
+                (hadAttachment
+                    ? " with its attachment."
+                    : ".");
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException
+                or UnauthorizedAccessException
+                or DomainException
+                or DbUpdateException)
+        {
+            statusClass =
+                "alert-danger";
+
+            status =
+                ex.Message;
+        }
+    }
     private async Task PayBill() { try { var result = await Purchasing.PayBillAsync(userId, new(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId)); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
     private int OverdueCount => bills.Count(IsOverdue);
