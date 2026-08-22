@@ -50,3 +50,31 @@
 .notification-amount .text-danger {
     color: #c92a2a;
 }
+
+.notification-filters {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.filter-group {
+    display: flex;
+    gap: .5rem;
+}
+
+.filter-button,
+.filter-active {
+    border: 1px solid #d9e2ec;
+    background: white;
+    padding: .45rem .9rem;
+    border-radius: .5rem;
+    cursor: pointer;
+    font-size: .9rem;
+}
+
+.filter-active {
+    font-weight: 700;
+}
+

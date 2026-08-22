@@ -15,6 +15,57 @@
 
 <h1>Notifications</h1>
 
+<div class="notification-filters">
+
+    <div class="filter-group">
+        <button class="@GetCategoryClass(null)"
+                @onclick="() => selectedCategory = null">
+            All
+        </button>
+
+        <button class="@GetCategoryClass(NotificationType.PaymentDueSoon)"
+                @onclick="() => selectedCategory = NotificationType.PaymentDueSoon">
+            Financial
+        </button>
+
+        <button class="@GetCategoryClass(NotificationType.DocumentExpiry)"
+                @onclick="() => selectedCategory = NotificationType.DocumentExpiry">
+            Documents
+        </button>
+
+        <button class="@GetCategoryClass(NotificationType.System)"
+                @onclick="() => selectedCategory = NotificationType.System">
+            System
+        </button>
+    </div>
+
+
+    <div class="filter-group">
+
+        <button class="@GetStatusClass(null)"
+                @onclick="() => selectedStatus = null">
+            All
+        </button>
+
+        <button class="@GetStatusClass(NotificationStatus.Open)"
+                @onclick="() => selectedStatus = NotificationStatus.Open">
+            Open
+        </button>
+
+        <button class="@GetStatusClass(NotificationStatus.Acknowledged)"
+                @onclick="() => selectedStatus = NotificationStatus.Acknowledged">
+            Acknowledged
+        </button>
+
+        <button class="@GetStatusClass(NotificationStatus.Resolved)"
+                @onclick="() => selectedStatus = NotificationStatus.Resolved">
+            Resolved
+        </button>
+
+    </div>
+
+</div>
+
 @if (notifications.Count == 0)
 {
     <div class="alert alert-info">
@@ -34,7 +85,7 @@ else
             <div>Actions</div>
         </div>
 
-        @foreach (var notification in notifications)
+        @foreach (var notification in FilteredNotifications)
         {
             <div class="notification-row">
 
@@ -148,6 +199,38 @@ else
     private List<Notification> notifications = [];
     private Dictionary<Guid, string> notificationLinks = [];
     private string userId = "";
+
+    private NotificationType? selectedCategory;
+
+    private NotificationStatus? selectedStatus;
+
+    private IEnumerable<Notification> FilteredNotifications =>
+        notifications
+            .Where(
+                x =>
+                    (!selectedCategory.HasValue ||
+                     x.Type == selectedCategory.Value)
+                    &&
+                    (!selectedStatus.HasValue ||
+                     x.Status == selectedStatus.Value));
+
+
+    private string GetCategoryClass(
+        NotificationType? type)
+    {
+        return selectedCategory == type
+            ? "filter-active"
+            : "filter-button";
+    }
+
+
+    private string GetStatusClass(
+        NotificationStatus? status)
+    {
+        return selectedStatus == status
+            ? "filter-active"
+            : "filter-button";
+    }
 
     protected override async Task OnParametersSetAsync()
     {
