@@ -67,3 +67,81 @@
     background: #c44536;
 }
 
+.intelligence-card {
+    margin-top: 1rem;
+}
+
+.intelligence-grid {
+    display: grid;
+    gap: .8rem;
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.intelligence-metric {
+    background: #f6f9fa;
+    border: 1px solid #e4ebee;
+    border-radius: .8rem;
+    color: #17324d;
+    display: flex;
+    flex-direction: column;
+    min-height: 145px;
+    padding: 1rem;
+    text-decoration: none;
+}
+
+.intelligence-metric:hover {
+    border-color: #8edcc8;
+}
+
+.intelligence-metric > span {
+    align-items: center;
+    color: #607681;
+    display: flex;
+    font-size: .82rem;
+    font-weight: 700;
+    justify-content: space-between;
+}
+
+.intelligence-metric strong {
+    font-size: 1.45rem;
+    margin: .7rem 0;
+}
+
+.intelligence-metric small {
+    color: #687b86;
+    margin-top: auto;
+}
+
+.risk-badge {
+    border-radius: 2rem;
+    font-size: .68rem;
+    padding: .22rem .45rem;
+}
+
+.risk-badge.current {
+    background: #e7f7f1;
+    color: #087057;
+}
+
+.risk-badge.watch {
+    background: #fff3df;
+    color: #9a5d00;
+}
+
+.risk-badge.high {
+    background: #fde8e5;
+    color: #a8372a;
+}
+
+@media (max-width: 1000px) {
+    .intelligence-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 600px) {
+    .intelligence-grid {
+        grid-template-columns: 1fr;
+    }
+}
+

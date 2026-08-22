@@ -15,6 +15,7 @@
 @inject NavigationManager Navigation
 @inject NotificationService NotificationService
 @inject CashflowForecastService CashflowForecastService
+@inject FinancialRiskService FinancialRiskService
 
 <PageTitle>@(access?.Organisation.LegalName ?? "Organisation") · Account Island</PageTitle>
 @if (loading) { <div class="dashboard-loading">Preparing your island...</div> }
@@ -111,6 +112,47 @@ else
         </section>
     }
 
+    @if (cashflowForecast is not null && financialRisk is not null)
+    {
+        <section class="detail-card intelligence-card">
+            <div class="card-heading">
+                <div>
+                    <span class="eyebrow">Financial intelligence</span>
+                    <h2>Collections, obligations and ageing risk</h2>
+                </div>
+                <span>Next 30 days</span>
+            </div>
+            <div class="intelligence-grid">
+                <a href="o/@OrganisationId/sales" class="intelligence-metric">
+                    <span>Expected collections</span>
+                    <strong>$@cashflowForecast.Next30Days.ExpectedReceipts.ToString("N2")</strong>
+                    <small>Outstanding customer invoices due within 30 days</small>
+                </a>
+                <a href="o/@OrganisationId/purchases" class="intelligence-metric">
+                    <span>Upcoming obligations</span>
+                    <strong>$@cashflowForecast.Next30Days.ExpectedPayments.ToString("N2")</strong>
+                    <small>Outstanding supplier bills due within 30 days</small>
+                </a>
+                <a href="o/@OrganisationId/reports/aging/receivables" class="intelligence-metric">
+                    <span>
+                        Receivables risk
+                        <b class="@GetRiskClass(financialRisk.Receivables.RiskLevel)">@GetRiskLabel(financialRisk.Receivables.RiskLevel)</b>
+                    </span>
+                    <strong>$@financialRisk.Receivables.Overdue.ToString("N2")</strong>
+                    <small>@financialRisk.Receivables.OverduePercentage.ToString("N0")% overdue · $@financialRisk.Receivables.Over90.ToString("N2") over 90 days</small>
+                </a>
+                <a href="o/@OrganisationId/reports/aging/payables" class="intelligence-metric">
+                    <span>
+                        Payables risk
+                        <b class="@GetRiskClass(financialRisk.Payables.RiskLevel)">@GetRiskLabel(financialRisk.Payables.RiskLevel)</b>
+                    </span>
+                    <strong>$@financialRisk.Payables.Overdue.ToString("N2")</strong>
+                    <small>@financialRisk.Payables.OverduePercentage.ToString("N0")% overdue · $@financialRisk.Payables.Over90.ToString("N2") over 90 days</small>
+                </a>
+            </div>
+        </section>
+    }
+
     <section id="chart-of-accounts" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Accounting</span><h2>Chart of accounts</h2></div><span>@accounts.Count accounts</span></div><div class="table-responsive"><table class="table"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Status</th></tr></thead><tbody>@foreach (var account in accounts) { <tr><td><code>@account.Code</code></td><td>@account.Name</td><td>@account.Type</td><td><span class="status-pill">@(account.IsActive ? "Active" : "Archived")</span></td></tr> }</tbody></table></div></section>
     <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Role</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@member.Role</td></tr> }</tbody></table></div>
     @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="invite.Email" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
@@ -121,6 +163,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private InviteModel invite = new(); private string? invitationLink; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private CashflowForecast? cashflowForecast;
+    private FinancialRiskSummary? financialRisk;
     private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
     protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); cashPosition=await Db.PostedJournalLines.AsNoTracking().Where(x=>x.PostedJournal.OrganisationId==OrganisationId && x.LedgerAccount.Code=="1000").SumAsync(x=>(decimal?)(x.Debit-x.Credit))??0; receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
 
@@ -138,6 +181,10 @@ systemAlertCount =
 
 cashflowForecast =
     await CashflowForecastService.GetAsync(
+        OrganisationId);
+
+financialRisk =
+    await FinancialRiskService.GetAsync(
         OrganisationId);
 var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
     private IEnumerable<(string Label, CashflowPeriodSummary Summary)> GetCashflowPeriods()
@@ -186,6 +233,23 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         amount < 0
             ? $"-${Math.Abs(amount):N2}"
             : $"${amount:N2}";
+
+    private static string GetRiskLabel(FinancialRiskLevel riskLevel) =>
+        riskLevel switch
+        {
+            FinancialRiskLevel.High => "High risk",
+            FinancialRiskLevel.Watch => "Watch",
+            _ => "Current"
+        };
+
+    private static string GetRiskClass(FinancialRiskLevel riskLevel) =>
+        riskLevel switch
+        {
+            FinancialRiskLevel.High => "risk-badge high",
+            FinancialRiskLevel.Watch => "risk-badge watch",
+            _ => "risk-badge current"
+        };
+
     private string GetCashflowStatus()
     {
         if (cashflowForecast is null)
