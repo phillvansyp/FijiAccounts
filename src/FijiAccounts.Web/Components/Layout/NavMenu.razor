@@ -6,6 +6,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject UserManager<ApplicationUser> UserManager
 @inject TenantAccessService TenantAccess
+@inject NotificationService NotificationService
 
 <header class="app-header"><nav class="nav-inner" aria-label="Primary navigation">
     <a class="brand" href=""><img class="brand-mark" src="account-island-logo.png" alt="" /><span>Account Island</span></a>
@@ -40,7 +41,16 @@
                 <details class="module-menu" name="account-island-top-menu"><summary>Reporting</summary><div class="mega-menu" onclick="this.closest('details').removeAttribute('open')"><strong>Financial reports</strong><a href="@OrgUrl("reports/profit-loss")">Profit &amp; Loss</a><a href="@OrgUrl("reports/balance-sheet")">Balance Sheet</a><a href="@OrgUrl("reports/trial-balance")">Trial Balance</a><a href="@OrgUrl("reports/cash-summary")">Cash summary</a><a href="@OrgUrl("budgets")">Budget vs actual</a><a href="@OrgUrl("general-ledger")">General ledger</a><a href="@OrgUrl("reports/aging")">Ageing reports</a><a href="@OrgUrl("reports/aging/receivables")">Receivables ageing</a><a href="@OrgUrl("reports/aging/payables")">Payables ageing</a><small>Live reports generated from posted ledger entries.</small></div></details>
                 <details class="module-menu" name="account-island-top-menu"><summary>Accounting</summary><div class="mega-menu" onclick="this.closest('details').removeAttribute('open')"><strong>Books &amp; controls</strong><a href="@OrgUrl("banking")">Bank accounts</a><a href="@OrgUrl("bank-transfers")">Bank transfers</a><a href="@OrgUrl("bank-rules")">Bank rules</a><a href="@OrgUrl("accounts")">Chart of accounts</a><a href="@OrgUrl("inventory")">Inventory valuation</a><a href="@OrgUrl("assets")">Fixed assets</a><a href="@OrgUrl("journals")">Manual journals</a><a href="@OrgUrl("periods")">Accounting periods</a><a href="@OrgUrl("audit")">Audit trail</a><small>Maintain the ledger, controls and audit access.</small></div></details>
                 <details class="module-menu" name="account-island-top-menu"><summary>Tax</summary><div class="mega-menu" onclick="this.closest('details').removeAttribute('open')"><strong>Fiji compliance</strong><a href="@OrgUrl("tax")">Tax centre</a><a href="@OrgUrl()#tax-position">Tax position</a><a href="help?from=vat">Fiji tax guidance</a><small>Verified, effective-dated Fiji tax treatment.</small></div></details>
-                <details class="module-menu" name="account-island-top-menu"><summary>Contacts</summary><div class="mega-menu" onclick="this.closest('details').removeAttribute('open')"><strong>Contacts</strong><a href="@OrgUrl("contacts")">All contacts</a><a href="@OrgUrl("contacts/customers")">Customers</a><a href="@OrgUrl("contacts/suppliers")">Suppliers</a><small>Manage the people and businesses you sell to and buy from.</small></div></details><NavLink href="@OrgUrl("notifications")">Notifications</NavLink>
+                <details class="module-menu" name="account-island-top-menu"><summary>Contacts</summary><div class="mega-menu" onclick="this.closest('details').removeAttribute('open')"><strong>Contacts</strong><a href="@OrgUrl("contacts")">All contacts</a><a href="@OrgUrl("contacts/customers")">Customers</a><a href="@OrgUrl("contacts/suppliers")">Suppliers</a><small>Manage the people and businesses you sell to and buy from.</small></div></details><NavLink href="@OrgUrl("notifications")">
+    Notifications
+
+    @if (unreadNotificationCount > 0)
+    {
+        <span class="badge bg-danger ms-1">
+            @unreadNotificationCount
+        </span>
+    }
+</NavLink>
             </div>
         }
     </Authorized><NotAuthorized><div class="primary-links"><NavLink href="" Match="NavLinkMatch.All">Home</NavLink></div></NotAuthorized></AuthorizeView>
@@ -52,12 +62,12 @@
 </nav></header>
 
 @code {
-    private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private List<AccessibleOrganisation> accessibleOrganisations = [];
+    private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private List<AccessibleOrganisation> accessibleOrganisations = []; private int unreadNotificationCount;
     private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
     protected override async Task OnInitializedAsync() { await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
     private async void LocationChanged(object? sender, LocationChangedEventArgs e) { await UpdateContext(); await InvokeAsync(StateHasChanged); }
-    private async Task UpdateContext() { currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri); activeOrganisationId = ExtractOrganisationId(currentUrl); activeOrganisationName = null; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User); accessibleOrganisations = userId is null ? [] : await TenantAccess.ListAsync(userId); if (activeOrganisationId is not null) activeOrganisationName = accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation.LegalName; if (activeOrganisationName is null && accessibleOrganisations.Count > 0) { activeOrganisationId = accessibleOrganisations[0].Organisation.Id; activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName; } }
+    private async Task UpdateContext() { currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri); activeOrganisationId = ExtractOrganisationId(currentUrl); activeOrganisationName = null; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User); accessibleOrganisations = userId is null ? [] : await TenantAccess.ListAsync(userId); if (activeOrganisationId is not null) activeOrganisationName = accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation.LegalName; if (activeOrganisationName is null && accessibleOrganisations.Count > 0) { activeOrganisationId = accessibleOrganisations[0].Organisation.Id; activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName; } unreadNotificationCount = activeOrganisationId is null ? 0 : await NotificationService.GetUnreadCountAsync(activeOrganisationId.Value); }
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
     private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
     private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();

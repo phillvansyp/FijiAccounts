@@ -94,6 +94,18 @@ public sealed class NotificationService(
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<int> GetUnreadCountAsync(
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        return await db.Notifications
+            .CountAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    !x.IsRead,
+                ct);
+    }
+
     public async Task MarkAsReadAsync(
         Guid notificationId,
         CancellationToken ct = default)
