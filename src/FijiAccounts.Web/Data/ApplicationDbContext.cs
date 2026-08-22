@@ -6,6 +6,9 @@ namespace FijiAccounts.Web.Data;
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
     public DbSet<Organisation> Organisations => Set<Organisation>();
+    public DbSet<OrganisationGroup> OrganisationGroups => Set<OrganisationGroup>();
+    public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
     public DbSet<OrganisationMembership> OrganisationMemberships => Set<OrganisationMembership>();
     public DbSet<AccountantEngagement> AccountantEngagements => Set<AccountantEngagement>();
@@ -80,6 +83,35 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.Entity<Organisation>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.Companies)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Organisation>()
+            .HasIndex(x => x.OrganisationGroupId);
+        builder.Entity<Branch>()
+            .HasIndex(x => new { x.OrganisationId, x.Code })
+            .IsUnique();
+        builder.Entity<Branch>()
+            .HasIndex(x => new { x.OrganisationId, x.Name })
+            .IsUnique();
+        builder.Entity<Branch>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Division>()
+            .HasIndex(x => new { x.BranchId, x.Code })
+            .IsUnique();
+        builder.Entity<Division>()
+            .HasIndex(x => new { x.BranchId, x.Name })
+            .IsUnique();
+        builder.Entity<Division>()
+            .HasOne(x => x.Branch)
+            .WithMany(x => x.Divisions)
+            .HasForeignKey(x => x.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationMembership>().HasKey(x => new { x.OrganisationId, x.UserId });
         builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Code }).IsUnique();
         builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Name }).IsUnique();

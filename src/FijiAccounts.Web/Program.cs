@@ -60,6 +60,7 @@ builder.Services.ConfigureApplicationCookie(options =>
 });
 
 builder.Services.AddScoped<TenantAccessService>();
+builder.Services.AddScoped<EnterpriseStructureService>();
 builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<RecurringSalesInvoiceService>();

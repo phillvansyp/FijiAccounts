@@ -7,9 +7,23 @@ public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Pay
 public enum EngagementAccess { ReadOnly, Bookkeeping, Accountant, Full }
 public enum OrganisationUnitType { Department, Branch }
 
+public sealed class OrganisationGroup
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [MaxLength(160)]
+    public required string Name { get; set; }
+
+    public List<Organisation> Companies { get; set; } = [];
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public sealed class Organisation
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? OrganisationGroupId { get; set; }
+    public OrganisationGroup? OrganisationGroup { get; set; }
     [MaxLength(160)] public required string LegalName { get; set; }
     [MaxLength(80)] public string? TradingName { get; set; }
     [MaxLength(32)] public string? Tin { get; set; }
@@ -56,6 +70,41 @@ public sealed class Organisation
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;
     public OrganisationKind Kind { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class Branch
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+
+    [MaxLength(20)]
+    public required string Code { get; set; }
+
+    [MaxLength(120)]
+    public required string Name { get; set; }
+
+    public bool IsDefault { get; set; }
+    public bool IsActive { get; set; } = true;
+    public List<Division> Divisions { get; set; } = [];
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class Division
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid BranchId { get; set; }
+    public Branch Branch { get; set; } = null!;
+
+    [MaxLength(20)]
+    public required string Code { get; set; }
+
+    [MaxLength(120)]
+    public required string Name { get; set; }
+
+    public bool IsDefault { get; set; }
+    public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
