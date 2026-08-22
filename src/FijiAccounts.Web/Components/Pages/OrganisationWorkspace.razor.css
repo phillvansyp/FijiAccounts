@@ -7,3 +7,63 @@
     font-weight: 700;
 }
 
+.cashflow-card {
+    margin-top: 1rem;
+}
+
+.cashflow-description {
+    color: #687b86;
+    margin: -.35rem 0 1.1rem;
+}
+
+.cashflow-chart {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.cashflow-chart th,
+.cashflow-chart td {
+    border-top: 1px solid #edf1f3;
+    padding: .8rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.cashflow-chart thead th {
+    border-top: 0;
+    color: #687b86;
+    font-size: .78rem;
+    text-transform: uppercase;
+}
+
+.cashflow-chart tbody th {
+    white-space: nowrap;
+}
+
+.cashflow-chart td span {
+    display: block;
+    font-weight: 700;
+    margin-bottom: .35rem;
+}
+
+.cashflow-bar {
+    background: #087f5b;
+    border-radius: 1rem;
+    display: block;
+    height: .45rem;
+    max-width: 100%;
+    width: var(--bar-width);
+}
+
+.cashflow-bar.payments {
+    background: #d9822b;
+}
+
+.cashflow-bar.movement-positive {
+    background: #277da1;
+}
+
+.cashflow-bar.movement-negative {
+    background: #c44536;
+}
+

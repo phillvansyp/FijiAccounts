@@ -13,8 +13,11 @@ public sealed record CashflowPeriodSummary(
 
 
 public sealed record CashflowForecast(
+    CashflowPeriodSummary Today,
     CashflowPeriodSummary Next7Days,
-    CashflowPeriodSummary Next30Days);
+    CashflowPeriodSummary Next30Days,
+    CashflowPeriodSummary Next60Days,
+    CashflowPeriodSummary Next90Days);
 
 
 public sealed class CashflowForecastService(
@@ -34,6 +37,12 @@ public sealed class CashflowForecastService(
         var thirtyDays =
             today.AddDays(30);
 
+        var sixtyDays =
+            today.AddDays(60);
+
+        var ninetyDays =
+            today.AddDays(90);
+
 
         var invoices =
             await db.SalesInvoices
@@ -41,9 +50,10 @@ public sealed class CashflowForecastService(
                 .Where(
                     x =>
                         x.OrganisationId == organisationId &&
-                        x.DueDate > today &&
-                        x.DueDate <= thirtyDays &&
+                        x.DueDate >= today &&
+                        x.DueDate <= ninetyDays &&
                         x.AmountPaid + x.AmountCredited < x.Total &&
+                        x.Status != InvoiceStatus.Draft &&
                         x.Status != InvoiceStatus.Voided)
                 .ToListAsync(ct);
 
@@ -54,8 +64,8 @@ public sealed class CashflowForecastService(
                 .Where(
                     x =>
                         x.OrganisationId == organisationId &&
-                        x.DueDate > today &&
-                        x.DueDate <= thirtyDays &&
+                        x.DueDate >= today &&
+                        x.DueDate <= ninetyDays &&
                         x.AmountPaid + x.AmountCredited < x.Total &&
                         x.Status != BillStatus.Voided)
                 .ToListAsync(ct);
@@ -65,11 +75,23 @@ public sealed class CashflowForecastService(
             CreateSummary(
                 invoices,
                 bills,
+                today),
+            CreateSummary(
+                invoices,
+                bills,
                 sevenDays),
             CreateSummary(
                 invoices,
                 bills,
-                thirtyDays));
+                thirtyDays),
+            CreateSummary(
+                invoices,
+                bills,
+                sixtyDays),
+            CreateSummary(
+                invoices,
+                bills,
+                ninetyDays));
     }
 
 
