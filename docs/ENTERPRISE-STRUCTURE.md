@@ -72,4 +72,6 @@ dimension until template-level allocation is added.
    templates and the remaining banking/inventory workflows are still pending.
 4. ~~Add explicit branch/division access grants.~~
 5. Add scoped and consolidated reporting. Branch/division financial statements
-   are complete; multi-company group consolidation remains pending.
+   and same-currency multi-company Profit & Loss and Balance Sheet consolidation
+   are complete. Foreign-currency translation and intercompany eliminations
+   remain pending.

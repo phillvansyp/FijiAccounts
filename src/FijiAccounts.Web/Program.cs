@@ -97,6 +97,7 @@ builder.Services.AddScoped<BankTransactionCodingService>();
 builder.Services.AddScoped<ProductCatalogService>();
 builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<FinancialReportService>();
+builder.Services.AddScoped<GroupFinancialReportService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankReconciliationSessionService>();
 builder.Services.AddScoped<BankAccountService>();

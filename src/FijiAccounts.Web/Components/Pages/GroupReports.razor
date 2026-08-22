@@ -1,0 +1,110 @@
+@page "/o/{OrganisationId:guid}/reports/group"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject GroupFinancialReportService ConsolidatedReports
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Group consolidation · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines same-currency company ledgers without changing their legal or tax boundaries. Figures are shown before intercompany eliminations.</p></div></div>
+    <section class="card p-4 mb-3 no-print">
+        <EditForm Model="filter" OnValidSubmit="Load" FormName="group-report-filter">
+            <div class="row align-items-end">
+                <div class="col-md-3 mb-2"><label class="form-label">Report</label><InputSelect class="form-select" @bind-Value="filter.ReportType"><option value="profit-loss">Profit &amp; Loss</option><option value="balance-sheet">Balance Sheet</option></InputSelect></div>
+                <div class="col-md-3 mb-2"><label class="form-label">From</label><InputDate class="form-control" @bind-Value="filter.From" /></div>
+                <div class="col-md-3 mb-2"><label class="form-label">To</label><InputDate class="form-control" @bind-Value="filter.To" /></div>
+                <div class="col-md-3 mb-2"><button class="btn btn-primary">Update</button></div>
+            </div>
+        </EditForm>
+    </section>
+
+    @if (error is not null)
+    {
+        <div class="alert alert-warning">@error</div>
+    }
+    else if (report is not null)
+    {
+        <section class="card p-4 mb-3">
+            <div class="d-flex justify-content-between align-items-start mb-3"><div><p class="eyebrow">@report.GroupName</p><h2>@(filter.ReportType == "profit-loss" ? "Consolidated Profit & Loss" : "Consolidated Balance Sheet")</h2><p class="text-muted mb-0">@PeriodLabel · @report.Currency · @report.Companies.Count legal companies</p></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print / Save PDF</button></div>
+            @if (filter.ReportType == "profit-loss")
+            {
+                <ReportSection Title="Income" Rows="RevenueRows" TotalLabel="Total income" Total="RevenueTotal" ShowAccountCodes="true" ShowDecimals="true" />
+                <ReportSection Title="Expenses" Rows="ExpenseRows" TotalLabel="Total expenses" Total="ExpenseTotal" ShowAccountCodes="true" ShowDecimals="true" />
+                <div class="d-flex justify-content-between border-top pt-3 fs-5"><strong>Group net profit</strong><strong>@Money(RevenueTotal - ExpenseTotal)</strong></div>
+            }
+            else
+            {
+                <ReportSection Title="Assets" Rows="AssetRows" TotalLabel="Total assets" Total="AssetTotal" ShowAccountCodes="true" ShowDecimals="true" />
+                <ReportSection Title="Liabilities" Rows="LiabilityRows" TotalLabel="Total liabilities" Total="LiabilityTotal" ShowAccountCodes="true" ShowDecimals="true" />
+                <ReportSection Title="Equity" Rows="EquityRows" TotalLabel="Total equity" Total="EquityTotal" ShowAccountCodes="true" ShowDecimals="true" />
+            }
+        </section>
+
+        <section class="card p-4">
+            <h2>Company breakdown</h2>
+            <div class="table-responsive"><table class="table"><thead><tr><th>Legal company</th>@if (filter.ReportType == "profit-loss") { <th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net profit</th> } else { <th class="text-end">Assets</th><th class="text-end">Liabilities</th><th class="text-end">Equity</th> }</tr></thead><tbody>@foreach (var company in report.Companies) { <tr><td><strong>@company.LegalName</strong><br /><small class="text-muted">@company.Currency</small></td>@if (filter.ReportType == "profit-loss") { <td class="text-end">@Money(company.Revenue)</td><td class="text-end">@Money(company.Expenses)</td><td class="text-end"><strong>@Money(company.NetProfit)</strong></td> } else { <td class="text-end">@Money(company.Assets)</td><td class="text-end">@Money(company.Liabilities)</td><td class="text-end">@Money(company.Equity)</td> }</tr> }</tbody></table></div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private GroupFinancialReportData? report;
+    private ReportFilter filter = new();
+    private string? error;
+    private IEnumerable<FinancialAccountBalance> Rows(AccountType type) => report?.Consolidated.Balances.Where(x => x.Type == type) ?? [];
+    private IEnumerable<FinancialAccountBalance> RevenueRows => Rows(AccountType.Revenue);
+    private IEnumerable<FinancialAccountBalance> ExpenseRows => Rows(AccountType.Expense);
+    private IEnumerable<FinancialAccountBalance> AssetRows => Rows(AccountType.Asset);
+    private IEnumerable<FinancialAccountBalance> LiabilityRows => Rows(AccountType.Liability);
+    private IEnumerable<FinancialAccountBalance> EquityRows => Rows(AccountType.Equity);
+    private decimal Total(AccountType type) => Rows(type).Sum(x => x.DisplayAmount);
+    private decimal RevenueTotal => Total(AccountType.Revenue);
+    private decimal ExpenseTotal => Total(AccountType.Expense);
+    private decimal AssetTotal => Total(AccountType.Asset);
+    private decimal LiabilityTotal => Total(AccountType.Liability);
+    private decimal EquityTotal => Total(AccountType.Equity);
+    private string PeriodLabel => filter.ReportType == "profit-loss" ? $"{filter.From:dd MMM yyyy} to {filter.To:dd MMM yyyy}" : $"As at {filter.To:dd MMM yyyy}";
+    private string Money(decimal amount) => $"{report?.Currency} {amount:N2}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        filter.To = today;
+        filter.From = new DateOnly(today.Year, 1, 1);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        report = null;
+        try { report = await ConsolidatedReports.GetAsync(userId, OrganisationId, filter.From, filter.To); }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private sealed class ReportFilter
+    {
+        public string ReportType { get; set; } = "profit-loss";
+        public DateOnly From { get; set; }
+        public DateOnly To { get; set; }
+    }
+}
