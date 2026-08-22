@@ -53,21 +53,18 @@ else
                 <div>
                     @notification.Message
                 </div>
-                @if (notificationLinks.TryGetValue(
-                    notification.Id,
-                    out var link))
-                {
-                    <div class="mt-2">
+                <div class="mt-2 d-flex gap-2">
+
+                    @if (notificationLinks.TryGetValue(
+                        notification.Id,
+                        out var link))
+                    {
                         <a class="btn btn-sm btn-outline-primary"
                            href="@link"
                            target="_blank">
                             Open document
                         </a>
-                    </div>
-                }
-
-
-                <div class="mt-2">
+                    }
 
                     @if (notification.Status == NotificationStatus.Open)
                     {
@@ -85,7 +82,7 @@ else
                     }
                     else
                     {
-                        <span class="text-success">
+                        <span class="text-success align-self-center">
                             Resolved
                         </span>
                     }
