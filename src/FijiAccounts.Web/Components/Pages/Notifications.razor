@@ -151,6 +151,14 @@ else
                         $"/api/o/{document.OrganisationId}/contacts/{document.BusinessPartyId}/documents/{document.Id}";
                 }
             }
+            else if (notification.RelatedEntityType == "SalesInvoice" &&
+                     Guid.TryParse(
+                         notification.RelatedEntityId,
+                         out var invoiceId))
+            {
+                notificationLinks[notification.Id] =
+                    $"/o/{OrganisationId}/sales/{invoiceId}";
+            }
         }
     }
 

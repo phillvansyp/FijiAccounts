@@ -13,6 +13,7 @@ public enum NotificationType
 {
     DocumentExpiry,
     PaymentDue,
+    PaymentOverdue,
     System
 }
 
