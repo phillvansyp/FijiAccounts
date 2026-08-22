@@ -15,6 +15,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PostedJournal> PostedJournals => Set<PostedJournal>();
     public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
     public DbSet<BusinessPartyDocument> BusinessPartyDocuments =>
         Set<BusinessPartyDocument>();

@@ -1,0 +1,118 @@
+using Microsoft.EntityFrameworkCore;
+using FijiAccounts.Web.Data;
+
+namespace FijiAccounts.Web.Services;
+
+public sealed record CreateNotificationRequest(
+    Guid OrganisationId,
+    string Title,
+    string Message,
+    NotificationType Type,
+    NotificationSeverity Severity,
+    string? RelatedEntityType = null,
+    string? RelatedEntityId = null);
+
+
+public sealed class NotificationService(
+    ApplicationDbContext db)
+{
+    public async Task<Notification> CreateAsync(
+        CreateNotificationRequest request,
+        CancellationToken ct = default)
+    {
+        var notification =
+            new Notification
+            {
+                OrganisationId = request.OrganisationId,
+                Title = request.Title,
+                Message = request.Message,
+                Type = request.Type,
+                Severity = request.Severity,
+                RelatedEntityType = request.RelatedEntityType,
+                RelatedEntityId = request.RelatedEntityId
+            };
+
+        db.Notifications.Add(notification);
+
+        await db.SaveChangesAsync(ct);
+
+        return notification;
+    }
+
+
+    public async Task<List<Notification>> GetUnreadAsync(
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        var notifications =
+            await db.Notifications
+                .AsNoTracking()
+                .Where(
+                    x =>
+                        x.OrganisationId == organisationId &&
+                        !x.IsRead)
+                .ToListAsync(ct);
+
+        return notifications
+            .OrderByDescending(
+                x => x.CreatedAt)
+            .ToList();
+    }
+
+
+    public async Task RemoveDuplicateDocumentExpiryNotificationsAsync(
+        CancellationToken ct = default)
+    {
+        var notifications =
+            await db.Notifications
+                .Where(
+                    x =>
+                        x.Type == NotificationType.DocumentExpiry &&
+                        !x.IsRead)
+                .ToListAsync(ct);
+
+        var duplicates =
+            notifications
+                .GroupBy(
+                    x => x.RelatedEntityId)
+                .SelectMany(
+                    group =>
+                        group
+                            .OrderByDescending(
+                                x => x.CreatedAt)
+                            .Skip(1))
+                .ToList();
+
+        if (duplicates.Count == 0)
+        {
+            return;
+        }
+
+        db.Notifications.RemoveRange(
+            duplicates);
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task MarkAsReadAsync(
+        Guid notificationId,
+        CancellationToken ct = default)
+    {
+        var notification =
+            await db.Notifications
+                .SingleOrDefaultAsync(
+                    x => x.Id == notificationId,
+                    ct);
+
+        if (notification is null)
+        {
+            return;
+        }
+
+        notification.IsRead = true;
+        notification.ReadAt =
+            DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+    }
+}

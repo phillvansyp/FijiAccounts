@@ -1,0 +1,86 @@
+@page "/o/{OrganisationId:guid}/notifications"
+
+@using Microsoft.AspNetCore.Authorization
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+
+@attribute [Authorize]
+
+@inject NotificationService NotificationService
+
+<h1>Notifications</h1>
+
+@if (notifications.Count == 0)
+{
+    <div class="alert alert-info">
+        No notifications.
+    </div>
+}
+else
+{
+    <div class="list-group">
+
+        @foreach (var notification in notifications)
+        {
+            <div class="list-group-item">
+
+                <div class="d-flex justify-content-between">
+
+                    <strong>
+                        @notification.Title
+                    </strong>
+
+                    <span>
+                        @(notification.CreatedAt
+                            .ToLocalTime()
+                            .ToString("dd MMM yyyy"))
+                    </span>
+
+                </div>
+
+                <div>
+                    @notification.Message
+                </div>
+
+                <div class="mt-2">
+
+                    @if (!notification.IsRead)
+                    {
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick="() => MarkRead(notification.Id)">
+                            Mark read
+                        </button>
+                    }
+
+                </div>
+
+            </div>
+        }
+
+    </div>
+}
+
+@code {
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    private List<Notification> notifications = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+
+        notifications =
+            await NotificationService.GetUnreadAsync(
+                OrganisationId);
+    }
+
+    private async Task MarkRead(Guid id)
+    {
+        await NotificationService.MarkAsReadAsync(id);
+
+        notifications =
+            await NotificationService.GetUnreadAsync(
+                OrganisationId);
+    }
+}
