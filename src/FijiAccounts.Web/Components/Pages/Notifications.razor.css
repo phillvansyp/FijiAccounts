@@ -1,4 +1,4 @@
-﻿.notification-table {
+.notification-table {
     background: white;
     border: 1px solid #e1e8ed;
     border-radius: 12px;
@@ -37,8 +37,10 @@
 
 .notification-actions {
     display: flex;
-    gap: .5rem;
-    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: .75rem;
+    white-space: nowrap;
 }
 
 .notification-details {

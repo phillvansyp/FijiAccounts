@@ -25,9 +25,8 @@ else
 
         <div class="notification-header">
             <div>Severity</div>
-            <div>Type</div>
+            <div>Alert</div>
             <div>Details</div>
-            <div>Related</div>
             <div>Amount</div>
             <div>Date</div>
             <div>Actions</div>
@@ -180,6 +179,14 @@ else
             {
                 notificationLinks[notification.Id] =
                     $"/o/{OrganisationId}/sales/{invoiceId}";
+            }
+            else if (notification.RelatedEntityType == "SupplierBill" &&
+                     Guid.TryParse(
+                         notification.RelatedEntityId,
+                         out var billId))
+            {
+                notificationLinks[notification.Id] =
+                    $"/o/{OrganisationId}/purchases/{billId}";
             }
         }
     }

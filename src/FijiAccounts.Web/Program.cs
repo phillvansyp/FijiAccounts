@@ -66,6 +66,7 @@ builder.Services.AddScoped<RecurringSalesInvoiceService>();
 builder.Services.AddHostedService<RecurringInvoiceGenerationWorker>();
 builder.Services.AddHostedService<DocumentExpiryWorker>();
 builder.Services.AddHostedService<OverdueInvoiceWorker>();
+builder.Services.AddHostedService<OverdueSupplierBillWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<NotificationService>();
