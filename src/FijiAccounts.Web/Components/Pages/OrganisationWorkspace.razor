@@ -34,13 +34,29 @@ else
     <section class="dashboard-grid"><article class="work-card"><div class="card-heading"><div><span class="eyebrow">Work queue</span><h2>Needs attention</h2></div><span class="count-badge">@(overdueInvoices + overdueBills)</span></div>
         <a href="o/@OrganisationId/sales"><span class="task-icon sales">↗</span><span><strong>Overdue customer invoices</strong><small>Follow up money owed to the business</small></span><b>@overdueInvoices</b></a>
         <a href="o/@OrganisationId/purchases"><span class="task-icon purchases">↙</span><span><strong>Overdue supplier bills</strong><small>Review bills that have passed their due date</small></span><b>@overdueBills</b></a>
-        <a href="o/@OrganisationId/notifications">
+        <a href="o/@OrganisationId/notifications?category=financial">
             <span class="task-icon alerts">!</span>
             <span>
-                <strong>Notifications</strong>
-                <small>Actions requiring attention</small>
+                <strong>Financial alerts</strong>
+                <small>Invoices and supplier bills needing attention</small>
             </span>
-            <b>@(financialAlertCount + documentAlertCount + systemAlertCount)</b>
+            <b>@financialAlertCount</b>
+        </a>
+        <a href="o/@OrganisationId/notifications?category=documents">
+            <span class="task-icon alerts">!</span>
+            <span>
+                <strong>Documents expiring</strong>
+                <small>Documents requiring review</small>
+            </span>
+            <b>@documentAlertCount</b>
+        </a>
+        <a href="o/@OrganisationId/notifications?category=system">
+            <span class="task-icon alerts">!</span>
+            <span>
+                <strong>System alerts</strong>
+                <small>System notifications</small>
+            </span>
+            <b>@systemAlertCount</b>
         </a>
         <a href="o/@OrganisationId/contacts"><span class="task-icon contacts">◎</span><span><strong>Business contacts</strong><small>Customers and suppliers in this organisation</small></span><b>@contactCount</b></a>
     </article>
