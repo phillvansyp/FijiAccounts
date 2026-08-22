@@ -14,7 +14,8 @@ public enum NotificationType
     DocumentExpiry,
     PaymentDue,
     PaymentOverdue,
-    System
+    System,
+    PaymentDueSoon
 }
 
 public enum NotificationStatus

@@ -1,11 +1,11 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed class OverdueInvoiceWorker(
+public sealed class UpcomingInvoiceWorker(
     IServiceScopeFactory scopeFactory,
-    ILogger<OverdueInvoiceWorker> logger)
+    ILogger<UpcomingInvoiceWorker> logger)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(
@@ -30,18 +30,22 @@ public sealed class OverdueInvoiceWorker(
                     DateOnly.FromDateTime(
                         DateTime.Today);
 
+                var reminderDate =
+                    today.AddDays(7);
+
                 var invoices =
                     await db.SalesInvoices
                         .AsNoTracking()
                         .Include(x => x.Customer)
                         .Where(
                             x =>
-                                x.DueDate < today &&
+                                x.DueDate > today &&
+                                x.DueDate <= reminderDate &&
                                 x.AmountPaid + x.AmountCredited < x.Total &&
-                                x.Status != InvoiceStatus.Draft &&
                                 x.Status != InvoiceStatus.Paid &&
                                 x.Status != InvoiceStatus.Voided &&
-                                x.Status != InvoiceStatus.Credited)
+                                x.Status != InvoiceStatus.Credited &&
+                                x.Status != InvoiceStatus.Draft)
                         .ToListAsync(
                             stoppingToken);
 
@@ -50,7 +54,8 @@ public sealed class OverdueInvoiceWorker(
                     var exists =
                         await db.Notifications.AnyAsync(
                             x =>
-                                x.Type == NotificationType.PaymentOverdue &&
+                                x.Type == NotificationType.PaymentDueSoon &&
+                                x.RelatedEntityType == "SalesInvoice" &&
                                 x.RelatedEntityId == invoice.Id.ToString() &&
                                 x.Status != NotificationStatus.Resolved,
                             stoppingToken);
@@ -60,27 +65,17 @@ public sealed class OverdueInvoiceWorker(
                         continue;
                     }
 
-                    var daysOverdue =
-                        today.DayNumber -
-                        invoice.DueDate.DayNumber;
-
-                    var overdueText =
-                        daysOverdue == 1
-                            ? "1 day overdue"
-                            : $"{daysOverdue} days overdue";
-
-                    var severity =
-                        daysOverdue >= 30
-                            ? NotificationSeverity.Critical
-                            : NotificationSeverity.Warning;
+                    var daysUntilDue =
+                        invoice.DueDate.DayNumber -
+                        today.DayNumber;
 
                     await notifications.CreateAsync(
                         new CreateNotificationRequest(
                             invoice.OrganisationId,
-                            "Invoice overdue",
-                            $"{invoice.InvoiceNumber} for {invoice.Customer.Name} is {daysOverdue} days overdue. Outstanding {invoice.Currency} {(invoice.Total - invoice.AmountPaid - invoice.AmountCredited):N2}.",
-                            NotificationType.PaymentOverdue,
-                            severity,
+                            "Invoice due soon",
+                            $"{invoice.InvoiceNumber} · {invoice.Customer.Name} · due in {daysUntilDue} days.",
+                            NotificationType.PaymentDueSoon,
+                            NotificationSeverity.Warning,
                             "SalesInvoice",
                             invoice.Id.ToString(),
                             invoice.Total - invoice.AmountPaid - invoice.AmountCredited,
@@ -92,7 +87,7 @@ public sealed class OverdueInvoiceWorker(
             {
                 logger.LogError(
                     ex,
-                    "Overdue invoice check failed.");
+                    "Upcoming invoice check failed.");
             }
 
             await Task.Delay(

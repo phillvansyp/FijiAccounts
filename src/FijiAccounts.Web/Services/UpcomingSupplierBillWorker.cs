@@ -1,11 +1,11 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed class OverdueSupplierBillWorker(
+public sealed class UpcomingSupplierBillWorker(
     IServiceScopeFactory scopeFactory,
-    ILogger<OverdueSupplierBillWorker> logger)
+    ILogger<UpcomingSupplierBillWorker> logger)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(
@@ -30,13 +30,17 @@ public sealed class OverdueSupplierBillWorker(
                     DateOnly.FromDateTime(
                         DateTime.Today);
 
+                var reminderDate =
+                    today.AddDays(7);
+
                 var bills =
                     await db.SupplierBills
                         .AsNoTracking()
                         .Include(x => x.Supplier)
                         .Where(
                             x =>
-                                x.DueDate < today &&
+                                x.DueDate > today &&
+                                x.DueDate <= reminderDate &&
                                 x.AmountPaid + x.AmountCredited < x.Total &&
                                 x.Status != BillStatus.Paid &&
                                 x.Status != BillStatus.Voided &&
@@ -49,7 +53,7 @@ public sealed class OverdueSupplierBillWorker(
                     var exists =
                         await db.Notifications.AnyAsync(
                             x =>
-                                x.Type == NotificationType.PaymentOverdue &&
+                                x.Type == NotificationType.PaymentDueSoon &&
                                 x.RelatedEntityType == "SupplierBill" &&
                                 x.RelatedEntityId == bill.Id.ToString() &&
                                 x.Status != NotificationStatus.Resolved,
@@ -60,27 +64,17 @@ public sealed class OverdueSupplierBillWorker(
                         continue;
                     }
 
-                    var daysOverdue =
-                        today.DayNumber -
-                        bill.DueDate.DayNumber;
-
-                    var overdueText =
-                        daysOverdue == 1
-                            ? "1 day overdue"
-                            : $"{daysOverdue} days overdue";
-
-                    var severity =
-                        daysOverdue >= 30
-                            ? NotificationSeverity.Critical
-                            : NotificationSeverity.Warning;
+                    var daysUntilDue =
+                        bill.DueDate.DayNumber -
+                        today.DayNumber;
 
                     await notifications.CreateAsync(
                         new CreateNotificationRequest(
                             bill.OrganisationId,
-                            "Supplier bill overdue",
-                            $"{bill.BillNumber} for {bill.Supplier.Name} is {daysOverdue} days overdue.",
-                            NotificationType.PaymentOverdue,
-                            severity,
+                            "Supplier bill due soon",
+                            $"{bill.BillNumber} · {bill.Supplier.Name} · due in {daysUntilDue} days.",
+                            NotificationType.PaymentDueSoon,
+                            NotificationSeverity.Warning,
                             "SupplierBill",
                             bill.Id.ToString(),
                             bill.Total - bill.AmountPaid - bill.AmountCredited,
@@ -92,7 +86,7 @@ public sealed class OverdueSupplierBillWorker(
             {
                 logger.LogError(
                     ex,
-                    "Overdue supplier bill check failed.");
+                    "Upcoming supplier bill check failed.");
             }
 
             await Task.Delay(
