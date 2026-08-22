@@ -253,7 +253,8 @@ public async Task ReceivableAsAtDate_ReceiptReversalRestoresBalanceOnlyFromRever
         test.Db,
         test.Access,
         test.Posting,
-        test.Reconciliation);
+        test.Reconciliation,
+        test.Notifications);
 
 var receipt =
     await receipts.RecordAsync(

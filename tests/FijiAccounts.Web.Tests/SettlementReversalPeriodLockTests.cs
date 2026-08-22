@@ -37,7 +37,8 @@ public sealed class SettlementReversalPeriodLockTests
         test.Db,
         test.Access,
         test.Posting,
-        test.Reconciliation);
+        test.Reconciliation,
+        test.Notifications);
 
         var receipt =
     await receipts.RecordAsync(

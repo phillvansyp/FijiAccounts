@@ -32,7 +32,8 @@ public sealed class CustomerReceiptAccountingTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var ex =
             await Assert.ThrowsAsync<InvalidOperationException>(
@@ -93,7 +94,8 @@ public sealed class CustomerReceiptAccountingTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var ex =
             await Assert.ThrowsAsync<InvalidOperationException>(
@@ -171,7 +173,8 @@ public sealed class CustomerReceiptAccountingTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var ex =
             await Assert.ThrowsAsync<InvalidOperationException>(

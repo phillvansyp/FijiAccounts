@@ -35,6 +35,9 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
         Db,
         Access);
 
+Notifications =
+    new NotificationService(Db);
+
 Posting =
     new JournalPostingService(
         Db,
@@ -64,7 +67,8 @@ Purchasing =
         Db,
         Access,
         Posting,
-        Reconciliation);
+        Reconciliation,
+        Notifications);
 
 BankCoding =
     new BankTransactionCodingService(
@@ -95,6 +99,8 @@ BankCoding =
     public PurchaseOrderService PurchaseOrders { get; }
 
     public BankReconciliationService Reconciliation { get; }
+
+    public NotificationService Notifications { get; }
 
 public BankTransactionCodingService BankCoding { get; }
 

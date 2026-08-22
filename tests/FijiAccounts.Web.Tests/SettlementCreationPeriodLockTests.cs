@@ -36,7 +36,8 @@ public sealed class SettlementCreationPeriodLockTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         await LockAugust2026Async(test);
 

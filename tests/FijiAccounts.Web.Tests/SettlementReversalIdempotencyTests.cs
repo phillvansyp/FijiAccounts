@@ -36,7 +36,8 @@ public sealed class SettlementReversalIdempotencyTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var receipt =
             await receipts.RecordAsync(
@@ -218,7 +219,8 @@ public async Task ReverseReceiptAsync_WhenCreditRemains_ChangesInvoiceToPartPaid
             test.Db,
             test.Access,
             test.Posting,
-            test.Reconciliation);
+            test.Reconciliation,
+            test.Notifications);
 
     var receipt =
         await receipts.RecordAsync(

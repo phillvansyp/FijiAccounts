@@ -46,7 +46,8 @@ public sealed class SettlementTenantIsolationTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var journalCountBefore =
             await test.Db.PostedJournals.CountAsync();
@@ -324,7 +325,8 @@ public async Task ReverseReceiptAsync_RejectsReceiptFromAnotherOrganisation()
             test.Db,
             test.Access,
             test.Posting,
-            test.Reconciliation);
+            test.Reconciliation,
+            test.Notifications);
 
     var receipt =
         await receipts.RecordAsync(

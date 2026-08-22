@@ -67,7 +67,8 @@ public sealed class CustomerStatementAccountingTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         var receipt =
             await receipts.RecordAsync(

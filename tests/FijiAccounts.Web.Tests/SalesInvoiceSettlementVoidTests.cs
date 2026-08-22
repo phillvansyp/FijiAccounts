@@ -38,7 +38,8 @@ public sealed class SalesInvoiceSettlementVoidTests
                 test.Db,
                 test.Access,
                 test.Posting,
-                test.Reconciliation);
+                test.Reconciliation,
+                test.Notifications);
 
         await receipts.RecordAsync(
             test.UserId,

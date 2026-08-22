@@ -144,7 +144,8 @@ public async Task PartialCredit_OnPartPaidInvoice_RemainsPartPaid()
             test.Db,
             test.Access,
             test.Posting,
-            test.Reconciliation)
+            test.Reconciliation,
+            test.Notifications)
         .RecordAsync(
             test.UserId,
             new CustomerReceiptRequest(
@@ -209,7 +210,8 @@ public async Task ReceiptPlusCredit_ThatFullySettlesInvoice_ChangesInvoiceToCred
             test.Db,
             test.Access,
             test.Posting,
-            test.Reconciliation)
+            test.Reconciliation,
+            test.Notifications)
         .RecordAsync(
             test.UserId,
             new CustomerReceiptRequest(
