@@ -106,6 +106,68 @@ public sealed class NotificationService(
                 ct);
     }
 
+    public async Task AcknowledgeAsync(
+        Guid notificationId,
+        string userId,
+        CancellationToken ct = default)
+    {
+        var notification =
+            await db.Notifications
+                .SingleOrDefaultAsync(
+                    x => x.Id == notificationId,
+                    ct);
+
+        if (notification is null)
+        {
+            return;
+        }
+
+        notification.Status =
+            NotificationStatus.Acknowledged;
+
+        notification.AcknowledgedAt =
+            DateTimeOffset.UtcNow;
+
+        notification.AcknowledgedByUserId =
+            userId;
+
+        await db.SaveChangesAsync(ct);
+    }
+
+
+    public async Task ResolveAsync(
+        Guid notificationId,
+        string userId,
+        CancellationToken ct = default)
+    {
+        var notification =
+            await db.Notifications
+                .SingleOrDefaultAsync(
+                    x => x.Id == notificationId,
+                    ct);
+
+        if (notification is null)
+        {
+            return;
+        }
+
+        notification.Status =
+            NotificationStatus.Resolved;
+
+        notification.ResolvedAt =
+            DateTimeOffset.UtcNow;
+
+        notification.ResolvedByUserId =
+            userId;
+
+        notification.IsRead = true;
+
+        notification.ReadAt =
+            DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task MarkAsReadAsync(
         Guid notificationId,
         CancellationToken ct = default)

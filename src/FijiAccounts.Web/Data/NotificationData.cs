@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace FijiAccounts.Web.Data;
 
@@ -14,6 +14,13 @@ public enum NotificationType
     DocumentExpiry,
     PaymentDue,
     System
+}
+
+public enum NotificationStatus
+{
+    Open,
+    Acknowledged,
+    Resolved
 }
 
 public sealed class Notification
@@ -41,6 +48,19 @@ public sealed class Notification
     public bool IsRead { get; set; }
 
     public DateTimeOffset? ReadAt { get; set; }
+
+    public NotificationStatus Status { get; set; } =
+        NotificationStatus.Open;
+
+    public DateTimeOffset? AcknowledgedAt { get; set; }
+
+    [MaxLength(450)]
+    public string? AcknowledgedByUserId { get; set; }
+
+    public DateTimeOffset? ResolvedAt { get; set; }
+
+    [MaxLength(450)]
+    public string? ResolvedByUserId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } =
         DateTimeOffset.UtcNow;

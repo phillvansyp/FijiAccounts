@@ -9,6 +9,7 @@
 
 @inject NotificationService NotificationService
 @inject ApplicationDbContext Db
+@inject AuthenticationStateProvider AuthenticationStateProvider
 
 <h1>Notifications</h1>
 
@@ -68,12 +69,25 @@ else
 
                 <div class="mt-2">
 
-                    @if (!notification.IsRead)
+                    @if (notification.Status == NotificationStatus.Open)
                     {
                         <button class="btn btn-sm btn-outline-primary"
-                                @onclick="() => MarkRead(notification.Id)">
-                            Mark read
+                                @onclick="() => Acknowledge(notification.Id)">
+                            Acknowledge
                         </button>
+                    }
+                    else if (notification.Status == NotificationStatus.Acknowledged)
+                    {
+                        <button class="btn btn-sm btn-outline-success"
+                                @onclick="() => Resolve(notification.Id)">
+                            Resolve
+                        </button>
+                    }
+                    else
+                    {
+                        <span class="text-success">
+                            Resolved
+                        </span>
                     }
 
                 </div>
@@ -113,6 +127,7 @@ else
     }
     private List<Notification> notifications = [];
     private Dictionary<Guid, string> notificationLinks = [];
+    private string userId = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -140,6 +155,29 @@ else
                 }
             }
         }
+    }
+
+    private async Task Acknowledge(Guid id)
+    {
+        await NotificationService.AcknowledgeAsync(
+            id,
+            userId);
+
+        notifications =
+            await NotificationService.GetUnreadAsync(
+                OrganisationId);
+    }
+
+
+    private async Task Resolve(Guid id)
+    {
+        await NotificationService.ResolveAsync(
+            id,
+            userId);
+
+        notifications =
+            await NotificationService.GetUnreadAsync(
+                OrganisationId);
     }
 
     private async Task MarkRead(Guid id)
