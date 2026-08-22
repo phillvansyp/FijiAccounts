@@ -63,6 +63,7 @@ builder.Services.AddScoped<TenantAccessService>();
 builder.Services.AddScoped<OrganisationInvitationService>();
 builder.Services.AddScoped<EnterpriseStructureService>();
 builder.Services.AddScoped<OrganisationSettingsService>();
+builder.Services.AddScoped<BusinessPartyService>();
 builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<RecurringSalesInvoiceService>();

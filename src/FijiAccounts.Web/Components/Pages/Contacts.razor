@@ -11,6 +11,7 @@
 @using FijiAccounts.Domain.Accounting
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject BusinessPartyService BusinessParties
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -331,7 +332,7 @@ else
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is not null)
         {
-            canEdit = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+            canEdit = await TenantAccess.CanManageContactsAsync(userId, OrganisationId);
             searchTerm = Query?.Trim() ?? string.Empty;
             model = new ContactModel
         {
@@ -375,9 +376,21 @@ else
 
     private async Task Create()
     {
-        if (!await TenantAccess.CanPostJournalsAsync(userId, OrganisationId)) return;
-        Db.BusinessParties.Add(new BusinessParty { OrganisationId = OrganisationId, Name = model.Name.Trim(), Email = model.Email?.Trim(), Tin = model.Tin?.Trim(), Type = model.Type, DefaultPurchaseAccountId = model.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = model.DefaultPurchaseVatTreatment, DefaultSalesInvoicePaymentTermType = model.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = model.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = model.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = model.DefaultSupplierBillDueDays });
-        await Db.SaveChangesAsync();
+        if (!canEdit) return;
+        await BusinessParties.CreateAsync(
+            userId,
+            new CreateBusinessPartyRequest(
+                OrganisationId,
+                model.Name,
+                model.Email,
+                model.Tin,
+                model.Type,
+                model.DefaultPurchaseAccountId,
+                model.DefaultPurchaseVatTreatment,
+                model.DefaultSalesInvoicePaymentTermType,
+                model.DefaultSalesInvoiceDueDays,
+                model.DefaultSupplierBillPaymentTermType,
+                model.DefaultSupplierBillDueDays));
         model = new ContactModel
         {
             Type = NormalizedView == "suppliers"
@@ -424,25 +437,13 @@ else
             return;
         }
 
-        var party =
-            await Db.BusinessParties
-                .FirstOrDefaultAsync(
-                    x =>
-                        x.Id == id &&
-                        x.OrganisationId == OrganisationId);
-
-        if (party is null)
-        {
-            return;
-        }
-
-        party.DefaultSalesInvoicePaymentTermType =
-            editingCustomerPaymentTermType;
-
-        party.DefaultSalesInvoiceDueDays =
-            editingCustomerDueDays;
-
-        await Db.SaveChangesAsync();
+        await BusinessParties.UpdateCustomerDefaultsAsync(
+            userId,
+            new UpdateCustomerDefaultsRequest(
+                OrganisationId,
+                id,
+                editingCustomerPaymentTermType,
+                editingCustomerDueDays));
 
         CancelCustomerSettings();
 
@@ -454,13 +455,15 @@ else
     private async Task SaveDefaults()
     {
         if (editingPartyId is not Guid id || !canEdit) return;
-        var party = await Db.BusinessParties.FirstOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId);
-        if (party is null) return;
-        party.DefaultPurchaseAccountId = editDefaults.DefaultPurchaseAccountId;
-        party.DefaultPurchaseVatTreatment = editDefaults.DefaultPurchaseVatTreatment;
-        party.DefaultSupplierBillPaymentTermType = editDefaults.DefaultSupplierBillPaymentTermType;
-        party.DefaultSupplierBillDueDays = editDefaults.DefaultSupplierBillDueDays;
-        await Db.SaveChangesAsync();
+        await BusinessParties.UpdateSupplierDefaultsAsync(
+            userId,
+            new UpdateSupplierDefaultsRequest(
+                OrganisationId,
+                id,
+                editDefaults.DefaultPurchaseAccountId,
+                editDefaults.DefaultPurchaseVatTreatment,
+                editDefaults.DefaultSupplierBillPaymentTermType,
+                editDefaults.DefaultSupplierBillDueDays));
         CancelDefaults();
         await Reload();
     }
