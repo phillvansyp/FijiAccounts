@@ -31,7 +31,8 @@ public sealed class FinancialReportService(
         Guid organisationId,
         DateOnly from,
         DateOnly to,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? divisionIds = null)
     {
         if (from > to)
         {
@@ -39,13 +40,21 @@ public sealed class FinancialReportService(
                 "The report start date cannot be after the end date.");
         }
 
-        var all =
-            await db.PostedJournalLines
+        var allQuery =
+            db.PostedJournalLines
                 .AsNoTracking()
                 .Where(x =>
                     x.PostedJournal.OrganisationId ==
                         organisationId &&
-                    x.PostedJournal.EntryDate <= to)
+                    x.PostedJournal.EntryDate <= to);
+        if (divisionIds is not null)
+        {
+            allQuery = allQuery.Where(x =>
+                x.DivisionId != null && divisionIds.Contains(x.DivisionId.Value));
+        }
+
+        var all =
+            await allQuery
                 .GroupBy(x => new
                 {
                     x.LedgerAccount.Code,
@@ -77,8 +86,8 @@ public sealed class FinancialReportService(
             })
             .ToList();
 
-        var profit =
-            await db.PostedJournalLines
+        var profitQuery =
+            db.PostedJournalLines
                 .AsNoTracking()
                 .Where(x =>
                     x.PostedJournal.OrganisationId ==
@@ -88,7 +97,15 @@ public sealed class FinancialReportService(
                     (x.LedgerAccount.Type ==
                         AccountType.Revenue ||
                      x.LedgerAccount.Type ==
-                        AccountType.Expense))
+                        AccountType.Expense));
+        if (divisionIds is not null)
+        {
+            profitQuery = profitQuery.Where(x =>
+                x.DivisionId != null && divisionIds.Contains(x.DivisionId.Value));
+        }
+
+        var profit =
+            await profitQuery
                 .GroupBy(x => new
                 {
                     x.LedgerAccount.Code,

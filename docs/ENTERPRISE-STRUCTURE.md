@@ -30,6 +30,11 @@ sales, purchasing and journal records. Accountant engagements continue to use
 their company-level engagement access until engagement-specific dimension grants
 are introduced.
 
+Profit & Loss, Balance Sheet and Trial Balance reports can be run for all
+permitted transactions, one branch, or one division. The scope is applied to
+posted journal lines for both the selected period and its comparison period, and
+restricted members cannot select dimensions outside their grants.
+
 ## Compatibility
 
 The enterprise-structure migration creates one group for each existing
@@ -66,4 +71,5 @@ dimension until template-level allocation is added.
    receipts, payments and related credits/reversals are complete. Recurring
    templates and the remaining banking/inventory workflows are still pending.
 4. ~~Add explicit branch/division access grants.~~
-5. Add scoped and consolidated reporting.
+5. Add scoped and consolidated reporting. Branch/division financial statements
+   are complete; multi-company group consolidation remains pending.

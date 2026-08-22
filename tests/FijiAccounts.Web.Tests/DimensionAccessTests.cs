@@ -45,6 +45,7 @@ public sealed class DimensionAccessTests
             retail.Id);
 
         var accessible = await test.Access.ListAccessibleBranchesAsync(member.Id, test.Organisation.Id);
+        var reportScope = await test.Access.GetReportDivisionScopeAsync(member.Id, test.Organisation.Id);
         var accounts = await test.Db.LedgerAccounts.AsNoTracking()
             .Where(x => x.OrganisationId == test.Organisation.Id)
             .ToListAsync();
@@ -58,6 +59,8 @@ public sealed class DimensionAccessTests
         Assert.Single(accessible);
         Assert.Equal(nadi.Id, accessible[0].Id);
         Assert.Equal(retail.Id, Assert.Single(accessible[0].Divisions).Id);
+        Assert.NotNull(reportScope);
+        Assert.Equal([retail.Id], reportScope);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             test.Posting.PostAsync(member.Id, Request(test.Organisation.Id, defaultBranch.Id, defaultDivision.Id, bank.Id, revenue.Id)));
 

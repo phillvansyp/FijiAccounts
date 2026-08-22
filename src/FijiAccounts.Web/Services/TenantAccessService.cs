@@ -115,6 +115,38 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             .Select(x => x.Id)
             .ToArray();
 
+    public async Task<Guid[]?> GetReportDivisionScopeAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken cancellationToken = default)
+    {
+        var membership = await db.OrganisationMemberships
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.OrganisationId == organisationId && x.UserId == userId,
+                cancellationToken);
+        if (membership is null ||
+            membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator ||
+            membership.DimensionAccessMode == DimensionAccessMode.All)
+        {
+            return null;
+        }
+
+        var grants = await db.OrganisationDimensionAccessGrants
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.UserId == userId)
+            .ToListAsync(cancellationToken);
+        var branchIds = grants.Where(x => x.DivisionId == null).Select(x => x.BranchId).ToArray();
+        var explicitDivisionIds = grants.Where(x => x.DivisionId != null).Select(x => x.DivisionId!.Value);
+        var branchDivisionIds = await db.Divisions
+            .AsNoTracking()
+            .Where(x => branchIds.Contains(x.BranchId))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        return explicitDivisionIds.Concat(branchDivisionIds).Distinct().ToArray();
+    }
+
     public async Task SetDimensionAccessModeAsync(
         string actorUserId,
         Guid organisationId,

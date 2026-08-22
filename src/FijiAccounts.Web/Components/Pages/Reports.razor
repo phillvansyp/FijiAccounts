@@ -33,6 +33,7 @@ else
                 Prepared from posted journals in
                 @access.Organisation.BaseCurrency.
             </p>
+            <p><strong>Scope:</strong> @TrackingLabel</p>
         </div>
     </div>
 
@@ -71,7 +72,15 @@ else
                 <label class="form-label">Tracking</label>
                 <InputSelect class="form-select"
                              @bind-Value="period.Tracking">
-                    <option value="all">All transactions</option>
+                    <option value="all">All accessible transactions</option>
+                    @foreach (var branch in branches)
+                    {
+                        <option value="@($"branch:{branch.Id}")">@branch.Code — @branch.Name</option>
+                        @foreach (var division in branch.Divisions)
+                        {
+                            <option value="@($"division:{division.Id}")">@branch.Code / @division.Code — @division.Name</option>
+                        }
+                    }
                 </InputSelect>
             </div>
 
@@ -342,6 +351,8 @@ else
         };
 
     private AccessibleOrganisation? access;
+    private string userId = "";
+    private List<Branch> branches = [];
 
     private PeriodModel period = new();
 
@@ -355,6 +366,26 @@ else
 
     private DateOnly comparisonFrom;
     private DateOnly comparisonTo;
+
+    private string TrackingLabel
+    {
+        get
+        {
+            if (period.Tracking == "all") return "All accessible transactions";
+            if (period.Tracking.StartsWith("branch:") && Guid.TryParse(period.Tracking[7..], out var branchId))
+            {
+                var branch = branches.SingleOrDefault(x => x.Id == branchId);
+                return branch is null ? "All accessible transactions" : $"{branch.Code} — {branch.Name}";
+            }
+            if (period.Tracking.StartsWith("division:") && Guid.TryParse(period.Tracking[9..], out var divisionId))
+            {
+                var branch = branches.SingleOrDefault(x => x.Divisions.Any(division => division.Id == divisionId));
+                var division = branch?.Divisions.Single(x => x.Id == divisionId);
+                return division is null ? "All accessible transactions" : $"{branch!.Code} / {division.Code} — {division.Name}";
+            }
+            return "All accessible transactions";
+        }
+    }
 
     private IEnumerable<TrialBalanceRow> VisibleTrialRows =>
         period.ShowZeroBalances
@@ -464,7 +495,7 @@ else
             await AuthenticationStateProvider
                 .GetAuthenticationStateAsync();
 
-        var userId =
+        userId =
             UserManager.GetUserId(state.User)!;
 
         access =
@@ -476,6 +507,8 @@ else
         {
             return;
         }
+
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
 
         var today =
             DateOnly.FromDateTime(DateTime.Today);
@@ -520,11 +553,14 @@ else
             return;
         }
 
+        var divisionScope = await ResolveDivisionScope();
+
         report =
             await FinancialReports.GetAsync(
                 OrganisationId,
                 period.From,
-                period.To);
+                period.To,
+                divisionIds: divisionScope);
 
         comparisonReport =
             FinancialReportData.Empty;
@@ -561,7 +597,30 @@ else
             await FinancialReports.GetAsync(
                 OrganisationId,
                 comparisonFrom,
-                comparisonTo);
+                comparisonTo,
+                divisionIds: divisionScope);
+    }
+
+    private async Task<Guid[]?> ResolveDivisionScope()
+    {
+        if (period.Tracking == "all")
+        {
+            return await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId);
+        }
+
+        if (period.Tracking.StartsWith("branch:") && Guid.TryParse(period.Tracking[7..], out var branchId))
+        {
+            return branches.SingleOrDefault(x => x.Id == branchId)?.Divisions.Select(x => x.Id).ToArray() ?? [];
+        }
+
+        if (period.Tracking.StartsWith("division:") && Guid.TryParse(period.Tracking[9..], out var divisionId) &&
+            branches.Any(x => x.Divisions.Any(division => division.Id == divisionId)))
+        {
+            return [divisionId];
+        }
+
+        period.Tracking = "all";
+        return await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId);
     }
 
     private string Money(decimal value) =>
