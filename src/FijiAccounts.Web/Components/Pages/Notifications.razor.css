@@ -1,0 +1,50 @@
+﻿.notification-table {
+    background: white;
+    border: 1px solid #e1e8ed;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.notification-header,
+.notification-row {
+    display: grid;
+    grid-template-columns:
+        120px
+        180px
+        minmax(250px, 1.8fr)
+        180px
+        160px
+        120px
+        240px;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem 1.25rem;
+}
+
+.notification-header {
+    font-weight: 700;
+    background: #f8fafc;
+    border-bottom: 1px solid #e1e8ed;
+}
+
+.notification-row {
+    border-bottom: 1px solid #edf2f7;
+}
+
+.notification-row:last-child {
+    border-bottom: none;
+}
+
+.notification-actions {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+}
+
+.notification-details {
+    color: #52606d;
+}
+
+.notification-amount .text-danger {
+    color: #c92a2a;
+}

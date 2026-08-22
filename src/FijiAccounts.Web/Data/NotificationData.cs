@@ -46,6 +46,11 @@ public sealed class Notification
     [MaxLength(80)]
     public string? RelatedEntityId { get; set; }
 
+    public decimal? Amount { get; set; }
+
+    [MaxLength(3)]
+    public string? Currency { get; set; }
+
     public bool IsRead { get; set; }
 
     public DateTimeOffset? ReadAt { get; set; }

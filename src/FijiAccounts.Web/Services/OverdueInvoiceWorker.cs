@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
@@ -77,7 +77,9 @@ public sealed class OverdueInvoiceWorker(
                             NotificationType.PaymentOverdue,
                             severity,
                             "SalesInvoice",
-                            invoice.Id.ToString()),
+                            invoice.Id.ToString(),
+                            invoice.Total - invoice.AmountPaid - invoice.AmountCredited,
+                            invoice.Currency),
                         stoppingToken);
                 }
             }

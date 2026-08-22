@@ -10,7 +10,9 @@ public sealed record CreateNotificationRequest(
     NotificationType Type,
     NotificationSeverity Severity,
     string? RelatedEntityType = null,
-    string? RelatedEntityId = null);
+    string? RelatedEntityId = null,
+    decimal? Amount = null,
+    string? Currency = null);
 
 
 public sealed class NotificationService(
@@ -29,7 +31,9 @@ public sealed class NotificationService(
                 Type = request.Type,
                 Severity = request.Severity,
                 RelatedEntityType = request.RelatedEntityType,
-                RelatedEntityId = request.RelatedEntityId
+                RelatedEntityId = request.RelatedEntityId,
+                Amount = request.Amount,
+                Currency = request.Currency
             };
 
         db.Notifications.Add(notification);
