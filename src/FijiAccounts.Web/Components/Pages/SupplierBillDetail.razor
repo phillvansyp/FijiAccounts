@@ -383,6 +383,11 @@ else
                         <span>Currency</span>
                         <strong>@bill.Currency</strong>
                     </div>
+
+                    <div>
+                        <span>Branch / division</span>
+                        <strong>@bill.Branch?.Name / @bill.Division?.Name</strong>
+                    </div>
                 </div>
             </section>
 
@@ -1084,6 +1089,8 @@ private async Task RecordPayment()
         bill = await Db.SupplierBills
             .AsNoTracking()
             .Include(x => x.Supplier)
+            .Include(x => x.Branch)
+            .Include(x => x.Division)
             .Include(x => x.Lines)
             .ThenInclude(x => x.ProductItem)
             .Include(x => x.Attachments)

@@ -68,6 +68,10 @@ else
                                       OnSelected="AddPurchaseProduct" />
             <div class="mb-3"><label class="form-label">Supplier</label><InputSelect class="form-select" @bind-Value="bill.SupplierId" @bind-Value:after="ApplySelectedSupplierDefaults"><option value="@Guid.Empty">Choose a supplier</option>@foreach (var supplier in suppliers) { <option value="@supplier.Id">@supplier.Name</option> }</InputSelect></div>
             <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Supplier reference</label><InputText class="form-control" @bind-Value="bill.SupplierReference" /></div><div class="col-md-4 mb-3"><label class="form-label">Bill date</label><InputDate class="form-control" @bind-Value="bill.BillDate" @bind-Value:after="ApplySelectedSupplierPaymentTerms" /></div><div class="col-md-4 mb-3"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="bill.DueDate" /></div></div>
+            @if (!isRecurringBill)
+            {
+                <div class="mb-3"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="bill.DivisionId">@foreach (var branch in branches) { <optgroup label="@($"{branch.Code} — {branch.Name}")">@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@division.Code — @division.Name</option> }</optgroup> }</InputSelect></div>
+            }
 
             @if (isRecurringBill)
             {
@@ -564,7 +568,7 @@ else
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
 protected override async Task OnParametersSetAsync()
 {
     var state =
@@ -620,6 +624,11 @@ protected override async Task OnParametersSetAsync()
                 x.IsBankAccount)
             .OrderBy(x => x.Code)
             .ToListAsync();
+
+    branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions)
+        .Where(x => x.OrganisationId == OrganisationId && x.IsActive)
+        .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code)
+        .ToListAsync();
 
     await Reload();
 
@@ -744,7 +753,7 @@ protected override async Task OnParametersSetAsync()
         billRegisterSort = sort;
         billRegisterSortDescending = false;
     }
-    private void ResetBillForm() { var billDate = DateOnly.FromDateTime(DateTime.Today); var termType = access?.Organisation.DefaultSupplierBillPaymentTermType ?? PaymentTermType.DaysAfterDocumentDate; var termValue = access?.Organisation.DefaultSupplierBillDueDays ?? 30; bill = new BillModel { SupplierId = Guid.Empty, BillDate = billDate, DueDate = PaymentTermCalculator.CalculateDueDate(billDate, termType, termValue), ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; editingRecurringBillId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; isRecurringBill = false; ResetRecurringBill(); }
+    private void ResetBillForm() { var billDate = DateOnly.FromDateTime(DateTime.Today); var termType = access?.Organisation.DefaultSupplierBillPaymentTermType ?? PaymentTermType.DaysAfterDocumentDate; var termValue = access?.Organisation.DefaultSupplierBillDueDays ?? 30; bill = new BillModel { SupplierId = Guid.Empty, DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty, BillDate = billDate, DueDate = PaymentTermCalculator.CalculateDueDate(billDate, termType, termValue), ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; editingRecurringBillId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; isRecurringBill = false; ResetRecurringBill(); }
     private void ResetPayment() { payment = new(); if (openBills.Count > 0) { payment.BillId = openBills[0].Id; SetOutstanding(); } if (bankAccounts.Count > 0) payment.BankAccountId = bankAccounts[0].Id; }
     private void ResetRecurringBill()
     {
@@ -995,6 +1004,8 @@ private void ToggleRecurringBill()
                 Db.SupplierBillDrafts.Add(draft);
             }
             draft.SupplierId = bill.SupplierId == Guid.Empty ? null : bill.SupplierId;
+            draft.BranchId = branches.SelectMany(branch => branch.Divisions.Select(division => new { Branch = branch, Division = division })).Single(x => x.Division.Id == bill.DivisionId).Branch.Id;
+            draft.DivisionId = bill.DivisionId;
             draft.SupplierReference = bill.SupplierReference.Trim();
             draft.BillDate = bill.BillDate;
             draft.DueDate = bill.DueDate;
@@ -1031,7 +1042,7 @@ private void ToggleRecurringBill()
     {
         showBillForm = true;
         editingDraftId = draft.Id;
-        bill = new BillModel { SupplierId = draft.SupplierId ?? Guid.Empty, SupplierReference = draft.SupplierReference, BillDate = draft.BillDate, DueDate = draft.DueDate, Description = draft.Description, Quantity = draft.Quantity, UnitPrice = draft.UnitPrice, VatTreatment = draft.VatTreatment, ExpenseAccountId = draft.ExpenseAccountId ?? Guid.Empty, ProductItemId = draft.ProductItemId };
+        bill = new BillModel { SupplierId = draft.SupplierId ?? Guid.Empty, DivisionId = draft.DivisionId ?? branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty, SupplierReference = draft.SupplierReference, BillDate = draft.BillDate, DueDate = draft.DueDate, Description = draft.Description, Quantity = draft.Quantity, UnitPrice = draft.UnitPrice, VatTreatment = draft.VatTreatment, ExpenseAccountId = draft.ExpenseAccountId ?? Guid.Empty, ProductItemId = draft.ProductItemId };
         try { additionalBillLines = JsonSerializer.Deserialize<List<DraftLineData>>(draft.AdditionalLinesJson)?.Select(x => new BillLineModel { Description = x.Description, Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }).ToList() ?? []; }
         catch (JsonException) { additionalBillLines = []; }
         pendingAttachment = draft.AttachmentContent is null ? null : new PendingAttachment(draft.AttachmentFileName ?? "attachment", draft.AttachmentContentType ?? "application/octet-stream", draft.AttachmentOriginalSize ?? draft.AttachmentContent.LongLength, draft.AttachmentContent, draft.AttachmentIsCompressed);
@@ -1404,7 +1415,8 @@ private void ToggleRecurringBill()
                     bill.SupplierReference,
                     bill.BillDate,
                     bill.DueDate,
-                    lines);
+                    lines,
+                    DivisionId: bill.DivisionId);
 
             SupplierBill result;
 
@@ -1536,7 +1548,7 @@ private void ToggleRecurringBill()
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
     private int OverdueCount => bills.Count(IsOverdue);
     private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);
-    private sealed class BillModel { public Guid SupplierId {get;set;} [Required,StringLength(80)] public string SupplierReference {get;set;}=""; public DateOnly BillDate {get;set;}=DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate {get;set;}=DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
+    private sealed class BillModel { public Guid SupplierId {get;set;} public Guid DivisionId {get;set;} [Required,StringLength(80)] public string SupplierReference {get;set;}=""; public DateOnly BillDate {get;set;}=DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate {get;set;}=DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
     private sealed class BillLineModel { [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
     private sealed class RecurringBillModel
     {

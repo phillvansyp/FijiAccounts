@@ -160,6 +160,9 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.InvoiceNumber }).IsUnique();
         builder.Entity<SalesInvoice>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesInvoice>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoice>().HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<SalesInvoice>().Property(x => x.Subtotal).HasPrecision(18, 2);
         builder.Entity<SalesInvoice>().Property(x => x.VatTotal).HasPrecision(18, 2);
         builder.Entity<SalesInvoice>().Property(x => x.Total).HasPrecision(18, 2);
@@ -212,6 +215,9 @@ builder.Entity<SalesCreditNoteReversal>()
         builder.Entity<CustomerReceipt>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceipt>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CustomerReceipt>().HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<CustomerReceiptAllocation>().Property(x => x.Amount).HasPrecision(18, 2);
         builder.Entity<CustomerReceiptAllocation>().HasIndex(x => new { x.CustomerReceiptId, x.SalesInvoiceId }).IsUnique();
         builder.Entity<CustomerReceiptAllocation>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
@@ -221,6 +227,9 @@ builder.Entity<SalesCreditNoteReversal>()
         builder.Entity<SupplierBill>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasOne<PostedJournal>().WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBill>().HasIndex(x => new { x.BranchId, x.DivisionId });
         foreach (var property in new[] { nameof(SupplierBill.Subtotal), nameof(SupplierBill.VatTotal), nameof(SupplierBill.Total), nameof(SupplierBill.AmountPaid), nameof(SupplierBill.AmountCredited) }) builder.Entity<SupplierBill>().Property(property).HasPrecision(18, 2);
         builder.Entity<SupplierBillVoid>()
     .HasIndex(x => x.SupplierBillId)
@@ -246,6 +255,9 @@ builder.Entity<SupplierBillVoid>()
         builder.Entity<SupplierBillDraft>().Property(x => x.Quantity).HasPrecision(18, 4);
         builder.Entity<SupplierBillDraft>().Property(x => x.UnitPrice).HasPrecision(18, 4);
         builder.Entity<SupplierBillDraft>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillDraft>().HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillDraft>().HasOne<Division>().WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillDraft>().HasIndex(x => new { x.BranchId, x.DivisionId });
 
         builder.Entity<PurchaseOrder>()
             .HasIndex(x => new
@@ -466,6 +478,9 @@ builder.Entity<RecurringSupplierBillGeneration>()
         builder.Entity<SupplierPayment>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPayment>().HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
         builder.Entity<SupplierCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);

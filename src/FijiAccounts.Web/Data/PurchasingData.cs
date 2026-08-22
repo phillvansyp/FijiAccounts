@@ -9,6 +9,8 @@ public sealed class SupplierBillDraft
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
+    public Guid? BranchId { get; set; }
+    public Guid? DivisionId { get; set; }
     public Guid? SupplierId { get; set; }
     public BusinessParty? Supplier { get; set; }
     [MaxLength(80)] public string SupplierReference { get; set; } = "";
@@ -60,6 +62,10 @@ public sealed class SupplierBill
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
     public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     public Guid SupplierId { get; set; }
     public BusinessParty Supplier { get; set; } = null!;
     public long SequenceNumber { get; set; }
@@ -165,6 +171,10 @@ public sealed class SupplierPayment
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
     public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     public Guid SupplierId { get; set; }
     public BusinessParty Supplier { get; set; } = null!;
     public DateOnly PaymentDate { get; set; }

@@ -27,6 +27,10 @@ else
     @if (status is not null) { <div class="alert alert-danger">@status</div> }
     <EditForm Model="model" OnValidSubmit="Post" FormName="advanced-sales-invoice" class="invoice-editor"><DataAnnotationsValidator /><ValidationSummary /><CatalogProductPicker OrganisationId="OrganisationId" OnSelected="AddProductLine" />
         <section class="invoice-parties"><div><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId" @bind-Value:after="ApplySelectedCustomerDefaultsAsync">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div><label class="form-label">Issue date</label><InputDate class="form-control" @bind-Value="model.IssueDate" @bind-Value:after="ApplySelectedCustomerPaymentTerms" /></div><div><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="model.DueDate" /></div><div><label class="form-label">Currency</label><input class="form-control" value="@access.Organisation.BaseCurrency" disabled /></div></section>
+        @if (!isRecurringInvoice)
+        {
+            <div class="mb-4"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="model.DivisionId">@foreach (var branch in branches) { <optgroup label="@($"{branch.Code} — {branch.Name}")">@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@division.Code — @division.Name</option> }</optgroup> }</InputSelect></div>
+        }
         <section class="line-editor"><div class="line-header"><span>Description</span><span>Customer PO</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
             @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputText class="form-control" @bind-Value="line.CustomerPurchaseOrderNumber" placeholder="PO number" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> }
             <button type="button" class="add-line" @onclick="AddLine">+ Add another line</button>
@@ -127,7 +131,7 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid? InvoiceId { get; set; } [Parameter] public Guid? RecurringInvoiceId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private InvoiceEditorModel model = new(); private bool isRecurringInvoice; private RecurringInvoiceEditorModel recurringModel = new(); private string? status; private decimal Subtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
+    private AccessibleOrganisation? access; private string userId = ""; private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private List<Branch> branches = []; private InvoiceEditorModel model = new(); private bool isRecurringInvoice; private RecurringInvoiceEditorModel recurringModel = new(); private string? status; private decimal Subtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
     protected override async Task OnParametersSetAsync()
     {
         var state =
@@ -164,6 +168,12 @@ else
                     x.Type == AccountType.Revenue)
                 .OrderBy(x => x.Code)
                 .ToListAsync();
+
+        branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions)
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive)
+            .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code)
+            .ToListAsync();
+        model.DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty;
 
         if (RecurringInvoiceId is not null)
         {
@@ -258,6 +268,8 @@ else
                         invoice.IssueDate,
                     DueDate =
                         invoice.DueDate,
+                    DivisionId =
+                        invoice.DivisionId ?? model.DivisionId,
                     Lines =
                         invoice.Lines
                             .Select(x =>
@@ -295,7 +307,7 @@ else
         }
     }
     private void AddLine() => model.Lines.Add(new InvoiceLineModel { RevenueAccountId = revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty }); private void AddProductLine(ProductItem item) { var line = model.Lines.Count == 1 && string.IsNullOrWhiteSpace(model.Lines[0].Description) ? model.Lines[0] : new InvoiceLineModel(); line.Description = string.IsNullOrWhiteSpace(item.Description) ? item.Name : item.Description; line.Quantity = 1; line.UnitPrice = item.SalePrice; line.VatTreatment = item.SaleTaxTreatment; line.RevenueAccountId = item.RevenueAccountId ?? revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty; line.ProductItemId = item.Id; if (!model.Lines.Contains(line)) model.Lines.Add(line); } private void RemoveLine(int index) { if (model.Lines.Count > 1) model.Lines.RemoveAt(index); }
-    private SalesInvoiceRequest Request() => new(OrganisationId, model.CustomerId, model.IssueDate, model.DueDate, model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId, x.ProductItemId, x.CustomerPurchaseOrderNumber)).ToList());
+    private SalesInvoiceRequest Request() => new(OrganisationId, model.CustomerId, model.IssueDate, model.DueDate, model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.RevenueAccountId, x.ProductItemId, x.CustomerPurchaseOrderNumber)).ToList(), DivisionId: model.DivisionId);
     private async Task CreateRecurringInvoice()
     {
         try
@@ -454,7 +466,7 @@ else
     public int DueDays { get; set; } = 30;
 }
 
-    private sealed class InvoiceEditorModel { public Guid CustomerId { get; set; } public DateOnly IssueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); public List<InvoiceLineModel> Lines { get; set; } = []; }
+    private sealed class InvoiceEditorModel { public Guid CustomerId { get; set; } public Guid DivisionId { get; set; } public DateOnly IssueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); public List<InvoiceLineModel> Lines { get; set; } = []; }
     private sealed class InvoiceLineModel { [Required, StringLength(300)] public string Description { get; set; } = ""; [StringLength(80)] public string? CustomerPurchaseOrderNumber { get; set; } [Range(.0001, 999999999)] public decimal Quantity { get; set; } = 1; [Range(0, 999999999)] public decimal UnitPrice { get; set; } public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard; public Guid RevenueAccountId { get; set; } public Guid? ProductItemId { get; set; } }
     private sealed record SalesInvoiceCodingSuggestion(Guid? RevenueAccountId, VatTreatment? VatTreatment, string Source);
 }

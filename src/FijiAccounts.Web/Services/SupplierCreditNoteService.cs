@@ -68,7 +68,7 @@ if (!controls.TryGetValue(
         if (journalLines.Count > 0 && allocatedNet != net) journalLines[0] = journalLines[0] with { Credit = journalLines[0].Credit + net - allocatedNet };
         journalLines.Add(new(accountsPayable.Id, number, request.Amount, 0));
         if (vat > 0) journalLines.Add(new(vatReceivable.Id, number, 0, vat));
-        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Supplier credit for {bill.BillNumber}: {request.Reason.Trim()}", journalLines), ct);
+        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Supplier credit for {bill.BillNumber}: {request.Reason.Trim()}", journalLines, bill.BranchId, bill.DivisionId), ct);
 
         foreach (var receipt in receipts)
         {
@@ -165,7 +165,9 @@ if (!controls.TryGetValue(
                         x.LedgerAccountId,
                         $"Reverse {credit.CreditNoteNumber}",
                         x.Credit,
-                        x.Debit))
+                        x.Debit,
+                        x.BranchId,
+                        x.DivisionId))
             .ToList();
 
     var journal =

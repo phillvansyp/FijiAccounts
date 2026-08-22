@@ -40,8 +40,8 @@ if (receivable is null ||
 }
 
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.Date, request.Reference, $"Receipt for {invoice.InvoiceNumber}", [new(bank.Id, invoice.InvoiceNumber, request.Amount, 0), new(receivable.Id, invoice.InvoiceNumber, 0, request.Amount)]), cancellationToken);
-        var receipt = new CustomerReceipt { OrganisationId = request.OrganisationId, CustomerId = invoice.CustomerId, ReceiptDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.Date, request.Reference, $"Receipt for {invoice.InvoiceNumber}", [new(bank.Id, invoice.InvoiceNumber, request.Amount, 0), new(receivable.Id, invoice.InvoiceNumber, 0, request.Amount)], invoice.BranchId, invoice.DivisionId), cancellationToken);
+        var receipt = new CustomerReceipt { OrganisationId = request.OrganisationId, BranchId = invoice.BranchId, DivisionId = invoice.DivisionId, CustomerId = invoice.CustomerId, ReceiptDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
         receipt.Allocations.Add(new CustomerReceiptAllocation { SalesInvoiceId = invoice.Id, Amount = request.Amount });
         invoice.AmountPaid += request.Amount; invoice.Status = invoice.AmountPaid + invoice.AmountCredited == invoice.Total ? InvoiceStatus.Paid : InvoiceStatus.PartPaid;
 

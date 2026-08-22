@@ -8,7 +8,7 @@ using FijiAccounts.Web.Data;
 namespace FijiAccounts.Web.Services;
 
 public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null);
-public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines);
+public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null);
 public sealed record SupplierBillAttachmentRequest(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
 public sealed record SupplierPaymentRequest(Guid OrganisationId, Guid SupplierBillId, DateOnly Date, string Reference, decimal Amount, Guid BankAccountId);
 
@@ -17,7 +17,8 @@ public sealed class PurchasingService(
     TenantAccessService access,
     JournalPostingService posting,
     BankReconciliationService reconciliation,
-    NotificationService notifications)
+    NotificationService notifications,
+    EnterpriseStructureService structures)
 {
     public Task<SupplierBill> PostBillAsync(
         string userId,
@@ -51,6 +52,11 @@ public sealed class PurchasingService(
         CancellationToken ct)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot post bills for this organisation.");
+        var dimension = await structures.ResolveActiveDimensionAsync(
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            ct);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, ct);
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
@@ -158,7 +164,7 @@ if (inventoryAccount is null ||
         }
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
-        var bill = new SupplierBill { OrganisationId = request.OrganisationId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var journalLines = lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, bill.BillNumber, x.Sum(y => y.NetAmount), 0)).ToList();
         if (bill.VatTotal > 0)
 {
@@ -176,7 +182,7 @@ journalLines.Add(
         bill.BillNumber,
         0,
         bill.Total));
-        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", journalLines), ct); bill.PostedJournalId = journal.Id;
+        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", journalLines, dimension.BranchId, dimension.DivisionId), ct); bill.PostedJournalId = journal.Id;
         foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; item.AverageCost = InventoryValuation.WeightedAverage(item.QuantityOnHand, item.AverageCost, line.Quantity, line.UnitPrice); item.QuantityOnHand += line.Quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.BillDate, Type = InventoryMovementType.AdjustmentIncrease, QuantityChange = line.Quantity, UnitCost = line.UnitPrice, ValueChange = InventoryValuation.MovementValue(line.Quantity, line.UnitPrice), Reference = bill.BillNumber, Note = "Automatic stock receipt from supplier bill", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         db.SupplierBills.Add(bill);
 
@@ -265,8 +271,8 @@ if (payable is null ||
         "Accounts Payable (2000) must be an active Liability account.");
 }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)]), ct);
-        var payment = new SupplierPayment { OrganisationId = request.OrganisationId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)], bill.BranchId, bill.DivisionId), ct);
+        var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
         bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
 
         if (bill.Status == BillStatus.Paid)

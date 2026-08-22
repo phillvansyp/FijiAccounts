@@ -37,16 +37,25 @@ branch/division management UI and financial-document dimensions are complete.
 
 Posted journal lines are the authoritative source for branch and division
 reporting. Every new posting receives an active branch and division, defaulting
-to Main Branch and General when the source document does not yet expose a
-selector. A journal can allocate individual lines to different divisions, and
-reversals preserve the original allocations. Existing journal lines are
-backfilled to their company's default branch and division.
+to Main Branch and General when no dimension is selected. A journal can allocate
+individual lines to different divisions, and reversals preserve the original
+allocations. Existing journal lines are backfilled to their company's default
+branch and division.
+
+Sales invoices and supplier bills now capture a selected branch and division,
+including while they are drafts. Their receipts, supplier payments, credit
+notes, voids and reversals inherit that source-document dimension. Existing
+documents are backfilled to the company default (or from their related source
+document for receipts and payments). Recurring templates still use the default
+dimension until template-level allocation is added.
 
 ## Next phases
 
 1. ~~Replace flat organisation-unit settings with hierarchy management.~~
 2. ~~Add group administration and multi-company creation.~~
 3. Add branch and division selectors to each financial document workflow. The
-   shared journal dimension and manual-journal selector are complete.
+   shared journal dimension, manual journals, sales invoices, supplier bills,
+   receipts, payments and related credits/reversals are complete. Recurring
+   templates and the remaining banking/inventory workflows are still pending.
 4. Add explicit branch/division access grants.
 5. Add scoped and consolidated reporting.

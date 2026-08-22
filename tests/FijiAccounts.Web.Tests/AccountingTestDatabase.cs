@@ -47,6 +47,9 @@ Posting =
         Access,
         Reconciliation);
 
+var structures =
+    new EnterpriseStructureService(Db);
+
 
 PurchaseOrders =
     new PurchaseOrderService(
@@ -63,7 +66,8 @@ SalesInvoices =
     new SalesInvoiceService(
         Db,
         Access,
-        Posting);
+        Posting,
+        structures);
 
 Purchasing =
     new PurchasingService(
@@ -71,7 +75,8 @@ Purchasing =
         Access,
         Posting,
         Reconciliation,
-        Notifications);
+        Notifications,
+        structures);
 
 BankCoding =
     new BankTransactionCodingService(

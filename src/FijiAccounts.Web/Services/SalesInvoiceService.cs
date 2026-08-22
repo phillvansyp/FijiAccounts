@@ -8,9 +8,9 @@ using FijiAccounts.Web.Data;
 namespace FijiAccounts.Web.Services;
 
 public sealed record SalesInvoiceLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid RevenueAccountId, Guid? ProductItemId = null, string? CustomerPurchaseOrderNumber = null);
-public sealed record SalesInvoiceRequest(Guid OrganisationId, Guid CustomerId, DateOnly IssueDate, DateOnly DueDate, IReadOnlyList<SalesInvoiceLineRequest> Lines);
+public sealed record SalesInvoiceRequest(Guid OrganisationId, Guid CustomerId, DateOnly IssueDate, DateOnly DueDate, IReadOnlyList<SalesInvoiceLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null);
 
-public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
+public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting, EnterpriseStructureService structures)
 {
     public async Task<SalesInvoice> CreateDraftAsync(string userId, SalesInvoiceRequest request, CancellationToken cancellationToken = default)
     {
@@ -21,10 +21,15 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
             throw new UnauthorizedAccessException(
                 "You cannot create invoices for this organisation.");
         }
+        var dimension = await structures.ResolveActiveDimensionAsync(
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            cancellationToken);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
         var sequence = (await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1;
-        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = $"DRAFT-{sequence:D6}", IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Draft, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = $"DRAFT-{sequence:D6}", IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Draft, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         db.SalesInvoices.Add(invoice); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoiceDraftCreated", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, Lines = lines.Count }) }); await db.SaveChangesAsync(cancellationToken); return invoice;
     }
 
@@ -72,7 +77,7 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
     invoice.Lines,
     journalLines,
     cancellationToken);
-        var journal = await posting.PostAsync(userId, new(organisationId, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines), cancellationToken);
+        var journal = await posting.PostAsync(userId, new(organisationId, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines, invoice.BranchId, invoice.DivisionId), cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.Status = InvoiceStatus.Posted; invoice.PostedJournalId = journal.Id; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
     }
 
@@ -82,6 +87,7 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         var invoice = await db.SalesInvoices.Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be edited.");
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken); var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
+        var dimension = await structures.ResolveActiveDimensionAsync(request.OrganisationId, request.BranchId, request.DivisionId, cancellationToken);
         var existingLines =
     invoice.Lines.ToList();
 
@@ -95,6 +101,8 @@ foreach (var line in lines)
 }
 
 invoice.CustomerId = request.CustomerId;
+invoice.BranchId = dimension.BranchId;
+invoice.DivisionId = dimension.DivisionId;
 invoice.IssueDate = request.IssueDate;
 invoice.DueDate = request.DueDate;
 invoice.Subtotal = lines.Sum(x => x.NetAmount);
@@ -175,6 +183,11 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
             throw new UnauthorizedAccessException(
                 "You cannot create invoices for this organisation.");
         }
+        var dimension = await structures.ResolveActiveDimensionAsync(
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            cancellationToken);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
@@ -234,7 +247,7 @@ if (!controlAccounts.TryGetValue(
         var invoiceNumber =
             AllocateSalesInvoiceNumber(organisation);
 
-        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = invoiceNumber, IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = invoiceNumber, IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
@@ -253,7 +266,9 @@ if (!controlAccounts.TryGetValue(
                         request.IssueDate,
                         invoice.InvoiceNumber,
                         $"Sales invoice {invoice.InvoiceNumber}",
-                        journalLines),
+                        journalLines,
+                        dimension.BranchId,
+                        dimension.DivisionId),
                     cancellationToken)
                 : await posting.PostAsync(
                     userId,
@@ -262,7 +277,9 @@ if (!controlAccounts.TryGetValue(
                         request.IssueDate,
                         invoice.InvoiceNumber,
                         $"Sales invoice {invoice.InvoiceNumber}",
-                        journalLines),
+                        journalLines,
+                        dimension.BranchId,
+                        dimension.DivisionId),
                     cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) });

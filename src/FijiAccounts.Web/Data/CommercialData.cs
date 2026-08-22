@@ -200,6 +200,10 @@ public sealed class SalesInvoice
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
     public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     public Guid CustomerId { get; set; }
     public BusinessParty Customer { get; set; } = null!;
     public long SequenceNumber { get; set; }
@@ -310,6 +314,10 @@ public sealed class CustomerReceipt
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
     public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     public Guid CustomerId { get; set; }
     public BusinessParty Customer { get; set; } = null!;
     public DateOnly ReceiptDate { get; set; }

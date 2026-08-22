@@ -129,7 +129,7 @@ journalLines.Add(
                 value));
     }
 }
-        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines), ct);
+        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines, invoice.BranchId, invoice.DivisionId), ct);
         var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, PostedJournalId = journal.Id, CreatedByUserId = userId };
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         invoice.AmountCredited += request.Amount;
@@ -232,7 +232,9 @@ invoice.Status =
                         x.LedgerAccountId,
                         $"Reverse {credit.CreditNoteNumber}",
                         x.Credit,
-                        x.Debit))
+                        x.Debit,
+                        x.BranchId,
+                        x.DivisionId))
             .ToList();
 
     var journal =

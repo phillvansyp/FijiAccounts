@@ -22,6 +22,10 @@ public sealed record CreateGroupCompanyRequest(
     string CountryCode,
     OrganisationKind Kind);
 
+public sealed record EnterprisePostingDimension(
+    Guid BranchId,
+    Guid DivisionId);
+
 public sealed class EnterpriseStructureService(
     ApplicationDbContext db)
 {
@@ -35,6 +39,62 @@ public sealed class EnterpriseStructureService(
             .OrderByDescending(x => x.IsDefault)
             .ThenBy(x => x.Code)
             .ToListAsync(ct);
+
+    public async Task<EnterprisePostingDimension> ResolveActiveDimensionAsync(
+        Guid organisationId,
+        Guid? requestedBranchId,
+        Guid? requestedDivisionId,
+        CancellationToken ct = default)
+    {
+        var activeBranches =
+            await db.Branches
+                .AsNoTracking()
+                .Include(x => x.Divisions.Where(division => division.IsActive))
+                .Where(x =>
+                    x.OrganisationId == organisationId &&
+                    x.IsActive)
+                .ToListAsync(ct);
+        Branch? branch = null;
+        Division? division = null;
+
+        if (requestedDivisionId is Guid divisionId)
+        {
+            branch = activeBranches.SingleOrDefault(x =>
+                x.Divisions.Any(candidate => candidate.Id == divisionId));
+            division = branch?.Divisions.Single(x => x.Id == divisionId);
+
+            if (division is null)
+            {
+                throw new InvalidOperationException(
+                    "The selected division must be active and belong to this organisation.");
+            }
+        }
+
+        if (requestedBranchId is Guid branchId)
+        {
+            var selectedBranch =
+                activeBranches.SingleOrDefault(x => x.Id == branchId)
+                ?? throw new InvalidOperationException(
+                    "The selected branch must be active and belong to this organisation.");
+
+            if (branch is not null && branch.Id != selectedBranch.Id)
+            {
+                throw new InvalidOperationException(
+                    "The selected division does not belong to the selected branch.");
+            }
+
+            branch = selectedBranch;
+        }
+
+        branch ??= activeBranches.SingleOrDefault(x => x.IsDefault)
+            ?? throw new InvalidOperationException(
+                "An active default branch is required before transactions can be posted.");
+        division ??= branch.Divisions.SingleOrDefault(x => x.IsDefault)
+            ?? throw new InvalidOperationException(
+                "An active default division is required for the selected branch.");
+
+        return new EnterprisePostingDimension(branch.Id, division.Id);
+    }
 
     public DefaultEnterpriseStructure AddDefaultFor(
         Organisation company,
