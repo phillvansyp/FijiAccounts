@@ -1,12 +1,14 @@
 @page "/o/{OrganisationId:guid}/notifications"
 
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 
 @attribute [Authorize]
 
 @inject NotificationService NotificationService
+@inject ApplicationDbContext Db
 
 <h1>Notifications</h1>
 
@@ -50,6 +52,19 @@ else
                 <div>
                     @notification.Message
                 </div>
+                @if (notificationLinks.TryGetValue(
+                    notification.Id,
+                    out var link))
+                {
+                    <div class="mt-2">
+                        <a class="btn btn-sm btn-outline-primary"
+                           href="@link"
+                           target="_blank">
+                            Open document
+                        </a>
+                    </div>
+                }
+
 
                 <div class="mt-2">
 
@@ -97,13 +112,34 @@ else
         };
     }
     private List<Notification> notifications = [];
+    private Dictionary<Guid, string> notificationLinks = [];
 
     protected override async Task OnInitializedAsync()
     {
-
         notifications =
             await NotificationService.GetUnreadAsync(
                 OrganisationId);
+
+        foreach (var notification in notifications)
+        {
+            if (notification.RelatedEntityType == "BusinessPartyDocument" &&
+                Guid.TryParse(
+                    notification.RelatedEntityId,
+                    out var documentId))
+            {
+                var document =
+                    await Db.BusinessPartyDocuments
+                        .AsNoTracking()
+                        .SingleOrDefaultAsync(
+                            x => x.Id == documentId);
+
+                if (document is not null)
+                {
+                    notificationLinks[notification.Id] =
+                        $"/api/o/{document.OrganisationId}/contacts/{document.BusinessPartyId}/documents/{document.Id}";
+                }
+            }
+        }
     }
 
     private async Task MarkRead(Guid id)
