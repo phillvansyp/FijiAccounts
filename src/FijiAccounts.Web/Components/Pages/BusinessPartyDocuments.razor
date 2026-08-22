@@ -112,13 +112,25 @@ else
 
             <tbody>
 
-            @foreach (var document in documents)
+            @foreach (var group in documents.GroupBy(x => x.Type))
             {
-                <BusinessPartyDocumentRow
-                    Document="document"
-                    OrganisationId="OrganisationId"
-                    PartyId="PartyId"
-                    OnDelete="DeleteDocument" />
+                <tr>
+                    <td colspan="8">
+                        <strong>@group.Key</strong>
+                        <span class="text-muted">
+                            (@group.Count())
+                        </span>
+                    </td>
+                </tr>
+
+                @foreach (var document in group)
+                {
+                    <BusinessPartyDocumentRow
+                        Document="document"
+                        OrganisationId="OrganisationId"
+                        PartyId="PartyId"
+                        OnDelete="DeleteDocument" />
+                }
             }
 
             </tbody>
@@ -174,13 +186,29 @@ else
     }
 
 
+    private static bool IsValidExpiryDate(
+        DateOnly? date)
+    {
+        if (!date.HasValue)
+        {
+            return true;
+        }
+
+        var today =
+            DateOnly.FromDateTime(DateTime.Today);
+
+        return date.Value >= today.AddYears(-1)
+            && date.Value <= today.AddYears(20);
+    }
+
     private async Task Upload(
     InputFileChangeEventArgs e)
 {
     try
     {
-        var files =
-            e.GetMultipleFiles(10);
+
+            var files =
+                e.GetMultipleFiles(10);
 
         foreach (var file in files)
         {
