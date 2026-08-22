@@ -172,4 +172,80 @@ public sealed class EnterpriseStructureServiceTests
                 "OTHER",
                 "Other"));
     }
+
+    [Fact]
+    public async Task GroupOwner_CanRenameGroupAndCreateIsolatedCompany()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        await service.UpdateGroupNameAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "Downer Group");
+        var company =
+            await service.AddCompanyAsync(
+                test.UserId,
+                new CreateGroupCompanyRequest(
+                    test.Organisation.Id,
+                    "Higgins Limited",
+                    "Higgins",
+                    "TIN-2",
+                    "FJ",
+                    OrganisationKind.Business));
+
+        var group =
+            await service.GetGroupAsync(
+                test.UserId,
+                test.Organisation.Id);
+        var companyMembership =
+            await test.Db.OrganisationMemberships
+                .AsNoTracking()
+                .SingleAsync(x => x.OrganisationId == company.Id);
+        var branch =
+            await test.Db.Branches
+                .AsNoTracking()
+                .Include(x => x.Divisions)
+                .SingleAsync(x => x.OrganisationId == company.Id);
+        var accountCount =
+            await test.Db.LedgerAccounts.CountAsync(
+                x => x.OrganisationId == company.Id);
+
+        Assert.NotNull(group);
+        Assert.Equal("Downer Group", group.Name);
+        Assert.Equal(2, group.Companies.Count);
+        Assert.Equal(test.Organisation.OrganisationGroupId, company.OrganisationGroupId);
+        Assert.Equal(test.UserId, companyMembership.UserId);
+        Assert.Equal(OrganisationRole.Owner, companyMembership.Role);
+        Assert.Equal("MAIN", branch.Code);
+        Assert.Equal("GENERAL", branch.Divisions.Single().Code);
+        Assert.Equal(FijiStarterChart.For(company.Id).Count, accountCount);
+    }
+
+    [Fact]
+    public async Task GroupManagement_RejectsUserWithoutGroupRole()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+        var otherUserId = Guid.NewGuid().ToString();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.UpdateGroupNameAsync(
+                otherUserId,
+                test.Organisation.Id,
+                "Unauthorised rename"));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.AddCompanyAsync(
+                otherUserId,
+                new CreateGroupCompanyRequest(
+                    test.Organisation.Id,
+                    "Unauthorised Company",
+                    null,
+                    null,
+                    "FJ",
+                    OrganisationKind.Business)));
+    }
 }

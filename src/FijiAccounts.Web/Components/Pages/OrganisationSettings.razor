@@ -18,6 +18,90 @@ else
 {
     <div class="settings-heading"><div><p class="eyebrow">Organisation</p><h1>Business settings</h1><p>Identity, regional accounting and compliance configuration.</p></div><span class="tax-pack @(jurisdiction.TaxPackEnabled ? "enabled" : "pending")">@(jurisdiction.TaxPackEnabled ? "Tax pack enabled" : "Tax pack pending verification")</span></div>
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
+    <section class="settings-card mb-3">
+        <h2>Organisation group</h2>
+        <p>
+            The parent group contains separate legal companies. Company ledgers
+            and user access remain isolated.
+        </p>
+        @if (canManageGroup)
+        {
+            <EditForm Model="groupModel"
+                      OnValidSubmit="SaveGroup"
+                      FormName="organisation-group-settings">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row align-items-end">
+                    <div class="col-md-8 mb-3">
+                        <label class="form-label">Group name</label>
+                        <InputText class="form-control"
+                                   @bind-Value="groupModel.Name" />
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <button class="btn btn-outline-primary">Save group name</button>
+                    </div>
+                </div>
+            </EditForm>
+        }
+        else
+        {
+            <dl class="jurisdiction-list">
+                <div><dt>Group</dt><dd>@groupName</dd></div>
+            </dl>
+        }
+
+        <div class="table-responsive mt-2">
+            <table class="table">
+                <thead><tr><th>Legal company</th><th>Jurisdiction</th><th>Currency</th><th>Access</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var company in GroupCompanies)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@company.LegalName</strong>
+                                @if (company.Id == OrganisationId)
+                                {
+                                    <span class="badge text-bg-light ms-1">Current</span>
+                                }
+                            </td>
+                            <td>@CountryName(company.CountryCode)</td>
+                            <td>@company.BaseCurrency</td>
+                            <td>@(accessibleCompanyIds.Contains(company.Id) ? "Direct access" : "No ledger access")</td>
+                            <td class="text-end">
+                                @if (accessibleCompanyIds.Contains(company.Id))
+                                {
+                                    <a class="btn btn-sm btn-outline-secondary"
+                                       href="o/@company.Id">Open</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (canManageGroup)
+        {
+            <details class="mt-3">
+                <summary><strong>Add a legal company to @groupName</strong></summary>
+                <EditForm Model="companyModel"
+                          OnValidSubmit="CreateCompany"
+                          FormName="add-group-company"
+                          class="mt-3">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+                    <div class="row">
+                        <div class="col-md-6 mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="companyModel.LegalName" /></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Trading name (optional)</label><InputText class="form-control" @bind-Value="companyModel.TradingName" /></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Jurisdiction</label><InputSelect class="form-select" @bind-Value="companyModel.CountryCode">@foreach (var item in IslandJurisdictions.All) { <option value="@item.CountryCode">@item.CountryName — @item.CurrencyCode</option> }</InputSelect></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="companyModel.Tin" /></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Company type</label><InputSelect class="form-select" @bind-Value="companyModel.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
+                    </div>
+                    <button class="btn btn-primary">Create company</button>
+                </EditForm>
+            </details>
+        }
+    </section>
     <div class="settings-grid">
         <section class="settings-card"><h2>Business details</h2><p>Used on transactions, reports and tax documents.</p>
             <EditForm Model="model" OnValidSubmit="Save" FormName="organisation-settings"><DataAnnotationsValidator /><ValidationSummary />
@@ -279,7 +363,8 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private bool canManage, canChangeJurisdiction; private SettingsModel model = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction; private SettingsModel model = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
     protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadHierarchy(); }
     private async Task Save()
@@ -323,6 +408,8 @@ else
         }
     }
     private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string CountryName(string countryCode) =>
+        IslandJurisdictions.Get(countryCode).CountryName;
     private async Task ChangeJurisdiction() { if (!canChangeJurisdiction || access is null) return; var selected = IslandJurisdictions.Get(selectedCountry); var organisation = await Db.Organisations.SingleAsync(x => x.Id == OrganisationId); organisation.CountryCode = selected.CountryCode; organisation.BaseCurrency = selected.CurrencyCode; organisation.TimeZoneId = selected.TimeZoneId; organisation.TaxLabel = selected.TaxLabel; organisation.FinancialYearEndMonth = selected.FinancialYearEndMonth; organisation.FinancialYearEndDay = selected.FinancialYearEndDay; await Db.SaveChangesAsync(); access = access with { Organisation = organisation }; jurisdiction = selected; status = $"Jurisdiction changed to {selected.CountryName}."; }
     private async Task LoadHierarchy()
     {
@@ -330,14 +417,26 @@ else
             await EnterpriseStructures.ListBranchesAsync(
                 OrganisationId);
 
-        groupName =
-            access!.Organisation.OrganisationGroupId is Guid groupId
+        groupDetails =
+            await EnterpriseStructures.GetGroupAsync(
+                userId,
+                OrganisationId);
+        accessibleCompanyIds =
+            (await TenantAccess.ListAsync(userId))
+                .Select(x => x.Organisation.Id)
+                .ToHashSet();
+        groupName = groupDetails?.Name ??
+            (access!.Organisation.OrganisationGroupId is Guid groupId
                 ? await Db.OrganisationGroups
                     .AsNoTracking()
                     .Where(x => x.Id == groupId)
                     .Select(x => x.Name)
                     .SingleAsync()
-                : "Organisation group";
+                : "Organisation group");
+        canManageGroup =
+            groupDetails?.Role is OrganisationGroupRole.Owner or
+                OrganisationGroupRole.Administrator;
+        groupModel.Name = groupName;
 
         if (divisionModel.BranchId == Guid.Empty ||
             branches.All(x =>
@@ -348,6 +447,43 @@ else
                 branches.FirstOrDefault(x => x.IsActive)?.Id ??
                 Guid.Empty;
         }
+    }
+
+    private async Task SaveGroup()
+    {
+        if (!canManageGroup) return;
+
+        await RunHierarchyChange(
+            async () =>
+            {
+                await EnterpriseStructures.UpdateGroupNameAsync(
+                    userId,
+                    OrganisationId,
+                    groupModel.Name);
+                status = "Organisation group name saved.";
+            });
+    }
+
+    private async Task CreateCompany()
+    {
+        if (!canManageGroup) return;
+
+        await RunHierarchyChange(
+            async () =>
+            {
+                var company =
+                    await EnterpriseStructures.AddCompanyAsync(
+                        userId,
+                        new CreateGroupCompanyRequest(
+                            OrganisationId,
+                            companyModel.LegalName,
+                            companyModel.TradingName,
+                            companyModel.Tin,
+                            companyModel.CountryCode,
+                            companyModel.Kind));
+                companyModel = new();
+                status = $"{company.LegalName} added to {groupName}.";
+            });
     }
 
     private async Task CreateBranch()
@@ -437,6 +573,8 @@ else
     }
 
     private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
+    private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
     private sealed class BranchModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
     private sealed class DivisionModel { [Required] public Guid BranchId { get; set; } [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
 }

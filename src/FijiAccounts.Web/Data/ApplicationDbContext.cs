@@ -7,6 +7,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
     public DbSet<Organisation> Organisations => Set<Organisation>();
     public DbSet<OrganisationGroup> OrganisationGroups => Set<OrganisationGroup>();
+    public DbSet<OrganisationGroupMembership> OrganisationGroupMemberships =>
+        Set<OrganisationGroupMembership>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
@@ -90,6 +92,15 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Organisation>()
             .HasIndex(x => x.OrganisationGroupId);
+        builder.Entity<OrganisationGroupMembership>()
+            .HasKey(x => new { x.OrganisationGroupId, x.UserId });
+        builder.Entity<OrganisationGroupMembership>()
+            .HasIndex(x => x.UserId);
+        builder.Entity<OrganisationGroupMembership>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.Memberships)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<Branch>()
             .HasIndex(x => new { x.OrganisationId, x.Code })
             .IsUnique();

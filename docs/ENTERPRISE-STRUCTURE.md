@@ -19,8 +19,8 @@ adding a distinct domain concept.
 
 Memberships and accountant engagements continue to grant access to an individual
 `Organisation`. Belonging to the same `OrganisationGroup` does not grant access to
-another company. Group-level roles and consolidated reporting will be added as
-separate, explicit capabilities.
+another company. Explicit group Owner, Administrator and Viewer roles control the
+group structure independently from company-ledger access.
 
 ## Compatibility
 
@@ -36,6 +36,7 @@ branch/division management UI and financial-document dimensions are complete.
 ## Next phases
 
 1. ~~Replace flat organisation-unit settings with hierarchy management.~~
-2. Add company, branch, and division assignments to financial documents.
-3. Add explicit group/company/branch/division access grants.
-4. Add scoped and consolidated reporting.
+2. ~~Add group administration and multi-company creation.~~
+3. Add branch and division assignments to financial documents.
+4. Add explicit branch/division access grants.
+5. Add scoped and consolidated reporting.

@@ -155,7 +155,7 @@ public BankTransactionCodingService BankCoding { get; }
         db.Organisations.Add(organisation);
 
         new EnterpriseStructureService(db)
-            .AddDefaultFor(organisation);
+            .AddDefaultFor(organisation, user.Id);
 
         db.OrganisationMemberships.Add(
             new OrganisationMembership

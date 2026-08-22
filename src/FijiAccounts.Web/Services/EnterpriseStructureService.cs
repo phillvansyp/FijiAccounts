@@ -8,6 +8,20 @@ public sealed record DefaultEnterpriseStructure(
     Branch Branch,
     Division Division);
 
+public sealed record EnterpriseGroupDetails(
+    Guid Id,
+    string Name,
+    OrganisationGroupRole Role,
+    IReadOnlyList<Organisation> Companies);
+
+public sealed record CreateGroupCompanyRequest(
+    Guid CurrentOrganisationId,
+    string LegalName,
+    string? TradingName,
+    string? Tin,
+    string CountryCode,
+    OrganisationKind Kind);
+
 public sealed class EnterpriseStructureService(
     ApplicationDbContext db)
 {
@@ -23,7 +37,8 @@ public sealed class EnterpriseStructureService(
             .ToListAsync(ct);
 
     public DefaultEnterpriseStructure AddDefaultFor(
-        Organisation company)
+        Organisation company,
+        string? ownerUserId = null)
     {
         if (company.OrganisationGroupId is not null ||
             company.OrganisationGroup is not null)
@@ -38,34 +53,151 @@ public sealed class EnterpriseStructureService(
                 Name = $"{company.LegalName.Trim()} Group"
             };
 
-        var branch =
-            new Branch
-            {
-                Organisation = company,
-                Code = "MAIN",
-                Name = "Main Branch",
-                IsDefault = true
-            };
-
-        var division =
-            new Division
-            {
-                Branch = branch,
-                Code = "GENERAL",
-                Name = "General",
-                IsDefault = true
-            };
+        var branch = CreateDefaultBranch(company);
+        var division = branch.Divisions.Single();
 
         company.OrganisationGroup = group;
 
         db.OrganisationGroups.Add(group);
+        if (!string.IsNullOrWhiteSpace(ownerUserId))
+        {
+            db.OrganisationGroupMemberships.Add(
+                new OrganisationGroupMembership
+                {
+                    OrganisationGroup = group,
+                    UserId = ownerUserId,
+                    Role = OrganisationGroupRole.Owner
+                });
+        }
         db.Branches.Add(branch);
-        db.Divisions.Add(division);
 
         return new(
             group,
             branch,
             division);
+    }
+
+    public async Task<EnterpriseGroupDetails?> GetGroupAsync(
+        string userId,
+        Guid currentOrganisationId,
+        CancellationToken ct = default)
+    {
+        var membership =
+            await db.OrganisationGroupMemberships
+                .AsNoTracking()
+                .Where(x =>
+                    x.UserId == userId &&
+                    x.OrganisationGroup.Companies.Any(company =>
+                        company.Id == currentOrganisationId))
+                .Select(x => new
+                {
+                    x.OrganisationGroupId,
+                    x.OrganisationGroup.Name,
+                    x.Role,
+                    Companies = x.OrganisationGroup.Companies
+                        .OrderBy(company => company.LegalName)
+                        .ToList()
+                })
+                .SingleOrDefaultAsync(ct);
+
+        return membership is null
+            ? null
+            : new EnterpriseGroupDetails(
+                membership.OrganisationGroupId,
+                membership.Name,
+                membership.Role,
+                membership.Companies);
+    }
+
+    public async Task UpdateGroupNameAsync(
+        string userId,
+        Guid currentOrganisationId,
+        string name,
+        CancellationToken ct = default)
+    {
+        var normalisedName = NormaliseGroupName(name);
+        var groupId = await RequireGroupManagerAsync(
+            userId,
+            currentOrganisationId,
+            ct);
+
+        var changed =
+            await db.OrganisationGroups
+                .Where(x => x.Id == groupId)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(x => x.Name, normalisedName),
+                    ct);
+
+        if (changed != 1)
+        {
+            throw new InvalidOperationException(
+                "The organisation group could not be updated.");
+        }
+    }
+
+    public async Task<Organisation> AddCompanyAsync(
+        string userId,
+        CreateGroupCompanyRequest request,
+        CancellationToken ct = default)
+    {
+        var groupId = await RequireGroupManagerAsync(
+            userId,
+            request.CurrentOrganisationId,
+            ct);
+        var groupRole =
+            await db.OrganisationGroupMemberships
+                .Where(x =>
+                    x.OrganisationGroupId == groupId &&
+                    x.UserId == userId)
+                .Select(x => x.Role)
+                .SingleAsync(ct);
+        var jurisdiction = IslandJurisdictions.Get(request.CountryCode);
+        var legalName = NormaliseCompanyName(request.LegalName);
+
+        if (await db.Organisations.AnyAsync(
+                x =>
+                    x.OrganisationGroupId == groupId &&
+                    x.LegalName == legalName,
+                ct))
+        {
+            throw new InvalidOperationException(
+                "A company with that legal name already exists in the group.");
+        }
+
+        var company =
+            new Organisation
+            {
+                OrganisationGroupId = groupId,
+                LegalName = legalName,
+                TradingName = NullIfWhiteSpace(request.TradingName),
+                Tin = NullIfWhiteSpace(request.Tin),
+                Kind = request.Kind,
+                CountryCode = jurisdiction.CountryCode,
+                BaseCurrency = jurisdiction.CurrencyCode,
+                TimeZoneId = jurisdiction.TimeZoneId,
+                TaxLabel = jurisdiction.TaxLabel,
+                FinancialYearEndMonth = jurisdiction.FinancialYearEndMonth,
+                FinancialYearEndDay = jurisdiction.FinancialYearEndDay
+            };
+        var branch = CreateDefaultBranch(company);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        db.Organisations.Add(company);
+        db.Branches.Add(branch);
+        db.OrganisationMemberships.Add(
+            new OrganisationMembership
+            {
+                Organisation = company,
+                UserId = userId,
+                Role = groupRole == OrganisationGroupRole.Owner
+                    ? OrganisationRole.Owner
+                    : OrganisationRole.Administrator
+            });
+        db.LedgerAccounts.AddRange(FijiStarterChart.For(company.Id));
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        return company;
     }
 
     public async Task<Branch> AddBranchAsync(
@@ -245,4 +377,68 @@ public sealed class EnterpriseStructureService(
 
         return result;
     }
+
+    private async Task<Guid> RequireGroupManagerAsync(
+        string userId,
+        Guid currentOrganisationId,
+        CancellationToken ct)
+    {
+        var groupId =
+            await db.OrganisationGroupMemberships
+                .Where(x =>
+                    x.UserId == userId &&
+                    x.Role != OrganisationGroupRole.Viewer &&
+                    x.OrganisationGroup.Companies.Any(company =>
+                        company.Id == currentOrganisationId))
+                .Select(x => (Guid?)x.OrganisationGroupId)
+                .SingleOrDefaultAsync(ct);
+
+        return groupId ?? throw new UnauthorizedAccessException(
+            "You do not have permission to manage this organisation group.");
+    }
+
+    private static Branch CreateDefaultBranch(Organisation company) =>
+        new()
+        {
+            Organisation = company,
+            Code = "MAIN",
+            Name = "Main Branch",
+            IsDefault = true,
+            Divisions =
+            [
+                new Division
+                {
+                    Code = "GENERAL",
+                    Name = "General",
+                    IsDefault = true
+                }
+            ]
+        };
+
+    private static string NormaliseGroupName(string value)
+    {
+        var result = value.Trim();
+        if (result.Length is < 1 or > 160)
+        {
+            throw new InvalidOperationException(
+                "Enter a group name between 1 and 160 characters.");
+        }
+
+        return result;
+    }
+
+    private static string NormaliseCompanyName(string value)
+    {
+        var result = value.Trim();
+        if (result.Length is < 1 or > 160)
+        {
+            throw new InvalidOperationException(
+                "Enter a legal name between 1 and 160 characters.");
+        }
+
+        return result;
+    }
+
+    private static string? NullIfWhiteSpace(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

@@ -4,6 +4,7 @@ namespace FijiAccounts.Web.Data;
 
 public enum OrganisationKind { Business, AccountingPractice }
 public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Payroll, Sales, ReadOnly }
+public enum OrganisationGroupRole { Owner, Administrator, Viewer }
 public enum EngagementAccess { ReadOnly, Bookkeeping, Accountant, Full }
 public enum OrganisationUnitType { Department, Branch }
 
@@ -15,7 +16,18 @@ public sealed class OrganisationGroup
     public required string Name { get; set; }
 
     public List<Organisation> Companies { get; set; } = [];
+    public List<OrganisationGroupMembership> Memberships { get; set; } = [];
 
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class OrganisationGroupMembership
+{
+    public Guid OrganisationGroupId { get; set; }
+    public OrganisationGroup OrganisationGroup { get; set; } = null!;
+    public required string UserId { get; set; }
+    public ApplicationUser User { get; set; } = null!;
+    public OrganisationGroupRole Role { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
