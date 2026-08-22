@@ -1,12 +1,10 @@
 @page "/invite/{Token}"
 @attribute [Authorize]
-@using System.Security.Cryptography
-@using System.Text
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
-@using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
-@inject ApplicationDbContext Db
+@using FijiAccounts.Web.Services
+@inject OrganisationInvitationService Invitations
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -19,12 +17,9 @@
     private string? message; private string alertClass = "alert-danger";
     protected override async Task OnParametersSetAsync()
     {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Token)));
-        var invitation = await Db.OrganisationInvitations.Include(x => x.Organisation).SingleOrDefaultAsync(x => x.TokenHash == hash);
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var user = await UserManager.GetUserAsync(state.User); var email = user is null ? null : await UserManager.GetEmailAsync(user);
-        if (invitation is null || invitation.ExpiresAt <= DateTimeOffset.UtcNow || invitation.AcceptedAt is not null || invitation.RevokedAt is not null) { message = "This invitation is invalid or has expired."; return; }
-        if (!string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase)) { message = $"This invitation was issued to {invitation.Email}. Sign in using that address."; return; }
-        if (!await Db.OrganisationMemberships.AnyAsync(x => x.OrganisationId == invitation.OrganisationId && x.UserId == user!.Id)) Db.OrganisationMemberships.Add(new OrganisationMembership { OrganisationId = invitation.OrganisationId, UserId = user!.Id, Role = invitation.Role });
-        invitation.AcceptedAt = DateTimeOffset.UtcNow; await Db.SaveChangesAsync(); alertClass = "alert-success"; message = $"You now have {invitation.Role} access to {invitation.Organisation.LegalName}.";
+        var result = await Invitations.AcceptAsync(user!.Id, email, Token);
+        alertClass = result.Succeeded ? "alert-success" : "alert-danger";
+        message = result.Message;
     }
 }
