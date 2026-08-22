@@ -1,6 +1,7 @@
 @page "/o/{OrganisationId:guid}/notifications"
 
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
@@ -9,6 +10,7 @@
 
 @inject NotificationService NotificationService
 @inject ApplicationDbContext Db
+@inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <h1>Notifications</h1>
@@ -147,11 +149,24 @@ else
     private Dictionary<Guid, string> notificationLinks = [];
     private string userId = "";
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
+    {
+        var state =
+            await AuthenticationStateProvider.GetAuthenticationStateAsync();
+
+        userId =
+            UserManager.GetUserId(state.User)!;
+
+        await LoadNotificationsAsync();
+    }
+
+    private async Task LoadNotificationsAsync()
     {
         notifications =
             await NotificationService.GetUnreadAsync(
                 OrganisationId);
+
+        notificationLinks.Clear();
 
         foreach (var notification in notifications)
         {
@@ -197,9 +212,7 @@ else
             id,
             userId);
 
-        notifications =
-            await NotificationService.GetUnreadAsync(
-                OrganisationId);
+        await LoadNotificationsAsync();
     }
 
 
@@ -209,17 +222,6 @@ else
             id,
             userId);
 
-        notifications =
-            await NotificationService.GetUnreadAsync(
-                OrganisationId);
-    }
-
-    private async Task MarkRead(Guid id)
-    {
-        await NotificationService.MarkAsReadAsync(id);
-
-        notifications =
-            await NotificationService.GetUnreadAsync(
-                OrganisationId);
+        await LoadNotificationsAsync();
     }
 }
