@@ -34,17 +34,39 @@ public sealed class GroupFinancialReportService(
         DateOnly to,
         CancellationToken cancellationToken = default)
     {
-        var group = await db.OrganisationGroupMemberships
+        var group = await db.OrganisationGroups
             .AsNoTracking()
-            .Where(x => x.UserId == userId && x.OrganisationGroup.Companies.Any(company => company.Id == currentOrganisationId))
+            .Where(x => x.Companies.Any(company => company.Id == currentOrganisationId))
             .Select(x => new
             {
-                x.OrganisationGroupId,
-                x.OrganisationGroup.Name,
-                Companies = x.OrganisationGroup.Companies.OrderBy(company => company.LegalName).ToList()
+                OrganisationGroupId = x.Id,
+                x.Name,
+                Companies = x.Companies.OrderBy(company => company.LegalName).ToList()
             })
             .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new UnauthorizedAccessException("You do not have access to this organisation group.");
+            ?? throw new InvalidOperationException("This organisation does not belong to an organisation group.");
+
+        var hasGroupMembership = await db.OrganisationGroupMemberships
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.OrganisationGroupId == group.OrganisationGroupId && x.UserId == userId,
+                cancellationToken);
+        if (!hasGroupMembership)
+        {
+            var managedCompanyIds = await db.OrganisationMemberships
+                .AsNoTracking()
+                .Where(x =>
+                    x.UserId == userId &&
+                    x.Organisation.OrganisationGroupId == group.OrganisationGroupId &&
+                    (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator))
+                .Select(x => x.OrganisationId)
+                .ToListAsync(cancellationToken);
+
+            if (group.Companies.Any(company => !managedCompanyIds.Contains(company.Id)))
+            {
+                throw new UnauthorizedAccessException("You do not have access to this organisation group.");
+            }
+        }
 
         var accessibleIds = (await tenantAccess.ListAsync(userId)).Select(x => x.Organisation.Id).ToHashSet();
         var inaccessible = group.Companies.Where(x => !accessibleIds.Contains(x.Id)).Select(x => x.LegalName).ToArray();

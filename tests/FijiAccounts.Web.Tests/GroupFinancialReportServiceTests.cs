@@ -8,6 +8,30 @@ namespace FijiAccounts.Web.Tests;
 public sealed class GroupFinancialReportServiceTests
 {
     [Fact]
+    public async Task GetAsync_AllowsLegacyOwnerWhoManagesEveryCompany()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var groupMemberships = await test.Db.OrganisationGroupMemberships
+            .Where(x => x.UserId == test.UserId)
+            .ToListAsync();
+        test.Db.OrganisationGroupMemberships.RemoveRange(groupMemberships);
+        await test.Db.SaveChangesAsync();
+        var service = new GroupFinancialReportService(
+            test.Db,
+            new FinancialReportService(test.Db),
+            test.Access);
+
+        var result = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 31));
+
+        Assert.Single(result.Companies);
+        Assert.Equal(test.Organisation.Id, result.Companies[0].OrganisationId);
+    }
+
+    [Fact]
     public async Task GetAsync_ConsolidatesCompanyLedgersAndPreservesBreakdown()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
