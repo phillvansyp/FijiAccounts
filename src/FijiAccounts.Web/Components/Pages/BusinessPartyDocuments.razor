@@ -138,7 +138,6 @@ else
 
                     <td>
                         @((document.StoredSize / 1024m / 1024m).ToString("N2")) MB
-
                         @if (document.IsCompressed)
                         {
                             <div class="text-success small">
@@ -156,7 +155,9 @@ else
                     <td>
                         @if (document.ExpiryDate.HasValue)
                         {
-                            @document.ExpiryDate.Value.ToString("dd MMM yyyy")
+                            <div>
+                                @document.ExpiryDate.Value.ToString("dd MMM yyyy")
+                            </div>
                         }
                         else
                         {
@@ -165,7 +166,6 @@ else
                     </td>
 
                     <td class="text-end">
-
                         <a class="btn btn-sm btn-outline-primary me-1"
                            target="_blank"
                            href="/api/o/@OrganisationId/contacts/@PartyId/documents/@document.Id">
@@ -182,7 +182,6 @@ else
                                 @onclick="() => DeleteDocument(document.Id)">
                             Delete
                         </button>
-
                     </td>
 
                 </tr>
@@ -355,6 +354,44 @@ else
     }
     }
 
+    private static string GetExpiryStatus(
+        DateOnly? expiryDate)
+    {
+        if (!expiryDate.HasValue)
+        {
+            return "";
+        }
+
+        var today =
+            DateOnly.FromDateTime(
+                DateTime.Today);
+
+        if (expiryDate.Value < today)
+        {
+            return "Expired";
+        }
+
+        if (expiryDate.Value <= today.AddDays(30))
+        {
+            return "Expiring soon";
+        }
+
+        return "";
+    }
+
+    private static string GetExpiryClass(
+        DateOnly? expiryDate)
+    {
+        var status =
+            GetExpiryStatus(expiryDate);
+
+        return status switch
+        {
+            "Expired" => "text-danger",
+            "Expiring soon" => "text-warning",
+            _ => ""
+        };
+    }
     private static string GetDocumentIcon(
         string fileName)
     {
