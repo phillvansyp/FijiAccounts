@@ -35,7 +35,7 @@ branch/division management UI and financial-document dimensions are complete.
 
 ## Next phases
 
-1. Replace flat organisation-unit settings with hierarchy management.
+1. ~~Replace flat organisation-unit settings with hierarchy management.~~
 2. Add company, branch, and division assignments to financial documents.
 3. Add explicit group/company/branch/division access grants.
 4. Add scoped and consolidated reporting.

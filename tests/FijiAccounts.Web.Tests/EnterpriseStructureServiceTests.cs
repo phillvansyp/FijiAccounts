@@ -86,4 +86,90 @@ public sealed class EnterpriseStructureServiceTests
             accessible,
             x => x.Organisation.Id == secondCompany.Id);
     }
+
+    [Fact]
+    public async Task BranchAndDivisionManagement_PreservesDefaultsAndStatuses()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new EnterpriseStructureService(test.Db);
+
+        var branch =
+            await service.AddBranchAsync(
+                test.Organisation.Id,
+                "nadi",
+                "Nadi Branch");
+
+        var division =
+            await service.AddDivisionAsync(
+                test.Organisation.Id,
+                branch.Id,
+                "retail",
+                "Retail");
+
+        await service.ToggleBranchAsync(
+            test.Organisation.Id,
+            branch.Id);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddDivisionAsync(
+                test.Organisation.Id,
+                branch.Id,
+                "CLOSED",
+                "Closed"));
+
+        await service.ToggleDivisionAsync(
+            test.Organisation.Id,
+            division.Id);
+
+        var branches =
+            await service.ListBranchesAsync(
+                test.Organisation.Id);
+
+        var storedBranch =
+            branches.Single(x => x.Id == branch.Id);
+
+        Assert.Equal("NADI", storedBranch.Code);
+        Assert.False(storedBranch.IsActive);
+        Assert.Contains(
+            storedBranch.Divisions,
+            x =>
+                x.Code == "GENERAL" &&
+                x.IsDefault &&
+                x.IsActive);
+        Assert.Contains(
+            storedBranch.Divisions,
+            x =>
+                x.Code == "RETAIL" &&
+                !x.IsDefault &&
+                !x.IsActive);
+    }
+
+    [Fact]
+    public async Task HierarchyManagement_RejectsCrossCompanyAndDefaultDeactivation()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var service =
+            new EnterpriseStructureService(test.Db);
+
+        var defaultBranch =
+            (await service.ListBranchesAsync(test.Organisation.Id))
+                .Single(x => x.IsDefault);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ToggleBranchAsync(
+                test.Organisation.Id,
+                defaultBranch.Id));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddDivisionAsync(
+                Guid.NewGuid(),
+                defaultBranch.Id,
+                "OTHER",
+                "Other"));
+    }
 }
