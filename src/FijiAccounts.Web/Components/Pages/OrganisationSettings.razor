@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject EnterpriseStructureService EnterpriseStructures
+@inject OrganisationSettingsService SettingsService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -372,30 +373,17 @@ else
         if (!canManage || access is null) return;
         try
         {
-            var legalName = model.LegalName.Trim();
-            var tradingName = NullIfWhiteSpace(model.TradingName);
-            var tin = NullIfWhiteSpace(model.Tin);
-            var changed = await Db.Organisations
-                .Where(x => x.Id == OrganisationId)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(x => x.LegalName, legalName)
-                    .SetProperty(x => x.TradingName, tradingName)
-                    .SetProperty(x => x.Tin, tin)
-                    .SetProperty(
-                        x => x.DefaultSalesInvoicePaymentTermType,
-                        model.DefaultSalesInvoicePaymentTermType)
-                    .SetProperty(
-                        x => x.DefaultSalesInvoiceDueDays,
-                        model.DefaultSalesInvoiceDueDays)
-                    .SetProperty(
-                        x => x.DefaultSupplierBillPaymentTermType,
-                        model.DefaultSupplierBillPaymentTermType)
-                    .SetProperty(
-                        x => x.DefaultSupplierBillDueDays,
-                        model.DefaultSupplierBillDueDays));
-            if (changed != 1) throw new InvalidOperationException("The organisation could not be updated.");
-
-            var stored = await Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == OrganisationId);
+            var stored = await SettingsService.UpdateAsync(
+                userId,
+                new UpdateOrganisationSettingsRequest(
+                    OrganisationId,
+                    model.LegalName,
+                    model.TradingName,
+                    model.Tin,
+                    model.DefaultSalesInvoicePaymentTermType,
+                    model.DefaultSalesInvoiceDueDays,
+                    model.DefaultSupplierBillPaymentTermType,
+                    model.DefaultSupplierBillDueDays));
             model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays };
             access = access with { Organisation = stored };
             statusClass = "alert-success";
@@ -407,10 +395,9 @@ else
             status = $"Business details were not saved: {ex.Message}";
         }
     }
-    private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string CountryName(string countryCode) =>
         IslandJurisdictions.Get(countryCode).CountryName;
-    private async Task ChangeJurisdiction() { if (!canChangeJurisdiction || access is null) return; var selected = IslandJurisdictions.Get(selectedCountry); var organisation = await Db.Organisations.SingleAsync(x => x.Id == OrganisationId); organisation.CountryCode = selected.CountryCode; organisation.BaseCurrency = selected.CurrencyCode; organisation.TimeZoneId = selected.TimeZoneId; organisation.TaxLabel = selected.TaxLabel; organisation.FinancialYearEndMonth = selected.FinancialYearEndMonth; organisation.FinancialYearEndDay = selected.FinancialYearEndDay; await Db.SaveChangesAsync(); access = access with { Organisation = organisation }; jurisdiction = selected; status = $"Jurisdiction changed to {selected.CountryName}."; }
+    private async Task ChangeJurisdiction() { if (!canChangeJurisdiction || access is null) return; var organisation = await SettingsService.ChangeJurisdictionAsync(userId, OrganisationId, selectedCountry); access = access with { Organisation = organisation }; jurisdiction = IslandJurisdictions.Get(organisation.CountryCode); status = $"Jurisdiction changed to {jurisdiction.CountryName}."; }
     private async Task LoadHierarchy()
     {
         branches =
