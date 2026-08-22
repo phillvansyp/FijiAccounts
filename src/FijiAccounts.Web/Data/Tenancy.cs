@@ -6,6 +6,7 @@ public enum OrganisationKind { Business, AccountingPractice }
 public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Payroll, Sales, ReadOnly }
 public enum DimensionAccessMode { All, Restricted }
 public enum OrganisationGroupRole { Owner, Administrator, Viewer }
+public enum GroupExchangeRateType { PeriodAverage, Closing }
 public enum EngagementAccess { ReadOnly, Bookkeeping, Accountant, Full }
 public enum OrganisationUnitType { Department, Branch }
 
@@ -16,9 +17,31 @@ public sealed class OrganisationGroup
     [MaxLength(160)]
     public required string Name { get; set; }
 
+    [MaxLength(3)]
+    public string PresentationCurrency { get; set; } = "FJD";
+
     public List<Organisation> Companies { get; set; } = [];
     public List<OrganisationGroupMembership> Memberships { get; set; } = [];
+    public List<GroupExchangeRate> ExchangeRates { get; set; } = [];
 
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class GroupExchangeRate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationGroupId { get; set; }
+    public OrganisationGroup OrganisationGroup { get; set; } = null!;
+
+    [MaxLength(3)]
+    public required string FromCurrency { get; set; }
+
+    [MaxLength(3)]
+    public required string ToCurrency { get; set; }
+
+    public GroupExchangeRateType Type { get; set; }
+    public DateOnly EffectiveDate { get; set; }
+    public decimal Rate { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

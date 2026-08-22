@@ -11,6 +11,7 @@ public sealed record DefaultEnterpriseStructure(
 public sealed record EnterpriseGroupDetails(
     Guid Id,
     string Name,
+    string PresentationCurrency,
     OrganisationGroupRole Role,
     IReadOnlyList<Organisation> Companies);
 
@@ -110,7 +111,8 @@ public sealed class EnterpriseStructureService(
         var group =
             new OrganisationGroup
             {
-                Name = $"{company.LegalName.Trim()} Group"
+                Name = $"{company.LegalName.Trim()} Group",
+                PresentationCurrency = company.BaseCurrency
             };
 
         var branch = CreateDefaultBranch(company);
@@ -153,6 +155,7 @@ public sealed class EnterpriseStructureService(
                 {
                     x.OrganisationGroupId,
                     x.OrganisationGroup.Name,
+                    x.OrganisationGroup.PresentationCurrency,
                     x.Role,
                     Companies = x.OrganisationGroup.Companies
                         .OrderBy(company => company.LegalName)
@@ -165,6 +168,7 @@ public sealed class EnterpriseStructureService(
             : new EnterpriseGroupDetails(
                 membership.OrganisationGroupId,
                 membership.Name,
+                membership.PresentationCurrency,
                 membership.Role,
                 membership.Companies);
     }

@@ -7,7 +7,9 @@ namespace FijiAccounts.Web.Services;
 public sealed record GroupCompanyFinancialSummary(
     Guid OrganisationId,
     string LegalName,
-    string Currency,
+    string SourceCurrency,
+    decimal PeriodAverageRate,
+    decimal ClosingRate,
     decimal Revenue,
     decimal Expenses,
     decimal NetProfit,
@@ -41,6 +43,7 @@ public sealed class GroupFinancialReportService(
             {
                 OrganisationGroupId = x.Id,
                 x.Name,
+                x.PresentationCurrency,
                 Companies = x.Companies.OrderBy(company => company.LegalName).ToList()
             })
             .SingleOrDefaultAsync(cancellationToken)
@@ -85,17 +88,36 @@ public sealed class GroupFinancialReportService(
             }
         }
 
-        var currencies = group.Companies.Select(x => x.BaseCurrency).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (currencies.Length != 1)
-        {
-            throw new InvalidOperationException(
-                "This group contains multiple base currencies. Configure group exchange rates before consolidating them.");
-        }
+        var storedRates = await db.GroupExchangeRates
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationGroupId == group.OrganisationGroupId &&
+                x.ToCurrency == group.PresentationCurrency &&
+                x.EffectiveDate <= to)
+            .OrderByDescending(x => x.EffectiveDate)
+            .ToListAsync(cancellationToken);
 
-        var companyReports = new List<(Organisation Company, FinancialReportData Report)>();
+        var companyReports = new List<TranslatedCompanyReport>();
         foreach (var company in group.Companies)
         {
-            companyReports.Add((company, await financialReports.GetAsync(company.Id, from, to, cancellationToken)));
+            var averageRate = ResolveRate(
+                company.BaseCurrency,
+                group.PresentationCurrency,
+                GroupExchangeRateType.PeriodAverage,
+                storedRates,
+                to);
+            var closingRate = ResolveRate(
+                company.BaseCurrency,
+                group.PresentationCurrency,
+                GroupExchangeRateType.Closing,
+                storedRates,
+                to);
+            var sourceReport = await financialReports.GetAsync(company.Id, from, to, cancellationToken);
+            companyReports.Add(new(
+                company,
+                Translate(sourceReport, averageRate, closingRate),
+                averageRate,
+                closingRate));
         }
 
         var balances = companyReports.SelectMany(x => x.Report.Balances)
@@ -115,10 +137,70 @@ public sealed class GroupFinancialReportService(
             var expenses = Total(AccountType.Expense);
             return new GroupCompanyFinancialSummary(
                 x.Company.Id, x.Company.LegalName, x.Company.BaseCurrency,
+                x.PeriodAverageRate, x.ClosingRate,
                 revenue, expenses, revenue - expenses,
                 Total(AccountType.Asset), Total(AccountType.Liability), Total(AccountType.Equity));
         }).ToList();
 
-        return new(group.OrganisationGroupId, group.Name, currencies[0], summaries, new(balances, trial));
+        return new(
+            group.OrganisationGroupId,
+            group.Name,
+            group.PresentationCurrency,
+            summaries,
+            new(balances, trial));
     }
+
+    private static decimal ResolveRate(
+        string sourceCurrency,
+        string presentationCurrency,
+        GroupExchangeRateType type,
+        IReadOnlyList<GroupExchangeRate> rates,
+        DateOnly reportDate)
+    {
+        if (sourceCurrency.Equals(presentationCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1m;
+        }
+
+        return rates.FirstOrDefault(x =>
+                   x.FromCurrency.Equals(sourceCurrency, StringComparison.OrdinalIgnoreCase) &&
+                   x.Type == type)?.Rate
+               ?? throw new InvalidOperationException(
+                   $"Add a {RateLabel(type)} {sourceCurrency} to {presentationCurrency} exchange rate on or before {reportDate:dd MMM yyyy}.");
+    }
+
+    private static FinancialReportData Translate(
+        FinancialReportData source,
+        decimal averageRate,
+        decimal closingRate)
+    {
+        decimal Convert(decimal amount, decimal rate) =>
+            Math.Round(amount * rate, 2, MidpointRounding.AwayFromZero);
+
+        var balances = source.Balances.Select(x =>
+        {
+            var rate = x.Type is AccountType.Revenue or AccountType.Expense
+                ? averageRate
+                : closingRate;
+            return x with { DisplayAmount = Convert(x.DisplayAmount, rate) };
+        }).ToList();
+        var trial = source.TrialBalance
+            .Select(x => x with
+            {
+                Debit = Convert(x.Debit, closingRate),
+                Credit = Convert(x.Credit, closingRate)
+            })
+            .ToList();
+
+        return new(balances, trial);
+    }
+
+    private static string RateLabel(GroupExchangeRateType type) =>
+        type == GroupExchangeRateType.PeriodAverage ? "period-average" : "closing";
+
+    private sealed record TranslatedCompanyReport(
+        Organisation Company,
+        FinancialReportData Report,
+        decimal PeriodAverageRate,
+        decimal ClosingRate);
 }

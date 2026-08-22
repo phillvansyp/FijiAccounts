@@ -9,6 +9,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<OrganisationGroup> OrganisationGroups => Set<OrganisationGroup>();
     public DbSet<OrganisationGroupMembership> OrganisationGroupMemberships =>
         Set<OrganisationGroupMembership>();
+    public DbSet<GroupExchangeRate> GroupExchangeRates => Set<GroupExchangeRate>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
@@ -101,6 +102,24 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<OrganisationGroupMembership>()
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.Memberships)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<GroupExchangeRate>()
+            .HasIndex(x => new
+            {
+                x.OrganisationGroupId,
+                x.FromCurrency,
+                x.ToCurrency,
+                x.Type,
+                x.EffectiveDate
+            })
+            .IsUnique();
+        builder.Entity<GroupExchangeRate>()
+            .Property(x => x.Rate)
+            .HasPrecision(18, 8);
+        builder.Entity<GroupExchangeRate>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.ExchangeRates)
             .HasForeignKey(x => x.OrganisationGroupId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<Branch>()

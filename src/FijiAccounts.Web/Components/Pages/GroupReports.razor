@@ -1,11 +1,13 @@
 @page "/o/{OrganisationId:guid}/reports/group"
 @attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using FijiAccounts.Domain.Accounting
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject GroupFinancialReportService ConsolidatedReports
+@inject GroupExchangeRateService ExchangeRates
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -18,7 +20,7 @@
 }
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines same-currency company ledgers without changing their legal or tax boundaries. Figures are shown before intercompany eliminations.</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines company ledgers in the group presentation currency without changing their legal or tax boundaries. Figures are shown before intercompany eliminations.</p></div></div>
     <section class="card p-4 mb-3 no-print">
         <EditForm Model="filter" OnValidSubmit="Load" FormName="group-report-filter">
             <div class="row align-items-end">
@@ -29,6 +31,40 @@ else
             </div>
         </EditForm>
     </section>
+
+    @if (rateConfiguration is not null)
+    {
+        <details class="card p-4 mb-3 no-print">
+            <summary><strong>Presentation currency &amp; exchange rates</strong></summary>
+            <p class="text-muted mt-3">Foreign-company income and expenses use the latest period-average rate on or before the report date. Balance-sheet values use the latest closing rate. Enter rates as presentation-currency units for one unit of source currency.</p>
+            <div class="row align-items-end">
+                <div class="col-md-4 mb-3"><label class="form-label">Group presentation currency</label><InputSelect class="form-select" @bind-Value="presentationCurrency" disabled="@(!rateConfiguration.CanManage)">@foreach (var currency in SupportedCurrencies) { <option value="@currency">@currency</option> }</InputSelect></div>
+                @if (rateConfiguration.CanManage) { <div class="col-md-4 mb-3"><button class="btn btn-outline-primary" @onclick="SavePresentationCurrency">Save presentation currency</button></div> }
+            </div>
+            @if (ForeignCurrencies.Count > 0)
+            {
+                @if (rateConfiguration.CanManage)
+                {
+                    <EditForm Model="rateModel" OnValidSubmit="SaveRate" FormName="group-exchange-rate">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+                        <div class="row align-items-end">
+                            <div class="col-md-2 mb-3"><label class="form-label">Source currency</label><InputSelect class="form-select" @bind-Value="rateModel.FromCurrency">@foreach (var currency in ForeignCurrencies) { <option value="@currency">@currency</option> }</InputSelect></div>
+                            <div class="col-md-3 mb-3"><label class="form-label">Rate type</label><InputSelect class="form-select" @bind-Value="rateModel.Type"><option value="@GroupExchangeRateType.PeriodAverage">Period average</option><option value="@GroupExchangeRateType.Closing">Closing</option></InputSelect></div>
+                            <div class="col-md-3 mb-3"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="rateModel.EffectiveDate" /></div>
+                            <div class="col-md-2 mb-3"><label class="form-label">Rate</label><InputNumber class="form-control" @bind-Value="rateModel.Rate" step="0.00000001" /></div>
+                            <div class="col-md-2 mb-3"><button class="btn btn-primary">Save rate</button></div>
+                        </div>
+                    </EditForm>
+                }
+                <div class="table-responsive"><table class="table"><thead><tr><th>Conversion</th><th>Type</th><th>Effective</th><th class="text-end">Rate</th></tr></thead><tbody>@foreach (var item in rateConfiguration.Rates.Where(x => x.ToCurrency == rateConfiguration.PresentationCurrency)) { <tr><td>1 @item.FromCurrency = @item.ToCurrency</td><td>@RateTypeLabel(item.Type)</td><td>@item.EffectiveDate.ToString("dd MMM yyyy")</td><td class="text-end">@item.Rate.ToString("N8")</td></tr> }</tbody></table></div>
+            }
+            else
+            {
+                <div class="alert alert-info mb-0">Every company already uses @rateConfiguration.PresentationCurrency, so no exchange rates are required.</div>
+            }
+        </details>
+    }
 
     @if (error is not null)
     {
@@ -54,7 +90,7 @@ else
 
         <section class="card p-4">
             <h2>Company breakdown</h2>
-            <div class="table-responsive"><table class="table"><thead><tr><th>Legal company</th>@if (filter.ReportType == "profit-loss") { <th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net profit</th> } else { <th class="text-end">Assets</th><th class="text-end">Liabilities</th><th class="text-end">Equity</th> }</tr></thead><tbody>@foreach (var company in report.Companies) { <tr><td><strong>@company.LegalName</strong><br /><small class="text-muted">@company.Currency</small></td>@if (filter.ReportType == "profit-loss") { <td class="text-end">@Money(company.Revenue)</td><td class="text-end">@Money(company.Expenses)</td><td class="text-end"><strong>@Money(company.NetProfit)</strong></td> } else { <td class="text-end">@Money(company.Assets)</td><td class="text-end">@Money(company.Liabilities)</td><td class="text-end">@Money(company.Equity)</td> }</tr> }</tbody></table></div>
+            <div class="table-responsive"><table class="table"><thead><tr><th>Legal company</th>@if (filter.ReportType == "profit-loss") { <th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net profit</th> } else { <th class="text-end">Assets</th><th class="text-end">Liabilities</th><th class="text-end">Equity</th> }</tr></thead><tbody>@foreach (var company in report.Companies) { <tr><td><strong>@company.LegalName</strong><br /><small class="text-muted">@company.SourceCurrency@if (company.SourceCurrency != report.Currency) { <span> &rarr; @report.Currency / average @company.PeriodAverageRate.ToString("N8") / closing @company.ClosingRate.ToString("N8")</span> }</small></td>@if (filter.ReportType == "profit-loss") { <td class="text-end">@Money(company.Revenue)</td><td class="text-end">@Money(company.Expenses)</td><td class="text-end"><strong>@Money(company.NetProfit)</strong></td> } else { <td class="text-end">@Money(company.Assets)</td><td class="text-end">@Money(company.Liabilities)</td><td class="text-end">@Money(company.Equity)</td> }</tr> }</tbody></table></div>
         </section>
     }
 }
@@ -64,7 +100,10 @@ else
     private AccessibleOrganisation? access;
     private string userId = "";
     private GroupFinancialReportData? report;
+    private GroupExchangeRateConfiguration? rateConfiguration;
     private ReportFilter filter = new();
+    private ExchangeRateModel rateModel = new();
+    private string presentationCurrency = "FJD";
     private string? error;
     private IEnumerable<FinancialAccountBalance> Rows(AccountType type) => report?.Consolidated.Balances.Where(x => x.Type == type) ?? [];
     private IEnumerable<FinancialAccountBalance> RevenueRows => Rows(AccountType.Revenue);
@@ -80,6 +119,8 @@ else
     private decimal EquityTotal => Total(AccountType.Equity);
     private string PeriodLabel => filter.ReportType == "profit-loss" ? $"{filter.From:dd MMM yyyy} to {filter.To:dd MMM yyyy}" : $"As at {filter.To:dd MMM yyyy}";
     private string Money(decimal amount) => $"{report?.Currency} {amount:N2}";
+    private IReadOnlyList<string> SupportedCurrencies => IslandJurisdictions.All.Select(x => x.CurrencyCode).Distinct().Order().ToList();
+    private IReadOnlyList<string> ForeignCurrencies => rateConfiguration?.CompanyCurrencies.Where(x => x != rateConfiguration.PresentationCurrency).Order().ToList() ?? [];
 
     protected override async Task OnParametersSetAsync()
     {
@@ -90,8 +131,50 @@ else
         var today = DateOnly.FromDateTime(DateTime.Today);
         filter.To = today;
         filter.From = new DateOnly(today.Year, 1, 1);
+        rateModel.EffectiveDate = today;
+        await LoadRateConfiguration();
         await Load();
     }
+
+    private async Task LoadRateConfiguration()
+    {
+        rateConfiguration = await ExchangeRates.GetAsync(userId, OrganisationId);
+        presentationCurrency = rateConfiguration.PresentationCurrency;
+        if (ForeignCurrencies.Count > 0 && !ForeignCurrencies.Contains(rateModel.FromCurrency))
+        {
+            rateModel.FromCurrency = ForeignCurrencies[0];
+        }
+    }
+
+    private async Task SavePresentationCurrency()
+    {
+        try
+        {
+            await ExchangeRates.SetPresentationCurrencyAsync(userId, OrganisationId, presentationCurrency);
+            await LoadRateConfiguration();
+            await Load();
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private async Task SaveRate()
+    {
+        try
+        {
+            await ExchangeRates.SaveAsync(userId, new(
+                OrganisationId,
+                rateModel.FromCurrency,
+                rateModel.Type,
+                rateModel.EffectiveDate,
+                rateModel.Rate));
+            await LoadRateConfiguration();
+            await Load();
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    private static string RateTypeLabel(GroupExchangeRateType type) =>
+        type == GroupExchangeRateType.PeriodAverage ? "Period average" : "Closing";
 
     private async Task Load()
     {
@@ -106,5 +189,13 @@ else
         public string ReportType { get; set; } = "profit-loss";
         public DateOnly From { get; set; }
         public DateOnly To { get; set; }
+    }
+
+    private sealed class ExchangeRateModel
+    {
+        [Required] public string FromCurrency { get; set; } = "";
+        public GroupExchangeRateType Type { get; set; }
+        public DateOnly EffectiveDate { get; set; }
+        [Range(typeof(decimal), "0.00000001", "999999999")] public decimal Rate { get; set; } = 1m;
     }
 }

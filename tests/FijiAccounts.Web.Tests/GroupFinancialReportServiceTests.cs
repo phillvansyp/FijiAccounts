@@ -68,7 +68,28 @@ public sealed class GroupFinancialReportServiceTests
         await test.Db.SaveChangesAsync();
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.GetAsync(test.UserId, test.Organisation.Id, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 31)));
-        Assert.Contains("exchange rates", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("period-average", exception.Message, StringComparison.OrdinalIgnoreCase);
+
+        var exchangeRates = new GroupExchangeRateService(test.Db);
+        await exchangeRates.SaveAsync(
+            test.UserId,
+            new(test.Organisation.Id, "NZD", GroupExchangeRateType.PeriodAverage, new DateOnly(2026, 8, 31), 2m));
+        await exchangeRates.SaveAsync(
+            test.UserId,
+            new(test.Organisation.Id, "NZD", GroupExchangeRateType.Closing, new DateOnly(2026, 8, 31), 1.5m));
+
+        result = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 31));
+
+        Assert.Equal("FJD", result.Currency);
+        Assert.Equal(600m, result.Consolidated.Balances.Single(x => x.Type == AccountType.Revenue).DisplayAmount);
+        var translated = result.Companies.Single(x => x.OrganisationId == second.Id);
+        Assert.Equal("NZD", translated.SourceCurrency);
+        Assert.Equal(500m, translated.Revenue);
+        Assert.Equal(375m, translated.Assets);
     }
 
     private static async Task PostRevenue(AccountingTestDatabase test, Guid organisationId, decimal amount)
