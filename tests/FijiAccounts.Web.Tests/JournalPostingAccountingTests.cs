@@ -384,10 +384,12 @@ public sealed class JournalPostingAccountingTests
         await using var test = await AccountingTestDatabase.CreateAsync();
         var structures = new EnterpriseStructureService(test.Db);
         var branch = await structures.AddBranchAsync(
+            test.UserId,
             test.Organisation.Id,
             "NADI",
             "Nadi Branch");
         var retail = await structures.AddDivisionAsync(
+            test.UserId,
             test.Organisation.Id,
             branch.Id,
             "RETAIL",

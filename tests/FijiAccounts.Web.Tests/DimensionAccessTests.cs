@@ -11,8 +11,8 @@ public sealed class DimensionAccessTests
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var structures = new EnterpriseStructureService(test.Db);
-        var nadi = await structures.AddBranchAsync(test.Organisation.Id, "NADI", "Nadi Branch");
-        var retail = await structures.AddDivisionAsync(test.Organisation.Id, nadi.Id, "RETAIL", "Retail");
+        var nadi = await structures.AddBranchAsync(test.UserId, test.Organisation.Id, "NADI", "Nadi Branch");
+        var retail = await structures.AddDivisionAsync(test.UserId, test.Organisation.Id, nadi.Id, "RETAIL", "Retail");
         var member = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),

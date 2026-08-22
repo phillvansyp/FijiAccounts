@@ -85,10 +85,12 @@ public sealed class FinancialDocumentDimensionTests
     {
         var structures = new EnterpriseStructureService(test.Db);
         var branch = await structures.AddBranchAsync(
+            test.UserId,
             test.Organisation.Id,
             "NADI",
             "Nadi Branch");
         var division = await structures.AddDivisionAsync(
+            test.UserId,
             test.Organisation.Id,
             branch.Id,
             "RETAIL",

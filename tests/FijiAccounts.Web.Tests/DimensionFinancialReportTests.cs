@@ -11,8 +11,8 @@ public sealed class DimensionFinancialReportTests
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var structures = new EnterpriseStructureService(test.Db);
-        var nadi = await structures.AddBranchAsync(test.Organisation.Id, "NADI", "Nadi Branch");
-        var retail = await structures.AddDivisionAsync(test.Organisation.Id, nadi.Id, "RETAIL", "Retail");
+        var nadi = await structures.AddBranchAsync(test.UserId, test.Organisation.Id, "NADI", "Nadi Branch");
+        var retail = await structures.AddDivisionAsync(test.UserId, test.Organisation.Id, nadi.Id, "RETAIL", "Retail");
         var defaultBranch = await test.Db.Branches.AsNoTracking()
             .Include(x => x.Divisions)
             .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);

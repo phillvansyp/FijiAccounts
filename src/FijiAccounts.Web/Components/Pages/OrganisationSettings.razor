@@ -495,6 +495,7 @@ else
             {
                 var branch =
                     await EnterpriseStructures.AddBranchAsync(
+                        userId,
                         OrganisationId,
                         branchModel.Code,
                         branchModel.Name);
@@ -514,6 +515,7 @@ else
             {
                 var division =
                     await EnterpriseStructures.AddDivisionAsync(
+                        userId,
                         OrganisationId,
                         divisionModel.BranchId,
                         divisionModel.Code,
@@ -534,6 +536,7 @@ else
             async () =>
             {
                 await EnterpriseStructures.ToggleBranchAsync(
+                    userId,
                     OrganisationId,
                     branch.Id);
 
@@ -547,6 +550,7 @@ else
             async () =>
             {
                 await EnterpriseStructures.ToggleDivisionAsync(
+                    userId,
                     OrganisationId,
                     division.Id);
 

@@ -98,29 +98,34 @@ public sealed class EnterpriseStructureServiceTests
 
         var branch =
             await service.AddBranchAsync(
+                test.UserId,
                 test.Organisation.Id,
                 "nadi",
                 "Nadi Branch");
 
         var division =
             await service.AddDivisionAsync(
+                test.UserId,
                 test.Organisation.Id,
                 branch.Id,
                 "retail",
                 "Retail");
 
         await service.ToggleBranchAsync(
+            test.UserId,
             test.Organisation.Id,
             branch.Id);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.AddDivisionAsync(
+                test.UserId,
                 test.Organisation.Id,
                 branch.Id,
                 "CLOSED",
                 "Closed"));
 
         await service.ToggleDivisionAsync(
+            test.UserId,
             test.Organisation.Id,
             division.Id);
 
@@ -162,15 +167,78 @@ public sealed class EnterpriseStructureServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.ToggleBranchAsync(
+                test.UserId,
                 test.Organisation.Id,
                 defaultBranch.Id));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.AddDivisionAsync(
+                test.UserId,
                 Guid.NewGuid(),
                 defaultBranch.Id,
                 "OTHER",
                 "Other"));
+    }
+
+    [Fact]
+    public async Task HierarchyManagement_RejectsNonManagerServiceCalls()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+        var branch =
+            await service.AddBranchAsync(
+                test.UserId,
+                test.Organisation.Id,
+                "NADI",
+                "Nadi Branch");
+        var division =
+            await service.AddDivisionAsync(
+                test.UserId,
+                test.Organisation.Id,
+                branch.Id,
+                "RETAIL",
+                "Retail");
+        var accountant = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "accountant@example.com",
+            NormalizedUserName = "ACCOUNTANT@EXAMPLE.COM"
+        };
+
+        test.Db.Users.Add(accountant);
+        test.Db.OrganisationMemberships.Add(
+            new OrganisationMembership
+            {
+                OrganisationId = test.Organisation.Id,
+                UserId = accountant.Id,
+                Role = OrganisationRole.Accountant
+            });
+        await test.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.AddBranchAsync(
+                accountant.Id,
+                test.Organisation.Id,
+                "SUVA",
+                "Suva Branch"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.AddDivisionAsync(
+                accountant.Id,
+                test.Organisation.Id,
+                branch.Id,
+                "WHOLESALE",
+                "Wholesale"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ToggleBranchAsync(
+                accountant.Id,
+                test.Organisation.Id,
+                branch.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ToggleDivisionAsync(
+                accountant.Id,
+                test.Organisation.Id,
+                division.Id));
     }
 
     [Fact]
@@ -221,6 +289,79 @@ public sealed class EnterpriseStructureServiceTests
         Assert.Equal("MAIN", branch.Code);
         Assert.Equal("GENERAL", branch.Divisions.Single().Code);
         Assert.Equal(FijiStarterChart.For(company.Id).Count, accountCount);
+    }
+
+    [Fact]
+    public async Task LegacyOwnerWithoutGroupMembership_CanManageGroup()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        await test.Db.OrganisationGroupMemberships
+            .Where(x => x.UserId == test.UserId)
+            .ExecuteDeleteAsync();
+
+        var group =
+            await service.GetGroupAsync(
+                test.UserId,
+                test.Organisation.Id);
+        await service.UpdateGroupNameAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "Legacy Owner Group");
+        var company =
+            await service.AddCompanyAsync(
+                test.UserId,
+                new CreateGroupCompanyRequest(
+                    test.Organisation.Id,
+                    "Legacy Subsidiary Limited",
+                    null,
+                    null,
+                    "FJ",
+                    OrganisationKind.Business));
+
+        Assert.NotNull(group);
+        Assert.Equal(OrganisationGroupRole.Owner, group.Role);
+        Assert.Equal(
+            "Legacy Owner Group",
+            await test.Db.OrganisationGroups
+                .Select(x => x.Name)
+                .SingleAsync());
+        Assert.Equal(
+            OrganisationRole.Owner,
+            await test.Db.OrganisationMemberships
+                .Where(x => x.OrganisationId == company.Id)
+                .Select(x => x.Role)
+                .SingleAsync());
+    }
+
+    [Fact]
+    public async Task ExplicitGroupViewer_IsNotElevatedByCompanyOwnership()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        await test.Db.OrganisationGroupMemberships
+            .Where(x => x.UserId == test.UserId)
+            .ExecuteUpdateAsync(update =>
+                update.SetProperty(
+                    x => x.Role,
+                    OrganisationGroupRole.Viewer));
+
+        var group =
+            await service.GetGroupAsync(
+                test.UserId,
+                test.Organisation.Id);
+
+        Assert.NotNull(group);
+        Assert.Equal(OrganisationGroupRole.Viewer, group.Role);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.UpdateGroupNameAsync(
+                test.UserId,
+                test.Organisation.Id,
+                "Not Allowed"));
     }
 
     [Fact]

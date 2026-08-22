@@ -144,33 +144,37 @@ public sealed class EnterpriseStructureService(
         Guid currentOrganisationId,
         CancellationToken ct = default)
     {
-        var membership =
-            await db.OrganisationGroupMemberships
+        var group =
+            await db.OrganisationGroups
                 .AsNoTracking()
-                .Where(x =>
-                    x.UserId == userId &&
-                    x.OrganisationGroup.Companies.Any(company =>
+                .Where(x => x.Companies.Any(company =>
                         company.Id == currentOrganisationId))
                 .Select(x => new
                 {
-                    x.OrganisationGroupId,
-                    x.OrganisationGroup.Name,
-                    x.OrganisationGroup.PresentationCurrency,
-                    x.Role,
-                    Companies = x.OrganisationGroup.Companies
+                    x.Id,
+                    x.Name,
+                    x.PresentationCurrency,
+                    Companies = x.Companies
                         .OrderBy(company => company.LegalName)
                         .ToList()
                 })
                 .SingleOrDefaultAsync(ct);
 
-        return membership is null
+        if (group is null)
+        {
+            return null;
+        }
+
+        var role = await ResolveGroupRoleAsync(userId, group.Id, ct);
+
+        return role is null
             ? null
             : new EnterpriseGroupDetails(
-                membership.OrganisationGroupId,
-                membership.Name,
-                membership.PresentationCurrency,
-                membership.Role,
-                membership.Companies);
+                group.Id,
+                group.Name,
+                group.PresentationCurrency,
+                role.Value,
+                group.Companies);
     }
 
     public async Task UpdateGroupNameAsync(
@@ -180,14 +184,14 @@ public sealed class EnterpriseStructureService(
         CancellationToken ct = default)
     {
         var normalisedName = NormaliseGroupName(name);
-        var groupId = await RequireGroupManagerAsync(
+        var groupAccess = await RequireGroupManagerAsync(
             userId,
             currentOrganisationId,
             ct);
 
         var changed =
             await db.OrganisationGroups
-                .Where(x => x.Id == groupId)
+                .Where(x => x.Id == groupAccess.GroupId)
                 .ExecuteUpdateAsync(
                     update => update.SetProperty(x => x.Name, normalisedName),
                     ct);
@@ -204,23 +208,16 @@ public sealed class EnterpriseStructureService(
         CreateGroupCompanyRequest request,
         CancellationToken ct = default)
     {
-        var groupId = await RequireGroupManagerAsync(
+        var groupAccess = await RequireGroupManagerAsync(
             userId,
             request.CurrentOrganisationId,
             ct);
-        var groupRole =
-            await db.OrganisationGroupMemberships
-                .Where(x =>
-                    x.OrganisationGroupId == groupId &&
-                    x.UserId == userId)
-                .Select(x => x.Role)
-                .SingleAsync(ct);
         var jurisdiction = IslandJurisdictions.Get(request.CountryCode);
         var legalName = NormaliseCompanyName(request.LegalName);
 
         if (await db.Organisations.AnyAsync(
                 x =>
-                    x.OrganisationGroupId == groupId &&
+                    x.OrganisationGroupId == groupAccess.GroupId &&
                     x.LegalName == legalName,
                 ct))
         {
@@ -231,7 +228,7 @@ public sealed class EnterpriseStructureService(
         var company =
             new Organisation
             {
-                OrganisationGroupId = groupId,
+                OrganisationGroupId = groupAccess.GroupId,
                 LegalName = legalName,
                 TradingName = NullIfWhiteSpace(request.TradingName),
                 Tin = NullIfWhiteSpace(request.Tin),
@@ -253,7 +250,7 @@ public sealed class EnterpriseStructureService(
             {
                 Organisation = company,
                 UserId = userId,
-                Role = groupRole == OrganisationGroupRole.Owner
+                Role = groupAccess.Role == OrganisationGroupRole.Owner
                     ? OrganisationRole.Owner
                     : OrganisationRole.Administrator
             });
@@ -265,21 +262,16 @@ public sealed class EnterpriseStructureService(
     }
 
     public async Task<Branch> AddBranchAsync(
+        string userId,
         Guid organisationId,
         string code,
         string name,
         CancellationToken ct = default)
     {
+        await RequireCompanyManagerAsync(userId, organisationId, ct);
+
         var normalisedCode = NormaliseCode(code);
         var normalisedName = NormaliseName(name);
-
-        if (!await db.Organisations.AnyAsync(
-                x => x.Id == organisationId,
-                ct))
-        {
-            throw new InvalidOperationException(
-                "The company was not found.");
-        }
 
         if (await db.Branches.AnyAsync(
                 x =>
@@ -316,12 +308,15 @@ public sealed class EnterpriseStructureService(
     }
 
     public async Task<Division> AddDivisionAsync(
+        string userId,
         Guid organisationId,
         Guid branchId,
         string code,
         string name,
         CancellationToken ct = default)
     {
+        await RequireCompanyManagerAsync(userId, organisationId, ct);
+
         var normalisedCode = NormaliseCode(code);
         var normalisedName = NormaliseName(name);
 
@@ -365,10 +360,13 @@ public sealed class EnterpriseStructureService(
     }
 
     public async Task ToggleBranchAsync(
+        string userId,
         Guid organisationId,
         Guid branchId,
         CancellationToken ct = default)
     {
+        await RequireCompanyManagerAsync(userId, organisationId, ct);
+
         var branch =
             await db.Branches.SingleOrDefaultAsync(
                 x =>
@@ -389,10 +387,13 @@ public sealed class EnterpriseStructureService(
     }
 
     public async Task ToggleDivisionAsync(
+        string userId,
         Guid organisationId,
         Guid divisionId,
         CancellationToken ct = default)
     {
+        await RequireCompanyManagerAsync(userId, organisationId, ct);
+
         var division =
             await db.Divisions
                 .Include(x => x.Branch)
@@ -442,24 +443,101 @@ public sealed class EnterpriseStructureService(
         return result;
     }
 
-    private async Task<Guid> RequireGroupManagerAsync(
+    private async Task<GroupManagerAccess> RequireGroupManagerAsync(
         string userId,
         Guid currentOrganisationId,
         CancellationToken ct)
     {
         var groupId =
-            await db.OrganisationGroupMemberships
-                .Where(x =>
-                    x.UserId == userId &&
-                    x.Role != OrganisationGroupRole.Viewer &&
-                    x.OrganisationGroup.Companies.Any(company =>
-                        company.Id == currentOrganisationId))
-                .Select(x => (Guid?)x.OrganisationGroupId)
+            await db.Organisations
+                .Where(x => x.Id == currentOrganisationId)
+                .Select(x => x.OrganisationGroupId)
                 .SingleOrDefaultAsync(ct);
 
-        return groupId ?? throw new UnauthorizedAccessException(
-            "You do not have permission to manage this organisation group.");
+        if (groupId is not Guid id)
+        {
+            throw new UnauthorizedAccessException(
+                "You do not have permission to manage this organisation group.");
+        }
+
+        var role = await ResolveGroupRoleAsync(userId, id, ct);
+        if (role is null or OrganisationGroupRole.Viewer)
+        {
+            throw new UnauthorizedAccessException(
+                "You do not have permission to manage this organisation group.");
+        }
+
+        return new GroupManagerAccess(id, role.Value);
     }
+
+    private async Task<OrganisationGroupRole?> ResolveGroupRoleAsync(
+        string userId,
+        Guid groupId,
+        CancellationToken ct)
+    {
+        var explicitRole =
+            await db.OrganisationGroupMemberships
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationGroupId == groupId &&
+                    x.UserId == userId)
+                .Select(x => (OrganisationGroupRole?)x.Role)
+                .SingleOrDefaultAsync(ct);
+
+        if (explicitRole is not null)
+        {
+            return explicitRole;
+        }
+
+        var companyRoles =
+            await db.Organisations
+                .AsNoTracking()
+                .Where(x => x.OrganisationGroupId == groupId)
+                .Select(x => db.OrganisationMemberships
+                    .Where(membership =>
+                        membership.OrganisationId == x.Id &&
+                        membership.UserId == userId &&
+                        (membership.Role == OrganisationRole.Owner ||
+                         membership.Role == OrganisationRole.Administrator))
+                    .Select(membership => (OrganisationRole?)membership.Role)
+                    .SingleOrDefault())
+                .ToListAsync(ct);
+
+        if (companyRoles.Count == 0 || companyRoles.Any(role => role is null))
+        {
+            return null;
+        }
+
+        return companyRoles.All(role => role == OrganisationRole.Owner)
+            ? OrganisationGroupRole.Owner
+            : OrganisationGroupRole.Administrator;
+    }
+
+    private async Task RequireCompanyManagerAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken ct)
+    {
+        var canManage =
+            await db.OrganisationMemberships
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.OrganisationId == organisationId &&
+                    x.UserId == userId &&
+                    (x.Role == OrganisationRole.Owner ||
+                     x.Role == OrganisationRole.Administrator),
+                    ct);
+
+        if (!canManage)
+        {
+            throw new UnauthorizedAccessException(
+                "You do not have permission to manage this company's branches and divisions.");
+        }
+    }
+
+    private sealed record GroupManagerAccess(
+        Guid GroupId,
+        OrganisationGroupRole Role);
 
     private static Branch CreateDefaultBranch(Organisation company) =>
         new()
