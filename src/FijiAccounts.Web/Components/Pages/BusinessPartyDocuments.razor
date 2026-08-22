@@ -7,6 +7,7 @@
 @using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
+@using FijiAccounts.Web.Components.Documents
 
 @attribute [Authorize]
 
@@ -113,78 +114,11 @@ else
 
             @foreach (var document in documents)
             {
-                <tr>
-
-                    <td>
-                        <strong>
-                            @GetDocumentIcon(document.FileName)
-                            @document.Name
-                        </strong>
-                    </td>
-
-                    <td>
-                        <span class="badge bg-primary">
-                            @document.Type
-                        </span>
-                    </td>
-
-                    <td>
-                        @document.UploadedAtUtc.ToLocalTime().ToString("dd MMM yyyy")
-                    </td>
-
-                    <td>
-                        @((document.OriginalSize / 1024m / 1024m).ToString("N2")) MB
-                    </td>
-
-                    <td>
-                        @((document.StoredSize / 1024m / 1024m).ToString("N2")) MB
-                        @if (document.IsCompressed)
-                        {
-                            <div class="text-success small">
-                                Compressed
-                            </div>
-                        }
-                    </td>
-
-                    <td>
-                        <span class="badge bg-success">
-                            Active
-                        </span>
-                    </td>
-
-                    <td>
-                        @if (document.ExpiryDate.HasValue)
-                        {
-                            <div>
-                                @document.ExpiryDate.Value.ToString("dd MMM yyyy")
-                            </div>
-                        }
-                        else
-                        {
-                            <span>-</span>
-                        }
-                    </td>
-
-                    <td class="text-end">
-                        <a class="btn btn-sm btn-outline-primary me-1"
-                           target="_blank"
-                           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@document.Id">
-                            View
-                        </a>
-
-                        <a class="btn btn-sm btn-outline-secondary me-1"
-                           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@document.Id">
-                            Download
-                        </a>
-
-                        <button type="button"
-                                class="btn btn-sm btn-outline-danger"
-                                @onclick="() => DeleteDocument(document.Id)">
-                            Delete
-                        </button>
-                    </td>
-
-                </tr>
+                <BusinessPartyDocumentRow
+                    Document="document"
+                    OrganisationId="OrganisationId"
+                    PartyId="PartyId"
+                    OnDelete="DeleteDocument" />
             }
 
             </tbody>

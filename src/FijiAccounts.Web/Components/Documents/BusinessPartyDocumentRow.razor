@@ -1,0 +1,171 @@
+﻿@using FijiAccounts.Web.Data
+
+<tr>
+
+    <td>
+        <strong>
+            @GetDocumentIcon(Document.FileName)
+            @Document.Name
+        </strong>
+    </td>
+
+    <td>
+        <span class="badge bg-primary">
+            @Document.Type
+        </span>
+    </td>
+
+    <td>
+        @Document.UploadedAtUtc
+            .ToLocalTime()
+            .ToString("dd MMM yyyy")
+    </td>
+
+    <td>
+        @((Document.OriginalSize / 1024m / 1024m).ToString("N2")) MB
+    </td>
+
+    <td>
+        @((Document.StoredSize / 1024m / 1024m).ToString("N2")) MB
+
+        @if (Document.IsCompressed)
+        {
+            <div class="text-success small">
+                Compressed
+            </div>
+        }
+    </td>
+
+    <td>
+        <span class="badge bg-success">
+            Active
+        </span>
+    </td>
+
+    <td>
+
+        @if (Document.ExpiryDate.HasValue)
+        {
+            <div>
+                @Document.ExpiryDate.Value.ToString("dd MMM yyyy")
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(
+                GetExpiryStatus(Document.ExpiryDate)))
+            {
+                <div class="@GetExpiryClass(Document.ExpiryDate)">
+                    @GetExpiryStatus(Document.ExpiryDate)
+                </div>
+            }
+        }
+        else
+        {
+            <span>-</span>
+        }
+
+    </td>
+
+    <td class="text-end">
+
+        <a class="btn btn-sm btn-outline-primary me-1"
+           target="_blank"
+           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@Document.Id">
+            View
+        </a>
+
+        <a class="btn btn-sm btn-outline-secondary me-1"
+           href="/api/o/@OrganisationId/contacts/@PartyId/documents/@Document.Id">
+            Download
+        </a>
+
+        <button type="button"
+                class="btn btn-sm btn-outline-danger"
+                @onclick="DeleteClicked">
+            Delete
+        </button>
+
+    </td>
+
+</tr>
+
+
+@code {
+
+    [Parameter]
+    public BusinessPartyDocument Document { get; set; } = null!;
+
+    [Parameter]
+    public Guid OrganisationId { get; set; }
+
+    [Parameter]
+    public Guid PartyId { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnDelete { get; set; }
+
+
+    private async Task DeleteClicked()
+    {
+        await OnDelete.InvokeAsync(Document.Id);
+    }
+
+
+    private static string GetDocumentIcon(
+        string fileName)
+    {
+        var extension =
+            Path.GetExtension(fileName)
+                .ToLowerInvariant();
+
+        return extension switch
+        {
+            ".pdf" => "📄",
+            ".doc" => "📝",
+            ".docx" => "📝",
+            ".xls" => "📊",
+            ".xlsx" => "📊",
+            ".jpg" => "🖼️",
+            ".jpeg" => "🖼️",
+            ".png" => "🖼️",
+            _ => "📁"
+        };
+    }
+
+
+    private static string GetExpiryStatus(
+        DateOnly? expiryDate)
+    {
+        if (!expiryDate.HasValue)
+        {
+            return "";
+        }
+
+        var today =
+            DateOnly.FromDateTime(
+                DateTime.Today);
+
+        if (expiryDate.Value < today)
+        {
+            return "Expired";
+        }
+
+        if (expiryDate.Value <= today.AddDays(30))
+        {
+            return "Expiring soon";
+        }
+
+        return "";
+    }
+
+
+    private static string GetExpiryClass(
+        DateOnly? expiryDate)
+    {
+        return GetExpiryStatus(expiryDate) switch
+        {
+            "Expired" => "text-danger",
+            "Expiring soon" => "text-warning",
+            _ => ""
+        };
+    }
+}
