@@ -3,6 +3,7 @@ using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -36,7 +37,9 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
         Access);
 
 Notifications =
-    new NotificationService(Db);
+    new NotificationService(
+        Db,
+        Updates);
 
 Posting =
     new JournalPostingService(
@@ -99,6 +102,10 @@ BankCoding =
     public PurchaseOrderService PurchaseOrders { get; }
 
     public BankReconciliationService Reconciliation { get; }
+
+    public OrganisationUpdateBroker Updates { get; } =
+        new(
+            NullLogger<OrganisationUpdateBroker>.Instance);
 
     public NotificationService Notifications { get; }
 

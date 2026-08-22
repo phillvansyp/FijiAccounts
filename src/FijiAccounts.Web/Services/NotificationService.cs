@@ -16,8 +16,12 @@ public sealed record CreateNotificationRequest(
 
 
 public sealed class NotificationService(
-    ApplicationDbContext db)
+    ApplicationDbContext db,
+    OrganisationUpdateBroker updates)
 {
+    public void PublishOrganisationUpdate(Guid organisationId) =>
+        updates.Publish(organisationId);
+
     public async Task<Notification> CreateAsync(
         CreateNotificationRequest request,
         CancellationToken ct = default)
@@ -39,6 +43,8 @@ public sealed class NotificationService(
         db.Notifications.Add(notification);
 
         await db.SaveChangesAsync(ct);
+
+        updates.Publish(request.OrganisationId);
 
         return notification;
     }
@@ -87,6 +93,12 @@ public sealed class NotificationService(
                             .Skip(1))
                 .ToList();
 
+        var organisationIds =
+            duplicates
+                .Select(x => x.OrganisationId)
+                .Distinct()
+                .ToArray();
+
         if (duplicates.Count == 0)
         {
             return;
@@ -96,15 +108,23 @@ public sealed class NotificationService(
             duplicates);
 
         await db.SaveChangesAsync(ct);
+
+        foreach (var organisationId in organisationIds)
+        {
+            updates.Publish(organisationId);
+        }
     }
     public async Task ResolveSalesInvoiceNotificationsAsync(
+        Guid organisationId,
         Guid invoiceId,
+        bool publishUpdate = true,
         CancellationToken ct = default)
     {
         var notifications =
             await db.Notifications
                 .Where(
                     x =>
+                        x.OrganisationId == organisationId &&
                         x.RelatedEntityType == "SalesInvoice" &&
                         x.RelatedEntityId == invoiceId.ToString() &&
                         x.Status != NotificationStatus.Resolved)
@@ -112,26 +132,45 @@ public sealed class NotificationService(
 
         if (notifications.Count == 0)
         {
+            if (publishUpdate)
+            {
+                updates.Publish(organisationId);
+            }
+
             return;
         }
+
+        var resolvedAt =
+            DateTimeOffset.UtcNow;
 
         foreach (var notification in notifications)
         {
             notification.Status =
                 NotificationStatus.Resolved;
+            notification.ResolvedAt = resolvedAt;
+            notification.IsRead = true;
+            notification.ReadAt = resolvedAt;
         }
 
         await db.SaveChangesAsync(ct);
+
+        if (publishUpdate)
+        {
+            updates.Publish(organisationId);
+        }
     }
 
     public async Task ResolveSupplierBillNotificationsAsync(
+        Guid organisationId,
         Guid billId,
+        bool publishUpdate = true,
         CancellationToken ct = default)
     {
         var notifications =
             await db.Notifications
                 .Where(
                     x =>
+                        x.OrganisationId == organisationId &&
                         x.RelatedEntityType == "SupplierBill" &&
                         x.RelatedEntityId == billId.ToString() &&
                         x.Status != NotificationStatus.Resolved)
@@ -139,16 +178,32 @@ public sealed class NotificationService(
 
         if (notifications.Count == 0)
         {
+            if (publishUpdate)
+            {
+                updates.Publish(organisationId);
+            }
+
             return;
         }
+
+        var resolvedAt =
+            DateTimeOffset.UtcNow;
 
         foreach (var notification in notifications)
         {
             notification.Status =
                 NotificationStatus.Resolved;
+            notification.ResolvedAt = resolvedAt;
+            notification.IsRead = true;
+            notification.ReadAt = resolvedAt;
         }
 
         await db.SaveChangesAsync(ct);
+
+        if (publishUpdate)
+        {
+            updates.Publish(organisationId);
+        }
     }
 
     public async Task<int> GetUnreadCountAsync(
@@ -189,6 +244,8 @@ public sealed class NotificationService(
             userId;
 
         await db.SaveChangesAsync(ct);
+
+        updates.Publish(notification.OrganisationId);
     }
 
 
@@ -223,6 +280,8 @@ public sealed class NotificationService(
             DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
+
+        updates.Publish(notification.OrganisationId);
     }
 
     public async Task<int> GetFinancialAlertCountAsync(
@@ -286,5 +345,7 @@ public sealed class NotificationService(
             DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
+
+        updates.Publish(notification.OrganisationId);
     }
 }

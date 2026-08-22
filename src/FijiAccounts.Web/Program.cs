@@ -71,6 +71,7 @@ builder.Services.AddHostedService<UpcomingInvoiceWorker>();
 builder.Services.AddHostedService<UpcomingSupplierBillWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
+builder.Services.AddSingleton<OrganisationUpdateBroker>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<CashflowForecastService>();
 builder.Services.AddScoped<FinancialRiskService>();

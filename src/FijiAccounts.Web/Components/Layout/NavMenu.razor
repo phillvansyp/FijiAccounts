@@ -7,6 +7,8 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject TenantAccessService TenantAccess
 @inject NotificationService NotificationService
+@inject OrganisationUpdateBroker Updates
+@inject IServiceScopeFactory ScopeFactory
 
 <header class="app-header"><nav class="nav-inner" aria-label="Primary navigation">
     <a class="brand" href=""><img class="brand-mark" src="account-island-logo.png" alt="" /><span>Account Island</span></a>
@@ -62,15 +64,17 @@
 </nav></header>
 
 @code {
-    private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private List<AccessibleOrganisation> accessibleOrganisations = []; private int unreadNotificationCount;
+    private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private List<AccessibleOrganisation> accessibleOrganisations = []; private int unreadNotificationCount; private IDisposable? updateSubscription; private bool liveRefreshInProgress, liveRefreshRequested;
     private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
-    protected override async Task OnInitializedAsync() { await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
+    protected override async Task OnInitializedAsync() { updateSubscription = Updates.Subscribe(OrganisationUpdated); await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
     private async void LocationChanged(object? sender, LocationChangedEventArgs e) { await UpdateContext(); await InvokeAsync(StateHasChanged); }
     private async Task UpdateContext() { currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri); activeOrganisationId = ExtractOrganisationId(currentUrl); activeOrganisationName = null; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User); accessibleOrganisations = userId is null ? [] : await TenantAccess.ListAsync(userId); if (activeOrganisationId is not null) activeOrganisationName = accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation.LegalName; if (activeOrganisationName is null && accessibleOrganisations.Count > 0) { activeOrganisationId = accessibleOrganisations[0].Organisation.Id; activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName; } unreadNotificationCount = activeOrganisationId is null ? 0 : await NotificationService.GetUnreadCountAsync(activeOrganisationId.Value); }
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
     private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
     private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();
     private static string OrganisationInitials(string name) { var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries); return words.Length > 1 ? string.Concat(words.Take(2).Select(x => char.ToUpperInvariant(x[0]))) : name[..Math.Min(2, name.Length)].ToUpperInvariant(); }
-    public void Dispose() => Navigation.LocationChanged -= LocationChanged;
+    private void OrganisationUpdated(Guid organisationId) { if (organisationId != activeOrganisationId) return; _ = InvokeAsync(RefreshNotificationCountAsync); }
+    private async Task RefreshNotificationCountAsync() { liveRefreshRequested = true; if (liveRefreshInProgress || activeOrganisationId is null) return; liveRefreshInProgress = true; try { while (liveRefreshRequested) { liveRefreshRequested = false; await using var scope = ScopeFactory.CreateAsyncScope(); unreadNotificationCount = await scope.ServiceProvider.GetRequiredService<NotificationService>().GetUnreadCountAsync(activeOrganisationId.Value); StateHasChanged(); } } finally { liveRefreshInProgress = false; } }
+    public void Dispose() { Navigation.LocationChanged -= LocationChanged; updateSubscription?.Dispose(); }
 }

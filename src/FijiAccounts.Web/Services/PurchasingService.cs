@@ -272,10 +272,12 @@ if (payable is null ||
         if (bill.Status == BillStatus.Paid)
         {
             await notifications.ResolveSupplierBillNotificationsAsync(
+                request.OrganisationId,
                 bill.Id,
-                ct);
+                publishUpdate: false,
+                ct: ct);
         } db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
-        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return payment;
+        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(request.OrganisationId); return payment;
     }
 
     public async Task<SupplierBill> VoidBillAsync(string userId, Guid organisationId, Guid billId, DateOnly voidDate, string reason, CancellationToken ct = default)
@@ -355,7 +357,7 @@ if (completedReconciliationExists)
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse supplier payment: {reason.Trim()}", lines), ct);
         var reversal = new SupplierPaymentReversal { OrganisationId = organisationId, SupplierPaymentId = payment.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId };
         payment.SupplierBill.AmountPaid -= payment.Amount; if (payment.SupplierBill.AmountPaid < 0) throw new InvalidOperationException("Payment history is inconsistent and cannot be reversed."); var remaining = payment.SupplierBill.Total - payment.SupplierBill.AmountPaid - payment.SupplierBill.AmountCredited; payment.SupplierBill.Status = remaining <= 0 ? BillStatus.Credited : payment.SupplierBill.AmountPaid > 0 || payment.SupplierBill.AmountCredited > 0 ? BillStatus.PartPaid : BillStatus.Posted;
-        db.SupplierPaymentReversals.Add(reversal); db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentReversed", nameof(SupplierPaymentReversal), reversal.Id, new { payment.Reference, payment.Amount, reason, ReversalJournalId = journal.Id })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return reversal;
+        db.SupplierPaymentReversals.Add(reversal); db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentReversed", nameof(SupplierPaymentReversal), reversal.Id, new { payment.Reference, payment.Amount, reason, ReversalJournalId = journal.Id })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(organisationId); return reversal;
     }
 
     private static AuditEvent Audit(Guid organisationId, string userId, string eventType, string entityType, Guid entityId, object data) => new() { OrganisationId = organisationId, UserId = userId, EventType = eventType, EntityType = entityType, EntityId = entityId.ToString(), JsonData = JsonSerializer.Serialize(data) };

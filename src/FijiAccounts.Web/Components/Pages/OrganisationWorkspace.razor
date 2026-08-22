@@ -1,5 +1,6 @@
 @page "/o/{OrganisationId:guid}"
 @attribute [Authorize]
+@implements IDisposable
 @using System.ComponentModel.DataAnnotations
 @using System.Security.Cryptography
 @using System.Text
@@ -17,6 +18,8 @@
 @inject CashflowForecastService CashflowForecastService
 @inject FinancialRiskService FinancialRiskService
 @inject CashRunwayService CashRunwayService
+@inject OrganisationUpdateBroker Updates
+@inject IServiceScopeFactory ScopeFactory
 
 <PageTitle>@(access?.Organisation.LegalName ?? "Organisation") · Account Island</PageTitle>
 @if (loading) { <div class="dashboard-loading">Preparing your island...</div> }
@@ -191,35 +194,129 @@ else
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
     private CashRunwayForecast? cashRunway;
+    private IDisposable? updateSubscription;
+    private bool liveRefreshInProgress;
+    private bool liveRefreshRequested;
     private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
-    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
+    protected override void OnInitialized() { updateSubscription = Updates.Subscribe(OrganisationUpdated); }
+    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
 
-financialAlertCount =
-    await NotificationService.GetFinancialAlertCountAsync(
-        OrganisationId);
-
-documentAlertCount =
-    await NotificationService.GetDocumentAlertCountAsync(
-        OrganisationId);
-
-systemAlertCount =
-    await NotificationService.GetSystemAlertCountAsync(
-        OrganisationId);
-
-cashflowForecast =
-    await CashflowForecastService.GetAsync(
-        OrganisationId);
-
-financialRisk =
-    await FinancialRiskService.GetAsync(
-        OrganisationId);
-
-cashRunway =
-    await CashRunwayService.GetAsync(
-        OrganisationId);
-
-cashPosition = cashRunway.OpeningCash;
+await LoadFinancialInsightsAsync(
+    Db,
+    NotificationService,
+    CashflowForecastService,
+    FinancialRiskService,
+    CashRunwayService);
 var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
+
+    private async Task LoadFinancialInsightsAsync(
+        ApplicationDbContext db,
+        NotificationService notifications,
+        CashflowForecastService cashflow,
+        FinancialRiskService risk,
+        CashRunwayService runway)
+    {
+        var today =
+            DateOnly.FromDateTime(DateTime.Today);
+
+        receivables =
+            await db.SalesInvoices
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.Status != InvoiceStatus.Draft &&
+                    x.Status != InvoiceStatus.Voided &&
+                    x.AmountPaid + x.AmountCredited < x.Total)
+                .SumAsync(x => (decimal?)(x.Total - x.AmountPaid - x.AmountCredited)) ?? 0;
+
+        payables =
+            await db.SupplierBills
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.Status != BillStatus.Voided &&
+                    x.AmountPaid + x.AmountCredited < x.Total)
+                .SumAsync(x => (decimal?)(x.Total - x.AmountPaid - x.AmountCredited)) ?? 0;
+
+        overdueInvoices =
+            await db.SalesInvoices.CountAsync(x =>
+                x.OrganisationId == OrganisationId &&
+                x.DueDate < today &&
+                x.AmountPaid + x.AmountCredited < x.Total &&
+                x.Status != InvoiceStatus.Draft &&
+                x.Status != InvoiceStatus.Voided);
+
+        overdueBills =
+            await db.SupplierBills.CountAsync(x =>
+                x.OrganisationId == OrganisationId &&
+                x.DueDate < today &&
+                x.AmountPaid + x.AmountCredited < x.Total &&
+                x.Status != BillStatus.Voided);
+
+        financialAlertCount =
+            await notifications.GetFinancialAlertCountAsync(OrganisationId);
+        documentAlertCount =
+            await notifications.GetDocumentAlertCountAsync(OrganisationId);
+        systemAlertCount =
+            await notifications.GetSystemAlertCountAsync(OrganisationId);
+        cashflowForecast =
+            await cashflow.GetAsync(OrganisationId);
+        financialRisk =
+            await risk.GetAsync(OrganisationId);
+        cashRunway =
+            await runway.GetAsync(OrganisationId);
+        cashPosition = cashRunway.OpeningCash;
+    }
+
+    private void OrganisationUpdated(Guid organisationId)
+    {
+        if (organisationId != OrganisationId)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(RefreshFinancialInsightsAsync);
+    }
+
+    private async Task RefreshFinancialInsightsAsync()
+    {
+        liveRefreshRequested = true;
+
+        if (liveRefreshInProgress)
+        {
+            return;
+        }
+
+        liveRefreshInProgress = true;
+
+        try
+        {
+            while (liveRefreshRequested)
+            {
+                liveRefreshRequested = false;
+
+                await using var scope =
+                    ScopeFactory.CreateAsyncScope();
+
+                await LoadFinancialInsightsAsync(
+                    scope.ServiceProvider.GetRequiredService<ApplicationDbContext>(),
+                    scope.ServiceProvider.GetRequiredService<NotificationService>(),
+                    scope.ServiceProvider.GetRequiredService<CashflowForecastService>(),
+                    scope.ServiceProvider.GetRequiredService<FinancialRiskService>(),
+                    scope.ServiceProvider.GetRequiredService<CashRunwayService>());
+
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            liveRefreshInProgress = false;
+        }
+    }
+
+    public void Dispose() =>
+        updateSubscription?.Dispose();
+
     private IEnumerable<(string Label, CashflowPeriodSummary Summary)> GetCashflowPeriods()
     {
         if (cashflowForecast is null)

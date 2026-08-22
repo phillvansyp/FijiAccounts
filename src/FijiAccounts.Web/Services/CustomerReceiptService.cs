@@ -48,12 +48,17 @@ if (receivable is null ||
         if (invoice.Status == InvoiceStatus.Paid)
         {
             await notifications.ResolveSalesInvoiceNotificationsAsync(
+                request.OrganisationId,
                 invoice.Id,
-                cancellationToken);
+                publishUpdate: false,
+                ct: cancellationToken);
         }
         db.CustomerReceipts.Add(receipt);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "CustomerReceiptRecorded", EntityType = nameof(CustomerReceipt), EntityId = receipt.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, receipt.Reference, receipt.Amount }) });
-        await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return receipt;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        notifications.PublishOrganisationUpdate(request.OrganisationId);
+        return receipt;
     }
 
     public async Task<CustomerReceiptReversal> ReverseAsync(string userId, Guid organisationId, Guid receiptId, DateOnly reversalDate, string reason, CancellationToken ct = default)
@@ -89,6 +94,6 @@ await using var transaction =
         var reference = $"REV-{receipt.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse receipt {receipt.Reference}", x.Credit, x.Debit)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse customer receipt: {reason.Trim()}", lines), ct);
         foreach (var allocation in receipt.Allocations) { var invoice = allocation.SalesInvoice; invoice.AmountPaid -= allocation.Amount; if (invoice.AmountPaid < 0) throw new InvalidOperationException("Receipt allocation history is inconsistent and cannot be reversed."); var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; invoice.Status = outstanding <= 0 ? (invoice.AmountCredited > 0 ? InvoiceStatus.Credited : InvoiceStatus.Paid) : invoice.AmountPaid > 0 || invoice.AmountCredited > 0 ? InvoiceStatus.PartPaid : InvoiceStatus.Posted; }
-        var reversal = new CustomerReceiptReversal { OrganisationId = organisationId, CustomerReceiptId = receipt.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId }; db.CustomerReceiptReversals.Add(reversal); db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "CustomerReceiptReversed", EntityType = nameof(CustomerReceiptReversal), EntityId = reversal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { receipt.Reference, receipt.Amount, reason, ReversalJournalId = journal.Id }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return reversal;
+        var reversal = new CustomerReceiptReversal { OrganisationId = organisationId, CustomerReceiptId = receipt.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId }; db.CustomerReceiptReversals.Add(reversal); db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "CustomerReceiptReversed", EntityType = nameof(CustomerReceiptReversal), EntityId = reversal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { receipt.Reference, receipt.Amount, reason, ReversalJournalId = journal.Id }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(organisationId); return reversal;
     }
 }

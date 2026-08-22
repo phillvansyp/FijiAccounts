@@ -1,4 +1,5 @@
 @page "/o/{OrganisationId:guid}/notifications"
+@implements IDisposable
 
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
@@ -12,6 +13,8 @@
 @inject ApplicationDbContext Db
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject OrganisationUpdateBroker Updates
+@inject IServiceScopeFactory ScopeFactory
 
 <h1>Notifications</h1>
 
@@ -203,6 +206,9 @@ else
     private List<Notification> notifications = [];
     private Dictionary<Guid, string> notificationLinks = [];
     private string userId = "";
+    private IDisposable? updateSubscription;
+    private bool liveRefreshInProgress;
+    private bool liveRefreshRequested;
 
     private NotificationType? selectedCategory;
 
@@ -217,6 +223,12 @@ else
                     &&
                     (!selectedStatus.HasValue ||
                      x.Status == selectedStatus.Value));
+
+    protected override void OnInitialized()
+    {
+        updateSubscription =
+            Updates.Subscribe(OrganisationUpdated);
+    }
 
 
     private string GetCategoryClass(
@@ -244,26 +256,20 @@ else
         userId =
             UserManager.GetUserId(state.User)!;
 
-        if (Category == "financial")
-        {
-            selectedCategory = NotificationType.PaymentDueSoon;
-        }
-        else if (Category == "documents")
-        {
-            selectedCategory = NotificationType.DocumentExpiry;
-        }
-        else if (Category == "system")
-        {
-            selectedCategory = NotificationType.System;
-        }
+        ApplyCategoryFilter();
 
         await LoadNotificationsAsync();
     }
 
-    private async Task LoadNotificationsAsync()
+    private async Task LoadNotificationsAsync(
+        NotificationService? notificationService = null,
+        ApplicationDbContext? db = null)
     {
+        notificationService ??= NotificationService;
+        db ??= Db;
+
         notifications =
-            await NotificationService.GetUnreadAsync(
+            await notificationService.GetUnreadAsync(
                 OrganisationId);
 
         notificationLinks.Clear();
@@ -276,7 +282,7 @@ else
                     out var documentId))
             {
                 var document =
-                    await Db.BusinessPartyDocuments
+                    await db.BusinessPartyDocuments
                         .AsNoTracking()
                         .SingleOrDefaultAsync(
                             x => x.Id == documentId);
@@ -311,21 +317,6 @@ else
         await NotificationService.AcknowledgeAsync(
             id,
             userId);
-
-        if (Category == "financial")
-        {
-            selectedCategory = NotificationType.PaymentDueSoon;
-        }
-        else if (Category == "documents")
-        {
-            selectedCategory = NotificationType.DocumentExpiry;
-        }
-        else if (Category == "system")
-        {
-            selectedCategory = NotificationType.System;
-        }
-
-        await LoadNotificationsAsync();
     }
 
 
@@ -334,7 +325,10 @@ else
         await NotificationService.ResolveAsync(
             id,
             userId);
+    }
 
+    private void ApplyCategoryFilter()
+    {
         if (Category == "financial")
         {
             selectedCategory = NotificationType.PaymentDueSoon;
@@ -347,7 +341,51 @@ else
         {
             selectedCategory = NotificationType.System;
         }
-
-        await LoadNotificationsAsync();
     }
+
+    private void OrganisationUpdated(Guid organisationId)
+    {
+        if (organisationId != OrganisationId)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(RefreshFromLiveUpdateAsync);
+    }
+
+    private async Task RefreshFromLiveUpdateAsync()
+    {
+        liveRefreshRequested = true;
+
+        if (liveRefreshInProgress)
+        {
+            return;
+        }
+
+        liveRefreshInProgress = true;
+
+        try
+        {
+            while (liveRefreshRequested)
+            {
+                liveRefreshRequested = false;
+
+                await using var scope =
+                    ScopeFactory.CreateAsyncScope();
+
+                await LoadNotificationsAsync(
+                    scope.ServiceProvider.GetRequiredService<NotificationService>(),
+                    scope.ServiceProvider.GetRequiredService<ApplicationDbContext>());
+
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            liveRefreshInProgress = false;
+        }
+    }
+
+    public void Dispose() =>
+        updateSubscription?.Dispose();
 }
