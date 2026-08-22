@@ -97,6 +97,60 @@ public sealed class NotificationService(
 
         await db.SaveChangesAsync(ct);
     }
+    public async Task ResolveSalesInvoiceNotificationsAsync(
+        Guid invoiceId,
+        CancellationToken ct = default)
+    {
+        var notifications =
+            await db.Notifications
+                .Where(
+                    x =>
+                        x.RelatedEntityType == "SalesInvoice" &&
+                        x.RelatedEntityId == invoiceId.ToString() &&
+                        x.Status != NotificationStatus.Resolved)
+                .ToListAsync(ct);
+
+        if (notifications.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var notification in notifications)
+        {
+            notification.Status =
+                NotificationStatus.Resolved;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task ResolveSupplierBillNotificationsAsync(
+        Guid billId,
+        CancellationToken ct = default)
+    {
+        var notifications =
+            await db.Notifications
+                .Where(
+                    x =>
+                        x.RelatedEntityType == "SupplierBill" &&
+                        x.RelatedEntityId == billId.ToString() &&
+                        x.Status != NotificationStatus.Resolved)
+                .ToListAsync(ct);
+
+        if (notifications.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var notification in notifications)
+        {
+            notification.Status =
+                NotificationStatus.Resolved;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<int> GetUnreadCountAsync(
         Guid organisationId,
         CancellationToken ct = default)

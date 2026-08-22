@@ -16,7 +16,8 @@ public sealed class PurchasingService(
     ApplicationDbContext db,
     TenantAccessService access,
     JournalPostingService posting,
-    BankReconciliationService reconciliation)
+    BankReconciliationService reconciliation,
+    NotificationService notifications)
 {
     public Task<SupplierBill> PostBillAsync(
         string userId,
@@ -266,7 +267,14 @@ if (payable is null ||
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)]), ct);
         var payment = new SupplierPayment { OrganisationId = request.OrganisationId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
-        bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid; db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
+        bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
+
+        if (bill.Status == BillStatus.Paid)
+        {
+            await notifications.ResolveSupplierBillNotificationsAsync(
+                bill.Id,
+                ct);
+        } db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return payment;
     }
 

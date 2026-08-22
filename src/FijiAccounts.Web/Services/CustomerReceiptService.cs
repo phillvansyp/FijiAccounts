@@ -12,7 +12,8 @@ public sealed class CustomerReceiptService(
     ApplicationDbContext db,
     TenantAccessService access,
     JournalPostingService posting,
-    BankReconciliationService reconciliation)
+    BankReconciliationService reconciliation,
+    NotificationService notifications)
 {
     public async Task<CustomerReceipt> RecordAsync(string userId, CustomerReceiptRequest request, CancellationToken cancellationToken = default)
     {
@@ -43,6 +44,13 @@ if (receivable is null ||
         var receipt = new CustomerReceipt { OrganisationId = request.OrganisationId, CustomerId = invoice.CustomerId, ReceiptDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
         receipt.Allocations.Add(new CustomerReceiptAllocation { SalesInvoiceId = invoice.Id, Amount = request.Amount });
         invoice.AmountPaid += request.Amount; invoice.Status = invoice.AmountPaid + invoice.AmountCredited == invoice.Total ? InvoiceStatus.Paid : InvoiceStatus.PartPaid;
+
+        if (invoice.Status == InvoiceStatus.Paid)
+        {
+            await notifications.ResolveSalesInvoiceNotificationsAsync(
+                invoice.Id,
+                cancellationToken);
+        }
         db.CustomerReceipts.Add(receipt);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "CustomerReceiptRecorded", EntityType = nameof(CustomerReceipt), EntityId = receipt.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, receipt.Reference, receipt.Amount }) });
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return receipt;
