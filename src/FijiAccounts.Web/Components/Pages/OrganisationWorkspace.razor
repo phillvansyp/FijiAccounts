@@ -16,6 +16,7 @@
 @inject NotificationService NotificationService
 @inject CashflowForecastService CashflowForecastService
 @inject FinancialRiskService FinancialRiskService
+@inject CashRunwayService CashRunwayService
 
 <PageTitle>@(access?.Organisation.LegalName ?? "Organisation") · Account Island</PageTitle>
 @if (loading) { <div class="dashboard-loading">Preparing your island...</div> }
@@ -112,7 +113,7 @@ else
         </section>
     }
 
-    @if (cashflowForecast is not null && financialRisk is not null)
+    @if (cashflowForecast is not null && financialRisk is not null && cashRunway is not null)
     {
         <section class="detail-card intelligence-card">
             <div class="card-heading">
@@ -121,6 +122,31 @@ else
                     <h2>Collections, obligations and ageing risk</h2>
                 </div>
                 <span>Next 30 days</span>
+            </div>
+            <div class="runway-summary @GetCashRunwayClass()">
+                <div>
+                    <span>Cash runway</span>
+                    <strong>@GetCashRunwayLabel()</strong>
+                    <small>@GetCashRunwayDescription()</small>
+                </div>
+                <dl>
+                    <div>
+                        <dt>Cash now</dt>
+                        <dd>@FormatCashflowAmount(cashRunway.OpeningCash)</dd>
+                    </div>
+                    <div>
+                        <dt>30-day balance</dt>
+                        <dd>@FormatCashflowAmount(cashRunway.ProjectedBalance30Days)</dd>
+                    </div>
+                    <div>
+                        <dt>90-day balance</dt>
+                        <dd>@FormatCashflowAmount(cashRunway.ProjectedBalance90Days)</dd>
+                    </div>
+                    <div>
+                        <dt>Lowest balance</dt>
+                        <dd>@FormatCashflowAmount(cashRunway.LowestProjectedBalance)</dd>
+                    </div>
+                </dl>
             </div>
             <div class="intelligence-grid">
                 <a href="o/@OrganisationId/sales" class="intelligence-metric">
@@ -164,8 +190,9 @@ else
     private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private InviteModel invite = new(); private string? invitationLink; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
+    private CashRunwayForecast? cashRunway;
     private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
-    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); cashPosition=await Db.PostedJournalLines.AsNoTracking().Where(x=>x.PostedJournal.OrganisationId==OrganisationId && x.LedgerAccount.Code=="1000").SumAsync(x=>(decimal?)(x.Debit-x.Credit))??0; receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
+    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
 
 financialAlertCount =
     await NotificationService.GetFinancialAlertCountAsync(
@@ -186,6 +213,12 @@ cashflowForecast =
 financialRisk =
     await FinancialRiskService.GetAsync(
         OrganisationId);
+
+cashRunway =
+    await CashRunwayService.GetAsync(
+        OrganisationId);
+
+cashPosition = cashRunway.OpeningCash;
 var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
     private IEnumerable<(string Label, CashflowPeriodSummary Summary)> GetCashflowPeriods()
     {
@@ -249,6 +282,35 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
             FinancialRiskLevel.Watch => "risk-badge watch",
             _ => "risk-badge current"
         };
+
+    private string GetCashRunwayLabel()
+    {
+        if (cashRunway?.DaysUntilShortfall is null)
+        {
+            return "90+ days";
+        }
+
+        return cashRunway.DaysUntilShortfall == 0
+            ? "Immediate pressure"
+            : $"{cashRunway.DaysUntilShortfall} days";
+    }
+
+    private string GetCashRunwayDescription()
+    {
+        if (cashRunway?.FirstShortfallDate is null)
+        {
+            return "No projected cash shortfall within 90 days.";
+        }
+
+        return cashRunway.DaysUntilShortfall == 0
+            ? "Projected obligations exceed available cash now."
+            : $"First projected shortfall on {cashRunway.FirstShortfallDate:dd MMM yyyy}.";
+    }
+
+    private string GetCashRunwayClass() =>
+        cashRunway?.FirstShortfallDate is null
+            ? "runway-stable"
+            : "runway-pressure";
 
     private string GetCashflowStatus()
     {

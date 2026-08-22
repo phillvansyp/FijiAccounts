@@ -74,6 +74,7 @@ builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<CashflowForecastService>();
 builder.Services.AddScoped<FinancialRiskService>();
+builder.Services.AddScoped<CashRunwayService>();
 builder.Services.AddScoped<PurchasingService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<RecurringSupplierBillService>();

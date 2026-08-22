@@ -77,6 +77,70 @@
     grid-template-columns: repeat(4, 1fr);
 }
 
+.runway-summary {
+    align-items: center;
+    background: #edf8f4;
+    border: 1px solid #bfe8da;
+    border-radius: .9rem;
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(180px, .65fr) 1.35fr;
+    margin-bottom: .8rem;
+    padding: 1rem;
+}
+
+.runway-summary.runway-pressure {
+    background: #fff3ef;
+    border-color: #f0c3b9;
+}
+
+.runway-summary > div {
+    display: flex;
+    flex-direction: column;
+}
+
+.runway-summary > div > span {
+    color: #607681;
+    font-size: .8rem;
+    font-weight: 700;
+}
+
+.runway-summary > div > strong {
+    font-size: 1.45rem;
+    margin: .2rem 0;
+}
+
+.runway-summary > div > small {
+    color: #687b86;
+}
+
+.runway-summary dl {
+    display: grid;
+    gap: .7rem;
+    grid-template-columns: repeat(4, 1fr);
+    margin: 0;
+}
+
+.runway-summary dl div {
+    border-left: 1px solid #cadfd8;
+    padding-left: .7rem;
+}
+
+.runway-pressure dl div {
+    border-left-color: #e1c6bf;
+}
+
+.runway-summary dt {
+    color: #687b86;
+    font-size: .7rem;
+    font-weight: 600;
+}
+
+.runway-summary dd {
+    font-weight: 750;
+    margin: .2rem 0 0;
+}
+
 .intelligence-metric {
     background: #f6f9fa;
     border: 1px solid #e4ebee;
@@ -137,11 +201,19 @@
     .intelligence-grid {
         grid-template-columns: 1fr 1fr;
     }
+
+    .runway-summary {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 600px) {
     .intelligence-grid {
         grid-template-columns: 1fr;
+    }
+
+    .runway-summary dl {
+        grid-template-columns: 1fr 1fr;
     }
 }
 
