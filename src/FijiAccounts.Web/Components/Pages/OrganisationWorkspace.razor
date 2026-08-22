@@ -13,6 +13,8 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
+@inject NotificationService NotificationService
+@inject NotificationService NotificationService
 
 <PageTitle>@(access?.Organisation.LegalName ?? "Organisation") · Account Island</PageTitle>
 @if (loading) { <div class="dashboard-loading">Preparing your island...</div> }
@@ -32,6 +34,14 @@ else
     <section class="dashboard-grid"><article class="work-card"><div class="card-heading"><div><span class="eyebrow">Work queue</span><h2>Needs attention</h2></div><span class="count-badge">@(overdueInvoices + overdueBills)</span></div>
         <a href="o/@OrganisationId/sales"><span class="task-icon sales">↗</span><span><strong>Overdue customer invoices</strong><small>Follow up money owed to the business</small></span><b>@overdueInvoices</b></a>
         <a href="o/@OrganisationId/purchases"><span class="task-icon purchases">↙</span><span><strong>Overdue supplier bills</strong><small>Review bills that have passed their due date</small></span><b>@overdueBills</b></a>
+        <a href="o/@OrganisationId/notifications">
+            <span class="task-icon alerts">!</span>
+            <span>
+                <strong>Notifications</strong>
+                <small>Actions requiring attention</small>
+            </span>
+            <b>@(financialAlertCount + documentAlertCount + systemAlertCount)</b>
+        </a>
         <a href="o/@OrganisationId/contacts"><span class="task-icon contacts">◎</span><span><strong>Business contacts</strong><small>Customers and suppliers in this organisation</small></span><b>@contactCount</b></a>
     </article>
     <article class="quick-card"><span class="eyebrow">Shortcuts</span><h2>Keep work moving</h2><div class="shortcut-grid"><a href="o/@OrganisationId/sales"><b>＋</b><span>Sales invoice</span></a><a href="o/@OrganisationId/purchases"><b>＋</b><span>Supplier bill</span></a><a href="o/@OrganisationId/receipts"><b>✓</b><span>Customer receipt</span></a><a href="o/@OrganisationId/journals"><b>≡</b><span>Manual journal</span></a></div></article></section>
@@ -44,9 +54,33 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private InviteModel invite = new(); private string? invitationLink; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount;
+    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private InviteModel invite = new(); private string? invitationLink; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
-    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); cashPosition=await Db.PostedJournalLines.AsNoTracking().Where(x=>x.PostedJournal.OrganisationId==OrganisationId && x.LedgerAccount.Code=="1000").SumAsync(x=>(decimal?)(x.Debit-x.Credit))??0; receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive); var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
+    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); cashPosition=await Db.PostedJournalLines.AsNoTracking().Where(x=>x.PostedJournal.OrganisationId==OrganisationId && x.LedgerAccount.Code=="1000").SumAsync(x=>(decimal?)(x.Debit-x.Credit))??0; receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
+
+financialAlertCount =
+    await Db.Notifications.CountAsync(
+        x =>
+            x.OrganisationId == OrganisationId &&
+            x.Status == NotificationStatus.Open &&
+            (
+                x.Type == NotificationType.PaymentDueSoon ||
+                x.Type == NotificationType.PaymentOverdue
+            ));
+
+documentAlertCount =
+    await Db.Notifications.CountAsync(
+        x =>
+            x.OrganisationId == OrganisationId &&
+            x.Status == NotificationStatus.Open &&
+            x.Type == NotificationType.DocumentExpiry);
+
+systemAlertCount =
+    await Db.Notifications.CountAsync(
+        x =>
+            x.OrganisationId == OrganisationId &&
+            x.Status == NotificationStatus.Open &&
+            x.Type == NotificationType.System); var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
     private async Task CreateInvitation() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; if (!await TenantAccess.CanManageTeamAsync(userId, OrganisationId)) return; var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))); Db.OrganisationInvitations.Add(new OrganisationInvitation { OrganisationId = OrganisationId, Email = invite.Email.Trim().ToLowerInvariant(), Role = invite.Role, TokenHash = hash, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) }); await Db.SaveChangesAsync(); invitationLink = Navigation.ToAbsoluteUri($"invite/{token}").ToString(); invite = new(); }
     private static string Initials(string name) => string.Concat(name.Split(' ',StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x=>char.ToUpperInvariant(x[0])));
     private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
