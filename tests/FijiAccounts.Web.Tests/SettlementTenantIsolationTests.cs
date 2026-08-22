@@ -461,6 +461,9 @@ public async Task ReversePaymentAsync_RejectsPaymentFromAnotherOrganisation()
 
         test.Db.Organisations.Add(organisation);
 
+        new EnterpriseStructureService(test.Db)
+            .AddDefaultFor(organisation, test.UserId);
+
         test.Db.OrganisationMemberships.Add(
             new OrganisationMembership
             {

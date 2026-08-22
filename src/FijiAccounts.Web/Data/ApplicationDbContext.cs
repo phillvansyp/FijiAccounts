@@ -141,6 +141,18 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<PostedJournalLine>().Property(x => x.Debit).HasPrecision(18, 2);
         builder.Entity<PostedJournalLine>().Property(x => x.Credit).HasPrecision(18, 2);
         builder.Entity<PostedJournalLine>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>()
+            .HasOne(x => x.Branch)
+            .WithMany()
+            .HasForeignKey(x => x.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>()
+            .HasOne(x => x.Division)
+            .WithMany()
+            .HasForeignKey(x => x.DivisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>()
+            .HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<AuditEvent>().HasIndex(x => new { x.OrganisationId, x.OccurredAt });
         builder.Entity<BusinessParty>().HasIndex(x => new { x.OrganisationId, x.Name });
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultPurchaseAccount).WithMany().HasForeignKey(x => x.DefaultPurchaseAccountId).OnDelete(DeleteBehavior.Restrict);

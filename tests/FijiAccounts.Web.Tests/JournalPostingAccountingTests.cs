@@ -80,6 +80,9 @@ public sealed class JournalPostingAccountingTests
 
         test.Db.Organisations.Add(otherOrganisation);
 
+        new EnterpriseStructureService(test.Db)
+            .AddDefaultFor(otherOrganisation, test.UserId);
+
         var otherAccount =
             new LedgerAccount
             {
@@ -228,6 +231,9 @@ public sealed class JournalPostingAccountingTests
 
         test.Db.Organisations.Add(otherOrganisation);
 
+        new EnterpriseStructureService(test.Db)
+            .AddDefaultFor(otherOrganisation, test.UserId);
+
         test.Db.OrganisationMemberships.Add(
             new OrganisationMembership
             {
@@ -346,6 +352,105 @@ public sealed class JournalPostingAccountingTests
         Assert.NotEqual(
             default,
             stored.PostedAt);
+    }
+
+    [Fact]
+    public async Task PostAsync_WithoutDimension_UsesDefaultBranchAndDivision()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+
+        var journal = await PostSimpleAsync(test, "DEFAULT-DIMENSION-001");
+        var lines = await test.Db.PostedJournalLines
+            .AsNoTracking()
+            .Where(x => x.PostedJournalId == journal.Id)
+            .ToListAsync();
+        var defaultBranch = await test.Db.Branches
+            .AsNoTracking()
+            .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);
+        var defaultDivision = await test.Db.Divisions
+            .AsNoTracking()
+            .SingleAsync(x => x.BranchId == defaultBranch.Id && x.IsDefault);
+
+        Assert.All(lines, line =>
+        {
+            Assert.Equal(defaultBranch.Id, line.BranchId);
+            Assert.Equal(defaultDivision.Id, line.DivisionId);
+        });
+    }
+
+    [Fact]
+    public async Task PostAsync_LineDimensions_SupportMultipleAllocations()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var structures = new EnterpriseStructureService(test.Db);
+        var branch = await structures.AddBranchAsync(
+            test.Organisation.Id,
+            "NADI",
+            "Nadi Branch");
+        var retail = await structures.AddDivisionAsync(
+            test.Organisation.Id,
+            branch.Id,
+            "RETAIL",
+            "Retail");
+        var defaultBranch = await test.Db.Branches
+            .AsNoTracking()
+            .Include(x => x.Divisions)
+            .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);
+        var general = defaultBranch.Divisions.Single(x => x.IsDefault);
+
+        var journal = await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 20),
+                "MULTI-DIMENSION-001",
+                "Allocated journal",
+                [
+                    new(test.Account("1000").Id, "Debit", 100m, 0m, defaultBranch.Id, general.Id),
+                    new(test.Account("4000").Id, "Credit", 0m, 100m, branch.Id, retail.Id)
+                ]));
+        var dimensions = await test.Db.PostedJournalLines
+            .AsNoTracking()
+            .Where(x => x.PostedJournalId == journal.Id)
+            .Select(x => new { x.BranchId, x.DivisionId })
+            .ToListAsync();
+
+        Assert.Contains(dimensions, x => x.BranchId == defaultBranch.Id && x.DivisionId == general.Id);
+        Assert.Contains(dimensions, x => x.BranchId == branch.Id && x.DivisionId == retail.Id);
+    }
+
+    [Fact]
+    public async Task PostAsync_CrossCompanyDimension_IsRejected()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var otherCompany = new Organisation
+        {
+            LegalName = "Other Dimension Company",
+            CountryCode = "FJ",
+            BaseCurrency = "FJD",
+            Kind = OrganisationKind.Business
+        };
+        var otherStructure = new EnterpriseStructureService(test.Db)
+            .AddDefaultFor(otherCompany, test.UserId);
+        test.Db.Organisations.Add(otherCompany);
+        await test.Db.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Posting.PostAsync(
+                test.UserId,
+                new JournalPostRequest(
+                    test.Organisation.Id,
+                    new DateOnly(2026, 8, 20),
+                    "CROSS-DIMENSION-001",
+                    "Cross-company dimension",
+                    [
+                        new(test.Account("1000").Id, "Debit", 100m, 0m),
+                        new(test.Account("4000").Id, "Credit", 0m, 100m)
+                    ],
+                    otherStructure.Branch.Id,
+                    otherStructure.Division.Id)));
+
+        Assert.Contains("belong", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Task<PostedJournal> PostSimpleAsync(

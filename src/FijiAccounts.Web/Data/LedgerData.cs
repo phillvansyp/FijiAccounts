@@ -37,6 +37,10 @@ public sealed class PostedJournalLine
     public PostedJournal PostedJournal { get; set; } = null!;
     public Guid LedgerAccountId { get; set; }
     public LedgerAccount LedgerAccount { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     [MaxLength(300)] public required string Description { get; set; }
     public decimal Debit { get; set; }
     public decimal Credit { get; set; }

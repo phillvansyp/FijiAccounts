@@ -13,37 +13,146 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>Journals</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
 else
 {
     <h1>Manual journals</h1>
     @if (canPost)
     {
-        <div class="setup-card mb-5"><h2>Post a journal</h2><p class="text-secondary">Posted journals are permanent. Use a reversing entry to correct an error.</p>
-            <EditForm Model="model" OnValidSubmit="Post" FormName="post-journal"><DataAnnotationsValidator /><ValidationSummary />
-                <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div><div class="col-md-8 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div></div>
+        <div class="setup-card mb-5">
+            <h2>Post a journal</h2>
+            <p class="text-secondary">Posted journals are permanent. Use a reversing entry to correct an error.</p>
+            <EditForm Model="model" OnValidSubmit="Post" FormName="post-journal">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div>
+                    <div class="col-md-8 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
+                </div>
                 <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
-                <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Debit account</label><InputSelect class="form-select" @bind-Value="model.DebitAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-6 mb-3"><label class="form-label">Credit account</label><InputSelect class="form-select" @bind-Value="model.CreditAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div></div>
-                <div class="mb-3"><label class="form-label">Amount (FJD)</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
+                <div class="mb-3">
+                    <label class="form-label">Branch and division</label>
+                    <InputSelect class="form-select" @bind-Value="model.DivisionId">
+                        @foreach (var branch in branches)
+                        {
+                            <optgroup label="@($"{branch.Code} — {branch.Name}")">
+                                @foreach (var division in branch.Divisions.Where(x => x.IsActive))
+                                {
+                                    <option value="@division.Id">@division.Code — @division.Name</option>
+                                }
+                            </optgroup>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3"><label class="form-label">Debit account</label><InputSelect class="form-select" @bind-Value="model.DebitAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">Credit account</label><InputSelect class="form-select" @bind-Value="model.CreditAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div>
+                </div>
+                <div class="mb-3"><label class="form-label">Amount (@access.Organisation.BaseCurrency)</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
                 <button class="btn btn-primary">Post journal</button>
             </EditForm>
             @if (status is not null) { <div class="alert @statusClass mt-3">@status</div> }
         </div>
     }
     <h2>Posted journals</h2>
-    <div class="table-responsive"><table class="table"><thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Description</th><th class="text-end">Amount</th></tr></thead><tbody>
-        @foreach (var journal in journals) { <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr> }
-    </tbody></table></div>
+    <div class="table-responsive">
+        <table class="table">
+            <thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Branch / division</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
+            <tbody>
+                @foreach (var journal in journals)
+                {
+                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@DimensionLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private bool canPost; private string userId = string.Empty;
-    private List<LedgerAccount> accounts = []; private List<PostedJournal> journals = []; private JournalModel model = new();
-    private string? status; private string statusClass = "alert-success";
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.Code).ToListAsync(); ResetModel(); await Reload(); }
-    private async Task Reload() => journals = await Db.PostedJournals.AsNoTracking().Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId).OrderByDescending(x => x.SequenceNumber).Take(100).ToListAsync();
-    private void ResetModel() { model = new(); if (accounts.Count > 1) { model.DebitAccountId = accounts[0].Id; model.CreditAccountId = accounts[1].Id; } }
-    private async Task Post() { try { var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0), new(model.CreditAccountId, model.Description, 0, model.Amount)])); statusClass = "alert-success"; status = $"Journal J-{result.SequenceNumber:D6} posted."; ResetModel(); await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or FijiAccounts.Domain.Accounting.DomainException) { statusClass = "alert-danger"; status = ex.Message; } }
-    private sealed class JournalModel { public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Required, StringLength(80)] public string Reference { get; set; } = string.Empty; [Required, StringLength(300)] public string Description { get; set; } = string.Empty; public Guid DebitAccountId { get; set; } public Guid CreditAccountId { get; set; } [Range(0.01, 999999999999)] public decimal Amount { get; set; } }
+    private AccessibleOrganisation? access;
+    private bool canPost;
+    private string userId = string.Empty;
+    private List<LedgerAccount> accounts = [];
+    private List<Branch> branches = [];
+    private List<PostedJournal> journals = [];
+    private JournalModel model = new();
+    private string? status;
+    private string statusClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.Code).ToListAsync();
+        branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions).Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code).ToListAsync();
+        ResetModel();
+        await Reload();
+    }
+
+    private async Task Reload() =>
+        journals = await Db.PostedJournals.AsNoTracking()
+            .Include(x => x.Lines).ThenInclude(x => x.Branch)
+            .Include(x => x.Lines).ThenInclude(x => x.Division)
+            .Where(x => x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.SequenceNumber)
+            .Take(100)
+            .ToListAsync();
+
+    private void ResetModel()
+    {
+        model = new();
+        if (accounts.Count > 1)
+        {
+            model.DebitAccountId = accounts[0].Id;
+            model.CreditAccountId = accounts[1].Id;
+        }
+        model.DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty;
+    }
+
+    private async Task Post()
+    {
+        try
+        {
+            var dimension = branches.SelectMany(branch => branch.Divisions.Select(division => new { Branch = branch, Division = division })).Single(x => x.Division.Id == model.DivisionId);
+            var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0), new(model.CreditAccountId, model.Description, 0, model.Amount)], dimension.Branch.Id, dimension.Division.Id));
+            statusClass = "alert-success";
+            status = $"Journal J-{result.SequenceNumber:D6} posted.";
+            ResetModel();
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or FijiAccounts.Domain.Accounting.DomainException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private static string DimensionLabel(PostedJournal journal)
+    {
+        var dimensions = journal.Lines
+            .Select(x => new { Branch = x.Branch?.Name, Division = x.Division?.Name })
+            .Distinct()
+            .ToList();
+        return dimensions.Count == 1
+            ? $"{dimensions[0].Branch} / {dimensions[0].Division}"
+            : "Multiple allocations";
+    }
+
+    private sealed class JournalModel
+    {
+        public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        [Required, StringLength(80)] public string Reference { get; set; } = string.Empty;
+        [Required, StringLength(300)] public string Description { get; set; } = string.Empty;
+        [Required] public Guid DivisionId { get; set; }
+        public Guid DebitAccountId { get; set; }
+        public Guid CreditAccountId { get; set; }
+        [Range(0.01, 999999999999)] public decimal Amount { get; set; }
+    }
 }

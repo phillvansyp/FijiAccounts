@@ -6,8 +6,22 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record JournalLineInput(Guid AccountId, string Description, decimal Debit, decimal Credit);
-public sealed record JournalPostRequest(Guid OrganisationId, DateOnly Date, string Reference, string? Description, IReadOnlyList<JournalLineInput> Lines);
+public sealed record JournalLineInput(
+    Guid AccountId,
+    string Description,
+    decimal Debit,
+    decimal Credit,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
+
+public sealed record JournalPostRequest(
+    Guid OrganisationId,
+    DateOnly Date,
+    string Reference,
+    string? Description,
+    IReadOnlyList<JournalLineInput> Lines,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed class JournalPostingService(
     ApplicationDbContext db,
@@ -54,6 +68,22 @@ public sealed class JournalPostingService(
             .ToDictionary(x => x.Id);
         if (accounts.Count != accountIds.Length) throw new InvalidOperationException("Every account must be active and belong to the selected organisation.");
 
+        var activeBranches =
+            await db.Branches
+                .AsNoTracking()
+                .Include(x => x.Divisions.Where(division => division.IsActive))
+                .Where(x =>
+                    x.OrganisationId == request.OrganisationId &&
+                    x.IsActive)
+                .ToListAsync(cancellationToken);
+        var dimensions =
+            request.Lines
+                .Select(line => ResolveDimension(
+                    activeBranches,
+                    line.BranchId ?? request.BranchId,
+                    line.DivisionId ?? request.DivisionId))
+                .ToList();
+
         var bankAccountIds =
     accounts.Values
         .Where(x => x.IsBankAccount)
@@ -83,7 +113,7 @@ foreach (var bankAccountId in bankAccountIds)
         {
             OrganisationId = request.OrganisationId, SequenceNumber = sequence, EntryDate = request.Date,
             Reference = request.Reference.Trim(), Description = request.Description?.Trim(), PostedAt = DateTimeOffset.UtcNow, PostedByUserId = userId,
-            Lines = request.Lines.Select(x => new PostedJournalLine { LedgerAccountId = x.AccountId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
+            Lines = request.Lines.Select((x, index) => new PostedJournalLine { LedgerAccountId = x.AccountId, BranchId = dimensions[index].BranchId, DivisionId = dimensions[index].DivisionId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
         };
         db.PostedJournals.Add(journal);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "JournalPosted", EntityType = nameof(PostedJournal), EntityId = journal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { journal.SequenceNumber, journal.EntryDate, journal.Reference }) });
@@ -91,4 +121,53 @@ foreach (var bankAccountId in bankAccountIds)
         if (transaction is not null) { await transaction.CommitAsync(cancellationToken); await transaction.DisposeAsync(); }
         return journal;
     }
+
+    private static PostingDimension ResolveDimension(
+        IReadOnlyList<Branch> activeBranches,
+        Guid? requestedBranchId,
+        Guid? requestedDivisionId)
+    {
+        Branch? branch = null;
+        Division? division = null;
+
+        if (requestedDivisionId is Guid divisionId)
+        {
+            branch = activeBranches.SingleOrDefault(x =>
+                x.Divisions.Any(candidate => candidate.Id == divisionId));
+            division = branch?.Divisions.Single(x => x.Id == divisionId);
+
+            if (division is null)
+            {
+                throw new InvalidOperationException(
+                    "The selected division must be active and belong to this organisation.");
+            }
+        }
+
+        if (requestedBranchId is Guid branchId)
+        {
+            var selectedBranch =
+                activeBranches.SingleOrDefault(x => x.Id == branchId)
+                ?? throw new InvalidOperationException(
+                    "The selected branch must be active and belong to this organisation.");
+
+            if (branch is not null && branch.Id != selectedBranch.Id)
+            {
+                throw new InvalidOperationException(
+                    "The selected division does not belong to the selected branch.");
+            }
+
+            branch = selectedBranch;
+        }
+
+        branch ??= activeBranches.SingleOrDefault(x => x.IsDefault)
+            ?? throw new InvalidOperationException(
+                "An active default branch is required before transactions can be posted.");
+        division ??= branch.Divisions.SingleOrDefault(x => x.IsDefault)
+            ?? throw new InvalidOperationException(
+                "An active default division is required for the selected branch.");
+
+        return new PostingDimension(branch.Id, division.Id);
+    }
+
+    private sealed record PostingDimension(Guid BranchId, Guid DivisionId);
 }
