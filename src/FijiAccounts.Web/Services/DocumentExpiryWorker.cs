@@ -95,7 +95,7 @@ public sealed class DocumentExpiryWorker(
             }
 
             await Task.Delay(
-                TimeSpan.FromDays(1),
+                TimeSpan.FromHours(1),
                 stoppingToken);
         }
     }

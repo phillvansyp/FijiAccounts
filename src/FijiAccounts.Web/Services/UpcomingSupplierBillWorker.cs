@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
@@ -90,7 +90,7 @@ public sealed class UpcomingSupplierBillWorker(
             }
 
             await Task.Delay(
-                TimeSpan.FromDays(1),
+                TimeSpan.FromHours(1),
                 stoppingToken);
         }
     }

@@ -96,7 +96,7 @@ public sealed class OverdueSupplierBillWorker(
             }
 
             await Task.Delay(
-                TimeSpan.FromDays(1),
+                TimeSpan.FromHours(1),
                 stoppingToken);
         }
     }
