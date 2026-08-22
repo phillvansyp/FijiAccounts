@@ -625,10 +625,7 @@ protected override async Task OnParametersSetAsync()
             .OrderBy(x => x.Code)
             .ToListAsync();
 
-    branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions)
-        .Where(x => x.OrganisationId == OrganisationId && x.IsActive)
-        .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code)
-        .ToListAsync();
+    branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
 
     await Reload();
 
@@ -655,7 +652,7 @@ protected override async Task OnParametersSetAsync()
     }
 }
 }
-    private async Task Reload() { bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
+    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
 
     private static decimal Outstanding(SupplierBill item) => Math.Max(0m, item.Total - item.AmountPaid - item.AmountCredited);
     private string BillRegisterStatus(SupplierBill item) => IsOverdue(item) ? "Overdue" : item.Status switch { BillStatus.Posted => "Awaiting payment", BillStatus.PartPaid => "Part paid", BillStatus.Paid => "Paid", BillStatus.Credited => "Credited", BillStatus.Voided => "Voided", _ => item.Status.ToString() };
@@ -753,7 +750,7 @@ protected override async Task OnParametersSetAsync()
         billRegisterSort = sort;
         billRegisterSortDescending = false;
     }
-    private void ResetBillForm() { var billDate = DateOnly.FromDateTime(DateTime.Today); var termType = access?.Organisation.DefaultSupplierBillPaymentTermType ?? PaymentTermType.DaysAfterDocumentDate; var termValue = access?.Organisation.DefaultSupplierBillDueDays ?? 30; bill = new BillModel { SupplierId = Guid.Empty, DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty, BillDate = billDate, DueDate = PaymentTermCalculator.CalculateDueDate(billDate, termType, termValue), ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; editingRecurringBillId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; isRecurringBill = false; ResetRecurringBill(); }
+    private void ResetBillForm() { var billDate = DateOnly.FromDateTime(DateTime.Today); var termType = access?.Organisation.DefaultSupplierBillPaymentTermType ?? PaymentTermType.DaysAfterDocumentDate; var termValue = access?.Organisation.DefaultSupplierBillDueDays ?? 30; var accessibleDivisions = branches.SelectMany(x => x.Divisions).ToList(); bill = new BillModel { SupplierId = Guid.Empty, DivisionId = (accessibleDivisions.FirstOrDefault(x => x.IsDefault) ?? accessibleDivisions.FirstOrDefault())?.Id ?? Guid.Empty, BillDate = billDate, DueDate = PaymentTermCalculator.CalculateDueDate(billDate, termType, termValue), ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard }; additionalBillLines = []; editingDraftId = null; editingRecurringBillId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; isRecurringBill = false; ResetRecurringBill(); }
     private void ResetPayment() { payment = new(); if (openBills.Count > 0) { payment.BillId = openBills[0].Id; SetOutstanding(); } if (bankAccounts.Count > 0) payment.BankAccountId = bankAccounts[0].Id; }
     private void ResetRecurringBill()
     {

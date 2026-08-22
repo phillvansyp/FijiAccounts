@@ -183,14 +183,39 @@ else
     }
 
     <section id="chart-of-accounts" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Accounting</span><h2>Chart of accounts</h2></div><span>@accounts.Count accounts</span></div><div class="table-responsive"><table class="table"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Status</th></tr></thead><tbody>@foreach (var account in accounts) { <tr><td><code>@account.Code</code></td><td>@account.Name</td><td>@account.Type</td><td><span class="status-pill">@(account.IsActive ? "Active" : "Archived")</span></td></tr> }</tbody></table></div></section>
-    <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Role</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@member.Role</td></tr> }</tbody></table></div>
+    <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Role</th><th>Branch / division access</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@member.Role</td><td>@DimensionAccessLabel(member)</td></tr> }</tbody></table></div>
+    @if (canManageTeam && RestrictableMembers.Count > 0)
+    {
+        <details class="invite-panel">
+            <summary>Manage branch and division access</summary>
+            @if (dimensionAccessMessage is not null) { <div class="alert @dimensionAccessMessageClass mt-3">@dimensionAccessMessage</div> }
+            <div class="invite-fields">
+                <div><label class="form-label">Team member</label><InputSelect class="form-select" @bind-Value="selectedMemberUserId">@foreach (var member in RestrictableMembers) { <option value="@member.UserId">@member.User.Email — @member.Role</option> }</InputSelect></div>
+                <div><label class="form-label">Access mode</label><div class="d-flex gap-2"><button type="button" class="btn btn-outline-secondary" @onclick="SetFullDimensionAccess">All</button><button type="button" class="btn btn-outline-secondary" @onclick="SetRestrictedDimensionAccess">Restricted</button></div></div>
+            </div>
+            @if (SelectedMember?.DimensionAccessMode == DimensionAccessMode.Restricted)
+            {
+                <div class="invite-fields">
+                    <div><label class="form-label">Branch or division</label><InputSelect class="form-select" @bind-Value="selectedDimensionGrant">@foreach (var branch in branches) { <option value="@($"{branch.Id}|")">@branch.Code — @branch.Name (entire branch)</option>@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@($"{branch.Id}|{division.Id}")">@branch.Code / @division.Code — @division.Name</option> } }</InputSelect></div>
+                    <button type="button" class="btn btn-primary" @onclick="AddDimensionGrant">Add grant</button>
+                </div>
+                <div class="mt-3">
+                    @if (SelectedMemberGrants.Count == 0) { <p class="text-muted">No dimensions are currently accessible.</p> }
+                    else { @foreach (var grant in SelectedMemberGrants) { <div class="d-flex justify-content-between align-items-center border-top py-2"><span>@grant.Branch.Code — @grant.Branch.Name / @(grant.Division is null ? "All divisions" : $"{grant.Division.Code} — {grant.Division.Name}")</span><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveDimensionGrant(grant.Id)">Remove</button></div> } }
+                </div>
+            }
+        </details>
+    }
     @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="invite.Email" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
     </section>
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private InviteModel invite = new(); private string? invitationLink; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private InviteModel invite = new(); private string? invitationLink; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private List<OrganisationMembership> RestrictableMembers => members.Where(x => x.Role is not OrganisationRole.Owner and not OrganisationRole.Administrator).OrderBy(x => x.User.Email).ToList();
+    private OrganisationMembership? SelectedMember => members.SingleOrDefault(x => x.UserId == selectedMemberUserId);
+    private List<OrganisationDimensionAccessGrant> SelectedMemberGrants => dimensionGrants.Where(x => x.UserId == selectedMemberUserId).OrderBy(x => x.Branch.Code).ThenBy(x => x.Division == null ? "" : x.Division.Code).ToList();
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
     private CashRunwayForecast? cashRunway;
@@ -199,7 +224,7 @@ else
     private bool liveRefreshRequested;
     private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
     protected override void OnInitialized() { updateSubscription = Updates.Subscribe(OrganisationUpdated); }
-    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
+    protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); await LoadAccessManagement(); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
 
 await LoadFinancialInsightsAsync(
     Db,
@@ -433,7 +458,76 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
             : "cashflow-warning";
     }
 
-    private async Task CreateInvitation() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; if (!await TenantAccess.CanManageTeamAsync(userId, OrganisationId)) return; var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))); Db.OrganisationInvitations.Add(new OrganisationInvitation { OrganisationId = OrganisationId, Email = invite.Email.Trim().ToLowerInvariant(), Role = invite.Role, TokenHash = hash, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) }); await Db.SaveChangesAsync(); invitationLink = Navigation.ToAbsoluteUri($"invite/{token}").ToString(); invite = new(); }
+    private async Task LoadAccessManagement()
+    {
+        members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.User.Email).ToListAsync();
+        branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions).Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code).ToListAsync();
+        dimensionGrants = await Db.OrganisationDimensionAccessGrants.AsNoTracking().Include(x => x.Branch).Include(x => x.Division).Where(x => x.OrganisationId == OrganisationId).ToListAsync();
+        if (!RestrictableMembers.Any(x => x.UserId == selectedMemberUserId)) selectedMemberUserId = RestrictableMembers.FirstOrDefault()?.UserId ?? "";
+        if (string.IsNullOrWhiteSpace(selectedDimensionGrant) && branches.FirstOrDefault() is Branch branch) selectedDimensionGrant = $"{branch.Id}|";
+    }
+
+    private static string DimensionAccessLabel(OrganisationMembership member) =>
+        member.Role is OrganisationRole.Owner or OrganisationRole.Administrator || member.DimensionAccessMode == DimensionAccessMode.All
+            ? "All dimensions"
+            : "Restricted";
+
+    private Task SetFullDimensionAccess() => SetDimensionAccessMode(DimensionAccessMode.All);
+    private Task SetRestrictedDimensionAccess() => SetDimensionAccessMode(DimensionAccessMode.Restricted);
+
+    private async Task SetDimensionAccessMode(DimensionAccessMode mode)
+    {
+        if (string.IsNullOrWhiteSpace(selectedMemberUserId)) return;
+        try
+        {
+            await TenantAccess.SetDimensionAccessModeAsync(userId, OrganisationId, selectedMemberUserId, mode);
+            dimensionAccessMessageClass = "alert-success";
+            dimensionAccessMessage = mode == DimensionAccessMode.All ? "Full dimension access restored." : "Access is now restricted to the grants below.";
+            await LoadAccessManagement();
+        }
+        catch (Exception ex)
+        {
+            dimensionAccessMessageClass = "alert-danger";
+            dimensionAccessMessage = ex.Message;
+        }
+    }
+
+    private async Task AddDimensionGrant()
+    {
+        var parts = selectedDimensionGrant.Split('|');
+        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var branchId)) return;
+        var divisionId = Guid.TryParse(parts[1], out var selectedDivisionId) ? selectedDivisionId : (Guid?)null;
+        try
+        {
+            await TenantAccess.AddDimensionAccessGrantAsync(userId, OrganisationId, selectedMemberUserId, branchId, divisionId);
+            dimensionAccessMessageClass = "alert-success";
+            dimensionAccessMessage = "Dimension access granted.";
+            await LoadAccessManagement();
+        }
+        catch (Exception ex)
+        {
+            dimensionAccessMessageClass = "alert-danger";
+            dimensionAccessMessage = ex.Message;
+        }
+    }
+
+    private async Task RemoveDimensionGrant(Guid grantId)
+    {
+        try
+        {
+            await TenantAccess.RemoveDimensionAccessGrantAsync(userId, OrganisationId, grantId);
+            dimensionAccessMessageClass = "alert-success";
+            dimensionAccessMessage = "Dimension access removed.";
+            await LoadAccessManagement();
+        }
+        catch (Exception ex)
+        {
+            dimensionAccessMessageClass = "alert-danger";
+            dimensionAccessMessage = ex.Message;
+        }
+    }
+
+    private async Task CreateInvitation() { if (!await TenantAccess.CanManageTeamAsync(userId, OrganisationId)) return; var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))); Db.OrganisationInvitations.Add(new OrganisationInvitation { OrganisationId = OrganisationId, Email = invite.Email.Trim().ToLowerInvariant(), Role = invite.Role, TokenHash = hash, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) }); await Db.SaveChangesAsync(); invitationLink = Navigation.ToAbsoluteUri($"invite/{token}").ToString(); invite = new(); }
     private static string Initials(string name) => string.Concat(name.Split(' ',StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x=>char.ToUpperInvariant(x[0])));
     private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
 }

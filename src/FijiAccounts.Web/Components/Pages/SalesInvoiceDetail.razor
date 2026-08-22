@@ -242,6 +242,7 @@ else
 
     private async Task Reload()
     {
+        var accessibleDivisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
         invoice =
             await Db.SalesInvoices
                 .AsNoTracking()
@@ -252,7 +253,9 @@ else
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == InvoiceId &&
-                        x.OrganisationId == OrganisationId);
+                        x.OrganisationId == OrganisationId &&
+                        x.DivisionId != null &&
+                        accessibleDivisionIds.Contains(x.DivisionId.Value));
 
         credits =
             await Db.SalesCreditNotes

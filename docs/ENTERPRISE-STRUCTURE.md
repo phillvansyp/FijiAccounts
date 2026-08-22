@@ -22,6 +22,14 @@ Memberships and accountant engagements continue to grant access to an individual
 another company. Explicit group Owner, Administrator and Viewer roles control the
 group structure independently from company-ledger access.
 
+Company owners and administrators always retain access to every branch and
+division. Other direct members default to all dimensions for compatibility, but
+can be changed to restricted access with branch-wide or individual-division
+grants. Restricted selections are enforced when posting and when opening core
+sales, purchasing and journal records. Accountant engagements continue to use
+their company-level engagement access until engagement-specific dimension grants
+are introduced.
+
 ## Compatibility
 
 The enterprise-structure migration creates one group for each existing
@@ -57,5 +65,5 @@ dimension until template-level allocation is added.
    shared journal dimension, manual journals, sales invoices, supplier bills,
    receipts, payments and related credits/reversals are complete. Recurring
    templates and the remaining banking/inventory workflows are still pending.
-4. Add explicit branch/division access grants.
+4. ~~Add explicit branch/division access grants.~~
 5. Add scoped and consolidated reporting.

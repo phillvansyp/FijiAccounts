@@ -727,6 +727,11 @@ else
             return;
         }
 
+        var accessibleDivisionIds =
+            await TenantAccess.ListAccessibleDivisionIdsAsync(
+                userId,
+                OrganisationId);
+
         journal =
             await Db.PostedJournals
                 .AsNoTracking()
@@ -735,7 +740,10 @@ else
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == JournalId &&
-                        x.OrganisationId == OrganisationId);
+                        x.OrganisationId == OrganisationId &&
+                        x.Lines.All(line =>
+                            line.DivisionId != null &&
+                            accessibleDivisionIds.Contains(line.DivisionId.Value)));
 
         if (journal is null)
         {

@@ -169,11 +169,9 @@ else
                 .OrderBy(x => x.Code)
                 .ToListAsync();
 
-        branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions)
-            .Where(x => x.OrganisationId == OrganisationId && x.IsActive)
-            .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code)
-            .ToListAsync();
-        model.DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty;
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        var accessibleDivisions = branches.SelectMany(x => x.Divisions).ToList();
+        model.DivisionId = (accessibleDivisions.FirstOrDefault(x => x.IsDefault) ?? accessibleDivisions.FirstOrDefault())?.Id ?? Guid.Empty;
 
         if (RecurringInvoiceId is not null)
         {

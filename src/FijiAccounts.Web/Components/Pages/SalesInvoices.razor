@@ -409,6 +409,7 @@ else
     private string invoiceSort = "Invoice";
     private bool invoiceSortDescending = true;
     private List<RecurringSalesInvoice> recurringInvoices = [];
+    private Guid[] accessibleDivisionIds = [];
     private RecurringInvoiceAutomationRun? latestAutomationRun;
     private bool automationEnabled;
     private TimeOnly automationTime;
@@ -430,6 +431,7 @@ else
             access.Organisation.RecurringInvoiceAutomationTime;
 
         canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        accessibleDivisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
         customers = await Db.BusinessParties.AsNoTracking()
             .Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0)
             .OrderBy(x => x.Name)
@@ -445,7 +447,7 @@ else
                 .AsNoTracking()
                 .Include(x => x.Customer)
                 .Include(x => x.Lines)
-                .Where(x => x.OrganisationId == OrganisationId)
+                .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
                 .OrderByDescending(x => x.SequenceNumber)
                 .Take(100)
                 .ToListAsync();

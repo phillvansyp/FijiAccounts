@@ -32,6 +32,191 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&
             (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator));
 
+    public async Task<List<Branch>> ListAccessibleBranchesAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken cancellationToken = default)
+    {
+        var branches = await db.Branches
+            .AsNoTracking()
+            .Include(x => x.Divisions.Where(division => division.IsActive))
+            .Where(x => x.OrganisationId == organisationId && x.IsActive)
+            .OrderByDescending(x => x.IsDefault)
+            .ThenBy(x => x.Code)
+            .ToListAsync(cancellationToken);
+        var membership = await db.OrganisationMemberships
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.OrganisationId == organisationId && x.UserId == userId,
+                cancellationToken);
+
+        if (membership is null ||
+            membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator ||
+            membership.DimensionAccessMode == DimensionAccessMode.All)
+        {
+            return branches;
+        }
+
+        var grants = await db.OrganisationDimensionAccessGrants
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.UserId == userId)
+            .ToListAsync(cancellationToken);
+        var branchWide = grants.Where(x => x.DivisionId == null).Select(x => x.BranchId).ToHashSet();
+        var divisionIds = grants.Where(x => x.DivisionId != null).Select(x => x.DivisionId!.Value).ToHashSet();
+
+        foreach (var branch in branches)
+        {
+            if (!branchWide.Contains(branch.Id))
+            {
+                branch.Divisions = branch.Divisions.Where(x => divisionIds.Contains(x.Id)).ToList();
+            }
+        }
+
+        return branches.Where(x => branchWide.Contains(x.Id) || x.Divisions.Count > 0).ToList();
+    }
+
+    public async Task<bool> CanAccessDimensionAsync(
+        string userId,
+        Guid organisationId,
+        Guid branchId,
+        Guid divisionId,
+        CancellationToken cancellationToken = default)
+    {
+        var membership = await db.OrganisationMemberships
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.OrganisationId == organisationId && x.UserId == userId,
+                cancellationToken);
+        if (membership is null)
+        {
+            return await FindAsync(userId, organisationId) is not null;
+        }
+
+        if (membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator ||
+            membership.DimensionAccessMode == DimensionAccessMode.All)
+        {
+            return true;
+        }
+
+        return await db.OrganisationDimensionAccessGrants.AnyAsync(
+            x => x.OrganisationId == organisationId &&
+                 x.UserId == userId &&
+                 x.BranchId == branchId &&
+                 (x.DivisionId == null || x.DivisionId == divisionId),
+            cancellationToken);
+    }
+
+    public async Task<Guid[]> ListAccessibleDivisionIdsAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken cancellationToken = default) =>
+        (await ListAccessibleBranchesAsync(userId, organisationId, cancellationToken))
+            .SelectMany(x => x.Divisions)
+            .Select(x => x.Id)
+            .ToArray();
+
+    public async Task SetDimensionAccessModeAsync(
+        string actorUserId,
+        Guid organisationId,
+        string memberUserId,
+        DimensionAccessMode mode,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanManageTeamAsync(actorUserId, organisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot manage this organisation's team.");
+        }
+
+        var membership = await db.OrganisationMemberships.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId && x.UserId == memberUserId,
+            cancellationToken) ?? throw new InvalidOperationException("The selected user is not an organisation member.");
+        if (mode == DimensionAccessMode.Restricted &&
+            membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator)
+        {
+            throw new InvalidOperationException("Owners and administrators must retain access to all dimensions.");
+        }
+
+        membership.DimensionAccessMode = mode;
+        if (mode == DimensionAccessMode.All)
+        {
+            await db.OrganisationDimensionAccessGrants
+                .Where(x => x.OrganisationId == organisationId && x.UserId == memberUserId)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddDimensionAccessGrantAsync(
+        string actorUserId,
+        Guid organisationId,
+        string memberUserId,
+        Guid branchId,
+        Guid? divisionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanManageTeamAsync(actorUserId, organisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot manage this organisation's team.");
+        }
+
+        var membership = await db.OrganisationMemberships.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId && x.UserId == memberUserId,
+            cancellationToken) ?? throw new InvalidOperationException("The selected user is not an organisation member.");
+        if (membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator)
+        {
+            throw new InvalidOperationException("Owners and administrators already have access to all dimensions.");
+        }
+
+        var branch = await db.Branches
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == branchId && x.OrganisationId == organisationId && x.IsActive,
+                cancellationToken) ?? throw new InvalidOperationException("The selected branch is not active in this organisation.");
+        if (divisionId is Guid selectedDivisionId &&
+            !await db.Divisions.AnyAsync(
+                x => x.Id == selectedDivisionId && x.BranchId == branch.Id && x.IsActive,
+                cancellationToken))
+        {
+            throw new InvalidOperationException("The selected division is not active in this branch.");
+        }
+
+        membership.DimensionAccessMode = DimensionAccessMode.Restricted;
+        if (!await db.OrganisationDimensionAccessGrants.AnyAsync(
+            x => x.OrganisationId == organisationId && x.UserId == memberUserId &&
+                 x.BranchId == branchId && x.DivisionId == divisionId,
+            cancellationToken))
+        {
+            db.OrganisationDimensionAccessGrants.Add(new OrganisationDimensionAccessGrant
+            {
+                OrganisationId = organisationId,
+                UserId = memberUserId,
+                BranchId = branchId,
+                DivisionId = divisionId
+            });
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task RemoveDimensionAccessGrantAsync(
+        string actorUserId,
+        Guid organisationId,
+        Guid grantId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await CanManageTeamAsync(actorUserId, organisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot manage this organisation's team.");
+        }
+
+        var grant = await db.OrganisationDimensionAccessGrants.SingleOrDefaultAsync(
+            x => x.Id == grantId && x.OrganisationId == organisationId,
+            cancellationToken) ?? throw new InvalidOperationException("The selected access grant was not found.");
+        db.OrganisationDimensionAccessGrants.Remove(grant);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<bool> CanPostJournalsAsync(string userId, Guid organisationId)
     {
         if (await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&

@@ -13,6 +13,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
     public DbSet<OrganisationMembership> OrganisationMemberships => Set<OrganisationMembership>();
+    public DbSet<OrganisationDimensionAccessGrant> OrganisationDimensionAccessGrants =>
+        Set<OrganisationDimensionAccessGrant>();
     public DbSet<AccountantEngagement> AccountantEngagements => Set<AccountantEngagement>();
     public DbSet<LedgerAccount> LedgerAccounts => Set<LedgerAccount>();
     public DbSet<OrganisationInvitation> OrganisationInvitations => Set<OrganisationInvitation>();
@@ -128,6 +130,24 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Name }).IsUnique();
         builder.Entity<OrganisationUnit>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<OrganisationMembership>().HasIndex(x => x.UserId);
+        builder.Entity<OrganisationDimensionAccessGrant>()
+            .HasIndex(x => new { x.OrganisationId, x.UserId, x.BranchId, x.DivisionId })
+            .IsUnique();
+        builder.Entity<OrganisationDimensionAccessGrant>()
+            .HasOne<OrganisationMembership>()
+            .WithMany()
+            .HasForeignKey(x => new { x.OrganisationId, x.UserId })
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<OrganisationDimensionAccessGrant>()
+            .HasOne(x => x.Branch)
+            .WithMany()
+            .HasForeignKey(x => x.BranchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<OrganisationDimensionAccessGrant>()
+            .HasOne(x => x.Division)
+            .WithMany()
+            .HasForeignKey(x => x.DivisionId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<AccountantEngagement>().HasIndex(x => new { x.PracticeOrganisationId, x.ClientOrganisationId }).IsUnique();
         builder.Entity<AccountantEngagement>().HasOne(x => x.PracticeOrganisation).WithMany()
             .HasForeignKey(x => x.PracticeOrganisationId).OnDelete(DeleteBehavior.Restrict);

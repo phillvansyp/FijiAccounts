@@ -1086,6 +1086,7 @@ private async Task RecordPayment()
 
     private async Task Reload()
     {
+        var accessibleDivisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
         bill = await Db.SupplierBills
             .AsNoTracking()
             .Include(x => x.Supplier)
@@ -1096,7 +1097,9 @@ private async Task RecordPayment()
             .Include(x => x.Attachments)
             .SingleOrDefaultAsync(
                 x => x.Id == BillId &&
-                     x.OrganisationId == OrganisationId);
+                     x.OrganisationId == OrganisationId &&
+                     x.DivisionId != null &&
+                     accessibleDivisionIds.Contains(x.DivisionId.Value));
 
         bankAccounts =
     await Db.LedgerAccounts

@@ -83,6 +83,22 @@ public sealed class JournalPostingService(
                     line.BranchId ?? request.BranchId,
                     line.DivisionId ?? request.DivisionId))
                 .ToList();
+        if (!skipPermissionCheck)
+        {
+            foreach (var dimension in dimensions.Distinct())
+            {
+                if (!await tenantAccess.CanAccessDimensionAsync(
+                    userId,
+                    request.OrganisationId,
+                    dimension.BranchId,
+                    dimension.DivisionId,
+                    cancellationToken))
+                {
+                    throw new UnauthorizedAccessException(
+                        "You cannot post transactions to the selected branch or division.");
+                }
+            }
+        }
 
         var bankAccountIds =
     accounts.Values

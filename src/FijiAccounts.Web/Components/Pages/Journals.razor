@@ -91,19 +91,22 @@ else
         if (access is null) return;
         canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.Code).ToListAsync();
-        branches = await Db.Branches.AsNoTracking().Include(x => x.Divisions).Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderByDescending(x => x.IsDefault).ThenBy(x => x.Code).ToListAsync();
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
         ResetModel();
         await Reload();
     }
 
-    private async Task Reload() =>
+    private async Task Reload()
+    {
+        var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray();
         journals = await Db.PostedJournals.AsNoTracking()
             .Include(x => x.Lines).ThenInclude(x => x.Branch)
             .Include(x => x.Lines).ThenInclude(x => x.Division)
-            .Where(x => x.OrganisationId == OrganisationId)
+            .Where(x => x.OrganisationId == OrganisationId && x.Lines.All(line => line.DivisionId != null && accessibleDivisionIds.Contains(line.DivisionId.Value)))
             .OrderByDescending(x => x.SequenceNumber)
             .Take(100)
             .ToListAsync();
+    }
 
     private void ResetModel()
     {
@@ -113,7 +116,8 @@ else
             model.DebitAccountId = accounts[0].Id;
             model.CreditAccountId = accounts[1].Id;
         }
-        model.DivisionId = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty;
+        var accessibleDivisions = branches.SelectMany(x => x.Divisions).ToList();
+        model.DivisionId = (accessibleDivisions.FirstOrDefault(x => x.IsDefault) ?? accessibleDivisions.FirstOrDefault())?.Id ?? Guid.Empty;
     }
 
     private async Task Post()
