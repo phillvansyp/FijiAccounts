@@ -225,6 +225,47 @@ public sealed class NotificationService(
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<int> GetFinancialAlertCountAsync(
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        return await db.Notifications.CountAsync(
+            x =>
+                x.OrganisationId == organisationId &&
+                x.Status == NotificationStatus.Open &&
+                (
+                    x.Type == NotificationType.PaymentDueSoon ||
+                    x.Type == NotificationType.PaymentOverdue
+                ),
+            ct);
+    }
+
+
+    public async Task<int> GetDocumentAlertCountAsync(
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        return await db.Notifications.CountAsync(
+            x =>
+                x.OrganisationId == organisationId &&
+                x.Status == NotificationStatus.Open &&
+                x.Type == NotificationType.DocumentExpiry,
+            ct);
+    }
+
+
+    public async Task<int> GetSystemAlertCountAsync(
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        return await db.Notifications.CountAsync(
+            x =>
+                x.OrganisationId == organisationId &&
+                x.Status == NotificationStatus.Open &&
+                x.Type == NotificationType.System,
+            ct);
+    }
+
     public async Task MarkAsReadAsync(
         Guid notificationId,
         CancellationToken ct = default)

@@ -75,6 +75,18 @@ else
     protected override async Task OnParametersSetAsync() { loading = true; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is not null) { accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync(); members = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).Where(x => x.OrganisationId == OrganisationId).ToListAsync(); canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); var today=DateOnly.FromDateTime(DateTime.Today); cashPosition=await Db.PostedJournalLines.AsNoTracking().Where(x=>x.PostedJournal.OrganisationId==OrganisationId && x.LedgerAccount.Code=="1000").SumAsync(x=>(decimal?)(x.Debit-x.Credit))??0; receivables=await Db.SalesInvoices.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; payables=await Db.SupplierBills.AsNoTracking().Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)(x.Total-x.AmountPaid-x.AmountCredited))??0; overdueInvoices=await Db.SalesInvoices.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=InvoiceStatus.Voided); overdueBills=await Db.SupplierBills.CountAsync(x=>x.OrganisationId==OrganisationId && x.DueDate<today && x.AmountPaid+x.AmountCredited<x.Total && x.Status!=BillStatus.Voided); contactCount=await Db.BusinessParties.CountAsync(x=>x.OrganisationId==OrganisationId && x.IsActive);
 
 financialAlertCount =
+    await NotificationService.GetFinancialAlertCountAsync(
+        OrganisationId);
+
+documentAlertCount =
+    await NotificationService.GetDocumentAlertCountAsync(
+        OrganisationId);
+
+systemAlertCount =
+    await NotificationService.GetSystemAlertCountAsync(
+        OrganisationId);
+
+financialAlertCount =
     await Db.Notifications.CountAsync(
         x =>
             x.OrganisationId == OrganisationId &&
