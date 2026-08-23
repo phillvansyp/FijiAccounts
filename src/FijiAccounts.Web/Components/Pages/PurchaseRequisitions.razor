@@ -1,0 +1,240 @@
+@page "/o/{OrganisationId:guid}/requisitions"
+@attribute [Authorize]
+
+@using System.ComponentModel.DataAnnotations
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+
+@inject ApplicationDbContext Db
+@inject PurchaseRequisitionService Requisitions
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Purchase requisitions · Account Island</PageTitle>
+
+@if (accessDenied)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Procurement control</p>
+            <h1>Purchase requisitions</h1>
+            <p class="page-intro">Request, independently approve, and convert planned spending into purchase orders.</p>
+        </div>
+        <button class="btn btn-primary" type="button" @onclick="() => showForm = !showForm">+ New requisition</button>
+    </div>
+
+    @if (error is not null) { <div class="alert alert-danger">@error</div> }
+    @if (message is not null) { <div class="alert alert-success">@message</div> }
+
+    @if (showForm)
+    {
+        <section class="setup-card mb-4">
+            <h2>New purchase requisition</h2>
+            <EditForm Model="model" OnValidSubmit="Create" FormName="create-purchase-requisition">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Supplier</label>
+                        <InputSelect class="form-select" @bind-Value="model.SupplierId">
+                            <option value="@Guid.Empty">Choose supplier</option>
+                            @foreach (var supplier in suppliers) { <option value="@supplier.Id">@supplier.Name</option> }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Branch and division</label>
+                        <InputSelect class="form-select" @bind-Value="model.DivisionId">
+                            <option value="@Guid.Empty">Choose scope</option>
+                            @foreach (var option in dimensions) { <option value="@option.DivisionId">@option.BranchName · @option.DivisionName</option> }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Request date</label>
+                        <InputDate class="form-control" @bind-Value="model.RequestDate" />
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Required date</label>
+                        <InputDate class="form-control" @bind-Value="model.RequiredDate" />
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Estimated total</label>
+                        <input class="form-control" value="@((model.Quantity * model.EstimatedUnitPrice).ToString("N2"))" disabled />
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Business purpose</label>
+                    <InputTextArea class="form-control" @bind-Value="model.Purpose" />
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="model.Quantity" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Estimated unit price</label><InputNumber class="form-control" @bind-Value="model.EstimatedUnitPrice" /></div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Expense or asset account</label>
+                        <InputSelect class="form-select" @bind-Value="model.ExpenseAccountId">
+                            <option value="@Guid.Empty">Choose account</option>
+                            @foreach (var account in accounts) { <option value="@account.Id">@account.Code · @account.Name</option> }
+                        </InputSelect>
+                    </div>
+                </div>
+                <button class="btn btn-primary" type="submit" disabled="@busy">Save draft</button>
+            </EditForm>
+        </section>
+    }
+
+    <section class="setup-card">
+        <div class="card-heading"><h2>Requests</h2><span>@items.Count</span></div>
+        @if (items.Count == 0)
+        {
+            <p>No purchase requisitions yet.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Request</th><th>Scope</th><th>Supplier</th><th>Status</th><th class="text-end">Total</th><th>Actions</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in items)
+                        {
+                            <tr>
+                                <td><strong>@item.RequisitionNumber</strong><div><small>@item.Purpose</small></div></td>
+                                <td>@item.Branch.Name · @item.Division.Name</td>
+                                <td>@item.Supplier.Name</td>
+                                <td><span class="badge text-bg-secondary">@item.Status</span></td>
+                                <td class="text-end">@item.Total.ToString("C2")</td>
+                                <td>
+                                    @if (item.Status == PurchaseRequisitionStatus.Draft && item.CreatedByUserId == userId)
+                                    {
+                                        <button class="btn btn-sm btn-primary" @onclick="() => Submit(item.Id)">Submit</button>
+                                    }
+                                    @if (item.Status == PurchaseRequisitionStatus.Submitted && canApprove && item.CreatedByUserId != userId)
+                                    {
+                                        <button class="btn btn-sm btn-success me-1" @onclick="() => Approve(item.Id)">Approve</button>
+                                        <InputText class="form-control form-control-sm d-inline-block me-1" style="width: 12rem" placeholder="Rejection reason" @bind-Value="rejectionReasons[item.Id]" />
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Reject(item.Id)">Reject</button>
+                                    }
+                                    @if (item.Status == PurchaseRequisitionStatus.Approved)
+                                    {
+                                        <button class="btn btn-sm btn-primary" @onclick="() => Convert(item.Id)">Create purchase order</button>
+                                    }
+                                    @if (item.Status == PurchaseRequisitionStatus.Converted)
+                                    {
+                                        <span class="text-secondary">Purchase order created</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private readonly RequisitionModel model = new();
+    private readonly Dictionary<Guid, string> rejectionReasons = [];
+    private List<PurchaseRequisition> items = [];
+    private List<BusinessParty> suppliers = [];
+    private List<LedgerAccount> accounts = [];
+    private List<DimensionOption> dimensions = [];
+    private string userId = string.Empty;
+    private string? error;
+    private string? message;
+    private bool accessDenied;
+    private bool canApprove;
+    private bool showForm;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        accessDenied = userId.Length == 0 || await TenantAccess.FindAsync(userId, OrganisationId) is null;
+        if (accessDenied) return;
+        canApprove = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
+        accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
+        dimensions = (await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId))
+            .SelectMany(branch => branch.Divisions.Select(division => new DimensionOption(branch.Id, branch.Name, division.Id, division.Name))).ToList();
+        await Reload();
+    }
+
+    private async Task Create() => await Run(async () =>
+    {
+        var dimension = dimensions.SingleOrDefault(x => x.DivisionId == model.DivisionId)
+            ?? throw new InvalidOperationException("Choose a branch and division.");
+        var created = await Requisitions.CreateDraftAsync(userId, new PurchaseRequisitionRequest(
+            OrganisationId, dimension.BranchId, dimension.DivisionId, model.SupplierId,
+            model.RequestDate, model.RequiredDate, model.Purpose,
+            [new PurchaseRequisitionLineRequest(model.Description, model.Quantity, model.EstimatedUnitPrice, model.ExpenseAccountId)]));
+        message = $"{created.RequisitionNumber} saved as a draft.";
+        showForm = false;
+        ResetModel();
+    });
+
+    private Task Submit(Guid id) => Run(async () => { await Requisitions.SubmitAsync(userId, OrganisationId, id); message = "Requisition submitted for independent approval."; });
+    private Task Approve(Guid id) => Run(async () => { await Requisitions.ApproveAsync(userId, OrganisationId, id); message = "Requisition approved."; });
+    private Task Reject(Guid id) => Run(async () => { await Requisitions.RejectAsync(userId, OrganisationId, id, rejectionReasons[id]); message = "Requisition rejected."; });
+    private Task Convert(Guid id) => Run(async () =>
+    {
+        var order = await Requisitions.ConvertToPurchaseOrderAsync(userId, OrganisationId, id);
+        Navigation.NavigateTo($"/o/{OrganisationId}/purchase-orders/{order.Id}");
+    });
+
+    private async Task Run(Func<Task> action)
+    {
+        error = message = null;
+        busy = true;
+        try { await action(); await Reload(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task Reload()
+    {
+        items = await Requisitions.ListAsync(userId, OrganisationId);
+        foreach (var item in items.Where(x => x.Status == PurchaseRequisitionStatus.Submitted))
+        {
+            rejectionReasons.TryAdd(item.Id, string.Empty);
+        }
+    }
+
+    private void ResetModel()
+    {
+        model.SupplierId = Guid.Empty;
+        model.DivisionId = Guid.Empty;
+        model.RequestDate = DateOnly.FromDateTime(DateTime.Today);
+        model.RequiredDate = DateOnly.FromDateTime(DateTime.Today.AddDays(14));
+        model.Purpose = model.Description = string.Empty;
+        model.Quantity = 1;
+        model.EstimatedUnitPrice = 0;
+        model.ExpenseAccountId = Guid.Empty;
+    }
+
+    private sealed record DimensionOption(Guid BranchId, string BranchName, Guid DivisionId, string DivisionName);
+
+    private sealed class RequisitionModel
+    {
+        public Guid SupplierId { get; set; }
+        public Guid DivisionId { get; set; }
+        [Required] public DateOnly RequestDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public DateOnly? RequiredDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(14));
+        [Required, StringLength(500)] public string Purpose { get; set; } = string.Empty;
+        [Required, StringLength(300)] public string Description { get; set; } = string.Empty;
+        [Range(typeof(decimal), "0.0001", "999999999")] public decimal Quantity { get; set; } = 1;
+        [Range(typeof(decimal), "0", "999999999")] public decimal EstimatedUnitPrice { get; set; }
+        public Guid ExpenseAccountId { get; set; }
+    }
+}

@@ -118,10 +118,9 @@ public sealed class PurchaseOrderService(
                     x => x.Id == request.OrganisationId,
                     ct);
 
-        await using var transaction =
-            await db.Database.BeginTransactionAsync(
-                IsolationLevel.Serializable,
-                ct);
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
 
         var sequence =
             (await db.PurchaseOrders
@@ -221,7 +220,10 @@ public sealed class PurchaseOrderService(
             }));
 
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
 
         return order;
     }

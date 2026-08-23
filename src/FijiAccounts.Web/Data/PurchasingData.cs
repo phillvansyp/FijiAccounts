@@ -306,6 +306,60 @@ public enum PurchaseOrderStatus
     Cancelled
 }
 
+public enum PurchaseRequisitionStatus
+{
+    Draft,
+    Submitted,
+    Approved,
+    Rejected,
+    Converted
+}
+
+public sealed class PurchaseRequisition
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid BranchId { get; set; }
+    public Branch Branch { get; set; } = null!;
+    public Guid DivisionId { get; set; }
+    public Division Division { get; set; } = null!;
+    public Guid SupplierId { get; set; }
+    public BusinessParty Supplier { get; set; } = null!;
+    public long SequenceNumber { get; set; }
+    [MaxLength(40)] public required string RequisitionNumber { get; set; }
+    public DateOnly RequestDate { get; set; }
+    public DateOnly? RequiredDate { get; set; }
+    [MaxLength(500)] public required string Purpose { get; set; }
+    public PurchaseRequisitionStatus Status { get; set; } = PurchaseRequisitionStatus.Draft;
+    public decimal Total { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? SubmittedAt { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public DateTimeOffset? RejectedAt { get; set; }
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+    [MaxLength(450)] public string? ApprovedByUserId { get; set; }
+    [MaxLength(450)] public string? RejectedByUserId { get; set; }
+    [MaxLength(500)] public string? RejectionReason { get; set; }
+    public List<PurchaseRequisitionLine> Lines { get; set; } = [];
+}
+
+public sealed class PurchaseRequisitionLine
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid PurchaseRequisitionId { get; set; }
+    public PurchaseRequisition PurchaseRequisition { get; set; } = null!;
+    [MaxLength(300)] public required string Description { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal EstimatedUnitPrice { get; set; }
+    public decimal EstimatedTotal { get; set; }
+    public Guid ExpenseAccountId { get; set; }
+    public LedgerAccount ExpenseAccount { get; set; } = null!;
+    public Guid? ProductItemId { get; set; }
+    public ProductItem? ProductItem { get; set; }
+}
+
 public sealed class PurchaseOrder
 {
     public Guid Id { get; set; } =
@@ -355,6 +409,10 @@ public sealed class PurchaseOrder
     public Guid? SupplierBillId { get; set; }
 
     public SupplierBill? SupplierBill { get; set; }
+
+    public Guid? PurchaseRequisitionId { get; set; }
+
+    public PurchaseRequisition? PurchaseRequisition { get; set; }
 
     public List<PurchaseOrderLine> Lines { get; set; } =
         [];
