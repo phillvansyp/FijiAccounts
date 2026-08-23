@@ -3,10 +3,8 @@
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
-@using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
-@inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject EnterpriseStructureService EnterpriseStructures
 @inject UserManager<ApplicationUser> UserManager
@@ -30,6 +28,7 @@ else
     </div>
     <div class="setup-card">
         <h2>Create an organisation</h2>
+        @if (creationError is not null) { <div class="alert alert-danger">@creationError</div> }
         <EditForm Model="model" OnValidSubmit="CreateOrganisation" FormName="create-organisation">
             <DataAnnotationsValidator /><ValidationSummary />
             <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" /></div>
@@ -46,9 +45,30 @@ else
     private List<AccessibleOrganisation>? organisations;
     private CreateOrganisationModel model = new();
     private string userId = string.Empty;
+    private string? creationError;
     protected override async Task OnInitializedAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; await Reload(); }
     private async Task Reload() => organisations = await TenantAccess.ListAsync(userId);
-    private async Task CreateOrganisation() { var jurisdiction = IslandJurisdictions.Get(model.CountryCode); var organisation = new Organisation { LegalName = model.LegalName.Trim(), TradingName = model.TradingName?.Trim(), Tin = model.Tin?.Trim(), Kind = model.Kind, CountryCode = jurisdiction.CountryCode, BaseCurrency = jurisdiction.CurrencyCode, TimeZoneId = jurisdiction.TimeZoneId, TaxLabel = jurisdiction.TaxLabel, FinancialYearEndMonth = jurisdiction.FinancialYearEndMonth, FinancialYearEndDay = jurisdiction.FinancialYearEndDay }; EnterpriseStructures.AddDefaultFor(organisation, userId); Db.OrganisationMemberships.Add(new OrganisationMembership { Organisation = organisation, UserId = userId, Role = OrganisationRole.Owner }); Db.LedgerAccounts.AddRange(FijiStarterChart.For(organisation.Id)); await Db.SaveChangesAsync(); model = new(); await Reload(); }
+    private async Task CreateOrganisation()
+    {
+        creationError = null;
+        try
+        {
+            await EnterpriseStructures.CreateStandaloneCompanyAsync(
+                userId,
+                new CreateStandaloneCompanyRequest(
+                    model.LegalName,
+                    model.TradingName,
+                    model.Tin,
+                    model.CountryCode,
+                    model.Kind));
+            model = new();
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            creationError = ex.Message;
+        }
+    }
     private static string CountryName(string countryCode) => IslandJurisdictions.Get(countryCode).CountryName;
     private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
 }

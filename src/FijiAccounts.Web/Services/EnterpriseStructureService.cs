@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,6 +24,13 @@ public sealed record CreateGroupCompanyRequest(
     string CountryCode,
     OrganisationKind Kind);
 
+public sealed record CreateStandaloneCompanyRequest(
+    string LegalName,
+    string? TradingName,
+    string? Tin,
+    string CountryCode,
+    OrganisationKind Kind);
+
 public sealed record EnterprisePostingDimension(
     Guid BranchId,
     Guid DivisionId);
@@ -30,6 +38,74 @@ public sealed record EnterprisePostingDimension(
 public sealed class EnterpriseStructureService(
     ApplicationDbContext db)
 {
+    public async Task<Organisation> CreateStandaloneCompanyAsync(
+        string userId,
+        CreateStandaloneCompanyRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId) ||
+            !await db.Users.AsNoTracking().AnyAsync(x => x.Id == userId, ct))
+        {
+            throw new UnauthorizedAccessException(
+                "You must be signed in to create an organisation.");
+        }
+
+        if (!Enum.IsDefined(request.Kind))
+        {
+            throw new InvalidOperationException("Select a valid organisation type.");
+        }
+
+        var jurisdiction = IslandJurisdictions.Get(request.CountryCode);
+        var company = new Organisation
+        {
+            LegalName = NormaliseCompanyName(request.LegalName),
+            TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
+            Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
+            Kind = request.Kind,
+            CountryCode = jurisdiction.CountryCode,
+            BaseCurrency = jurisdiction.CurrencyCode,
+            TimeZoneId = jurisdiction.TimeZoneId,
+            TaxLabel = jurisdiction.TaxLabel,
+            FinancialYearEndMonth = jurisdiction.FinancialYearEndMonth,
+            FinancialYearEndDay = jurisdiction.FinancialYearEndDay
+        };
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        db.Organisations.Add(company);
+        var structure = AddDefaultFor(company, userId);
+        db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            Organisation = company,
+            UserId = userId,
+            Role = OrganisationRole.Owner
+        });
+        db.LedgerAccounts.AddRange(FijiStarterChart.For(company.Id));
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = company.Id,
+            UserId = userId,
+            EventType = "OrganisationCreated",
+            EntityType = nameof(Organisation),
+            EntityId = company.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                company.LegalName,
+                company.TradingName,
+                company.Tin,
+                Kind = company.Kind.ToString(),
+                company.CountryCode,
+                company.BaseCurrency,
+                OrganisationGroupId = structure.Group.Id,
+                DefaultBranchId = structure.Branch.Id,
+                DefaultDivisionId = structure.Division.Id
+            })
+        });
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        return company;
+    }
+
     public async Task<List<Branch>> ListBranchesAsync(
         Guid organisationId,
         CancellationToken ct = default) =>
@@ -583,4 +659,19 @@ public sealed class EnterpriseStructureService(
 
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? NormaliseOptionalText(
+        string? value,
+        int maximumLength,
+        string fieldName)
+    {
+        var result = NullIfWhiteSpace(value);
+        if (result?.Length > maximumLength)
+        {
+            throw new InvalidOperationException(
+                $"Enter a {fieldName} no longer than {maximumLength} characters.");
+        }
+
+        return result;
+    }
 }

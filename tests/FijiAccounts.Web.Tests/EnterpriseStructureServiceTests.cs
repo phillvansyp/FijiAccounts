@@ -1,11 +1,88 @@
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Tests;
 
 public sealed class EnterpriseStructureServiceTests
 {
+    [Fact]
+    public async Task CreateStandaloneCompany_ProvisionsCompleteAuditedWorkspace()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        var company = await service.CreateStandaloneCompanyAsync(
+            test.UserId,
+            new CreateStandaloneCompanyRequest(
+                " New Company Limited ",
+                " New Company ",
+                " TIN-NEW ",
+                "FJ",
+                OrganisationKind.Business));
+
+        var stored = await test.Db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == company.Id);
+        var membership = await test.Db.OrganisationMemberships
+            .AsNoTracking()
+            .SingleAsync(x => x.OrganisationId == company.Id);
+        var branch = await test.Db.Branches
+            .AsNoTracking()
+            .Include(x => x.Divisions)
+            .SingleAsync(x => x.OrganisationId == company.Id);
+        var groupMembership = await test.Db.OrganisationGroupMemberships
+            .AsNoTracking()
+            .SingleAsync(x => x.OrganisationGroupId == stored.OrganisationGroupId);
+        var audit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .SingleAsync(x =>
+                x.OrganisationId == company.Id &&
+                x.EventType == "OrganisationCreated");
+
+        Assert.Equal("New Company Limited", stored.LegalName);
+        Assert.Equal("New Company", stored.TradingName);
+        Assert.Equal("TIN-NEW", stored.Tin);
+        Assert.Equal(test.UserId, membership.UserId);
+        Assert.Equal(OrganisationRole.Owner, membership.Role);
+        Assert.Equal(test.UserId, groupMembership.UserId);
+        Assert.Equal(OrganisationGroupRole.Owner, groupMembership.Role);
+        Assert.Equal("MAIN", branch.Code);
+        Assert.Equal("GENERAL", Assert.Single(branch.Divisions).Code);
+        Assert.Equal(
+            FijiStarterChart.For(company.Id).Count,
+            await test.Db.LedgerAccounts.CountAsync(x => x.OrganisationId == company.Id));
+        Assert.Equal(test.UserId, audit.UserId);
+        using var evidence = JsonDocument.Parse(audit.JsonData);
+        Assert.Equal(
+            branch.Id.ToString(),
+            evidence.RootElement.GetProperty("DefaultBranchId").GetString());
+    }
+
+    [Fact]
+    public async Task CreateStandaloneCompany_RejectsUnknownUserWithoutPartialWorkspace()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+        var initialOrganisationCount = await test.Db.Organisations.CountAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.CreateStandaloneCompanyAsync(
+                Guid.NewGuid().ToString(),
+                new CreateStandaloneCompanyRequest(
+                    "Unauthorised Limited",
+                    null,
+                    null,
+                    "FJ",
+                    OrganisationKind.Business)));
+
+        Assert.Equal(initialOrganisationCount, await test.Db.Organisations.CountAsync());
+        Assert.DoesNotContain(
+            await test.Db.AuditEvents.AsNoTracking().ToListAsync(),
+            x => x.EventType == "OrganisationCreated");
+    }
+
     [Fact]
     public async Task AddDefaultFor_CreatesPersistedGroupBranchAndDivision()
     {
