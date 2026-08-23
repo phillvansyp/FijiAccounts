@@ -264,19 +264,30 @@ public sealed class EnterpriseStructureService(
             userId,
             currentOrganisationId,
             ct);
-
-        var changed =
-            await db.OrganisationGroups
-                .Where(x => x.Id == groupAccess.GroupId)
-                .ExecuteUpdateAsync(
-                    update => update.SetProperty(x => x.Name, normalisedName),
-                    ct);
-
-        if (changed != 1)
+        var group = await db.OrganisationGroups.SingleOrDefaultAsync(
+            x => x.Id == groupAccess.GroupId,
+            ct);
+        if (group is null)
         {
             throw new InvalidOperationException(
                 "The organisation group could not be updated.");
         }
+
+        if (group.Name == normalisedName)
+        {
+            return;
+        }
+
+        var oldName = group.Name;
+        group.Name = normalisedName;
+        db.AuditEvents.Add(StructureAudit(
+            currentOrganisationId,
+            userId,
+            "OrganisationGroupRenamed",
+            nameof(OrganisationGroup),
+            group.Id,
+            new { OldName = oldName, NewName = group.Name }));
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<Organisation> AddCompanyAsync(
@@ -290,6 +301,10 @@ public sealed class EnterpriseStructureService(
             ct);
         var jurisdiction = IslandJurisdictions.Get(request.CountryCode);
         var legalName = NormaliseCompanyName(request.LegalName);
+        if (!Enum.IsDefined(request.Kind))
+        {
+            throw new InvalidOperationException("Select a valid organisation type.");
+        }
 
         if (await db.Organisations.AnyAsync(
                 x =>
@@ -306,8 +321,8 @@ public sealed class EnterpriseStructureService(
             {
                 OrganisationGroupId = groupAccess.GroupId,
                 LegalName = legalName,
-                TradingName = NullIfWhiteSpace(request.TradingName),
-                Tin = NullIfWhiteSpace(request.Tin),
+                TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
+                Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
                 Kind = request.Kind,
                 CountryCode = jurisdiction.CountryCode,
                 BaseCurrency = jurisdiction.CurrencyCode,
@@ -331,6 +346,25 @@ public sealed class EnterpriseStructureService(
                     : OrganisationRole.Administrator
             });
         db.LedgerAccounts.AddRange(FijiStarterChart.For(company.Id));
+        db.AuditEvents.Add(StructureAudit(
+            company.Id,
+            userId,
+            "OrganisationCreated",
+            nameof(Organisation),
+            company.Id,
+            new
+            {
+                company.LegalName,
+                company.TradingName,
+                company.Tin,
+                Kind = company.Kind.ToString(),
+                company.CountryCode,
+                company.BaseCurrency,
+                OrganisationGroupId = groupAccess.GroupId,
+                DefaultBranchId = branch.Id,
+                DefaultDivisionId = branch.Divisions.Single().Id,
+                CreatedWithinGroup = true
+            }));
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
 
@@ -378,6 +412,18 @@ public sealed class EnterpriseStructureService(
             };
 
         db.Branches.Add(branch);
+        db.AuditEvents.Add(StructureAudit(
+            organisationId,
+            userId,
+            "BranchCreated",
+            nameof(Branch),
+            branch.Id,
+            new
+            {
+                branch.Code,
+                branch.Name,
+                DefaultDivisionId = branch.Divisions.Single().Id
+            }));
         await db.SaveChangesAsync(ct);
 
         return branch;
@@ -430,6 +476,18 @@ public sealed class EnterpriseStructureService(
             };
 
         db.Divisions.Add(division);
+        db.AuditEvents.Add(StructureAudit(
+            organisationId,
+            userId,
+            "DivisionCreated",
+            nameof(Division),
+            division.Id,
+            new
+            {
+                division.BranchId,
+                division.Code,
+                division.Name
+            }));
         await db.SaveChangesAsync(ct);
 
         return division;
@@ -458,7 +516,21 @@ public sealed class EnterpriseStructureService(
                 "The default branch must remain active.");
         }
 
-        branch.IsActive = !branch.IsActive;
+        var wasActive = branch.IsActive;
+        branch.IsActive = !wasActive;
+        db.AuditEvents.Add(StructureAudit(
+            organisationId,
+            userId,
+            branch.IsActive ? "BranchReactivated" : "BranchDeactivated",
+            nameof(Branch),
+            branch.Id,
+            new
+            {
+                branch.Code,
+                branch.Name,
+                OldIsActive = wasActive,
+                NewIsActive = branch.IsActive
+            }));
         await db.SaveChangesAsync(ct);
     }
 
@@ -487,9 +559,41 @@ public sealed class EnterpriseStructureService(
                 "The default division must remain active.");
         }
 
-        division.IsActive = !division.IsActive;
+        var wasActive = division.IsActive;
+        division.IsActive = !wasActive;
+        db.AuditEvents.Add(StructureAudit(
+            organisationId,
+            userId,
+            division.IsActive ? "DivisionReactivated" : "DivisionDeactivated",
+            nameof(Division),
+            division.Id,
+            new
+            {
+                division.BranchId,
+                division.Code,
+                division.Name,
+                OldIsActive = wasActive,
+                NewIsActive = division.IsActive
+            }));
         await db.SaveChangesAsync(ct);
     }
+
+    private static AuditEvent StructureAudit(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        string entityType,
+        Guid entityId,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = entityType,
+            EntityId = entityId.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 
     private static string NormaliseCode(
         string value)

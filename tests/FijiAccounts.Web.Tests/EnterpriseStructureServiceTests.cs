@@ -227,6 +227,21 @@ public sealed class EnterpriseStructureServiceTests
                 x.Code == "RETAIL" &&
                 !x.IsDefault &&
                 !x.IsActive);
+
+        var structureAudit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == test.Organisation.Id &&
+                (x.EventType == "BranchCreated" ||
+                 x.EventType == "DivisionCreated" ||
+                 x.EventType == "BranchDeactivated" ||
+                 x.EventType == "DivisionDeactivated"))
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+        Assert.Equal(
+            ["BranchCreated", "DivisionCreated", "BranchDeactivated", "DivisionDeactivated"],
+            structureAudit.Select(x => x.EventType));
+        Assert.All(structureAudit, audit => Assert.Equal(test.UserId, audit.UserId));
     }
 
     [Fact]
@@ -292,6 +307,7 @@ public sealed class EnterpriseStructureServiceTests
                 Role = OrganisationRole.Accountant
             });
         await test.Db.SaveChangesAsync();
+        var initialAuditCount = await test.Db.AuditEvents.CountAsync();
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.AddBranchAsync(
@@ -316,6 +332,7 @@ public sealed class EnterpriseStructureServiceTests
                 accountant.Id,
                 test.Organisation.Id,
                 division.Id));
+        Assert.Equal(initialAuditCount, await test.Db.AuditEvents.CountAsync());
     }
 
     [Fact]
@@ -325,6 +342,10 @@ public sealed class EnterpriseStructureServiceTests
             await AccountingTestDatabase.CreateAsync();
         var service = new EnterpriseStructureService(test.Db);
 
+        await service.UpdateGroupNameAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "Downer Group");
         await service.UpdateGroupNameAsync(
             test.UserId,
             test.Organisation.Id,
@@ -366,6 +387,25 @@ public sealed class EnterpriseStructureServiceTests
         Assert.Equal("MAIN", branch.Code);
         Assert.Equal("GENERAL", branch.Divisions.Single().Code);
         Assert.Equal(FijiStarterChart.For(company.Id).Count, accountCount);
+
+        var groupRenameAudit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .SingleAsync(x =>
+                x.OrganisationId == test.Organisation.Id &&
+                x.EventType == "OrganisationGroupRenamed");
+        var companyAudit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .SingleAsync(x =>
+                x.OrganisationId == company.Id &&
+                x.EventType == "OrganisationCreated");
+        Assert.Equal(test.UserId, groupRenameAudit.UserId);
+        Assert.Equal(test.UserId, companyAudit.UserId);
+        using var companyEvidence = JsonDocument.Parse(companyAudit.JsonData);
+        Assert.True(
+            companyEvidence.RootElement.GetProperty("CreatedWithinGroup").GetBoolean());
+        Assert.Equal(
+            test.Organisation.OrganisationGroupId.ToString(),
+            companyEvidence.RootElement.GetProperty("OrganisationGroupId").GetString());
     }
 
     [Fact]
