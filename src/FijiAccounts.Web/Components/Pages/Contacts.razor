@@ -1,6 +1,7 @@
 @page "/o/{OrganisationId:guid}/contacts"
 @page "/o/{OrganisationId:guid}/contacts/{ContactView}"
 @attribute [Authorize]
+@implements IDisposable
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
@@ -386,7 +387,52 @@ else
     private string searchTerm = string.Empty;
     private string? status;
     private string statusClass = "alert-success";
-    private void DismissStatus() => status = null;
+    private CancellationTokenSource? statusDismissal;
+
+    private void ShowStatus(string message, string cssClass)
+    {
+        statusDismissal?.Cancel();
+        statusDismissal?.Dispose();
+
+        status = message;
+        statusClass = cssClass;
+        statusDismissal = new CancellationTokenSource();
+        _ = DismissStatusAfterDelayAsync(statusDismissal.Token);
+    }
+
+    private void DismissStatus()
+    {
+        statusDismissal?.Cancel();
+        statusDismissal?.Dispose();
+        statusDismissal = null;
+        status = null;
+    }
+
+    private async Task DismissStatusAfterDelayAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    status = null;
+                    StateHasChanged();
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer message replaced this one, or it was dismissed manually.
+        }
+    }
+
+    public void Dispose()
+    {
+        statusDismissal?.Cancel();
+        statusDismissal?.Dispose();
+    }
 
     private string NormalizedView => ContactView?.ToLowerInvariant() switch
     {
@@ -494,14 +540,12 @@ else
                     access?.Organisation.DefaultSupplierBillDueDays ?? 30
             };
             showAddContact = false;
-            statusClass = "alert-success";
-            status = $"{party.Name} added successfully.";
+            ShowStatus($"{party.Name} added successfully.", "alert-success");
             await Reload();
         }
         catch (Exception ex)
         {
-            statusClass = "alert-danger";
-            status = $"Contact was not added: {ex.Message}";
+            ShowStatus($"Contact was not added: {ex.Message}", "alert-danger");
         }
     }
 
@@ -539,8 +583,7 @@ else
         if (editingCustomerDueDays < 0 ||
             editingCustomerDueDays > 365)
         {
-            statusClass = "alert-danger";
-            status = "Enter customer payment terms between 0 and 365.";
+            ShowStatus("Enter customer payment terms between 0 and 365.", "alert-danger");
             return;
         }
 
@@ -556,14 +599,12 @@ else
                     editingCustomerPaymentTermType,
                     editingCustomerDueDays));
             CancelCustomerSettings();
-            statusClass = "alert-success";
-            status = "Customer settings saved.";
+            ShowStatus("Customer settings saved.", "alert-success");
             await Reload();
         }
         catch (Exception ex)
         {
-            statusClass = "alert-danger";
-            status = $"Customer settings were not saved: {ex.Message}";
+            ShowStatus($"Customer settings were not saved: {ex.Message}", "alert-danger");
         }
     }
 
@@ -584,14 +625,12 @@ else
                     editDefaults.DefaultSupplierBillPaymentTermType,
                     editDefaults.DefaultSupplierBillDueDays));
             CancelDefaults();
-            statusClass = "alert-success";
-            status = "Supplier settings saved.";
+            ShowStatus("Supplier settings saved.", "alert-success");
             await Reload();
         }
         catch (Exception ex)
         {
-            statusClass = "alert-danger";
-            status = $"Supplier settings were not saved: {ex.Message}";
+            ShowStatus($"Supplier settings were not saved: {ex.Message}", "alert-danger");
         }
     }
 
