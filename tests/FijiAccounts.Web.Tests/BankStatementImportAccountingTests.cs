@@ -478,6 +478,127 @@ public sealed class BankStatementImportAccountingTests
     }
 
     [Fact]
+    public async Task GetImportBatchesAsync_GroupsImportedLinesWithDeletionStatus()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+
+        var result = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [
+                new StatementPreviewLine(new DateOnly(2026, 6, 1), "Opening item", "JUN-1", 100m),
+                new StatementPreviewLine(new DateOnly(2026, 6, 30), "Closing item", "JUN-2", -35m)
+            ],
+            "PDF");
+
+        var batches = await service.GetImportBatchesAsync(
+            test.UserId,
+            test.Organisation.Id);
+
+        var batch = Assert.Single(batches);
+        Assert.Equal(result.BatchId, batch.BatchId);
+        Assert.Equal(bank.Id, batch.BankAccountId);
+        Assert.Equal(bank.Name, batch.BankAccountName);
+        Assert.Equal("PDF", batch.Source);
+        Assert.Equal(new DateOnly(2026, 6, 1), batch.FirstDate);
+        Assert.Equal(new DateOnly(2026, 6, 30), batch.LastDate);
+        Assert.Equal(2, batch.LineCount);
+        Assert.Equal(65m, batch.NetAmount);
+        Assert.True(batch.CanDelete);
+    }
+
+    [Fact]
+    public async Task DeleteImportBatchAsync_UnreconciledBatch_DeletesLinesAndCreatesAudit()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+        var imported = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [new StatementPreviewLine(new DateOnly(2026, 6, 12), "Wrong import", "WRONG-1", -45m)],
+            "CSV");
+
+        var result = await service.DeleteImportBatchAsync(
+            test.UserId,
+            test.Organisation.Id,
+            imported.BatchId);
+
+        Assert.Equal(1, result.Deleted);
+        Assert.False(await test.Db.BankStatementLines.AnyAsync(x =>
+            x.OrganisationId == test.Organisation.Id &&
+            x.ImportBatchId == imported.BatchId));
+
+        var audit = await test.Db.AuditEvents.AsNoTracking().SingleAsync(x =>
+            x.OrganisationId == test.Organisation.Id &&
+            x.EventType == "BankStatementImportDeleted" &&
+            x.EntityId == imported.BatchId.ToString());
+        Assert.Contains("\"LineCount\":1", audit.JsonData);
+    }
+
+    [Fact]
+    public async Task DeleteImportBatchAsync_ReconciledLine_RejectsEntireDeletion()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+        var imported = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [new StatementPreviewLine(new DateOnly(2026, 6, 14), "Already used", "USED-1", 75m)],
+            "CSV");
+
+        var line = await test.Db.BankStatementLines.SingleAsync(x =>
+            x.ImportBatchId == imported.BatchId);
+        line.ReconciledAt = DateTimeOffset.UtcNow;
+        line.ReconciledByUserId = test.UserId;
+        await test.Db.SaveChangesAsync();
+
+        var batches = await service.GetImportBatchesAsync(
+            test.UserId,
+            test.Organisation.Id);
+        Assert.False(Assert.Single(batches).CanDelete);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteImportBatchAsync(
+                test.UserId,
+                test.Organisation.Id,
+                imported.BatchId));
+
+        Assert.Contains("reconciled", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(await test.Db.BankStatementLines.AnyAsync(x =>
+            x.ImportBatchId == imported.BatchId));
+    }
+
+    [Fact]
+    public async Task DeleteImportBatchAsync_UserWithoutPostingAccess_IsRejected()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+        var imported = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [new StatementPreviewLine(new DateOnly(2026, 6, 20), "Protected import", "SEC-1", 25m)],
+            "CSV");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.DeleteImportBatchAsync(
+                "not-a-member",
+                test.Organisation.Id,
+                imported.BatchId));
+
+        Assert.True(await test.Db.BankStatementLines.AnyAsync(x =>
+            x.ImportBatchId == imported.BatchId));
+    }
+
+    [Fact]
 public async Task ReadAsync_CsvAmountColumn_ParsesTransactions()
 {
     await using var test =

@@ -1,3 +1,5 @@
+using FijiAccounts.Domain.Accounting;
+using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -117,6 +119,39 @@ public sealed class BankOpeningBalanceAccountingTests
         Assert.Equal(
             7500m,
             await test.AccountBalanceAsync("3200"));
+    }
+
+    [Fact]
+    public async Task PositiveLoanOpeningBalance_CreditsLiabilityAndDebitsOpeningEquity()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+
+        var loan = await test.BankAccounts.CreateAsync(
+            test.UserId,
+            new CreateBankAccountRequest(
+                test.Organisation.Id,
+                "2510",
+                "Vehicle Loan",
+                "LOAN-001",
+                12000m,
+                new DateOnly(2026, 7, 1),
+                BankAccountKind.Loan));
+
+        Assert.Equal(AccountType.Liability, loan.Type);
+        Assert.Equal(BankAccountKind.Loan, loan.BankAccountKind);
+
+        var journal = await test.Db.PostedJournals
+            .AsNoTracking()
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.LedgerAccount)
+            .SingleAsync(x => x.Reference == "OPEN-2510");
+        var loanLine = journal.Lines.Single(x => x.LedgerAccountId == loan.Id);
+        var equityLine = journal.Lines.Single(x => x.LedgerAccount.Code == "3200");
+
+        Assert.Equal(0m, loanLine.Debit);
+        Assert.Equal(12000m, loanLine.Credit);
+        Assert.Equal(12000m, equityLine.Debit);
+        Assert.Equal(0m, equityLine.Credit);
     }
 
     [Fact]

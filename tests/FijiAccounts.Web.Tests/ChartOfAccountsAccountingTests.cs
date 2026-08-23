@@ -141,6 +141,28 @@ public sealed class ChartOfAccountsAccountingTests
     }
 
     [Fact]
+    public async Task CreateAsync_LoanRequiresLiabilityType()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new ChartOfAccountsService(test.Db, test.Access);
+
+        var account = await service.CreateAsync(
+            test.UserId,
+            new LedgerAccountRequest(
+                OrganisationId: test.Organisation.Id,
+                Code: "2510",
+                Name: "Vehicle Loan",
+                Type: AccountType.Liability,
+                IsBankAccount: true,
+                BankAccountKind: BankAccountKind.Loan,
+                BankAccountNumber: "LOAN-001"));
+
+        Assert.True(account.IsBankAccount);
+        Assert.Equal(BankAccountKind.Loan, account.BankAccountKind);
+        Assert.Equal(AccountType.Liability, account.Type);
+    }
+
+    [Fact]
     public async Task UpdateAsync_WhenSystemAccount_IsRejected()
     {
         await using var test =

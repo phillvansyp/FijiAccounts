@@ -114,6 +114,10 @@ else
                                     Credit card
                                 </option>
 
+                                <option value="@BankAccountKind.Loan">
+                                    Loan
+                                </option>
+
                             </InputSelect>
                         </div>
 
@@ -238,6 +242,10 @@ else
 
                                 <option value="@BankAccountKind.CreditCard">
                                     Credit card
+                                </option>
+
+                                <option value="@BankAccountKind.Loan">
+                                    Loan
                                 </option>
 
                             </InputSelect>
@@ -487,7 +495,7 @@ else
         }
 
         model.Type =
-            model.BankAccountKind == BankAccountKind.CreditCard
+            model.BankAccountKind is BankAccountKind.CreditCard or BankAccountKind.Loan
                 ? AccountType.Liability
                 : AccountType.Asset;
     }
@@ -534,7 +542,7 @@ else
         }
 
         editModel.Type =
-            editModel.BankAccountKind == BankAccountKind.CreditCard
+            editModel.BankAccountKind is BankAccountKind.CreditCard or BankAccountKind.Loan
                 ? AccountType.Liability
                 : AccountType.Asset;
     }
@@ -646,6 +654,9 @@ else
             BankAccountKind.CreditCard =>
                 "Credit card",
 
+            BankAccountKind.Loan =>
+                "Loan",
+
             _ =>
                 "Bank account"
         };
@@ -661,6 +672,9 @@ else
 
             BankAccountKind.CreditCard =>
                 "Credit cards represent money owed to the card provider. They use the Liability account type.",
+
+            BankAccountKind.Loan =>
+                "Loans represent money owed to a lender. They use the Liability account type.",
 
             _ =>
                 "Cheque, current and savings bank accounts use the Asset account type."

@@ -11,7 +11,8 @@ public sealed record CreateBankAccountRequest(
     string Name,
     string? AccountNumber,
     decimal OpeningBalance,
-    DateOnly OpeningBalanceDate);
+    DateOnly OpeningBalanceDate,
+    BankAccountKind AccountKind = BankAccountKind.Bank);
 
 public sealed class BankAccountService(
     ApplicationDbContext db,
@@ -47,6 +48,12 @@ public sealed class BankAccountService(
                 "Enter a valid account code, name and account number.");
         }
 
+        if (!Enum.IsDefined(request.AccountKind))
+        {
+            throw new InvalidOperationException(
+                "Select a valid bank account type.");
+        }
+
         if (await db.LedgerAccounts.AnyAsync(
                 x =>
                     x.OrganisationId == request.OrganisationId &&
@@ -67,8 +74,12 @@ public sealed class BankAccountService(
                 Code = code,
                 Name = name,
                 BankAccountNumber = accountNumber,
-                Type = AccountType.Asset,
-                IsBankAccount = true
+                Type = request.AccountKind is
+                    BankAccountKind.CreditCard or BankAccountKind.Loan
+                        ? AccountType.Liability
+                        : AccountType.Asset,
+                IsBankAccount = true,
+                BankAccountKind = request.AccountKind
             };
 
         db.LedgerAccounts.Add(bank);
@@ -98,8 +109,14 @@ public sealed class BankAccountService(
             var amount =
                 Math.Abs(request.OpeningBalance);
 
+            var accountHasDebitBalance =
+                request.AccountKind is
+                    BankAccountKind.CreditCard or BankAccountKind.Loan
+                    ? request.OpeningBalance < 0m
+                    : request.OpeningBalance > 0m;
+
             IReadOnlyList<JournalLineInput> lines =
-                request.OpeningBalance > 0m
+                accountHasDebitBalance
                     ?
                     [
                         new(
@@ -159,6 +176,7 @@ public sealed class BankAccountService(
                             : bank.BankAccountNumber,
                         Type = bank.Type.ToString(),
                         bank.IsBankAccount,
+                        bank.BankAccountKind,
                         request.OpeningBalance,
                         request.OpeningBalanceDate,
                         OpeningJournalId = openingJournal?.Id

@@ -7,7 +7,8 @@ public enum BankAccountKind
 {
     Bank = 0,
     CreditCard = 1,
-    DebitCard = 2
+    DebitCard = 2,
+    Loan = 3
 }
 
 public sealed class LedgerAccount

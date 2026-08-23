@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
@@ -13,6 +14,18 @@ namespace FijiAccounts.Web.Services;
 public sealed record BankImportResult(int Imported, int Skipped, Guid BatchId);
 public sealed record StatementPreviewLine(DateOnly Date, string Description, string? Reference, decimal Amount);
 public sealed record StatementPreview(string Format, IReadOnlyList<StatementPreviewLine> Lines);
+public sealed record BankStatementImportBatch(
+    Guid BatchId,
+    Guid BankAccountId,
+    string BankAccountName,
+    string Source,
+    DateOnly FirstDate,
+    DateOnly LastDate,
+    int LineCount,
+    decimal NetAmount,
+    DateTimeOffset ImportedAt,
+    bool CanDelete);
+public sealed record BankStatementImportDeleteResult(Guid BatchId, int Deleted);
 
 public sealed class BankStatementImportService(ApplicationDbContext db, TenantAccessService access)
 {
@@ -91,6 +104,122 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
         }
         if (imported > 0) { db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, UserId = userId, EventType = "BankStatementImported", EntityType = nameof(BankStatementLine), EntityId = batchId.ToString(), JsonData = System.Text.Json.JsonSerializer.Serialize(new { bankAccountId, source, imported, skipped }) }); await db.SaveChangesAsync(ct); }
         return new(imported, skipped, batchId);
+    }
+
+    public async Task<IReadOnlyList<BankStatementImportBatch>> GetImportBatchesAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot view statement imports for this organisation.");
+        }
+
+        var importedLines = await db.BankStatementLines
+            .AsNoTracking()
+            .Include(x => x.BankAccount)
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.ImportBatchId != null)
+            .ToListAsync(ct);
+
+        return importedLines
+            .GroupBy(x => x.ImportBatchId!.Value)
+            .Select(group => new BankStatementImportBatch(
+                group.Key,
+                group.First().BankAccountId,
+                group.First().BankAccount.Name,
+                group.First().Source,
+                group.Min(x => x.TransactionDate),
+                group.Max(x => x.TransactionDate),
+                group.Count(),
+                group.Sum(x => x.Amount),
+                group.Min(x => x.ImportedAt),
+                group.All(x =>
+                    x.ReconciledAt == null &&
+                    x.MatchedPostedJournalLineId == null)))
+            .OrderByDescending(x => x.ImportedAt)
+            .ToList();
+    }
+
+    public async Task<BankStatementImportDeleteResult> DeleteImportBatchAsync(
+        string userId,
+        Guid organisationId,
+        Guid batchId,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot delete statement imports for this organisation.");
+        }
+
+        var lines = await db.BankStatementLines
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.ImportBatchId == batchId)
+            .ToListAsync(ct);
+
+        if (lines.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Statement import not found.");
+        }
+
+        if (lines.Any(x =>
+                x.ReconciledAt != null ||
+                x.MatchedPostedJournalLineId != null))
+        {
+            throw new InvalidOperationException(
+                "This import cannot be deleted because one or more transactions have been reconciled. Reopen those transactions first.");
+        }
+
+        var bankAccountId = lines[0].BankAccountId;
+        var firstDate = lines.Min(x => x.TransactionDate);
+        var lastDate = lines.Max(x => x.TransactionDate);
+        var insideCompletedReconciliation =
+            await db.BankReconciliationSessions
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.OrganisationId == organisationId &&
+                    x.BankAccountId == bankAccountId &&
+                    x.IsCompleted &&
+                    x.StatementStartDate <= lastDate &&
+                    x.StatementEndDate >= firstDate,
+                    ct);
+
+        if (insideCompletedReconciliation)
+        {
+            throw new InvalidOperationException(
+                "This import cannot be deleted because it is inside a completed reconciliation period.");
+        }
+
+        var evidence = new
+        {
+            BankAccountId = bankAccountId,
+            Source = lines[0].Source,
+            LineCount = lines.Count,
+            FirstDate = firstDate,
+            LastDate = lastDate,
+            NetAmount = lines.Sum(x => x.Amount),
+            ImportedAt = lines.Min(x => x.ImportedAt)
+        };
+
+        db.BankStatementLines.RemoveRange(lines);
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = "BankStatementImportDeleted",
+            EntityType = nameof(BankStatementLine),
+            EntityId = batchId.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        });
+
+        await db.SaveChangesAsync(ct);
+        return new BankStatementImportDeleteResult(batchId, lines.Count);
     }
 
     public async Task<BankImportResult> ImportCsvAsync(
@@ -394,7 +523,7 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
  * normally represents a new charge, so reverse the movement.
  */
 var normalizedMovement =
-    accountKind == BankAccountKind.CreditCard
+    accountKind is BankAccountKind.CreditCard or BankAccountKind.Loan
         ? -movement
         : movement;
 

@@ -237,8 +237,9 @@ if (completedReconciliationExists)
     ?? throw new InvalidOperationException(
         "The statement bank/card account is not available.");
 
-var isCreditCard =
-    statementAccount.BankAccountKind == BankAccountKind.CreditCard;
+var isLiabilityAccount =
+    statementAccount.BankAccountKind is
+        BankAccountKind.CreditCard or BankAccountKind.Loan;
 
         /*
          * INTERNAL BANK TRANSFER
@@ -277,7 +278,7 @@ var isCreditCard =
 
         var lines = new List<JournalLineInput>();
 
-if (!isCreditCard)
+if (!isLiabilityAccount)
 {
     /*
      * BANK / DEBIT-EFTPOS ACCOUNT

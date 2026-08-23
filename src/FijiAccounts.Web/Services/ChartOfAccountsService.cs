@@ -271,11 +271,11 @@ public sealed class ChartOfAccountsService(
             return;
         }
 
-        if (accountKind == BankAccountKind.CreditCard &&
+        if (accountKind is BankAccountKind.CreditCard or BankAccountKind.Loan &&
             type != AccountType.Liability)
         {
             throw new InvalidOperationException(
-                "Credit card accounts must use the Liability account type.");
+                "Credit card and loan accounts must use the Liability account type.");
         }
     }
 }
