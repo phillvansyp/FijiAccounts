@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -56,11 +57,32 @@ public sealed class GroupExchangeRateService(ApplicationDbContext db)
             throw new InvalidOperationException("Select a supported presentation currency.");
         }
 
-        await db.OrganisationGroups
-            .Where(x => x.Id == group.Id)
-            .ExecuteUpdateAsync(
-                update => update.SetProperty(x => x.PresentationCurrency, currency),
-                cancellationToken);
+        var storedGroup = await db.OrganisationGroups.SingleOrDefaultAsync(
+            x => x.Id == group.Id,
+            cancellationToken)
+            ?? throw new InvalidOperationException("The organisation group could not be updated.");
+        if (storedGroup.PresentationCurrency == currency)
+        {
+            return;
+        }
+
+        var oldCurrency = storedGroup.PresentationCurrency;
+        storedGroup.PresentationCurrency = currency;
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = currentOrganisationId,
+            UserId = userId,
+            EventType = "OrganisationGroupPresentationCurrencyUpdated",
+            EntityType = nameof(OrganisationGroup),
+            EntityId = storedGroup.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                GroupName = storedGroup.Name,
+                OldCurrency = oldCurrency,
+                NewCurrency = currency
+            })
+        });
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task SaveAsync(
@@ -69,6 +91,11 @@ public sealed class GroupExchangeRateService(ApplicationDbContext db)
         CancellationToken cancellationToken = default)
     {
         var group = await RequireGroupAsync(userId, request.CurrentOrganisationId, true, cancellationToken);
+        if (!Enum.IsDefined(request.Type))
+        {
+            throw new InvalidOperationException("Select a valid exchange rate type.");
+        }
+
         var fromCurrency = NormaliseCurrency(request.FromCurrency);
         if (!group.CompanyCurrencies.Contains(fromCurrency, StringComparer.OrdinalIgnoreCase))
         {
@@ -94,7 +121,7 @@ public sealed class GroupExchangeRateService(ApplicationDbContext db)
             cancellationToken);
         if (existing is null)
         {
-            db.GroupExchangeRates.Add(new GroupExchangeRate
+            existing = new GroupExchangeRate
             {
                 OrganisationGroupId = group.Id,
                 FromCurrency = fromCurrency,
@@ -102,15 +129,65 @@ public sealed class GroupExchangeRateService(ApplicationDbContext db)
                 Type = request.Type,
                 EffectiveDate = request.EffectiveDate,
                 Rate = request.Rate
-            });
+            };
+            db.GroupExchangeRates.Add(existing);
+            db.AuditEvents.Add(RateAudit(
+                request.CurrentOrganisationId,
+                userId,
+                "GroupExchangeRateCreated",
+                existing,
+                group.Name,
+                null,
+                request.Rate));
         }
         else
         {
+            if (existing.Rate == request.Rate)
+            {
+                return;
+            }
+
+            var oldRate = existing.Rate;
             existing.Rate = request.Rate;
+            db.AuditEvents.Add(RateAudit(
+                request.CurrentOrganisationId,
+                userId,
+                "GroupExchangeRateUpdated",
+                existing,
+                group.Name,
+                oldRate,
+                request.Rate));
         }
 
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    private static AuditEvent RateAudit(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        GroupExchangeRate rate,
+        string groupName,
+        decimal? oldRate,
+        decimal newRate) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(GroupExchangeRate),
+            EntityId = rate.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                GroupName = groupName,
+                rate.FromCurrency,
+                rate.ToCurrency,
+                RateType = rate.Type.ToString(),
+                rate.EffectiveDate,
+                OldRate = oldRate,
+                NewRate = newRate
+            })
+        };
 
     private async Task<GroupAccess> RequireGroupAsync(
         string userId,
