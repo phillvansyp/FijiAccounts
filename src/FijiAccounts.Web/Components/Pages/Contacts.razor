@@ -31,6 +31,18 @@ else
             </button>
         }
     </div>
+    @if (status is not null)
+    {
+        <div class="alert @statusClass contact-status"
+             role="status">
+            <span>@status</span>
+            <button type="button"
+                    class="btn-close"
+                    aria-label="Dismiss message"
+                    @onclick="DismissStatus">
+            </button>
+        </div>
+    }
     @if (canEdit && showAddContact) { <div class="setup-card"><h2>Add contact</h2><EditForm Model="model" OnValidSubmit="Create" FormName="add-contact"><DataAnnotationsValidator /><ValidationSummary />
         <div class="mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
         <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="model.Email" /></div><div class="col-md-6 mb-3"><label class="form-label">TIN</label><InputText class="form-control" @bind-Value="model.Tin" /></div></div>
@@ -240,6 +252,10 @@ else
                                                     </option>
                                                 }
                                             </InputSelect>
+                                        </div>
+                                    </div>
+
+                                    <div class="row">
                                         <div class="col-md-4 mt-3">
                                             <label class="form-label">
                                                 Supplier bill payment terms
@@ -266,7 +282,6 @@ else
                                             <div class="form-text">
                                                 Bill due dates will use this payment rule.
                                             </div>
-                                        </div>
                                         </div>
                                     </div>
 
@@ -310,6 +325,9 @@ else
     private PaymentTermType editingCustomerPaymentTermType = PaymentTermType.DaysAfterDocumentDate;
     private PurchaseDefaultsModel editDefaults = new();
     private string searchTerm = string.Empty;
+    private string? status;
+    private string statusClass = "alert-success";
+    private void DismissStatus() => status = null;
 
     private string NormalizedView => ContactView?.ToLowerInvariant() switch
     {
@@ -377,31 +395,48 @@ else
     private async Task Create()
     {
         if (!canEdit) return;
-        await BusinessParties.CreateAsync(
-            userId,
-            new CreateBusinessPartyRequest(
-                OrganisationId,
-                model.Name,
-                model.Email,
-                model.Tin,
-                model.Type,
-                model.DefaultPurchaseAccountId,
-                model.DefaultPurchaseVatTreatment,
-                model.DefaultSalesInvoicePaymentTermType,
-                model.DefaultSalesInvoiceDueDays,
-                model.DefaultSupplierBillPaymentTermType,
-                model.DefaultSupplierBillDueDays));
-        model = new ContactModel
+        try
         {
-            Type = NormalizedView == "suppliers"
-                ? PartyType.Supplier
-                : PartyType.Customer,
-            DefaultSalesInvoiceDueDays =
-                access?.Organisation.DefaultSalesInvoiceDueDays ?? 30,
-            DefaultSupplierBillDueDays =
-                access?.Organisation.DefaultSupplierBillDueDays ?? 30
-        };
-        await Reload();
+            var party = await BusinessParties.CreateAsync(
+                userId,
+                new CreateBusinessPartyRequest(
+                    OrganisationId,
+                    model.Name,
+                    model.Email,
+                    model.Tin,
+                    model.Type,
+                    model.DefaultPurchaseAccountId,
+                    model.DefaultPurchaseVatTreatment,
+                    model.DefaultSalesInvoicePaymentTermType,
+                    model.DefaultSalesInvoiceDueDays,
+                    model.DefaultSupplierBillPaymentTermType,
+                    model.DefaultSupplierBillDueDays));
+            model = new ContactModel
+            {
+                Type = NormalizedView == "suppliers"
+                    ? PartyType.Supplier
+                    : PartyType.Customer,
+                DefaultSalesInvoicePaymentTermType =
+                    access?.Organisation.DefaultSalesInvoicePaymentTermType
+                    ?? PaymentTermType.DaysAfterDocumentDate,
+                DefaultSalesInvoiceDueDays =
+                    access?.Organisation.DefaultSalesInvoiceDueDays ?? 30,
+                DefaultSupplierBillPaymentTermType =
+                    access?.Organisation.DefaultSupplierBillPaymentTermType
+                    ?? PaymentTermType.DaysAfterDocumentDate,
+                DefaultSupplierBillDueDays =
+                    access?.Organisation.DefaultSupplierBillDueDays ?? 30
+            };
+            showAddContact = false;
+            statusClass = "alert-success";
+            status = $"{party.Name} added successfully.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Contact was not added: {ex.Message}";
+        }
     }
 
     private void EditCustomerSettings(BusinessParty party)
@@ -434,20 +469,30 @@ else
         if (editingCustomerDueDays < 0 ||
             editingCustomerDueDays > 365)
         {
+            statusClass = "alert-danger";
+            status = "Enter customer payment terms between 0 and 365.";
             return;
         }
 
-        await BusinessParties.UpdateCustomerDefaultsAsync(
-            userId,
-            new UpdateCustomerDefaultsRequest(
-                OrganisationId,
-                id,
-                editingCustomerPaymentTermType,
-                editingCustomerDueDays));
-
-        CancelCustomerSettings();
-
-        await Reload();
+        try
+        {
+            await BusinessParties.UpdateCustomerDefaultsAsync(
+                userId,
+                new UpdateCustomerDefaultsRequest(
+                    OrganisationId,
+                    id,
+                    editingCustomerPaymentTermType,
+                    editingCustomerDueDays));
+            CancelCustomerSettings();
+            statusClass = "alert-success";
+            status = "Customer settings saved.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Customer settings were not saved: {ex.Message}";
+        }
     }
 
     private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; }
@@ -455,17 +500,27 @@ else
     private async Task SaveDefaults()
     {
         if (editingPartyId is not Guid id || !canEdit) return;
-        await BusinessParties.UpdateSupplierDefaultsAsync(
-            userId,
-            new UpdateSupplierDefaultsRequest(
-                OrganisationId,
-                id,
-                editDefaults.DefaultPurchaseAccountId,
-                editDefaults.DefaultPurchaseVatTreatment,
-                editDefaults.DefaultSupplierBillPaymentTermType,
-                editDefaults.DefaultSupplierBillDueDays));
-        CancelDefaults();
-        await Reload();
+        try
+        {
+            await BusinessParties.UpdateSupplierDefaultsAsync(
+                userId,
+                new UpdateSupplierDefaultsRequest(
+                    OrganisationId,
+                    id,
+                    editDefaults.DefaultPurchaseAccountId,
+                    editDefaults.DefaultPurchaseVatTreatment,
+                    editDefaults.DefaultSupplierBillPaymentTermType,
+                    editDefaults.DefaultSupplierBillDueDays));
+            CancelDefaults();
+            statusClass = "alert-success";
+            status = "Supplier settings saved.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Supplier settings were not saved: {ex.Message}";
+        }
     }
 
     private class PurchaseDefaultsModel { public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }

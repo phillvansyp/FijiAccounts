@@ -1,0 +1,21 @@
+.contact-status {
+    position: fixed;
+    top: 110px;
+    right: 24px;
+    z-index: 1100;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 280px;
+    max-width: min(460px, calc(100vw - 48px));
+    box-shadow: 0 12px 32px rgb(15 23 42 / 20%);
+}
+
+@media (max-width: 640px) {
+    .contact-status {
+        top: 92px;
+        right: 12px;
+        max-width: calc(100vw - 24px);
+    }
+}
