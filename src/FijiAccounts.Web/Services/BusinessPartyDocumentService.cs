@@ -145,6 +145,28 @@ public sealed class BusinessPartyDocumentService(
         return true;
     }
 
+    public async Task<BusinessPartyDocument?> GetAsync(
+        string userId,
+        Guid organisationId,
+        Guid businessPartyId,
+        Guid documentId,
+        CancellationToken ct = default)
+    {
+        if (await access.FindAsync(userId, organisationId) is null)
+        {
+            return null;
+        }
+
+        return await db.BusinessPartyDocuments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x =>
+                    x.Id == documentId &&
+                    x.BusinessPartyId == businessPartyId &&
+                    x.OrganisationId == organisationId,
+                ct);
+    }
+
 
     public async Task<List<BusinessPartyDocument>> GetForPartyAsync(
     string userId,

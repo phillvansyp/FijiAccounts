@@ -1,6 +1,7 @@
 using System.IO.Compression;
+using System.Security.Claims;
 using FijiAccounts.Web.Data;
-using Microsoft.EntityFrameworkCore;
+using FijiAccounts.Web.Services;
 
 public static class SupplierBillAttachmentEndpoints
 {
@@ -13,16 +14,18 @@ public static class SupplierBillAttachmentEndpoints
                 Guid organisationId,
                 Guid billId,
                 Guid attachmentId,
-                ApplicationDbContext db,
+                SupplierBillAttachmentService attachments,
+                ClaimsPrincipal principal,
                 CancellationToken cancellationToken) =>
             {
-                var attachment = await db.SupplierBillAttachments
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(
-                        x =>
-                            x.Id == attachmentId &&
-                            x.SupplierBillId == billId &&
-                            x.OrganisationId == organisationId,
+                var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                var attachment = userId is null
+                    ? null
+                    : await attachments.GetAsync(
+                        userId,
+                        organisationId,
+                        billId,
+                        attachmentId,
                         cancellationToken);
 
                 if (attachment is null)

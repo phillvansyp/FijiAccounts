@@ -180,6 +180,50 @@ public sealed class SupplierBillAttachmentServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_AllowsReadOnlyAccessAndScopesEveryRouteIdentifier()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bill = await PostBillAsync(test, "SUP-DOWNLOAD");
+        var otherBill = await PostBillAsync(test, "SUP-DOWNLOAD-OTHER");
+        var service = new SupplierBillAttachmentService(test.Db, test.Access);
+        var attachment = await service.AddAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            Attachment());
+        await test.Db.OrganisationMemberships
+            .Where(x =>
+                x.UserId == test.UserId &&
+                x.OrganisationId == test.Organisation.Id)
+            .ExecuteUpdateAsync(update =>
+                update.SetProperty(x => x.Role, OrganisationRole.ReadOnly));
+
+        var downloaded = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            attachment.Id);
+        Assert.NotNull(downloaded);
+        Assert.Equal(attachment.Id, downloaded.Id);
+        Assert.Equal([1, 2, 3, 4], downloaded.Content);
+        Assert.Null(await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            otherBill.Id,
+            attachment.Id));
+        Assert.Null(await service.GetAsync(
+            test.UserId,
+            Guid.NewGuid(),
+            bill.Id,
+            attachment.Id));
+        Assert.Null(await service.GetAsync(
+            "not-a-member",
+            test.Organisation.Id,
+            bill.Id,
+            attachment.Id));
+    }
+
+    [Fact]
     public async Task AuthorizedOtherTenant_CannotTargetThisTenantsBill()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

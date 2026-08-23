@@ -44,6 +44,28 @@ public sealed class SupplierBillAttachmentService(
         return attachment;
     }
 
+    public async Task<SupplierBillAttachment?> GetAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierBillId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        if (await access.FindAsync(userId, organisationId) is null)
+        {
+            return null;
+        }
+
+        return await db.SupplierBillAttachments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x =>
+                    x.Id == attachmentId &&
+                    x.SupplierBillId == supplierBillId &&
+                    x.OrganisationId == organisationId,
+                cancellationToken);
+    }
+
     public async Task<bool> DeleteAsync(
         string userId,
         Guid organisationId,
