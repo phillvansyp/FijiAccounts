@@ -9,6 +9,7 @@ public sealed record UpdateOrganisationSettingsRequest(
     string LegalName,
     string? TradingName,
     string? Tin,
+    DateOnly? ConversionDate,
     PaymentTermType DefaultSalesInvoicePaymentTermType,
     int DefaultSalesInvoiceDueDays,
     PaymentTermType DefaultSupplierBillPaymentTermType,
@@ -53,6 +54,7 @@ public sealed class OrganisationSettingsService(
             organisation.LegalName,
             organisation.TradingName,
             organisation.Tin,
+            organisation.ConversionDate,
             DefaultSalesInvoicePaymentTermType =
                 organisation.DefaultSalesInvoicePaymentTermType.ToString(),
             organisation.DefaultSalesInvoiceDueDays,
@@ -65,6 +67,7 @@ public sealed class OrganisationSettingsService(
             LegalName = legalName,
             TradingName = tradingName,
             Tin = tin,
+            request.ConversionDate,
             DefaultSalesInvoicePaymentTermType =
                 request.DefaultSalesInvoicePaymentTermType.ToString(),
             request.DefaultSalesInvoiceDueDays,
@@ -80,6 +83,7 @@ public sealed class OrganisationSettingsService(
         organisation.LegalName = legalName;
         organisation.TradingName = tradingName;
         organisation.Tin = tin;
+        organisation.ConversionDate = request.ConversionDate;
         organisation.DefaultSalesInvoicePaymentTermType =
             request.DefaultSalesInvoicePaymentTermType;
         organisation.DefaultSalesInvoiceDueDays =

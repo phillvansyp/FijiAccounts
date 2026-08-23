@@ -26,6 +26,7 @@ public sealed class OrganisationSettingsServiceTests
         Assert.Equal("Updated Company Limited", updated.LegalName);
         Assert.Equal("Updated Company", updated.TradingName);
         Assert.Equal("TIN-UPDATED", updated.Tin);
+        Assert.Equal(new DateOnly(2026, 1, 1), updated.ConversionDate);
         Assert.Equal(14, updated.DefaultSalesInvoiceDueDays);
         Assert.Equal(20, updated.DefaultSupplierBillDueDays);
         Assert.Equal("WS", relocated.CountryCode);
@@ -112,6 +113,7 @@ public sealed class OrganisationSettingsServiceTests
                 $" {organisation.LegalName} ",
                 organisation.TradingName,
                 organisation.Tin,
+                organisation.ConversionDate,
                 organisation.DefaultSalesInvoicePaymentTermType,
                 organisation.DefaultSalesInvoiceDueDays,
                 organisation.DefaultSupplierBillPaymentTermType,
@@ -184,6 +186,7 @@ public sealed class OrganisationSettingsServiceTests
             " Updated Company Limited ",
             " Updated Company ",
             " TIN-UPDATED ",
+            new DateOnly(2026, 1, 1),
             PaymentTermType.DaysAfterDocumentDate,
             14,
             PaymentTermType.DayOfFollowingMonth,

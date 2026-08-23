@@ -125,6 +125,7 @@ public sealed class Organisation
     [MaxLength(32)] public string TaxLabel { get; set; } = "VAT";
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;
+    public DateOnly? ConversionDate { get; set; }
     public OrganisationKind Kind { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

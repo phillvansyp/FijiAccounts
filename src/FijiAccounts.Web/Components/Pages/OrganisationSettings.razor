@@ -109,6 +109,13 @@ else
                 <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
+                <div class="mb-3">
+                    <label class="form-label">Conversion date</label>
+                    <InputDate class="form-control" @bind-Value="model.ConversionDate" disabled="@(!canManage)" />
+                    <div class="form-text">
+                        The first day transactions are entered in Account Island. Opening balances should be dated the previous day.
+                    </div>
+                </div>
 
                 <div class="row">
                     <div class="col-md-6 mb-3">
@@ -367,7 +374,7 @@ else
     private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction; private SettingsModel model = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadHierarchy(); }
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, ConversionDate = access.Organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadHierarchy(); }
     private async Task Save()
     {
         if (!canManage || access is null) return;
@@ -380,11 +387,12 @@ else
                     model.LegalName,
                     model.TradingName,
                     model.Tin,
+                    model.ConversionDate,
                     model.DefaultSalesInvoicePaymentTermType,
                     model.DefaultSalesInvoiceDueDays,
                     model.DefaultSupplierBillPaymentTermType,
                     model.DefaultSupplierBillDueDays));
-            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays };
+            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, ConversionDate = stored.ConversionDate, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays };
             access = access with { Organisation = stored };
             statusClass = "alert-success";
             status = "Business details saved and verified.";
@@ -563,7 +571,7 @@ else
         }
     }
 
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
     private sealed class BranchModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
