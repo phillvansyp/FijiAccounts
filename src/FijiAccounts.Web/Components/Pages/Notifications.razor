@@ -13,9 +13,16 @@
 @inject ApplicationDbContext Db
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject TenantAccessService TenantAccess
 @inject OrganisationUpdateBroker Updates
 @inject IServiceScopeFactory ScopeFactory
 
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
 <h1>Notifications</h1>
 
 <div class="notification-filters">
@@ -171,6 +178,7 @@ else
 
     </div>
 }
+}
 
 @code {
 
@@ -205,6 +213,7 @@ else
     }
     private List<Notification> notifications = [];
     private Dictionary<Guid, string> notificationLinks = [];
+    private AccessibleOrganisation? access;
     private string userId = "";
     private IDisposable? updateSubscription;
     private bool liveRefreshInProgress;
@@ -256,6 +265,16 @@ else
         userId =
             UserManager.GetUserId(state.User)!;
 
+        access =
+            await TenantAccess.FindAsync(userId, OrganisationId);
+
+        if (access is null)
+        {
+            notifications = [];
+            notificationLinks.Clear();
+            return;
+        }
+
         ApplyCategoryFilter();
 
         await LoadNotificationsAsync();
@@ -270,6 +289,7 @@ else
 
         notifications =
             await notificationService.GetUnreadAsync(
+                userId,
                 OrganisationId);
 
         notificationLinks.Clear();
@@ -285,7 +305,9 @@ else
                     await db.BusinessPartyDocuments
                         .AsNoTracking()
                         .SingleOrDefaultAsync(
-                            x => x.Id == documentId);
+                            x =>
+                                x.Id == documentId &&
+                                x.OrganisationId == OrganisationId);
 
                 if (document is not null)
                 {
@@ -315,16 +337,18 @@ else
     private async Task Acknowledge(Guid id)
     {
         await NotificationService.AcknowledgeAsync(
-            id,
-            userId);
+            userId,
+            OrganisationId,
+            id);
     }
 
 
     private async Task Resolve(Guid id)
     {
         await NotificationService.ResolveAsync(
-            id,
-            userId);
+            userId,
+            OrganisationId,
+            id);
     }
 
     private void ApplyCategoryFilter()

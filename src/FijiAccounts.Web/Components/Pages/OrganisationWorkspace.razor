@@ -278,11 +278,11 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
                 x.Status != BillStatus.Voided);
 
         financialAlertCount =
-            await notifications.GetFinancialAlertCountAsync(OrganisationId);
+            await notifications.GetFinancialAlertCountAsync(userId, OrganisationId);
         documentAlertCount =
-            await notifications.GetDocumentAlertCountAsync(OrganisationId);
+            await notifications.GetDocumentAlertCountAsync(userId, OrganisationId);
         systemAlertCount =
-            await notifications.GetSystemAlertCountAsync(OrganisationId);
+            await notifications.GetSystemAlertCountAsync(userId, OrganisationId);
         cashflowForecast =
             await cashflow.GetAsync(OrganisationId);
         financialRisk =

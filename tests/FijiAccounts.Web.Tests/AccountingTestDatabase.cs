@@ -39,7 +39,8 @@ public sealed class AccountingTestDatabase : IAsyncDisposable
 Notifications =
     new NotificationService(
         Db,
-        Updates);
+        Updates,
+        Access);
 
 Posting =
     new JournalPostingService(
