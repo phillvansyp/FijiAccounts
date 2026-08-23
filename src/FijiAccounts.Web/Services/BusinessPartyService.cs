@@ -43,6 +43,12 @@ public sealed record LearnCustomerSalesDefaultsRequest(
     Guid SalesAccountId,
     VatTreatment VatTreatment);
 
+public sealed record LearnSupplierPurchaseDefaultsRequest(
+    Guid OrganisationId,
+    Guid BusinessPartyId,
+    Guid PurchaseAccountId,
+    VatTreatment VatTreatment);
+
 public sealed class BusinessPartyService(
     ApplicationDbContext db,
     TenantAccessService access)
@@ -309,6 +315,58 @@ public sealed class BusinessPartyService(
             request.OrganisationId,
             userId,
             "CustomerDefaultsLearnedFromInvoice",
+            party.Id,
+            new { party.Name, Old = previous, New = updated }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task LearnSupplierPurchaseDefaultsAsync(
+        string userId,
+        LearnSupplierPurchaseDefaultsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(
+            userId,
+            request.OrganisationId,
+            cancellationToken);
+        await ValidatePurchaseDefaultsAsync(
+            request.OrganisationId,
+            request.PurchaseAccountId,
+            request.VatTreatment,
+            cancellationToken);
+
+        var party = await GetPartyAsync(
+            request.OrganisationId,
+            request.BusinessPartyId,
+            PartyType.Supplier,
+            cancellationToken);
+        if (party.DefaultPurchaseAccountId is not null &&
+            party.DefaultPurchaseVatTreatment is not null)
+        {
+            return;
+        }
+
+        var previous = new
+        {
+            PurchaseAccountId = party.DefaultPurchaseAccountId,
+            VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
+            DueDays = party.DefaultSupplierBillDueDays
+        };
+        party.DefaultPurchaseAccountId ??= request.PurchaseAccountId;
+        party.DefaultPurchaseVatTreatment ??= request.VatTreatment;
+        var updated = new
+        {
+            PurchaseAccountId = party.DefaultPurchaseAccountId,
+            VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
+            DueDays = party.DefaultSupplierBillDueDays
+        };
+
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "SupplierDefaultsLearnedFromBill",
             party.Id,
             new { party.Name, Old = previous, New = updated }));
         await db.SaveChangesAsync(cancellationToken);

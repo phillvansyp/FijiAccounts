@@ -132,6 +132,14 @@ public sealed class BusinessPartyServiceTests
                     test.Customer.Id,
                     test.Account("4000").Id,
                     VatTreatment.Standard)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.LearnSupplierPurchaseDefaultsAsync(
+                test.UserId,
+                new LearnSupplierPurchaseDefaultsRequest(
+                    test.Organisation.Id,
+                    test.Supplier.Id,
+                    test.Account("6000").Id,
+                    VatTreatment.Standard)));
 
         Assert.Equal(initialAuditCount, await test.Db.AuditEvents.CountAsync());
     }
@@ -223,6 +231,57 @@ public sealed class BusinessPartyServiceTests
             evidence.RootElement.GetProperty("New").GetProperty("SalesAccountId").GetString());
         Assert.Equal(
             "ZeroRated",
+            evidence.RootElement.GetProperty("New").GetProperty("VatTreatment").GetString());
+    }
+
+    [Fact]
+    public async Task BillCoding_LearnsOnlyMissingSupplierDefaultsAndAuditsOnce()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var expenseAccount = test.Account("6000");
+        var request = CreateRequest(test.Organisation.Id, null, null) with
+        {
+            Type = PartyType.Supplier,
+            DefaultSalesVatTreatment = null,
+            DefaultPurchaseVatTreatment = VatTreatment.Standard
+        };
+        var party = await service.CreateAsync(test.UserId, request);
+
+        await service.LearnSupplierPurchaseDefaultsAsync(
+            test.UserId,
+            new LearnSupplierPurchaseDefaultsRequest(
+                test.Organisation.Id,
+                party.Id,
+                expenseAccount.Id,
+                VatTreatment.ZeroRated));
+        await service.LearnSupplierPurchaseDefaultsAsync(
+            test.UserId,
+            new LearnSupplierPurchaseDefaultsRequest(
+                test.Organisation.Id,
+                party.Id,
+                expenseAccount.Id,
+                VatTreatment.Exempt));
+
+        var stored = await test.Db.BusinessParties
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == party.Id);
+        Assert.Equal(expenseAccount.Id, stored.DefaultPurchaseAccountId);
+        Assert.Equal(VatTreatment.Standard, stored.DefaultPurchaseVatTreatment);
+
+        var learnedEvents = await test.Db.AuditEvents
+            .AsNoTracking()
+            .Where(x =>
+                x.EntityId == party.Id.ToString() &&
+                x.EventType == "SupplierDefaultsLearnedFromBill")
+            .ToListAsync();
+        var audit = Assert.Single(learnedEvents);
+        using var evidence = JsonDocument.Parse(audit.JsonData);
+        Assert.Equal(
+            expenseAccount.Id.ToString(),
+            evidence.RootElement.GetProperty("New").GetProperty("PurchaseAccountId").GetString());
+        Assert.Equal(
+            "Standard",
             evidence.RootElement.GetProperty("New").GetProperty("VatTreatment").GetString());
     }
 

@@ -18,6 +18,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
+@inject BusinessPartyService BusinessParties
 @inject RecurringSupplierBillService RecurringBills
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -1491,27 +1492,17 @@ private void ToggleRecurringBill()
                 }
             }
 
-            var supplier =
-                await Db.BusinessParties
-                    .FirstOrDefaultAsync(
-                        x =>
-                            x.Id == bill.SupplierId &&
-                            x.OrganisationId == OrganisationId);
-
-            if (supplier is not null &&
-                supplier.DefaultPurchaseAccountId is null)
-            {
-                supplier.DefaultPurchaseAccountId =
-                    bill.ExpenseAccountId;
-
-                supplier.DefaultPurchaseVatTreatment =
-                    bill.VatTreatment;
-            }
-
             var hadAttachment =
                 pendingAttachment is not null;
 
             await Db.SaveChangesAsync();
+            await BusinessParties.LearnSupplierPurchaseDefaultsAsync(
+                userId,
+                new LearnSupplierPurchaseDefaultsRequest(
+                    OrganisationId,
+                    bill.SupplierId,
+                    bill.ExpenseAccountId,
+                    bill.VatTreatment));
 
             ResetBillForm();
             showBillForm = false;
