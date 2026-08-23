@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -39,6 +40,7 @@ public sealed class BankReconciliationSessionService(
 
         var bank =
             await db.LedgerAccounts
+                .AsNoTracking()
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == request.BankAccountId &&
@@ -110,6 +112,16 @@ public sealed class BankReconciliationSessionService(
             };
 
         db.BankReconciliationSessions.Add(session);
+        db.AuditEvents.Add(Audit(
+            request.OrganisationId,
+            userId,
+            "BankReconciliationSessionCreated",
+            session,
+            new
+            {
+                BankAccountCode = bank.Code,
+                New = Evidence(session)
+            }));
 
         await db.SaveChangesAsync(ct);
 
@@ -147,19 +159,35 @@ public sealed class BankReconciliationSessionService(
                 "A completed reconciliation cannot be changed.");
         }
 
-        session.LedgerBalance =
+        var ledgerBalance =
             await LedgerBalanceAsync(
                 organisationId,
                 session.BankAccountId,
                 session.StatementEndDate,
                 ct);
 
-        session.Difference =
+        var difference =
             Math.Round(
                 session.ClosingStatementBalance -
-                session.LedgerBalance,
+                ledgerBalance,
                 2,
                 MidpointRounding.AwayFromZero);
+
+        if (session.LedgerBalance == ledgerBalance &&
+            session.Difference == difference)
+        {
+            return session;
+        }
+
+        var previous = Evidence(session);
+        session.LedgerBalance = ledgerBalance;
+        session.Difference = difference;
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "BankReconciliationSessionRefreshed",
+            session,
+            new { Old = previous, New = Evidence(session) }));
 
         await db.SaveChangesAsync(ct);
 
@@ -197,25 +225,25 @@ public sealed class BankReconciliationSessionService(
                 "This reconciliation is already completed.");
         }
 
-        session.LedgerBalance =
+        var ledgerBalance =
             await LedgerBalanceAsync(
                 organisationId,
                 session.BankAccountId,
                 session.StatementEndDate,
                 ct);
 
-        session.Difference =
+        var difference =
             Math.Round(
                 session.ClosingStatementBalance -
-                session.LedgerBalance,
+                ledgerBalance,
                 2,
                 MidpointRounding.AwayFromZero);
 
-        if (Math.Abs(session.Difference) >
+        if (Math.Abs(difference) >
             AmountTolerance)
         {
             throw new InvalidOperationException(
-                $"The reconciliation difference must be zero before completion. Current difference: {session.Difference:N2}.");
+                $"The reconciliation difference must be zero before completion. Current difference: {difference:N2}.");
         }
 
         var unreconciledStatementLines =
@@ -239,11 +267,21 @@ public sealed class BankReconciliationSessionService(
                 "Reconcile all statement lines in this period before completing the reconciliation.");
         }
 
+        var previous = Evidence(session);
+        session.LedgerBalance = ledgerBalance;
+        session.Difference = difference;
         session.IsCompleted = true;
         session.CompletedAt =
             DateTimeOffset.UtcNow;
         session.CompletedByUserId =
             userId;
+
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "BankReconciliationSessionCompleted",
+            session,
+            new { Old = previous, New = Evidence(session) }));
 
         await db.SaveChangesAsync(ct);
 
@@ -269,4 +307,35 @@ public sealed class BankReconciliationSessionService(
                 x => x.Debit - x.Credit,
                 ct);
     }
+
+    private static object Evidence(BankReconciliationSession session) =>
+        new
+        {
+            session.BankAccountId,
+            session.StatementStartDate,
+            session.StatementEndDate,
+            session.OpeningStatementBalance,
+            session.ClosingStatementBalance,
+            session.LedgerBalance,
+            session.Difference,
+            session.IsCompleted,
+            session.CompletedAt,
+            session.CompletedByUserId
+        };
+
+    private static AuditEvent Audit(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        BankReconciliationSession session,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(BankReconciliationSession),
+            EntityId = session.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 }
