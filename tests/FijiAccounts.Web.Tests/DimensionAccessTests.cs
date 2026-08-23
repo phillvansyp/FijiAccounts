@@ -1,6 +1,7 @@
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -73,12 +74,44 @@ public sealed class DimensionAccessTests
             Assert.Equal(nadi.Id, line.BranchId);
             Assert.Equal(retail.Id, line.DivisionId);
         });
+
+        var grant = await test.Db.OrganisationDimensionAccessGrants.SingleAsync(x =>
+            x.OrganisationId == test.Organisation.Id &&
+            x.UserId == member.Id &&
+            x.BranchId == nadi.Id &&
+            x.DivisionId == retail.Id);
+        await test.Access.RemoveDimensionAccessGrantAsync(
+            test.UserId,
+            test.Organisation.Id,
+            grant.Id);
+
+        var accessAudit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == test.Organisation.Id &&
+                x.UserId == test.UserId &&
+                (x.EventType == "DimensionAccessModeChanged" ||
+                 x.EventType == "DimensionAccessGrantAdded" ||
+                 x.EventType == "DimensionAccessGrantRemoved"))
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+        Assert.Equal(
+            ["DimensionAccessModeChanged", "DimensionAccessGrantAdded", "DimensionAccessGrantRemoved"],
+            accessAudit.Select(x => x.EventType));
+        using var grantEvidence = JsonDocument.Parse(accessAudit[1].JsonData);
+        Assert.Equal(
+            member.Id,
+            grantEvidence.RootElement.GetProperty("MemberUserId").GetString());
+        Assert.Equal(
+            retail.Id.ToString(),
+            grantEvidence.RootElement.GetProperty("DivisionId").GetString());
     }
 
     [Fact]
     public async Task Owner_CannotBeChangedToRestrictedDimensionAccess()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
+        var initialAuditCount = await test.Db.AuditEvents.CountAsync();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             test.Access.SetDimensionAccessModeAsync(
@@ -88,6 +121,7 @@ public sealed class DimensionAccessTests
                 DimensionAccessMode.Restricted));
 
         Assert.Contains("retain access", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(initialAuditCount, await test.Db.AuditEvents.CountAsync());
     }
 
     private static JournalPostRequest Request(

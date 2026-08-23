@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
@@ -168,14 +169,36 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             throw new InvalidOperationException("Owners and administrators must retain access to all dimensions.");
         }
 
+        var previousMode = membership.DimensionAccessMode;
         membership.DimensionAccessMode = mode;
+        var removedGrantCount = 0;
         if (mode == DimensionAccessMode.All)
         {
-            await db.OrganisationDimensionAccessGrants
+            var grants = await db.OrganisationDimensionAccessGrants
                 .Where(x => x.OrganisationId == organisationId && x.UserId == memberUserId)
-                .ExecuteDeleteAsync(cancellationToken);
+                .ToListAsync(cancellationToken);
+            removedGrantCount = grants.Count;
+            db.OrganisationDimensionAccessGrants.RemoveRange(grants);
         }
 
+        if (previousMode == mode && removedGrantCount == 0)
+        {
+            return;
+        }
+
+        db.AuditEvents.Add(AccessAudit(
+            organisationId,
+            actorUserId,
+            "DimensionAccessModeChanged",
+            nameof(OrganisationMembership),
+            MembershipEntityId(organisationId, memberUserId),
+            new
+            {
+                MemberUserId = memberUserId,
+                OldMode = previousMode.ToString(),
+                NewMode = mode.ToString(),
+                RemovedGrants = removedGrantCount
+            }));
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -213,19 +236,56 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             throw new InvalidOperationException("The selected division is not active in this branch.");
         }
 
-        membership.DimensionAccessMode = DimensionAccessMode.Restricted;
-        if (!await db.OrganisationDimensionAccessGrants.AnyAsync(
+        var previousMode = membership.DimensionAccessMode;
+        var existingGrant = await db.OrganisationDimensionAccessGrants.SingleOrDefaultAsync(
             x => x.OrganisationId == organisationId && x.UserId == memberUserId &&
                  x.BranchId == branchId && x.DivisionId == divisionId,
-            cancellationToken))
+            cancellationToken);
+        membership.DimensionAccessMode = DimensionAccessMode.Restricted;
+        if (previousMode != DimensionAccessMode.Restricted)
         {
-            db.OrganisationDimensionAccessGrants.Add(new OrganisationDimensionAccessGrant
+            db.AuditEvents.Add(AccessAudit(
+                organisationId,
+                actorUserId,
+                "DimensionAccessModeChanged",
+                nameof(OrganisationMembership),
+                MembershipEntityId(organisationId, memberUserId),
+                new
+                {
+                    MemberUserId = memberUserId,
+                    OldMode = previousMode.ToString(),
+                    NewMode = DimensionAccessMode.Restricted.ToString(),
+                    RemovedGrants = 0
+                }));
+        }
+
+        if (existingGrant is null)
+        {
+            var grant = new OrganisationDimensionAccessGrant
             {
                 OrganisationId = organisationId,
                 UserId = memberUserId,
                 BranchId = branchId,
                 DivisionId = divisionId
-            });
+            };
+            db.OrganisationDimensionAccessGrants.Add(grant);
+            db.AuditEvents.Add(AccessAudit(
+                organisationId,
+                actorUserId,
+                "DimensionAccessGrantAdded",
+                nameof(OrganisationDimensionAccessGrant),
+                grant.Id.ToString(),
+                new
+                {
+                    MemberUserId = memberUserId,
+                    grant.BranchId,
+                    grant.DivisionId
+                }));
+        }
+
+        if (previousMode == DimensionAccessMode.Restricted && existingGrant is not null)
+        {
+            return;
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -245,9 +305,43 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         var grant = await db.OrganisationDimensionAccessGrants.SingleOrDefaultAsync(
             x => x.Id == grantId && x.OrganisationId == organisationId,
             cancellationToken) ?? throw new InvalidOperationException("The selected access grant was not found.");
+        db.AuditEvents.Add(AccessAudit(
+            organisationId,
+            actorUserId,
+            "DimensionAccessGrantRemoved",
+            nameof(OrganisationDimensionAccessGrant),
+            grant.Id.ToString(),
+            new
+            {
+                MemberUserId = grant.UserId,
+                grant.BranchId,
+                grant.DivisionId
+            }));
         db.OrganisationDimensionAccessGrants.Remove(grant);
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    private static string MembershipEntityId(
+        Guid organisationId,
+        string memberUserId) =>
+        $"{organisationId}:{memberUserId}";
+
+    private static AuditEvent AccessAudit(
+        Guid organisationId,
+        string actorUserId,
+        string eventType,
+        string entityType,
+        string entityId,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = actorUserId,
+            EventType = eventType,
+            EntityType = entityType,
+            EntityId = entityId,
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 
     public async Task<bool> CanPostJournalsAsync(string userId, Guid organisationId)
     {
