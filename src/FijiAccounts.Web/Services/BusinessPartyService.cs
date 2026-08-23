@@ -37,6 +37,12 @@ public sealed record UpdateSupplierDefaultsRequest(
     PaymentTermType PaymentTermType,
     int DueDays);
 
+public sealed record LearnCustomerSalesDefaultsRequest(
+    Guid OrganisationId,
+    Guid BusinessPartyId,
+    Guid SalesAccountId,
+    VatTreatment VatTreatment);
+
 public sealed class BusinessPartyService(
     ApplicationDbContext db,
     TenantAccessService access)
@@ -251,6 +257,58 @@ public sealed class BusinessPartyService(
             request.OrganisationId,
             userId,
             "SupplierDefaultsUpdated",
+            party.Id,
+            new { party.Name, Old = previous, New = updated }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task LearnCustomerSalesDefaultsAsync(
+        string userId,
+        LearnCustomerSalesDefaultsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(
+            userId,
+            request.OrganisationId,
+            cancellationToken);
+        await ValidateSalesDefaultsAsync(
+            request.OrganisationId,
+            request.SalesAccountId,
+            request.VatTreatment,
+            cancellationToken);
+
+        var party = await GetPartyAsync(
+            request.OrganisationId,
+            request.BusinessPartyId,
+            PartyType.Customer,
+            cancellationToken);
+        if (party.DefaultSalesAccountId is not null &&
+            party.DefaultSalesVatTreatment is not null)
+        {
+            return;
+        }
+
+        var previous = new
+        {
+            SalesAccountId = party.DefaultSalesAccountId,
+            VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
+            DueDays = party.DefaultSalesInvoiceDueDays
+        };
+        party.DefaultSalesAccountId ??= request.SalesAccountId;
+        party.DefaultSalesVatTreatment ??= request.VatTreatment;
+        var updated = new
+        {
+            SalesAccountId = party.DefaultSalesAccountId,
+            VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
+            DueDays = party.DefaultSalesInvoiceDueDays
+        };
+
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "CustomerDefaultsLearnedFromInvoice",
             party.Id,
             new { party.Name, Old = previous, New = updated }));
         await db.SaveChangesAsync(cancellationToken);

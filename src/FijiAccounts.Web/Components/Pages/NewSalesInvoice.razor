@@ -12,6 +12,7 @@
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject BusinessPartyService BusinessParties
 @inject SalesInvoiceService InvoiceService
 @inject RecurringSalesInvoiceService RecurringInvoices
 @inject UserManager<ApplicationUser> UserManager
@@ -445,12 +446,15 @@ else
     private async Task Post() { try { SalesInvoice invoice; if (InvoiceId is null) invoice = await InvoiceService.CreateAndPostAsync(userId, Request()); else { await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request()); invoice = await InvoiceService.PostDraftAsync(userId, OrganisationId, InvoiceId.Value); } await PersistCustomerInvoiceDefaultsAsync(invoice.CustomerId); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}"); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { status = ex.Message; } }
     private async Task PersistCustomerInvoiceDefaultsAsync(Guid customerId)
     {
-        var customer = await Db.BusinessParties.SingleOrDefaultAsync(x => x.Id == customerId && x.OrganisationId == OrganisationId);
-        if (customer is null || model.Lines.Count == 0) return;
+        if (model.Lines.Count == 0) return;
         var firstLine = model.Lines[0];
-        if (customer.DefaultSalesAccountId is null && firstLine.RevenueAccountId != Guid.Empty) customer.DefaultSalesAccountId = firstLine.RevenueAccountId;
-        if (customer.DefaultSalesVatTreatment is null) customer.DefaultSalesVatTreatment = firstLine.VatTreatment;
-        if (customer.DefaultSalesAccountId is not null || customer.DefaultSalesVatTreatment is not null) await Db.SaveChangesAsync();
+        await BusinessParties.LearnCustomerSalesDefaultsAsync(
+            userId,
+            new LearnCustomerSalesDefaultsRequest(
+                OrganisationId,
+                customerId,
+                firstLine.RevenueAccountId,
+                firstLine.VatTreatment));
     }
     private sealed class RecurringInvoiceEditorModel
 {
