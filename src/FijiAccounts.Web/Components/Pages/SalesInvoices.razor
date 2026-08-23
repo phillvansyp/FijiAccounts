@@ -12,6 +12,7 @@
 @inject TenantAccessService TenantAccess
 @inject SalesInvoiceService InvoiceService
 @inject RecurringSalesInvoiceService RecurringInvoices
+@inject RecurringInvoiceAutomationSettingsService AutomationSettings
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -127,7 +128,7 @@ else
 
                         @if (automationStatus is not null)
                         {
-                            <div class="alert alert-success">
+                            <div class="alert @automationStatusClass">
                                 @automationStatus
                             </div>
                         }
@@ -415,6 +416,7 @@ else
     private TimeOnly automationTime;
     private bool showAutomationSettings;
     private string? automationStatus;
+    private string automationStatusClass = "alert-success";
     private string? recurringStatus;
     private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
@@ -494,21 +496,26 @@ else
             return;
         }
 
-        var organisation =
-            await Db.Organisations
-                .SingleAsync(
-                    x => x.Id == OrganisationId);
+        try
+        {
+            await AutomationSettings.UpdateAsync(
+                userId,
+                new UpdateRecurringInvoiceAutomationSettingsRequest(
+                    OrganisationId,
+                    automationEnabled,
+                    automationTime));
 
-        organisation.RecurringInvoiceAutomationEnabled =
-            automationEnabled;
-
-        organisation.RecurringInvoiceAutomationTime =
-            automationTime;
-
-        await Db.SaveChangesAsync();
-
-        automationStatus =
-            "Automation settings saved.";
+            automationStatusClass = "alert-success";
+            automationStatus = "Automation settings saved.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DbUpdateException)
+        {
+            automationStatusClass = "alert-danger";
+            automationStatus = ex.Message;
+        }
     }
     private async Task GenerateRecurringInvoices()
     {

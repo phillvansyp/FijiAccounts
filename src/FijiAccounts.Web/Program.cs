@@ -67,6 +67,7 @@ builder.Services.AddScoped<BusinessPartyService>();
 builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<RecurringSalesInvoiceService>();
+builder.Services.AddScoped<RecurringInvoiceAutomationSettingsService>();
 builder.Services.AddHostedService<RecurringInvoiceGenerationWorker>();
 builder.Services.AddHostedService<DocumentExpiryWorker>();
 builder.Services.AddHostedService<OverdueInvoiceWorker>();
