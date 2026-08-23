@@ -6,6 +6,7 @@ public enum OrganisationKind { Business, AccountingPractice }
 public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Payroll, Sales, ReadOnly }
 public enum DimensionAccessMode { All, Restricted }
 public enum OrganisationGroupRole { Owner, Administrator, Viewer }
+public enum TenantStatus { Active, Suspended, Archived }
 public enum GroupExchangeRateType { PeriodAverage, Closing }
 public enum EngagementAccess { ReadOnly, Bookkeeping, Accountant, Full }
 public enum OrganisationUnitType { Department, Branch }
@@ -24,7 +25,26 @@ public sealed class OrganisationGroup
     public List<OrganisationGroupMembership> Memberships { get; set; } = [];
     public List<GroupExchangeRate> ExchangeRates { get; set; } = [];
 
+    public bool IsDemo { get; set; }
+    public TenantStatus Status { get; set; } = TenantStatus.Active;
+    public DateTimeOffset? SuspendedAt { get; set; }
+
+    [MaxLength(1000)]
+    public string? InternalNotes { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class PlatformAuditEvent
+{
+    public long Id { get; set; }
+    [MaxLength(450)] public required string AdministratorUserId { get; set; }
+    [MaxLength(80)] public required string EventType { get; set; }
+    public Guid? OrganisationGroupId { get; set; }
+    public Guid? OrganisationId { get; set; }
+    [MaxLength(500)] public required string Reason { get; set; }
+    public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
+    public required string JsonData { get; set; }
 }
 
 public sealed class GroupExchangeRate

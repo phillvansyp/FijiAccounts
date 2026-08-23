@@ -1,0 +1,167 @@
+@page "/platform"
+@attribute [Authorize(Policy = PlatformAdminAccessService.PolicyName)]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject PlatformAdministrationService Platform
+@inject DemoDataService DemoSeeder
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Platform administration · Account Island</PageTitle>
+
+<div class="settings-heading">
+    <div>
+        <p class="eyebrow">Account Island operator</p>
+        <h1>Tenant overview</h1>
+        <p>Platform-level visibility across tenant groups and legal companies.</p>
+    </div>
+</div>
+
+@if (overview is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="settings-grid mb-4">
+        <section class="settings-card"><p class="eyebrow">Tenants</p><h2>@overview.TenantCount</h2><p>@overview.ActiveTenantCount active · @overview.SuspendedTenantCount suspended · @overview.DemoTenantCount demo</p></section>
+        <section class="settings-card"><p class="eyebrow">Companies</p><h2>@overview.CompanyCount</h2><p>@overview.UserCount registered users · @overview.MembershipCount memberships</p></section>
+        <section class="settings-card"><p class="eyebrow">Sales &amp; purchases</p><h2>@((overview.PostedInvoiceCount + overview.SupplierBillCount).ToString("N0"))</h2><p>@overview.PostedInvoiceCount invoices · @overview.SupplierBillCount bills</p></section>
+        <section class="settings-card"><p class="eyebrow">Ledger</p><h2>@overview.PostedJournalCount.ToString("N0")</h2><p>Posted journals across grouped tenants</p></section>
+    </div>
+
+    @if (Environment.IsDevelopment())
+    {
+        <section class="settings-card mb-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <p class="eyebrow">Platform operations</p>
+                    <h2>Demo company seeder</h2>
+                    <p class="mb-0">Reset and populate only the dedicated Demo tenant. Customer tenants are never included.</p>
+                </div>
+                @if (demoTenant is not null)
+                {
+                    <a class="btn btn-outline-secondary" href="platform/tenants/@demoTenant.Id">View Demo tenant</a>
+                }
+            </div>
+
+            @if (demoError is not null) { <div class="alert alert-danger mt-3">@demoError</div> }
+            @if (demoMessage is not null) { <div class="alert alert-success mt-3">@demoMessage</div> }
+
+            <EditForm Model="demoModel" OnValidSubmit="GenerateDemo" FormName="platform-generate-demo" class="row g-3 align-items-end mt-1">
+                <DataAnnotationsValidator />
+                <div class="col-md-5 col-lg-4">
+                    <label class="form-label">Demo as-of date</label>
+                    <InputDate class="form-control" @bind-Value="demoModel.AsOfDate" />
+                    <div class="form-text">Creates three months of realistic accounting activity.</div>
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <InputCheckbox id="confirm-platform-demo-reset" class="form-check-input" @bind-Value="demoModel.Confirmed" />
+                        <label class="form-check-label" for="confirm-platform-demo-reset">
+                            I understand that the existing Demo tenant accounting data will be replaced.
+                        </label>
+                        <ValidationMessage For="@(() => demoModel.Confirmed)" />
+                    </div>
+                </div>
+                <div class="col-md-auto">
+                    <button class="btn btn-primary" type="submit" disabled="@isGeneratingDemo">
+                        @(isGeneratingDemo ? "Populating Demo…" : "Reset & populate Demo")
+                    </button>
+                </div>
+            </EditForm>
+
+            @if (demoSummary is not null)
+            {
+                <div class="mt-3 text-secondary">
+                    @demoSummary.CompanyCount companies · @demoSummary.SalesInvoiceCount invoices ·
+                    @demoSummary.SupplierBillCount bills · @demoSummary.AnnualisedNetSales.ToString("C0") annualised sales
+                </div>
+            }
+        </section>
+    }
+
+    <section class="settings-card">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
+            <div><h2>Tenants</h2><p class="mb-0">Organisation groups are the platform tenant boundary.</p></div>
+            <div>
+                <label class="form-label" for="tenant-search">Search</label>
+                <input id="tenant-search" class="form-control" @bind="search" @bind:event="oninput" placeholder="Tenant, country or currency" />
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th>Tenant</th><th>Status</th><th>Companies</th><th>Users</th><th>Jurisdictions</th><th>Transactions</th><th>Last activity</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var tenant in FilteredTenants)
+                    {
+                        <tr>
+                            <td><strong>@tenant.Name</strong><div><small>@tenant.PresentationCurrency @if (tenant.IsDemo) { <span class="badge text-bg-info ms-1">Demo</span> }</small></div></td>
+                            <td><span class="badge @(tenant.Status == TenantStatus.Active ? "text-bg-success" : tenant.Status == TenantStatus.Suspended ? "text-bg-warning" : "text-bg-secondary")">@tenant.Status</span></td>
+                            <td>@tenant.CompanyCount</td><td>@tenant.UserCount</td><td>@(tenant.Jurisdictions.Length == 0 ? "—" : tenant.Jurisdictions)</td>
+                            <td>@tenant.TransactionCount.ToString("N0")</td><td>@(tenant.LastActivity?.ToString("dd MMM yyyy") ?? "—")</td>
+                            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="platform/tenants/@tenant.Id">Open</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@code {
+    private PlatformOverview? overview;
+    private DemoDataSummary? demoSummary;
+    private readonly DemoModel demoModel = new() { AsOfDate = DateOnly.FromDateTime(DateTime.Today) };
+    private string userId = string.Empty;
+    private string search = string.Empty;
+    private string? demoError;
+    private string? demoMessage;
+    private bool isGeneratingDemo;
+    private PlatformTenantRow? demoTenant => overview?.Tenants.FirstOrDefault(x => x.IsDemo);
+    private IEnumerable<PlatformTenantRow> FilteredTenants => overview?.Tenants.Where(x =>
+        string.IsNullOrWhiteSpace(search) ||
+        x.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+        x.Jurisdictions.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+        x.PresentationCurrency.Contains(search, StringComparison.OrdinalIgnoreCase)) ?? [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        overview = await Platform.GetOverviewAsync(userId);
+        demoSummary = await DemoSeeder.GetSummaryAsync(userId);
+    }
+
+    private async Task GenerateDemo()
+    {
+        demoError = demoMessage = null;
+        isGeneratingDemo = true;
+        try
+        {
+            demoSummary = await DemoSeeder.ResetAndGenerateAsync(userId, demoModel.AsOfDate);
+            overview = await Platform.GetOverviewAsync(userId);
+            demoModel.Confirmed = false;
+            demoMessage = "The Demo tenant was reset and populated successfully.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            demoError = ex.Message;
+        }
+        finally
+        {
+            isGeneratingDemo = false;
+        }
+    }
+
+    private sealed class DemoModel
+    {
+        [Required] public DateOnly AsOfDate { get; set; }
+        [Range(typeof(bool), "true", "true", ErrorMessage = "Confirm that the existing Demo tenant data will be replaced.")]
+        public bool Confirmed { get; set; }
+    }
+}

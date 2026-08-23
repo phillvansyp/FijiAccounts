@@ -1,0 +1,118 @@
+@page "/platform/tenants/{TenantId:guid}"
+@attribute [Authorize(Policy = PlatformAdminAccessService.PolicyName)]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject PlatformAdministrationService Platform
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Tenant detail · Account Island</PageTitle>
+
+@if (tenant is null)
+{
+    <div class="alert alert-warning">Tenant not found.</div>
+}
+else
+{
+    <p><a href="platform">← Tenant overview</a></p>
+    <div class="settings-heading">
+        <div><p class="eyebrow">Platform tenant</p><h1>@tenant.Name</h1><p>@tenant.Companies.Count companies · @tenant.DistinctUserCount users · @tenant.PresentationCurrency presentation currency</p></div>
+        <div><span class="badge @(tenant.Status == TenantStatus.Active ? "text-bg-success" : "text-bg-warning")">@tenant.Status</span>@if (tenant.IsDemo) { <span class="badge text-bg-info ms-2">Demo</span> }</div>
+    </div>
+
+    @if (message is not null) { <div class="alert alert-success">@message</div> }
+    @if (error is not null) { <div class="alert alert-danger">@error</div> }
+
+    <section class="settings-card mb-3">
+        <h2>Legal companies</h2>
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th>Company</th><th>Structure</th><th>Users</th><th>Contacts</th><th>Accounting</th><th>Last activity</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var company in tenant.Companies)
+                    {
+                        <tr>
+                            <td><strong>@company.LegalName</strong><div><small>@company.CountryCode · @company.BaseCurrency</small></div></td>
+                            <td>@company.BranchCount branches · @company.DepartmentCount departments</td><td>@company.MemberCount</td>
+                            <td>@company.CustomerCount customers · @company.SupplierCount suppliers</td>
+                            <td>@company.SalesInvoiceCount invoices · @company.SupplierBillCount bills · @company.JournalCount journals</td>
+                            <td>@(company.LastActivity?.ToString("dd MMM yyyy") ?? "—")</td>
+                            <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="o/@company.Id">Open company</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="settings-grid">
+        <section class="settings-card">
+            <h2>Tenant status</h2>
+            <p>Suspension records the operational state. It does not delete accounting records.</p>
+            <EditForm Model="statusModel" OnValidSubmit="ChangeStatus" FormName="platform-tenant-status">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="mb-3"><label class="form-label">Reason</label><InputText class="form-control" @bind-Value="statusModel.Reason" /></div>
+                @if (tenant.Status == TenantStatus.Active)
+                {
+                    <button class="btn btn-warning" type="submit">Suspend tenant</button>
+                }
+                else if (tenant.Status == TenantStatus.Suspended)
+                {
+                    <button class="btn btn-success" type="submit">Reactivate tenant</button>
+                }
+            </EditForm>
+        </section>
+        <section class="settings-card">
+            <h2>Platform audit</h2>
+            @if (tenant.RecentPlatformEvents.Count == 0) { <p>No platform actions recorded.</p> }
+            else
+            {
+                <ul>
+                    @foreach (var item in tenant.RecentPlatformEvents)
+                    {
+                        <li><strong>@item.EventType</strong> · @item.OccurredAt.ToString("dd MMM yyyy HH:mm")<br /><small>@item.Reason</small></li>
+                    }
+                </ul>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid TenantId { get; set; }
+    private PlatformTenantDetails? tenant;
+    private readonly StatusModel statusModel = new();
+    private string userId = string.Empty;
+    private string? message;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        tenant = await Platform.GetTenantAsync(userId, TenantId);
+    }
+
+    private async Task ChangeStatus()
+    {
+        if (tenant is null) return;
+        error = message = null;
+        try
+        {
+            var next = tenant.Status == TenantStatus.Active ? TenantStatus.Suspended : TenantStatus.Active;
+            await Platform.SetTenantStatusAsync(userId, tenant.Id, next, statusModel.Reason);
+            statusModel.Reason = string.Empty;
+            tenant = await Platform.GetTenantAsync(userId, TenantId);
+            message = $"Tenant status changed to {next}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { error = ex.Message; }
+    }
+
+    private sealed class StatusModel
+    {
+        [Required, StringLength(500)] public string Reason { get; set; } = string.Empty;
+    }
+}

@@ -13,6 +13,9 @@
 <PageTitle>Organisations</PageTitle>
 <h1>Your organisations</h1>
 <p class="text-secondary">Choose a business or create a new workspace.</p>
+<AuthorizeView Roles="@PlatformAdminAccessService.RoleName">
+    <Authorized><p><a href="platform">Platform administration</a></p></Authorized>
+</AuthorizeView>
 
 @if (organisations is null) { <p>Loading…</p> }
 else

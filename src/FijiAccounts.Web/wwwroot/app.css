@@ -271,3 +271,28 @@ img,svg{max-width:100%}
         width: 100%;
     }
 }
+
+.platform-admin-entry {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    padding: .55rem .8rem;
+    border: 1px solid #cbd8de;
+    border-radius: .6rem;
+    background: rgba(255, 255, 255, .94);
+    box-shadow: 0 6px 20px rgba(20, 48, 61, .12);
+    color: #385566;
+    font-size: .82rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.platform-admin-entry:hover,
+.platform-admin-entry:focus-visible {
+    border-color: #087f5b;
+    color: #065f46;
+    background: #fff;
+}

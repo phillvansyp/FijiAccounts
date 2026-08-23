@@ -1,0 +1,129 @@
+@page "/demo-data"
+@page "/platform/demo"
+@attribute [Authorize(Policy = PlatformAdminAccessService.PolicyName)]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject DemoDataService DemoSeeder
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Demo data · Account Island</PageTitle>
+
+<h1>Demo data</h1>
+<p><a href="platform">← Tenant overview</a></p>
+
+@if (!Environment.IsDevelopment())
+{
+    <div class="alert alert-warning">Demo data generation is available only in Development.</div>
+}
+else
+{
+    <p class="text-secondary">
+        Reset and rebuild the companies inside the dedicated Demo tenant. The Demo owner login is preserved, and other tenants and users are not changed.
+    </p>
+
+    @if (error is not null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+
+    @if (message is not null)
+    {
+        <div class="alert alert-success">@message</div>
+    }
+
+    <div class="setup-card">
+        <h2>Reset &amp; generate demo</h2>
+        <EditForm Model="model" OnValidSubmit="Generate" FormName="generate-demo-data">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <div class="mb-3">
+                <label class="form-label">Demo as-of date</label>
+                <InputDate class="form-control" @bind-Value="model.AsOfDate" />
+                <div class="form-text">Transactions cover the three months ending on this date.</div>
+            </div>
+            <div class="alert alert-warning">
+                This replaces accounting data only inside the <strong>@DemoDataService.DemoGroupName</strong> tenant and keeps its owner login.
+            </div>
+            <div class="form-check mb-3">
+                <InputCheckbox id="confirm-demo-reset" class="form-check-input" @bind-Value="model.Confirmed" />
+                <label class="form-check-label" for="confirm-demo-reset">
+                    I understand that the existing Demo tenant accounting data will be replaced.
+                </label>
+                <ValidationMessage For="@(() => model.Confirmed)" />
+            </div>
+            <button class="btn btn-primary" type="submit" disabled="@isGenerating">
+                @(isGenerating ? "Generating…" : "Reset & generate demo")
+            </button>
+        </EditForm>
+    </div>
+
+    @if (summary is not null)
+    {
+        <div class="setup-card mt-4">
+            <h2>Current demo</h2>
+            <dl class="row mb-0">
+                <dt class="col-sm-5">Period</dt><dd class="col-sm-7">@summary.StartDate.ToString("dd MMM yyyy") – @summary.AsOfDate.ToString("dd MMM yyyy")</dd>
+                <dt class="col-sm-5">Structure</dt><dd class="col-sm-7">@summary.CompanyCount companies · @summary.BranchCount branches · @summary.DepartmentCount departments</dd>
+                <dt class="col-sm-5">Contacts</dt><dd class="col-sm-7">@summary.CustomerCount customers · @summary.SupplierCount suppliers</dd>
+                <dt class="col-sm-5">Sales</dt><dd class="col-sm-7">@summary.SalesInvoiceCount invoices · @summary.CustomerReceiptCount receipts · @summary.CreditNoteCount credits</dd>
+                <dt class="col-sm-5">Purchases</dt><dd class="col-sm-7">@summary.SupplierBillCount bills · @summary.SupplierPaymentCount payments</dd>
+                <dt class="col-sm-5">Net sales</dt><dd class="col-sm-7">@summary.NetSales.ToString("C2")</dd>
+                <dt class="col-sm-5">Annualised run rate</dt><dd class="col-sm-7">@summary.AnnualisedNetSales.ToString("C2")</dd>
+            </dl>
+        </div>
+    }
+}
+
+@code {
+    private readonly DemoModel model = new() { AsOfDate = DateOnly.FromDateTime(DateTime.Today) };
+    private DemoDataSummary? summary;
+    private string userId = string.Empty;
+    private string? error;
+    private string? message;
+    private bool isGenerating;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        if (userId.Length > 0)
+        {
+            summary = await DemoSeeder.GetSummaryAsync(userId);
+        }
+    }
+
+    private async Task Generate()
+    {
+        error = null;
+        message = null;
+        isGenerating = true;
+        try
+        {
+            summary = await DemoSeeder.ResetAndGenerateAsync(userId, model.AsOfDate);
+            model.Confirmed = false;
+            message = "The Demo account was rebuilt successfully.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isGenerating = false;
+        }
+    }
+
+    private sealed class DemoModel
+    {
+        [Required]
+        public DateOnly AsOfDate { get; set; }
+
+        [Range(typeof(bool), "true", "true", ErrorMessage = "Confirm that the existing Demo tenant data will be replaced.")]
+        public bool Confirmed { get; set; }
+    }
+}

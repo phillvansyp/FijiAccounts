@@ -43,9 +43,15 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
         options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
         options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
     })
+    .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
+
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy(
+        PlatformAdminAccessService.PolicyName,
+        policy => policy.RequireRole(PlatformAdminAccessService.RoleName));
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddScoped<ILoginCodeEmailSender, LoginCodeEmailSender>();
@@ -107,6 +113,9 @@ builder.Services.AddScoped<GroupExchangeRateService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankReconciliationSessionService>();
 builder.Services.AddScoped<BankAccountService>();
+builder.Services.AddScoped<DemoDataService>();
+builder.Services.AddScoped<PlatformAdminAccessService>();
+builder.Services.AddScoped<PlatformAdministrationService>();
 
 var app = builder.Build();
 
@@ -144,6 +153,7 @@ if (app.Environment.IsDevelopment())
 }
 
 await DevelopmentAccountSeeder.SeedAsync(app);
+await PlatformAdminSeeder.SeedAsync(app);
 
 if (builder.Configuration.GetValue<bool>("DevSeed:SeedOnly"))
 {

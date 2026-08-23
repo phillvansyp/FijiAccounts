@@ -11,15 +11,22 @@ public sealed class TenantAccessService(ApplicationDbContext db)
     public async Task<List<AccessibleOrganisation>> ListAsync(string userId)
     {
         var direct = await db.OrganisationMemberships.AsNoTracking().Include(x => x.Organisation)
-            .Where(x => x.UserId == userId).Select(x => new AccessibleOrganisation(x.Organisation, x.Role.ToString(), false)).ToListAsync();
+            .Where(x => x.UserId == userId &&
+                (x.Organisation.OrganisationGroupId == null ||
+                 x.Organisation.OrganisationGroup!.Status == TenantStatus.Active))
+            .Select(x => new AccessibleOrganisation(x.Organisation, x.Role.ToString(), false)).ToListAsync();
 
         var practiceIds = await db.OrganisationMemberships.AsNoTracking()
             .Where(x => x.UserId == userId && x.Organisation.Kind == OrganisationKind.AccountingPractice &&
+                (x.Organisation.OrganisationGroupId == null ||
+                 x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
                 (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator ||
                  x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper))
             .Select(x => x.OrganisationId).ToArrayAsync();
         var clients = await db.AccountantEngagements.AsNoTracking().Include(x => x.ClientOrganisation)
-            .Where(x => practiceIds.Contains(x.PracticeOrganisationId) && x.RevokedAt == null)
+            .Where(x => practiceIds.Contains(x.PracticeOrganisationId) && x.RevokedAt == null &&
+                (x.ClientOrganisation.OrganisationGroupId == null ||
+                 x.ClientOrganisation.OrganisationGroup!.Status == TenantStatus.Active))
             .Select(x => new AccessibleOrganisation(x.ClientOrganisation, x.Access.ToString(), true)).ToListAsync();
 
         return direct.Concat(clients).GroupBy(x => x.Organisation.Id).Select(x => x.First())
@@ -31,6 +38,7 @@ public sealed class TenantAccessService(ApplicationDbContext db)
 
     public async Task<bool> CanManageTeamAsync(string userId, Guid organisationId) =>
         await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&
+            (x.Organisation.OrganisationGroupId == null || x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator));
 
     public async Task<List<Branch>> ListAccessibleBranchesAsync(
@@ -38,6 +46,11 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         Guid organisationId,
         CancellationToken cancellationToken = default)
     {
+        if (await FindAsync(userId, organisationId) is null)
+        {
+            return [];
+        }
+
         var branches = await db.Branches
             .AsNoTracking()
             .Include(x => x.Divisions.Where(division => division.IsActive))
@@ -83,6 +96,11 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         Guid divisionId,
         CancellationToken cancellationToken = default)
     {
+        if (await FindAsync(userId, organisationId) is null)
+        {
+            return false;
+        }
+
         var membership = await db.OrganisationMemberships
             .AsNoTracking()
             .SingleOrDefaultAsync(
@@ -90,7 +108,7 @@ public sealed class TenantAccessService(ApplicationDbContext db)
                 cancellationToken);
         if (membership is null)
         {
-            return await FindAsync(userId, organisationId) is not null;
+            return true;
         }
 
         if (membership.Role is OrganisationRole.Owner or OrganisationRole.Administrator ||
@@ -121,6 +139,11 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         Guid organisationId,
         CancellationToken cancellationToken = default)
     {
+        if (await FindAsync(userId, organisationId) is null)
+        {
+            return [];
+        }
+
         var membership = await db.OrganisationMemberships
             .AsNoTracking()
             .SingleOrDefaultAsync(
@@ -346,9 +369,11 @@ public sealed class TenantAccessService(ApplicationDbContext db)
     public async Task<bool> CanPostJournalsAsync(string userId, Guid organisationId)
     {
         if (await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&
+            (x.Organisation.OrganisationGroupId == null || x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper))) return true;
 
         return await db.AccountantEngagements.AnyAsync(e => e.ClientOrganisationId == organisationId && e.RevokedAt == null &&
+            (e.ClientOrganisation.OrganisationGroupId == null || e.ClientOrganisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             e.Access != EngagementAccess.ReadOnly && db.OrganisationMemberships.Any(m => m.OrganisationId == e.PracticeOrganisationId && m.UserId == userId &&
                 (m.Role == OrganisationRole.Owner || m.Role == OrganisationRole.Administrator || m.Role == OrganisationRole.Accountant || m.Role == OrganisationRole.Bookkeeper)));
     }
@@ -361,6 +386,8 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         x =>
             x.UserId == userId &&
             x.OrganisationId == organisationId &&
+            (x.Organisation.OrganisationGroupId == null ||
+             x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             (
                 x.Role == OrganisationRole.Owner ||
                 x.Role == OrganisationRole.Administrator ||
@@ -375,6 +402,8 @@ public sealed class TenantAccessService(ApplicationDbContext db)
         e =>
             e.ClientOrganisationId == organisationId &&
             e.RevokedAt == null &&
+            (e.ClientOrganisation.OrganisationGroupId == null ||
+             e.ClientOrganisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             e.Access != EngagementAccess.ReadOnly &&
             db.OrganisationMemberships.Any(
                 m =>

@@ -124,6 +124,57 @@ public sealed class DimensionAccessTests
         Assert.Equal(initialAuditCount, await test.Db.AuditEvents.CountAsync());
     }
 
+    [Fact]
+    public async Task SuspendedTenant_HasNoBranchDimensionOrReportAccess()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var group = new OrganisationGroup
+        {
+            Name = "Suspended Group",
+            Status = TenantStatus.Suspended,
+            SuspendedAt = DateTimeOffset.UtcNow
+        };
+        test.Organisation.OrganisationGroup = group;
+        test.Db.OrganisationGroups.Add(group);
+        await test.Db.SaveChangesAsync();
+
+        var branch = await test.Db.Branches
+            .Include(x => x.Divisions)
+            .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);
+        var division = branch.Divisions.Single(x => x.IsDefault);
+
+        Assert.Empty(await test.Access.ListAccessibleBranchesAsync(test.UserId, test.Organisation.Id));
+        Assert.False(await test.Access.CanAccessDimensionAsync(
+            test.UserId,
+            test.Organisation.Id,
+            branch.Id,
+            division.Id));
+        var reportScope = await test.Access.GetReportDivisionScopeAsync(test.UserId, test.Organisation.Id);
+        Assert.NotNull(reportScope);
+        Assert.Empty(reportScope);
+    }
+
+    [Fact]
+    public async Task UserWithoutOrganisationAccess_HasNoDimensionScope()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var unknownUserId = Guid.NewGuid().ToString();
+        var branch = await test.Db.Branches
+            .Include(x => x.Divisions)
+            .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);
+        var division = branch.Divisions.Single(x => x.IsDefault);
+
+        Assert.Empty(await test.Access.ListAccessibleBranchesAsync(unknownUserId, test.Organisation.Id));
+        Assert.False(await test.Access.CanAccessDimensionAsync(
+            unknownUserId,
+            test.Organisation.Id,
+            branch.Id,
+            division.Id));
+        var reportScope = await test.Access.GetReportDivisionScopeAsync(unknownUserId, test.Organisation.Id);
+        Assert.NotNull(reportScope);
+        Assert.Empty(reportScope);
+    }
+
     private static JournalPostRequest Request(
         Guid organisationId,
         Guid branchId,

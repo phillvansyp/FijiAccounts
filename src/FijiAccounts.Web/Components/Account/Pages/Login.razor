@@ -3,8 +3,10 @@
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 
+@inject ApplicationDbContext Db
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
 @inject ILogger<Login> Logger
@@ -127,6 +129,26 @@
         if (result.Succeeded)
         {
             Logger.LogInformation("User logged in.");
+
+            var user = await UserManager.FindByEmailAsync(Input.Email);
+            if (user is not null)
+            {
+                var demoOrganisationId = await Db.OrganisationMemberships
+                    .Where(x =>
+                        x.UserId == user.Id &&
+                        x.Organisation.LegalName == "Demo" &&
+                        x.Organisation.OrganisationGroup != null &&
+                        x.Organisation.OrganisationGroup.IsDemo)
+                    .Select(x => (Guid?)x.OrganisationId)
+                    .SingleOrDefaultAsync();
+
+                if (demoOrganisationId is not null)
+                {
+                    RedirectManager.RedirectTo($"o/{demoOrganisationId.Value}");
+                    return;
+                }
+            }
+
             RedirectManager.RedirectTo(ReturnUrl);
         }
         else if (result.RequiresTwoFactor)

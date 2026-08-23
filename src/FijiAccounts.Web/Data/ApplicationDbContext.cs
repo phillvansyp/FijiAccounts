@@ -10,6 +10,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<OrganisationGroupMembership> OrganisationGroupMemberships =>
         Set<OrganisationGroupMembership>();
     public DbSet<GroupExchangeRate> GroupExchangeRates => Set<GroupExchangeRate>();
+    public DbSet<PlatformAuditEvent> PlatformAuditEvents => Set<PlatformAuditEvent>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
@@ -122,6 +123,10 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .WithMany(x => x.ExchangeRates)
             .HasForeignKey(x => x.OrganisationGroupId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<PlatformAuditEvent>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.OccurredAt });
+        builder.Entity<PlatformAuditEvent>()
+            .HasIndex(x => x.AdministratorUserId);
         builder.Entity<Branch>()
             .HasIndex(x => new { x.OrganisationId, x.Code })
             .IsUnique();
@@ -723,6 +728,8 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<PostedJournalLine>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<AuditEvent>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<PlatformAuditEvent>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesInvoice>()
         .Any(x =>
