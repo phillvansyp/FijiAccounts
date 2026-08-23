@@ -19,6 +19,7 @@
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
 @inject BusinessPartyService BusinessParties
+@inject SupplierBillDraftService BillDrafts
 @inject RecurringSupplierBillService RecurringBills
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -992,35 +993,53 @@ private void ToggleRecurringBill()
     {
         try
         {
-            var draft = editingDraftId is Guid id
-                ? await Db.SupplierBillDrafts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId)
-                : null;
-            var isNew = draft is null;
-            if (draft is null)
+            var isNew = editingDraftId is null;
+            var selectedDimension = branches
+                .SelectMany(branch => branch.Divisions.Select(
+                    division => new { Branch = branch, Division = division }))
+                .Single(x => x.Division.Id == bill.DivisionId);
+            var lines = new List<SupplierBillDraftLineRequest>
             {
-                draft = new SupplierBillDraft { OrganisationId = OrganisationId, CreatedByUserId = userId };
-                Db.SupplierBillDrafts.Add(draft);
-            }
-            draft.SupplierId = bill.SupplierId == Guid.Empty ? null : bill.SupplierId;
-            draft.BranchId = branches.SelectMany(branch => branch.Divisions.Select(division => new { Branch = branch, Division = division })).Single(x => x.Division.Id == bill.DivisionId).Branch.Id;
-            draft.DivisionId = bill.DivisionId;
-            draft.SupplierReference = bill.SupplierReference.Trim();
-            draft.BillDate = bill.BillDate;
-            draft.DueDate = bill.DueDate;
-            draft.Description = bill.Description.Trim();
-            draft.Quantity = bill.Quantity;
-            draft.UnitPrice = bill.UnitPrice;
-            draft.VatTreatment = bill.VatTreatment;
-            draft.ExpenseAccountId = bill.ExpenseAccountId == Guid.Empty ? null : bill.ExpenseAccountId;
-            draft.ProductItemId = bill.ProductItemId;
-            draft.AdditionalLinesJson = JsonSerializer.Serialize(additionalBillLines.Select(x => new DraftLineData(x.Description, x.Quantity, x.UnitPrice, x.VatTreatment, x.ExpenseAccountId, x.ProductItemId)));
-            draft.AttachmentFileName = pendingAttachment?.FileName;
-            draft.AttachmentContentType = pendingAttachment?.ContentType;
-            draft.AttachmentOriginalSize = pendingAttachment?.OriginalSize;
-            draft.AttachmentIsCompressed = pendingAttachment?.IsCompressed ?? false;
-            draft.AttachmentContent = pendingAttachment?.Content;
-            draft.UpdatedAt = DateTimeOffset.UtcNow;
-            await Db.SaveChangesAsync();
+                new(
+                    bill.Description,
+                    bill.Quantity,
+                    bill.UnitPrice,
+                    bill.VatTreatment,
+                    bill.ExpenseAccountId == Guid.Empty
+                        ? null
+                        : bill.ExpenseAccountId,
+                    bill.ProductItemId)
+            };
+            lines.AddRange(additionalBillLines.Select(x =>
+                new SupplierBillDraftLineRequest(
+                    x.Description,
+                    x.Quantity,
+                    x.UnitPrice,
+                    x.VatTreatment,
+                    x.ExpenseAccountId,
+                    x.ProductItemId)));
+            var attachment = pendingAttachment is null
+                ? null
+                : new SupplierBillAttachmentRequest(
+                    pendingAttachment.FileName,
+                    pendingAttachment.ContentType,
+                    pendingAttachment.OriginalSize,
+                    pendingAttachment.Content,
+                    pendingAttachment.IsCompressed);
+
+            await BillDrafts.SaveAsync(
+                userId,
+                new SaveSupplierBillDraftRequest(
+                    OrganisationId,
+                    editingDraftId,
+                    bill.SupplierId == Guid.Empty ? null : bill.SupplierId,
+                    selectedDimension.Branch.Id,
+                    selectedDimension.Division.Id,
+                    bill.SupplierReference,
+                    bill.BillDate,
+                    bill.DueDate,
+                    lines,
+                    attachment));
             var message = isNew
                 ? "Draft bill saved. Nothing has been posted to the ledger."
                 : "Draft bill updated. Nothing has been posted to the ledger.";
@@ -1030,7 +1049,10 @@ private void ToggleRecurringBill()
             statusClass = "alert-success";
             status = message;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or DbUpdateException)
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DbUpdateException)
         {
             statusClass = "alert-danger";
             status = $"Could not save draft: {ex.Message}";
@@ -1048,17 +1070,31 @@ private void ToggleRecurringBill()
     }
     private async Task DeleteDraft(Guid id)
     {
-        var draft = await Db.SupplierBillDrafts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == OrganisationId);
-        if (draft is null) return;
-        Db.SupplierBillDrafts.Remove(draft);
-        await Db.SaveChangesAsync();
-        if (editingDraftId == id)
+        try
         {
-            ResetBillForm();
-            showBillForm = false;
+            if (!await BillDrafts.DeleteAsync(userId, OrganisationId, id))
+            {
+                return;
+            }
+
+            if (editingDraftId == id)
+            {
+                ResetBillForm();
+                showBillForm = false;
+            }
+
+            await Reload();
+            statusClass = "alert-success";
+            status = "Draft deleted.";
         }
-        await Reload();
-        statusClass = "alert-success"; status = "Draft deleted.";
+        catch (Exception ex) when (
+            ex is InvalidOperationException or
+            UnauthorizedAccessException or
+            DbUpdateException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
     }
     private static decimal DraftTotal(SupplierBillDraft draft)
     {
@@ -1436,19 +1472,6 @@ private void ToggleRecurringBill()
                         draftId,
                         request,
                         attachment);
-                var purchaseOrder =
-                    await Db.PurchaseOrders
-                        .SingleOrDefaultAsync(
-                            x =>
-                                x.OrganisationId == OrganisationId &&
-                                x.SupplierBillDraftId == draftId);
-
-                if (purchaseOrder is not null)
-                {
-                    purchaseOrder.SupplierBillId = result.Id;
-                    purchaseOrder.SupplierBillDraftId = null;
-                    purchaseOrder.UpdatedAt = DateTimeOffset.UtcNow;
-                }
             }
             else
             {

@@ -74,23 +74,23 @@ public sealed class PurchasingService(
         x => x.Code,
         ct);
 
-if (!controls.TryGetValue(
-        "1150",
-        out var vatReceivable) ||
-    vatReceivable.Type != AccountType.Asset)
-{
-    throw new InvalidOperationException(
-        "VAT Receivable (1150) must be an active Asset account.");
-}
+        if (!controls.TryGetValue(
+                "1150",
+                out var vatReceivable) ||
+            vatReceivable.Type != AccountType.Asset)
+        {
+            throw new InvalidOperationException(
+                "VAT Receivable (1150) must be an active Asset account.");
+        }
 
-if (!controls.TryGetValue(
-        "2000",
-        out var accountsPayable) ||
-    accountsPayable.Type != AccountType.Liability)
-{
-    throw new InvalidOperationException(
-        "Accounts Payable (2000) must be an active Liability account.");
-}
+        if (!controls.TryGetValue(
+                "2000",
+                out var accountsPayable) ||
+            accountsPayable.Type != AccountType.Liability)
+        {
+            throw new InvalidOperationException(
+                "Accounts Payable (2000) must be an active Liability account.");
+        }
         var schedule = new FijiVatSchedule();
         var lines = request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.BillDate, x.VatTreatment); return new SupplierBillLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }; }).ToList();
         var trackedIds =
@@ -100,51 +100,52 @@ if (!controls.TryGetValue(
         .Distinct()
         .ToArray();
 
-var tracked =
-    await db.ProductItems
-        .Where(x =>
-            x.OrganisationId == request.OrganisationId &&
-            x.Kind == ProductKind.TrackedItem &&
-            trackedIds.Contains(x.Id))
-        .ToDictionaryAsync(
-            x => x.Id,
-            ct);
+        var tracked =
+            await db.ProductItems
+                .Where(x =>
+                    x.OrganisationId == request.OrganisationId &&
+                    x.Kind == ProductKind.TrackedItem &&
+                    trackedIds.Contains(x.Id))
+                .ToDictionaryAsync(
+                    x => x.Id,
+                    ct);
 
-foreach (var line in lines.Where(
-    x =>
-        x.ProductItemId != null &&
-        tracked.ContainsKey(x.ProductItemId.Value)))
-{
-    var item =
-        tracked[line.ProductItemId!.Value];
-
-    if (item.InventoryAccountId is null ||
-        line.ExpenseAccountId != item.InventoryAccountId)
-    {
-        throw new InvalidOperationException(
-            $"Set opening stock and inventory accounts for {item.Code} before purchasing it.");
-    }
-
-    var inventoryAccount =
-    await db.LedgerAccounts
-        .SingleOrDefaultAsync(
+        foreach (var line in lines.Where(
             x =>
-                x.Id == item.InventoryAccountId.Value &&
-                x.OrganisationId == request.OrganisationId,
-            ct);
+                x.ProductItemId != null &&
+                tracked.ContainsKey(x.ProductItemId.Value)))
+        {
+            var item =
+                tracked[line.ProductItemId!.Value];
 
-if (inventoryAccount is null ||
-    !inventoryAccount.IsActive ||
-    inventoryAccount.Type != AccountType.Asset)
-{
-    throw new InvalidOperationException(
-        $"Inventory account for {item.Code} ({inventoryAccount?.Code ?? item.InventoryAccountId.Value.ToString()}) must be an active Asset account.");
-}
-}
+            if (item.InventoryAccountId is null ||
+                line.ExpenseAccountId != item.InventoryAccountId)
+            {
+                throw new InvalidOperationException(
+                    $"Set opening stock and inventory accounts for {item.Code} before purchasing it.");
+            }
+
+            var inventoryAccount =
+            await db.LedgerAccounts
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == item.InventoryAccountId.Value &&
+                        x.OrganisationId == request.OrganisationId,
+                    ct);
+
+            if (inventoryAccount is null ||
+                !inventoryAccount.IsActive ||
+                inventoryAccount.Type != AccountType.Asset)
+            {
+                throw new InvalidOperationException(
+                    $"Inventory account for {item.Code} ({inventoryAccount?.Code ?? item.InventoryAccountId.Value.ToString()}) must be an active Asset account.");
+            }
+        }
 
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
 
         SupplierBillDraft? draft = null;
+        PurchaseOrder? sourcePurchaseOrder = null;
 
         if (draftId is Guid id)
         {
@@ -161,27 +162,34 @@ if (inventoryAccount is null ||
                 throw new InvalidOperationException(
                     "Supplier bill draft not found.");
             }
+
+            sourcePurchaseOrder =
+                await db.PurchaseOrders.SingleOrDefaultAsync(
+                    x =>
+                        x.OrganisationId == request.OrganisationId &&
+                        x.SupplierBillDraftId == id,
+                    ct);
         }
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
         var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var journalLines = lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, bill.BillNumber, x.Sum(y => y.NetAmount), 0)).ToList();
         if (bill.VatTotal > 0)
-{
-    journalLines.Add(
-        new(
-            vatReceivable.Id,
-            bill.BillNumber,
-            bill.VatTotal,
-            0));
-}
+        {
+            journalLines.Add(
+                new(
+                    vatReceivable.Id,
+                    bill.BillNumber,
+                    bill.VatTotal,
+                    0));
+        }
 
-journalLines.Add(
-    new(
-        accountsPayable.Id,
-        bill.BillNumber,
-        0,
-        bill.Total));
+        journalLines.Add(
+            new(
+                accountsPayable.Id,
+                bill.BillNumber,
+                0,
+                bill.Total));
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", journalLines, dimension.BranchId, dimension.DivisionId), ct); bill.PostedJournalId = journal.Id;
         foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; item.AverageCost = InventoryValuation.WeightedAverage(item.QuantityOnHand, item.AverageCost, line.Quantity, line.UnitPrice); item.QuantityOnHand += line.Quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.BillDate, Type = InventoryMovementType.AdjustmentIncrease, QuantityChange = line.Quantity, UnitCost = line.UnitPrice, ValueChange = InventoryValuation.MovementValue(line.Quantity, line.UnitPrice), Reference = bill.BillNumber, Note = "Automatic stock receipt from supplier bill", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         db.SupplierBills.Add(bill);
@@ -236,6 +244,25 @@ journalLines.Add(
 
         if (draft is not null)
         {
+            if (sourcePurchaseOrder is not null)
+            {
+                sourcePurchaseOrder.SupplierBillId = bill.Id;
+                sourcePurchaseOrder.SupplierBillDraftId = null;
+                sourcePurchaseOrder.UpdatedAt = DateTimeOffset.UtcNow;
+                db.AuditEvents.Add(Audit(
+                    request.OrganisationId,
+                    userId,
+                    "PurchaseOrderConvertedToSupplierBill",
+                    nameof(PurchaseOrder),
+                    sourcePurchaseOrder.Id,
+                    new
+                    {
+                        sourcePurchaseOrder.PurchaseOrderNumber,
+                        SupplierBillId = bill.Id,
+                        bill.BillNumber
+                    }));
+            }
+
             db.SupplierBillDrafts.Remove(draft);
         }
 
@@ -250,10 +277,10 @@ journalLines.Add(
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
         var bill = await db.SupplierBills.Include(x => x.Supplier).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
         if (bill.Status is BillStatus.Voided or BillStatus.Credited)
-{
-    throw new InvalidOperationException(
-        "Only outstanding posted supplier bills can be paid.");
-}
+        {
+            throw new InvalidOperationException(
+                "Only outstanding posted supplier bills can be paid.");
+        }
         var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited; if (request.Amount <= 0 || request.Amount > outstanding) throw new InvalidOperationException($"Payment must be between $0.01 and ${outstanding:N2}.");
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, ct) ?? throw new InvalidOperationException("Select an active bank account.");
         var payable =
@@ -264,12 +291,12 @@ journalLines.Add(
             x.IsActive,
         ct);
 
-if (payable is null ||
-    payable.Type != AccountType.Liability)
-{
-    throw new InvalidOperationException(
-        "Accounts Payable (2000) must be an active Liability account.");
-}
+        if (payable is null ||
+            payable.Type != AccountType.Liability)
+        {
+            throw new InvalidOperationException(
+                "Accounts Payable (2000) must be an active Liability account.");
+        }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)], bill.BranchId, bill.DivisionId), ct);
         var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
@@ -282,7 +309,8 @@ if (payable is null ||
                 bill.Id,
                 publishUpdate: false,
                 ct: ct);
-        } db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
+        }
+        db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(request.OrganisationId); return payment;
     }
 
@@ -300,12 +328,12 @@ if (payable is null ||
             x.OrganisationId == organisationId,
         ct);
 
-var hasCreditHistory =
-    await db.SupplierCreditNotes.AnyAsync(
-        x =>
-            x.SupplierBillId == bill.Id &&
-            x.OrganisationId == organisationId,
-        ct);
+        var hasCreditHistory =
+            await db.SupplierCreditNotes.AnyAsync(
+                x =>
+                    x.SupplierBillId == bill.Id &&
+                    x.OrganisationId == organisationId,
+                ct);
         if (bill.AmountPaid > 0 ||
     bill.AmountCredited > 0 ||
     hasPaymentHistory ||
@@ -313,10 +341,10 @@ var hasCreditHistory =
     bill.Status is BillStatus.PartPaid or
         BillStatus.Paid or
         BillStatus.Credited)
-{
-    throw new InvalidOperationException(
-        "A paid or credited bill cannot be voided. Reverse payments first; supplier credits remain permanent audit records.");
-}
+        {
+            throw new InvalidOperationException(
+                "A paid or credited bill cannot be voided. Reverse payments first; supplier credits remain permanent audit records.");
+        }
         var receipts = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == bill.BillNumber && x.QuantityChange > 0).ToListAsync(ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; if (item.QuantityOnHand < receipt.QuantityChange) throw new InvalidOperationException($"Cannot void this bill because {item.Code} no longer has all received units on hand."); var remainingValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost) - receipt.ValueChange; if (remainingValue < 0) throw new InvalidOperationException($"Cannot void this bill because it would make the value of {item.Code} negative."); }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
@@ -325,16 +353,16 @@ var hasCreditHistory =
         var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{bill.BillNumber}", $"Void supplier bill {bill.SupplierReference}: {reason.Trim()}", reversalLines), ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; var oldValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost); item.QuantityOnHand -= receipt.QuantityChange; item.AverageCost = item.QuantityOnHand == 0 ? 0 : decimal.Round((oldValue - receipt.ValueChange) / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero); db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -receipt.QuantityChange, UnitCost = receipt.UnitCost, ValueChange = -receipt.ValueChange, Reference = $"VOID-{bill.BillNumber}", Note = $"Stock removed by supplier bill void: {reason.Trim()}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         var billVoid = new SupplierBillVoid
-{
-    OrganisationId = organisationId,
-    SupplierBillId = bill.Id,
-    VoidDate = voidDate,
-    Reason = reason.Trim(),
-    PostedJournalId = journal.Id,
-    CreatedByUserId = userId
-};
+        {
+            OrganisationId = organisationId,
+            SupplierBillId = bill.Id,
+            VoidDate = voidDate,
+            Reason = reason.Trim(),
+            PostedJournalId = journal.Id,
+            CreatedByUserId = userId
+        };
 
-db.SupplierBillVoids.Add(billVoid);
+        db.SupplierBillVoids.Add(billVoid);
         bill.Status = BillStatus.Voided; db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillVoided", nameof(SupplierBill), bill.Id, new { bill.BillNumber, reason, ReversalJournalId = journal.Id, StockReturns = receipts.Count })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return bill;
     }
 
@@ -352,11 +380,11 @@ db.SupplierBillVoids.Add(billVoid);
         payment.PaymentDate,
         ct);
 
-if (completedReconciliationExists)
-{
-    throw new InvalidOperationException(
-        "A supplier payment inside a completed bank reconciliation period cannot be reversed.");
-}
+        if (completedReconciliationExists)
+        {
+            throw new InvalidOperationException(
+                "A supplier payment inside a completed bank reconciliation period cannot be reversed.");
+        }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == payment.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reference = $"REV-{payment.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse payment {payment.Reference}", x.Credit, x.Debit, x.BranchId, x.DivisionId)).ToList();

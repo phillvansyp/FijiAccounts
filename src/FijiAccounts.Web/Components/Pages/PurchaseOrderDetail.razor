@@ -10,6 +10,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchaseOrderService PurchaseOrderService
+@inject SupplierBillDraftService BillDraftService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -372,43 +373,9 @@ private async Task CancelPurchaseOrder()
 
 private async Task CreateSupplierBillDraft()
 {
-    if (order is null || access is null || order.Lines.Count == 0)
+    if (order is null || access is null)
     {
         return;
-    }
-
-    if (order.Status != PurchaseOrderStatus.Received)
-    {
-        throw new InvalidOperationException(
-            "Only fully received purchase orders can be converted to a supplier bill draft.");
-    }
-
-    var trackedOrder =
-        await Db.PurchaseOrders
-            .Include(x => x.Lines)
-            .SingleAsync(
-                x =>
-                    x.Id == PurchaseOrderId &&
-                    x.OrganisationId == OrganisationId);
-
-    if (trackedOrder.SupplierBillDraftId is Guid existingDraftId)
-    {
-        var existingDraftExists =
-            await Db.SupplierBillDrafts
-                .AnyAsync(
-                    x =>
-                        x.Id == existingDraftId &&
-                        x.OrganisationId == OrganisationId);
-
-        if (existingDraftExists)
-        {
-            Navigation.NavigateTo(
-                $"/o/{OrganisationId}/purchases?draft={existingDraftId}#draft-editor");
-
-            return;
-        }
-
-        trackedOrder.SupplierBillDraftId = null;
     }
 
     var state =
@@ -418,53 +385,11 @@ private async Task CreateSupplierBillDraft()
     var userId =
         UserManager.GetUserId(state.User)!;
 
-    var firstLine =
-        trackedOrder.Lines.First();
-
-    var additionalLines =
-        trackedOrder.Lines
-            .Skip(1)
-            .Select(x => new
-            {
-                x.Description,
-                x.Quantity,
-                x.UnitPrice,
-                x.VatTreatment,
-                x.ExpenseAccountId,
-                x.ProductItemId
-            })
-            .ToList();
-
     var draft =
-        new SupplierBillDraft
-        {
-            OrganisationId = OrganisationId,
-            SupplierId = trackedOrder.SupplierId,
-            SupplierReference =
-                string.IsNullOrWhiteSpace(trackedOrder.SupplierReference)
-                    ? trackedOrder.PurchaseOrderNumber
-                    : trackedOrder.SupplierReference,
-            BillDate = trackedOrder.OrderDate,
-            DueDate = trackedOrder.ExpectedDate ?? trackedOrder.OrderDate,
-            Description = firstLine.Description,
-            Quantity = firstLine.Quantity,
-            UnitPrice = firstLine.UnitPrice,
-            VatTreatment = firstLine.VatTreatment,
-            ExpenseAccountId = firstLine.ExpenseAccountId,
-            ProductItemId = firstLine.ProductItemId,
-            AdditionalLinesJson =
-                System.Text.Json.JsonSerializer.Serialize(
-                    additionalLines),
-            CreatedByUserId = userId,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-
-    Db.SupplierBillDrafts.Add(draft);
-
-    trackedOrder.SupplierBillDraftId = draft.Id;
-    trackedOrder.UpdatedAt = DateTimeOffset.UtcNow;
-
-    await Db.SaveChangesAsync();
+        await BillDraftService.CreateFromPurchaseOrderAsync(
+            userId,
+            OrganisationId,
+            PurchaseOrderId);
 
     Navigation.NavigateTo(
         $"/o/{OrganisationId}/purchases?draft={draft.Id}#draft-editor");
