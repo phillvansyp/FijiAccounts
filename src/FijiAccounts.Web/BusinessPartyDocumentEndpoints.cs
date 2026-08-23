@@ -1,6 +1,8 @@
 ﻿using System.IO.Compression;
 using FijiAccounts.Web.Data;
+using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 public static class BusinessPartyDocumentEndpoints
 {
@@ -14,8 +16,17 @@ public static class BusinessPartyDocumentEndpoints
                 Guid partyId,
                 Guid documentId,
                 ApplicationDbContext db,
+                TenantAccessService access,
+                ClaimsPrincipal principal,
                 CancellationToken cancellationToken) =>
             {
+                var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (userId is null ||
+                    await access.FindAsync(userId, organisationId) is null)
+                {
+                    return Results.NotFound();
+                }
+
                 var document =
                     await db.BusinessPartyDocuments
                         .AsNoTracking()

@@ -169,6 +169,11 @@ else
         userId =
             UserManager.GetUserId(state.User)!;
 
+        if (await TenantAccess.FindAsync(userId, OrganisationId) is null)
+        {
+            return;
+        }
+
         party =
             await Db.BusinessParties
                 .SingleOrDefaultAsync(
@@ -180,6 +185,7 @@ else
         {
             documents =
                 await Documents.GetForPartyAsync(
+                    userId,
                     OrganisationId,
                     PartyId);
         }
@@ -301,6 +307,7 @@ else
 
         documents =
             await Documents.GetForPartyAsync(
+                userId,
                 OrganisationId,
                 PartyId);
 
@@ -376,13 +383,20 @@ else
     }
     private async Task DeleteDocument(Guid id)
     {
-        await Documents.DeleteAsync(
+        var deleted = await Documents.DeleteAsync(
             userId,
             OrganisationId,
             id);
 
+        if (!deleted)
+        {
+            message = "Document not found.";
+            return;
+        }
+
         documents =
             await Documents.GetForPartyAsync(
+                userId,
                 OrganisationId,
                 PartyId);
 

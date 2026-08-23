@@ -1,4 +1,4 @@
-using System.IO.Compression;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Web.Data;
 
@@ -21,6 +21,19 @@ public sealed class BusinessPartyDocumentService(
     ApplicationDbContext db,
     TenantAccessService access)
 {
+    public const int MaximumDocumentBytes = 10 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedContentTypes =
+    [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "image/jpeg",
+        "image/png"
+    ];
+
     public async Task<BusinessPartyDocument> AddAsync(
         string userId,
         BusinessPartyDocumentUploadRequest request,
@@ -34,6 +47,24 @@ public sealed class BusinessPartyDocumentService(
         if (!hasAccess)
         {
             throw new UnauthorizedAccessException();
+        }
+
+        var name = request.Name.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        var fileName = request.FileName.Trim();
+        var contentType = request.ContentType.Trim().ToLowerInvariant();
+        var storedSize = request.Content.LongLength;
+        if (!Enum.IsDefined(request.Type) || string.IsNullOrWhiteSpace(name) || name.Length > 200 ||
+            description?.Length > 500 || string.IsNullOrWhiteSpace(fileName) || fileName.Length > 255 ||
+            Path.GetFileName(fileName) != fileName || string.IsNullOrWhiteSpace(contentType) ||
+            contentType.Length > 100 || !AllowedContentTypes.Contains(contentType) ||
+            request.OriginalSize <= 0 || request.OriginalSize > MaximumDocumentBytes ||
+            storedSize <= 0 || storedSize > MaximumDocumentBytes ||
+            (!request.IsCompressed && request.OriginalSize != storedSize) ||
+            (request.IsCompressed && storedSize >= request.OriginalSize))
+        {
+            throw new InvalidOperationException(
+                "The document must have valid metadata and non-empty supported content no larger than 10 MB.");
         }
 
         var party =
@@ -56,10 +87,10 @@ public sealed class BusinessPartyDocumentService(
                 OrganisationId = request.OrganisationId,
                 BusinessPartyId = request.BusinessPartyId,
                 Type = request.Type,
-                Name = request.Name,
-                Description = request.Description,
-                FileName = request.FileName,
-                ContentType = request.ContentType,
+                Name = name,
+                Description = description,
+                FileName = fileName,
+                ContentType = contentType,
                 Content = request.Content,
                 OriginalSize = request.OriginalSize,
                 StoredSize = request.Content.LongLength,
@@ -69,32 +100,15 @@ public sealed class BusinessPartyDocumentService(
             };
 
         db.BusinessPartyDocuments.Add(document);
+        db.AuditEvents.Add(Audit(request.OrganisationId, userId, "BusinessPartyDocumentAdded", document, party.Name));
 
         await db.SaveChangesAsync(ct);
-        var saved =
-            await db.BusinessPartyDocuments
-                .AsNoTracking()
-                .Where(
-                    x => x.Id == document.Id)
-                .Select(
-                    x => new
-                    {
-                        x.Id,
-                        x.BusinessPartyId,
-                        x.OrganisationId,
-                        x.Name
-                    })
-                .SingleOrDefaultAsync(ct);
-
-        Console.WriteLine(
-            $"[DOCUMENT DEBUG] Saved: {saved?.Name ?? "NOT FOUND"} | Party: {saved?.BusinessPartyId} | Org: {saved?.OrganisationId}");
-
 
         return document;
     }
 
 
-    public async Task DeleteAsync(
+    public async Task<bool> DeleteAsync(
         string userId,
         Guid organisationId,
         Guid documentId,
@@ -112,6 +126,7 @@ public sealed class BusinessPartyDocumentService(
 
         var document =
             await db.BusinessPartyDocuments
+                .Include(x => x.BusinessParty)
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == documentId &&
@@ -120,20 +135,28 @@ public sealed class BusinessPartyDocumentService(
 
         if (document is null)
         {
-            return;
+            return false;
         }
 
         db.BusinessPartyDocuments.Remove(document);
+        db.AuditEvents.Add(Audit(organisationId, userId, "BusinessPartyDocumentDeleted", document, document.BusinessParty.Name));
 
         await db.SaveChangesAsync(ct);
+        return true;
     }
 
 
     public async Task<List<BusinessPartyDocument>> GetForPartyAsync(
+    string userId,
     Guid organisationId,
     Guid businessPartyId,
     CancellationToken ct = default)
 {
+    if (await access.FindAsync(userId, organisationId) is null)
+    {
+        throw new UnauthorizedAccessException();
+    }
+
     var documents =
         await db.BusinessPartyDocuments
             .AsNoTracking()
@@ -148,4 +171,28 @@ public sealed class BusinessPartyDocumentService(
             x => x.UploadedAtUtc)
         .ToList();
 }
+
+    private static AuditEvent Audit(Guid organisationId, string userId, string eventType,
+        BusinessPartyDocument document, string partyName) => new()
+    {
+        OrganisationId = organisationId,
+        UserId = userId,
+        EventType = eventType,
+        EntityType = nameof(BusinessPartyDocument),
+        EntityId = document.Id.ToString(),
+        JsonData = JsonSerializer.Serialize(new
+        {
+            document.BusinessPartyId,
+            BusinessPartyName = partyName,
+            Type = document.Type.ToString(),
+            document.Name,
+            document.Description,
+            document.FileName,
+            document.ContentType,
+            document.OriginalSize,
+            document.StoredSize,
+            document.IsCompressed,
+            document.ExpiryDate
+        })
+    };
 }
