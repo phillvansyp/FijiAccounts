@@ -11,6 +11,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
+@inject SupplierBillAttachmentService BillAttachments
 @inject SupplierCreditNoteService SupplierCredits
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -1206,42 +1207,17 @@ creditReversals =
 
                 var content = memory.ToArray();
 
-                var attachment = new SupplierBillAttachment
-                {
-                    OrganisationId = OrganisationId,
-                    SupplierBillId = BillId,
-                    FileName = Path.GetFileName(file.Name),
-                    ContentType = contentType,
-                    OriginalSize = file.Size,
-                    StoredSize = content.LongLength,
-                    IsCompressed = false,
-                    Content = content,
-                    UploadedAt = DateTimeOffset.UtcNow,
-                    UploadedByUserId = userId
-                };
-
-                Db.SupplierBillAttachments.Add(attachment);
-
-                Db.AuditEvents.Add(
-                    new AuditEvent
-                    {
-                        OrganisationId = OrganisationId,
-                        UserId = userId,
-                        EventType = "SupplierBillDocumentAdded",
-                        EntityType = nameof(SupplierBill),
-                        EntityId = BillId.ToString(),
-                        JsonData = System.Text.Json.JsonSerializer.Serialize(
-                            new
-                            {
-                                AttachmentId = attachment.Id,
-                                attachment.FileName,
-                                attachment.ContentType,
-                                attachment.OriginalSize
-                            })
-                    });
+                await BillAttachments.AddAsync(
+                    userId,
+                    OrganisationId,
+                    BillId,
+                    new SupplierBillAttachmentRequest(
+                        Path.GetFileName(file.Name),
+                        contentType,
+                        file.Size,
+                        content,
+                        false));
             }
-
-            await Db.SaveChangesAsync();
 
             showAttachmentMenu = false;
             statusClass = "alert-success";
@@ -1269,39 +1245,20 @@ creditReversals =
 
         try
         {
-            var attachment = await Db.SupplierBillAttachments
-                .SingleOrDefaultAsync(
-                    x => x.Id == attachmentId &&
-                         x.SupplierBillId == BillId &&
-                         x.OrganisationId == OrganisationId);
-
-            if (attachment is null)
+            var attachment = bill?.Attachments.SingleOrDefault(
+                x => x.Id == attachmentId);
+            if (attachment is null ||
+                !await BillAttachments.DeleteAsync(
+                    userId,
+                    OrganisationId,
+                    BillId,
+                    attachmentId))
             {
                 throw new InvalidOperationException(
                     "The attachment could not be found.");
             }
 
             var fileName = attachment.FileName;
-
-            Db.SupplierBillAttachments.Remove(attachment);
-
-            Db.AuditEvents.Add(
-                new AuditEvent
-                {
-                    OrganisationId = OrganisationId,
-                    UserId = userId,
-                    EventType = "SupplierBillDocumentRemoved",
-                    EntityType = nameof(SupplierBill),
-                    EntityId = BillId.ToString(),
-                    JsonData = System.Text.Json.JsonSerializer.Serialize(
-                        new
-                        {
-                            AttachmentId = attachment.Id,
-                            attachment.FileName
-                        })
-                });
-
-            await Db.SaveChangesAsync();
 
             statusClass = "alert-success";
             status = $"{fileName} removed.";

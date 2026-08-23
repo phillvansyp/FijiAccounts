@@ -1453,19 +1453,18 @@ private void ToggleRecurringBill()
                     DivisionId: bill.DivisionId);
 
             SupplierBill result;
+            SupplierBillAttachmentRequest? attachment =
+                pendingAttachment is null
+                    ? null
+                    : new SupplierBillAttachmentRequest(
+                        pendingAttachment.FileName,
+                        pendingAttachment.ContentType,
+                        pendingAttachment.OriginalSize,
+                        pendingAttachment.Content,
+                        pendingAttachment.IsCompressed);
 
             if (editingDraftId is Guid draftId)
             {
-                SupplierBillAttachmentRequest? attachment =
-                    pendingAttachment is null
-                        ? null
-                        : new SupplierBillAttachmentRequest(
-                            pendingAttachment.FileName,
-                            pendingAttachment.ContentType,
-                            pendingAttachment.OriginalSize,
-                            pendingAttachment.Content,
-                            pendingAttachment.IsCompressed);
-
                 result =
                     await Purchasing.PostDraftBillAsync(
                         userId,
@@ -1475,50 +1474,14 @@ private void ToggleRecurringBill()
             }
             else
             {
-                result =
-                    await Purchasing.PostBillAsync(
-                        userId,
-                        request);
-
-                if (pendingAttachment is not null)
-                {
-                    Db.SupplierBillAttachments.Add(
-                        new SupplierBillAttachment
-                        {
-                            OrganisationId =
-                                OrganisationId,
-
-                            SupplierBillId =
-                                result.Id,
-
-                            FileName =
-                                pendingAttachment.FileName,
-
-                            ContentType =
-                                pendingAttachment.ContentType,
-
-                            OriginalSize =
-                                pendingAttachment.OriginalSize,
-
-                            StoredSize =
-                                pendingAttachment.Content.LongLength,
-
-                            IsCompressed =
-                                pendingAttachment.IsCompressed,
-
-                            Content =
-                                pendingAttachment.Content,
-
-                            UploadedByUserId =
-                                userId
-                        });
-                }
+                result = attachment is null
+                    ? await Purchasing.PostBillAsync(userId, request)
+                    : await Purchasing.PostBillAsync(userId, request, attachment);
             }
 
             var hadAttachment =
                 pendingAttachment is not null;
 
-            await Db.SaveChangesAsync();
             await BusinessParties.LearnSupplierPurchaseDefaultsAsync(
                 userId,
                 new LearnSupplierPurchaseDefaultsRequest(

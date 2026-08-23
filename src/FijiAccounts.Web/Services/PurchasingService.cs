@@ -31,6 +31,18 @@ public sealed class PurchasingService(
             attachment: null,
             ct);
 
+    public Task<SupplierBill> PostBillAsync(
+        string userId,
+        SupplierBillRequest request,
+        SupplierBillAttachmentRequest attachment,
+        CancellationToken ct = default) =>
+        PostBillCoreAsync(
+            userId,
+            request,
+            draftId: null,
+            attachment,
+            ct);
+
     public Task<SupplierBill> PostDraftBillAsync(
         string userId,
         Guid draftId,
@@ -52,6 +64,13 @@ public sealed class PurchasingService(
         CancellationToken ct)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot post bills for this organisation.");
+        var validatedAttachment = attachment is null
+            ? null
+            : SupplierBillAttachmentService.CreateValidated(
+                request.OrganisationId,
+                Guid.Empty,
+                userId,
+                attachment);
         var dimension = await structures.ResolveActiveDimensionAsync(
             request.OrganisationId,
             request.BranchId,
@@ -208,38 +227,15 @@ public sealed class PurchasingService(
                     bill.VatTotal
                 }));
 
-        if (attachment is not null)
+        if (validatedAttachment is not null)
         {
-            db.SupplierBillAttachments.Add(
-                new SupplierBillAttachment
-                {
-                    OrganisationId =
-                        request.OrganisationId,
-
-                    SupplierBillId =
-                        bill.Id,
-
-                    FileName =
-                        attachment.FileName,
-
-                    ContentType =
-                        attachment.ContentType,
-
-                    OriginalSize =
-                        attachment.OriginalSize,
-
-                    StoredSize =
-                        attachment.Content.LongLength,
-
-                    IsCompressed =
-                        attachment.IsCompressed,
-
-                    Content =
-                        attachment.Content,
-
-                    UploadedByUserId =
-                        userId
-                });
+            validatedAttachment.SupplierBillId = bill.Id;
+            db.SupplierBillAttachments.Add(validatedAttachment);
+            db.AuditEvents.Add(SupplierBillAttachmentService.AddedAudit(
+                request.OrganisationId,
+                userId,
+                bill,
+                validatedAttachment));
         }
 
         if (draft is not null)

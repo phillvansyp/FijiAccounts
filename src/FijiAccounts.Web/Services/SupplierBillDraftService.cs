@@ -30,8 +30,6 @@ public sealed class SupplierBillDraftService(
     ApplicationDbContext db,
     TenantAccessService access)
 {
-    private const int MaximumAttachmentBytes = 10 * 1024 * 1024;
-
     public async Task<SupplierBillDraft> SaveAsync(
         string userId,
         SaveSupplierBillDraftRequest request,
@@ -344,17 +342,13 @@ public sealed class SupplierBillDraftService(
                 "Every selected product must be active and belong to this organisation.");
         }
 
-        if (request.Attachment is { } attachment &&
-            (string.IsNullOrWhiteSpace(attachment.FileName) ||
-             attachment.FileName.Trim().Length > 255 ||
-             string.IsNullOrWhiteSpace(attachment.ContentType) ||
-             attachment.ContentType.Trim().Length > 100 ||
-             attachment.OriginalSize < 0 ||
-             attachment.OriginalSize > MaximumAttachmentBytes ||
-             attachment.Content.Length > MaximumAttachmentBytes))
+        if (request.Attachment is { } attachment)
         {
-            throw new InvalidOperationException(
-                "The draft attachment must be a valid file no larger than 10 MB.");
+            _ = SupplierBillAttachmentService.CreateValidated(
+                request.OrganisationId,
+                Guid.Empty,
+                string.Empty,
+                attachment);
         }
     }
 

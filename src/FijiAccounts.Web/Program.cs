@@ -84,6 +84,7 @@ builder.Services.AddScoped<CashRunwayService>();
 builder.Services.AddScoped<VatWorkpaperService>();
 builder.Services.AddScoped<PurchasingService>();
 builder.Services.AddScoped<SupplierBillDraftService>();
+builder.Services.AddScoped<SupplierBillAttachmentService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<RecurringSupplierBillService>();
 builder.Services.AddScoped<SupplierCreditNoteService>();
