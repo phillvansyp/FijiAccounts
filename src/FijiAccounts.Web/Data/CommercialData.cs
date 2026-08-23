@@ -18,6 +18,9 @@ public sealed class BusinessParty
     [MaxLength(500)] public string? Address { get; set; }
     public PartyType Type { get; set; }
     public List<BusinessPartyDocument> Documents { get; set; } = [];
+    public Guid? DefaultSalesAccountId { get; set; }
+    public LedgerAccount? DefaultSalesAccount { get; set; }
+    public VatTreatment? DefaultSalesVatTreatment { get; set; }
     public Guid? DefaultPurchaseAccountId { get; set; }
     public LedgerAccount? DefaultPurchaseAccount { get; set; }
     public VatTreatment? DefaultPurchaseVatTreatment { get; set; }

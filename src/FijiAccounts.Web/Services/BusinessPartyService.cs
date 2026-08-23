@@ -11,6 +11,8 @@ public sealed record CreateBusinessPartyRequest(
     string? Email,
     string? Tin,
     PartyType Type,
+    Guid? DefaultSalesAccountId,
+    VatTreatment? DefaultSalesVatTreatment,
     Guid? DefaultPurchaseAccountId,
     VatTreatment? DefaultPurchaseVatTreatment,
     PaymentTermType DefaultSalesInvoicePaymentTermType,
@@ -21,6 +23,8 @@ public sealed record CreateBusinessPartyRequest(
 public sealed record UpdateCustomerDefaultsRequest(
     Guid OrganisationId,
     Guid BusinessPartyId,
+    Guid? SalesAccountId,
+    VatTreatment? VatTreatment,
     PaymentTermType PaymentTermType,
     int DueDays);
 
@@ -52,11 +56,23 @@ public sealed class BusinessPartyService(
         ValidatePaymentTerm(
             request.DefaultSupplierBillPaymentTermType,
             request.DefaultSupplierBillDueDays);
-        await ValidatePurchaseDefaultsAsync(
-            request.OrganisationId,
-            request.DefaultPurchaseAccountId,
-            request.DefaultPurchaseVatTreatment,
-            cancellationToken);
+        if ((request.Type & PartyType.Customer) != 0)
+        {
+            await ValidateSalesDefaultsAsync(
+                request.OrganisationId,
+                request.DefaultSalesAccountId,
+                request.DefaultSalesVatTreatment,
+                cancellationToken);
+        }
+
+        if ((request.Type & PartyType.Supplier) != 0)
+        {
+            await ValidatePurchaseDefaultsAsync(
+                request.OrganisationId,
+                request.DefaultPurchaseAccountId,
+                request.DefaultPurchaseVatTreatment,
+                cancellationToken);
+        }
 
         var email = OptionalText(request.Email, 320, "email address");
         if (email is not null && !new EmailAddressAttribute().IsValid(email))
@@ -76,9 +92,19 @@ public sealed class BusinessPartyService(
                     32,
                     "tax identification number"),
                 Type = request.Type,
-                DefaultPurchaseAccountId = request.DefaultPurchaseAccountId,
+                DefaultSalesAccountId = (request.Type & PartyType.Customer) != 0
+                    ? request.DefaultSalesAccountId
+                    : null,
+                DefaultSalesVatTreatment = (request.Type & PartyType.Customer) != 0
+                    ? request.DefaultSalesVatTreatment
+                    : null,
+                DefaultPurchaseAccountId = (request.Type & PartyType.Supplier) != 0
+                    ? request.DefaultPurchaseAccountId
+                    : null,
                 DefaultPurchaseVatTreatment =
-                    request.DefaultPurchaseVatTreatment,
+                    (request.Type & PartyType.Supplier) != 0
+                        ? request.DefaultPurchaseVatTreatment
+                        : null,
                 DefaultSalesInvoicePaymentTermType =
                     request.DefaultSalesInvoicePaymentTermType,
                 DefaultSalesInvoiceDueDays =
@@ -105,6 +131,11 @@ public sealed class BusinessPartyService(
             request.OrganisationId,
             cancellationToken);
         ValidatePaymentTerm(request.PaymentTermType, request.DueDays);
+        await ValidateSalesDefaultsAsync(
+            request.OrganisationId,
+            request.SalesAccountId,
+            request.VatTreatment,
+            cancellationToken);
 
         var party = await GetPartyAsync(
             request.OrganisationId,
@@ -113,6 +144,8 @@ public sealed class BusinessPartyService(
             cancellationToken);
         party.DefaultSalesInvoicePaymentTermType = request.PaymentTermType;
         party.DefaultSalesInvoiceDueDays = request.DueDays;
+        party.DefaultSalesAccountId = request.SalesAccountId;
+        party.DefaultSalesVatTreatment = request.VatTreatment;
 
         await db.SaveChangesAsync(cancellationToken);
     }
@@ -204,6 +237,39 @@ public sealed class BusinessPartyService(
         {
             throw new InvalidOperationException(
                 "Select an active purchase account from this organisation.");
+        }
+    }
+
+    private async Task ValidateSalesDefaultsAsync(
+        Guid organisationId,
+        Guid? salesAccountId,
+        VatTreatment? vatTreatment,
+        CancellationToken cancellationToken)
+    {
+        if (vatTreatment is not null && !Enum.IsDefined(vatTreatment.Value))
+        {
+            throw new InvalidOperationException(
+                "Select a valid default VAT treatment.");
+        }
+
+        if (salesAccountId is not Guid accountId)
+        {
+            return;
+        }
+
+        var validAccount = await db.LedgerAccounts
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.Id == accountId &&
+                x.OrganisationId == organisationId &&
+                x.IsActive &&
+                x.Type == FijiAccounts.Domain.Accounting.AccountType.Revenue,
+                cancellationToken);
+
+        if (!validAccount)
+        {
+            throw new InvalidOperationException(
+                "Select an active sales account from this organisation.");
         }
     }
 

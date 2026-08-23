@@ -194,6 +194,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<AuditEvent>().HasIndex(x => new { x.OrganisationId, x.OccurredAt });
         builder.Entity<BusinessParty>().HasIndex(x => new { x.OrganisationId, x.Name });
+        builder.Entity<BusinessParty>().HasOne(x => x.DefaultSalesAccount).WithMany().HasForeignKey(x => x.DefaultSalesAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultPurchaseAccount).WithMany().HasForeignKey(x => x.DefaultPurchaseAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.InvoiceNumber }).IsUnique();

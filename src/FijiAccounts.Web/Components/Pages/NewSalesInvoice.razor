@@ -410,11 +410,11 @@ else
         var customer = customers.FirstOrDefault(x => x.Id == customerId);
         if (customer is null) return null;
 
-        Guid? accountId = customer.DefaultPurchaseAccountId is Guid defaultAccountId && revenueAccounts.Any(x => x.Id == defaultAccountId)
+        Guid? accountId = customer.DefaultSalesAccountId is Guid defaultAccountId && revenueAccounts.Any(x => x.Id == defaultAccountId)
             ? defaultAccountId
             : null;
-        var vatTreatment = customer.DefaultPurchaseVatTreatment;
-        var source = customer.DefaultPurchaseAccountId is not null || customer.DefaultPurchaseVatTreatment is not null
+        var vatTreatment = customer.DefaultSalesVatTreatment;
+        var source = customer.DefaultSalesAccountId is not null || customer.DefaultSalesVatTreatment is not null
             ? "customer settings"
             : null;
 
@@ -448,9 +448,9 @@ else
         var customer = await Db.BusinessParties.SingleOrDefaultAsync(x => x.Id == customerId && x.OrganisationId == OrganisationId);
         if (customer is null || model.Lines.Count == 0) return;
         var firstLine = model.Lines[0];
-        if (customer.DefaultPurchaseAccountId is null && firstLine.RevenueAccountId != Guid.Empty) customer.DefaultPurchaseAccountId = firstLine.RevenueAccountId;
-        if (customer.DefaultPurchaseVatTreatment is null) customer.DefaultPurchaseVatTreatment = firstLine.VatTreatment;
-        if (customer.DefaultPurchaseAccountId is not null || customer.DefaultPurchaseVatTreatment is not null) await Db.SaveChangesAsync();
+        if (customer.DefaultSalesAccountId is null && firstLine.RevenueAccountId != Guid.Empty) customer.DefaultSalesAccountId = firstLine.RevenueAccountId;
+        if (customer.DefaultSalesVatTreatment is null) customer.DefaultSalesVatTreatment = firstLine.VatTreatment;
+        if (customer.DefaultSalesAccountId is not null || customer.DefaultSalesVatTreatment is not null) await Db.SaveChangesAsync();
     }
     private sealed class RecurringInvoiceEditorModel
 {
