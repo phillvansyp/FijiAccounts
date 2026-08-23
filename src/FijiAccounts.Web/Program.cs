@@ -93,6 +93,7 @@ builder.Services.AddScoped<SupplierBillDraftService>();
 builder.Services.AddScoped<SupplierBillAttachmentService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<PurchaseRequisitionService>();
+builder.Services.AddScoped<PurchaseApprovalPolicyService>();
 builder.Services.AddScoped<RecurringSupplierBillService>();
 builder.Services.AddScoped<SupplierCreditNoteService>();
 builder.Services.AddScoped<BankReconciliationService>();

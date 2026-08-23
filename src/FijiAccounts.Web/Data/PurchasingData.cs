@@ -315,6 +315,30 @@ public enum PurchaseRequisitionStatus
     Converted
 }
 
+public enum PurchaseApprovalRequirement
+{
+    OwnerOrAdministrator,
+    OwnerOnly
+}
+
+public sealed class PurchaseApprovalPolicy
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
+    [MaxLength(120)] public required string Name { get; set; }
+    public decimal MinimumAmount { get; set; }
+    public decimal? MaximumAmount { get; set; }
+    public PurchaseApprovalRequirement Requirement { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+}
+
 public sealed class PurchaseRequisition
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -332,6 +356,9 @@ public sealed class PurchaseRequisition
     public DateOnly? RequiredDate { get; set; }
     [MaxLength(500)] public required string Purpose { get; set; }
     public PurchaseRequisitionStatus Status { get; set; } = PurchaseRequisitionStatus.Draft;
+    public Guid? PurchaseApprovalPolicyId { get; set; }
+    public PurchaseApprovalPolicy? PurchaseApprovalPolicy { get; set; }
+    public PurchaseApprovalRequirement RequiredApproval { get; set; } = PurchaseApprovalRequirement.OwnerOrAdministrator;
     public decimal Total { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;

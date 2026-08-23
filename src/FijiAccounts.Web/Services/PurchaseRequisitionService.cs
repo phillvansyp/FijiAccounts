@@ -26,7 +26,8 @@ public sealed record PurchaseRequisitionLineRequest(
 public sealed class PurchaseRequisitionService(
     ApplicationDbContext db,
     TenantAccessService access,
-    PurchaseOrderService purchaseOrders)
+    PurchaseOrderService purchaseOrders,
+    PurchaseApprovalPolicyService approvalPolicies)
 {
     public async Task<List<PurchaseRequisition>> ListAsync(
         string userId,
@@ -118,6 +119,14 @@ public sealed class PurchaseRequisitionService(
         }
 
         var old = Evidence(requisition);
+        var policy = await approvalPolicies.ResolveAsync(
+            organisationId,
+            requisition.BranchId,
+            requisition.DivisionId,
+            requisition.Total,
+            ct);
+        requisition.PurchaseApprovalPolicyId = policy?.Id;
+        requisition.RequiredApproval = policy?.Requirement ?? PurchaseApprovalRequirement.OwnerOrAdministrator;
         requisition.Status = PurchaseRequisitionStatus.Submitted;
         requisition.SubmittedAt = requisition.UpdatedAt = DateTimeOffset.UtcNow;
         db.AuditEvents.Add(Audit(requisition, userId, "PurchaseRequisitionSubmitted", new { Old = old, New = Evidence(requisition) }));
@@ -126,11 +135,14 @@ public sealed class PurchaseRequisitionService(
 
     public async Task ApproveAsync(string userId, Guid organisationId, Guid requisitionId, CancellationToken ct = default)
     {
-        if (!await access.CanManageTeamAsync(userId, organisationId))
-        {
-            throw new UnauthorizedAccessException("Only an owner or administrator can approve requisitions.");
-        }
         var requisition = await LoadAsync(organisationId, requisitionId, ct);
+        if (!await approvalPolicies.CanApproveAsync(userId, organisationId, requisition.RequiredApproval, ct))
+        {
+            throw new UnauthorizedAccessException(
+                requisition.RequiredApproval == PurchaseApprovalRequirement.OwnerOnly
+                    ? "This requisition requires approval by an organisation owner."
+                    : "Only an owner or administrator can approve requisitions.");
+        }
         if (requisition.CreatedByUserId == userId)
         {
             throw new InvalidOperationException("A requisition creator cannot approve their own request.");
@@ -155,15 +167,18 @@ public sealed class PurchaseRequisitionService(
         string reason,
         CancellationToken ct = default)
     {
-        if (!await access.CanManageTeamAsync(userId, organisationId))
+        var requisition = await LoadAsync(organisationId, requisitionId, ct);
+        if (!await approvalPolicies.CanApproveAsync(userId, organisationId, requisition.RequiredApproval, ct))
         {
-            throw new UnauthorizedAccessException("Only an owner or administrator can reject requisitions.");
+            throw new UnauthorizedAccessException(
+                requisition.RequiredApproval == PurchaseApprovalRequirement.OwnerOnly
+                    ? "This requisition requires action by an organisation owner."
+                    : "Only an owner or administrator can reject requisitions.");
         }
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > 500)
         {
             throw new InvalidOperationException("Enter a rejection reason of 500 characters or fewer.");
         }
-        var requisition = await LoadAsync(organisationId, requisitionId, ct);
         if (requisition.CreatedByUserId == userId)
         {
             throw new InvalidOperationException("A requisition creator cannot reject their own request.");
@@ -322,6 +337,8 @@ public sealed class PurchaseRequisitionService(
         requisition.Purpose,
         Status = requisition.Status.ToString(),
         requisition.Total,
+        requisition.PurchaseApprovalPolicyId,
+        RequiredApproval = requisition.RequiredApproval.ToString(),
         requisition.CreatedByUserId,
         requisition.ApprovedByUserId,
         requisition.RejectedByUserId,

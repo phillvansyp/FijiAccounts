@@ -66,6 +66,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
     public DbSet<PurchaseRequisition> PurchaseRequisitions => Set<PurchaseRequisition>();
     public DbSet<PurchaseRequisitionLine> PurchaseRequisitionLines => Set<PurchaseRequisitionLine>();
+    public DbSet<PurchaseApprovalPolicy> PurchaseApprovalPolicies => Set<PurchaseApprovalPolicy>();
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
     public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
@@ -341,6 +342,18 @@ builder.Entity<SupplierBillVoid>()
         builder.Entity<PurchaseRequisition>()
             .HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PurchaseRequisition>().Property(x => x.Total).HasPrecision(18, 2);
+        builder.Entity<PurchaseRequisition>()
+            .HasOne(x => x.PurchaseApprovalPolicy).WithMany().HasForeignKey(x => x.PurchaseApprovalPolicyId).OnDelete(DeleteBehavior.SetNull);
+        builder.Entity<PurchaseApprovalPolicy>()
+            .HasIndex(x => new { x.OrganisationId, x.IsActive, x.MinimumAmount });
+        builder.Entity<PurchaseApprovalPolicy>()
+            .HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<PurchaseApprovalPolicy>()
+            .HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PurchaseApprovalPolicy>()
+            .HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PurchaseApprovalPolicy>().Property(x => x.MinimumAmount).HasPrecision(18, 2);
+        builder.Entity<PurchaseApprovalPolicy>().Property(x => x.MaximumAmount).HasPrecision(18, 2);
         builder.Entity<PurchaseRequisitionLine>()
             .HasOne(x => x.PurchaseRequisition).WithMany(x => x.Lines).HasForeignKey(x => x.PurchaseRequisitionId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<PurchaseRequisitionLine>()
