@@ -70,10 +70,7 @@ else
                                       OnSelected="AddPurchaseProduct" />
             <div class="mb-3"><label class="form-label">Supplier</label><InputSelect class="form-select" @bind-Value="bill.SupplierId" @bind-Value:after="ApplySelectedSupplierDefaults"><option value="@Guid.Empty">Choose a supplier</option>@foreach (var supplier in suppliers) { <option value="@supplier.Id">@supplier.Name</option> }</InputSelect></div>
             <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Supplier reference</label><InputText class="form-control" @bind-Value="bill.SupplierReference" /></div><div class="col-md-4 mb-3"><label class="form-label">Bill date</label><InputDate class="form-control" @bind-Value="bill.BillDate" @bind-Value:after="ApplySelectedSupplierPaymentTerms" /></div><div class="col-md-4 mb-3"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="bill.DueDate" /></div></div>
-            @if (!isRecurringBill)
-            {
-                <div class="mb-3"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="bill.DivisionId">@foreach (var branch in branches) { <optgroup label="@($"{branch.Code} — {branch.Name}")">@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@division.Code — @division.Name</option> }</optgroup> }</InputSelect></div>
-            }
+            <div class="mb-3"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="bill.DivisionId">@foreach (var branch in branches) { <optgroup label="@($"{branch.Code} — {branch.Name}")">@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@division.Code — @division.Name</option> }</optgroup> }</InputSelect></div>
 
             @if (isRecurringBill)
             {
@@ -654,7 +651,7 @@ protected override async Task OnParametersSetAsync()
     }
 }
 }
-    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
+    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
 
     private static decimal Outstanding(SupplierBill item) => Math.Max(0m, item.Total - item.AmountPaid - item.AmountCredited);
     private string BillRegisterStatus(SupplierBill item) => IsOverdue(item) ? "Overdue" : item.Status switch { BillStatus.Posted => "Awaiting payment", BillStatus.PartPaid => "Part paid", BillStatus.Paid => "Paid", BillStatus.Credited => "Credited", BillStatus.Voided => "Voided", _ => item.Status.ToString() };
@@ -1178,7 +1175,8 @@ private void ToggleRecurringBill()
                     recurringBill.Frequency,
                     recurringBill.StartDate,
                     recurringBill.DueDays,
-                    lines);
+                    lines,
+                    DivisionId: bill.DivisionId);
 
             var wasEditing =
                 editingRecurringBillId is not null;
@@ -1231,6 +1229,9 @@ private void ToggleRecurringBill()
 
         bill.SupplierId =
             item.SupplierId;
+
+        bill.DivisionId =
+            item.DivisionId ?? bill.DivisionId;
 
         bill.SupplierReference =
             item.SupplierReference;

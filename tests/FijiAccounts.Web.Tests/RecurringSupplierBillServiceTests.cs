@@ -995,4 +995,71 @@ public sealed class RecurringSupplierBillServiceTests
             reloaded.NextBillDate);
     }
 
+    [Fact]
+    public async Task GenerateDueAsync_PreservesTemplateDimensionOnBillAndJournal()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var structures = new EnterpriseStructureService(test.Db);
+        var branch = await structures.AddBranchAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "LAUTOKA",
+            "Lautoka Branch");
+        var division = await structures.AddDivisionAsync(
+            test.UserId,
+            test.Organisation.Id,
+            branch.Id,
+            "ADMIN",
+            "Administration");
+        var service = new RecurringSupplierBillService(
+            test.Db,
+            test.Access,
+            test.Purchasing);
+
+        var recurring = await service.CreateAsync(
+            test.UserId,
+            new RecurringSupplierBillRequest(
+                OrganisationId: test.Organisation.Id,
+                SupplierId: test.Supplier.Id,
+                SupplierReference: "DIMENSION",
+                Frequency: RecurringSupplierBillFrequency.Monthly,
+                StartDate: new DateOnly(2027, 5, 1),
+                DueDays: 14,
+                Lines:
+                [
+                    new RecurringSupplierBillLineRequest(
+                        Description: "Dimension test bill",
+                        Quantity: 1m,
+                        UnitPrice: 100m,
+                        VatTreatment: VatTreatment.Standard,
+                        ExpenseAccountId: test.Account("6500").Id)
+                ],
+                DivisionId: division.Id));
+
+        var bill = Assert.Single(
+            await service.GenerateDueAsync(
+                test.UserId,
+                test.Organisation.Id,
+                new DateOnly(2027, 5, 1)));
+
+        Assert.Equal(branch.Id, recurring.BranchId);
+        Assert.Equal(division.Id, recurring.DivisionId);
+        Assert.Equal(branch.Id, bill.BranchId);
+        Assert.Equal(division.Id, bill.DivisionId);
+
+        var journalLines = await test.Db.PostedJournalLines
+            .AsNoTracking()
+            .Where(x => x.PostedJournalId == bill.PostedJournalId)
+            .ToListAsync();
+
+        Assert.NotEmpty(journalLines);
+        Assert.All(journalLines, line =>
+        {
+            Assert.Equal(branch.Id, line.BranchId);
+            Assert.Equal(division.Id, line.DivisionId);
+        });
+    }
+
 }

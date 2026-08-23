@@ -110,6 +110,10 @@ public sealed class RecurringSalesInvoice
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
 
     public Guid CustomerId { get; set; }
     public BusinessParty Customer { get; set; } = null!;

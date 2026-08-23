@@ -406,6 +406,21 @@ builder.Entity<RecurringSalesInvoice>()
     .HasForeignKey(x => x.CustomerId)
     .OnDelete(DeleteBehavior.Restrict);
 
+builder.Entity<RecurringSalesInvoice>()
+    .HasOne(x => x.Branch)
+    .WithMany()
+    .HasForeignKey(x => x.BranchId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoice>()
+    .HasOne(x => x.Division)
+    .WithMany()
+    .HasForeignKey(x => x.DivisionId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoice>()
+    .HasIndex(x => new { x.BranchId, x.DivisionId });
+
 builder.Entity<RecurringSalesInvoiceLine>()
     .Property(x => x.Quantity)
     .HasPrecision(18, 4);
@@ -467,6 +482,21 @@ builder.Entity<RecurringSupplierBill>()
     .WithMany()
     .HasForeignKey(x => x.SupplierId)
     .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBill>()
+    .HasOne(x => x.Branch)
+    .WithMany()
+    .HasForeignKey(x => x.BranchId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBill>()
+    .HasOne(x => x.Division)
+    .WithMany()
+    .HasForeignKey(x => x.DivisionId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBill>()
+    .HasIndex(x => new { x.BranchId, x.DivisionId });
 
 builder.Entity<RecurringSupplierBillLine>()
     .Property(x => x.Quantity)

@@ -21,7 +21,9 @@ public sealed record RecurringSalesInvoiceRequest(
     RecurringSalesInvoiceFrequency Frequency,
     DateOnly StartDate,
     int DueDays,
-    IReadOnlyList<RecurringSalesInvoiceLineRequest> Lines);
+    IReadOnlyList<RecurringSalesInvoiceLineRequest> Lines,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed class RecurringSalesInvoiceService(
     ApplicationDbContext db,
@@ -40,6 +42,8 @@ public sealed class RecurringSalesInvoiceService(
             throw new UnauthorizedAccessException(
                 "You cannot create recurring invoices for this organisation.");
         }
+
+        var dimension = await ResolveDimensionAsync(userId, request, ct);
 
         if (request.DueDays < 0)
         {
@@ -125,6 +129,8 @@ public sealed class RecurringSalesInvoiceService(
             new RecurringSalesInvoice
             {
                 OrganisationId = request.OrganisationId,
+                BranchId = dimension.BranchId,
+                DivisionId = dimension.DivisionId,
                 CustomerId = request.CustomerId,
                 Frequency = request.Frequency,
                 StartDate = request.StartDate,
@@ -159,6 +165,8 @@ public sealed class RecurringSalesInvoiceService(
                     new
                     {
                         recurring.CustomerId,
+                        recurring.BranchId,
+                        recurring.DivisionId,
                         recurring.Frequency,
                         recurring.StartDate,
                         recurring.NextInvoiceDate,
@@ -185,6 +193,8 @@ public sealed class RecurringSalesInvoiceService(
             throw new UnauthorizedAccessException(
                 "You cannot update recurring invoices for this organisation.");
         }
+
+        var dimension = await ResolveDimensionAsync(userId, request, ct);
 
         if (request.DueDays < 0)
         {
@@ -306,6 +316,8 @@ public sealed class RecurringSalesInvoiceService(
                 "Recurring sales invoice not found.");
 
         recurring.CustomerId = request.CustomerId;
+        recurring.BranchId = dimension.BranchId;
+        recurring.DivisionId = dimension.DivisionId;
         recurring.Frequency = request.Frequency;
         recurring.StartDate = request.StartDate;
         recurring.NextInvoiceDate = request.StartDate;
@@ -350,6 +362,8 @@ public sealed class RecurringSalesInvoiceService(
                     new
                     {
                         recurring.CustomerId,
+                        recurring.BranchId,
+                        recurring.DivisionId,
                         recurring.Frequency,
                         recurring.StartDate,
                         recurring.NextInvoiceDate,
@@ -574,7 +588,9 @@ public sealed class RecurringSalesInvoiceService(
                                             x.VatTreatment,
                                             x.RevenueAccountId,
                                             x.ProductItemId))
-                                    .ToList()),
+                                    .ToList(),
+                                BranchId: template.BranchId,
+                                DivisionId: template.DivisionId),
                             ct);
 
                     db.RecurringSalesInvoiceGenerations.Add(
@@ -698,7 +714,9 @@ public sealed class RecurringSalesInvoiceService(
                                             x.VatTreatment,
                                             x.RevenueAccountId,
                                             x.ProductItemId))
-                                    .ToList()),
+                                    .ToList(),
+                                BranchId: template.BranchId,
+                                DivisionId: template.DivisionId),
                             ct);
 
                     db.RecurringSalesInvoiceGenerations.Add(
@@ -744,6 +762,57 @@ public sealed class RecurringSalesInvoiceService(
 
         return generated;
     }
+
+    private async Task<EnterprisePostingDimension> ResolveDimensionAsync(
+        string userId,
+        RecurringSalesInvoiceRequest request,
+        CancellationToken ct)
+    {
+        var branches = await access.ListAccessibleBranchesAsync(
+            userId,
+            request.OrganisationId,
+            ct);
+        Branch? branch = null;
+        Division? division = null;
+
+        if (request.DivisionId is Guid divisionId)
+        {
+            branch = branches.SingleOrDefault(x =>
+                x.Divisions.Any(candidate => candidate.Id == divisionId));
+            division = branch?.Divisions.Single(x => x.Id == divisionId);
+            if (division is null)
+            {
+                throw new UnauthorizedAccessException(
+                    "The selected division is unavailable for this recurring invoice.");
+            }
+        }
+
+        if (request.BranchId is Guid branchId)
+        {
+            var selectedBranch = branches.SingleOrDefault(x => x.Id == branchId)
+                ?? throw new UnauthorizedAccessException(
+                    "The selected branch is unavailable for this recurring invoice.");
+            if (branch is not null && branch.Id != selectedBranch.Id)
+            {
+                throw new InvalidOperationException(
+                    "The selected division does not belong to the selected branch.");
+            }
+
+            branch = selectedBranch;
+        }
+
+        branch ??= branches.SingleOrDefault(x => x.IsDefault)
+            ?? branches.FirstOrDefault()
+            ?? throw new UnauthorizedAccessException(
+                "No branch is available for this recurring invoice.");
+        division ??= branch.Divisions.SingleOrDefault(x => x.IsDefault)
+            ?? branch.Divisions.FirstOrDefault()
+            ?? throw new UnauthorizedAccessException(
+                "No division is available for this recurring invoice.");
+
+        return new EnterprisePostingDimension(branch.Id, division.Id);
+    }
+
     internal static DateOnly GetNextDate(
         DateOnly date,
         RecurringSalesInvoiceFrequency frequency,

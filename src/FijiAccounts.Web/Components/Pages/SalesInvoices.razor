@@ -464,6 +464,8 @@ else
 .AsSplitQuery()
                 .Where(x =>
                     x.OrganisationId == OrganisationId &&
+                    x.DivisionId != null &&
+                    accessibleDivisionIds.Contains(x.DivisionId.Value) &&
                     x.Status != RecurringSalesInvoiceStatus.Ended)
                 .OrderBy(x => x.Status)
                 .ThenBy(x => x.NextInvoiceDate)

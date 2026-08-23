@@ -184,6 +184,19 @@ public sealed class RecurringSalesInvoiceServiceTests
         await using var test =
             await AccountingTestDatabase.CreateAsync();
 
+        var structures = new EnterpriseStructureService(test.Db);
+        var branch = await structures.AddBranchAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "NADI",
+            "Nadi Branch");
+        var division = await structures.AddDivisionAsync(
+            test.UserId,
+            test.Organisation.Id,
+            branch.Id,
+            "SERVICES",
+            "Services");
+
         var service =
             new RecurringSalesInvoiceService(
                 test.Db,
@@ -207,7 +220,8 @@ public sealed class RecurringSalesInvoiceServiceTests
                             UnitPrice: 250m,
                             VatTreatment: VatTreatment.Standard,
                             RevenueAccountId: test.Account("4000").Id)
-                    ]));
+                    ],
+                    DivisionId: division.Id));
 
         var generated =
             await service.GenerateDueAsync(
@@ -233,6 +247,26 @@ public sealed class RecurringSalesInvoiceServiceTests
         Assert.Equal(
             test.Customer.Id,
             invoice.CustomerId);
+
+        Assert.Equal(branch.Id, recurring.BranchId);
+        Assert.Equal(division.Id, recurring.DivisionId);
+        Assert.Equal(branch.Id, invoice.BranchId);
+        Assert.Equal(division.Id, invoice.DivisionId);
+
+        var journalLines =
+            await test.Db.PostedJournalLines
+                .AsNoTracking()
+                .Where(x => x.PostedJournalId == invoice.PostedJournalId)
+                .ToListAsync();
+
+        Assert.NotEmpty(journalLines);
+        Assert.All(
+            journalLines,
+            line =>
+            {
+                Assert.Equal(branch.Id, line.BranchId);
+                Assert.Equal(division.Id, line.DivisionId);
+            });
 
         var generation =
             await test.Db.RecurringSalesInvoiceGenerations

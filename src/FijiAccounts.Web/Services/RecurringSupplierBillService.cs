@@ -21,7 +21,9 @@ public sealed record RecurringSupplierBillRequest(
     RecurringSupplierBillFrequency Frequency,
     DateOnly StartDate,
     int DueDays,
-    IReadOnlyList<RecurringSupplierBillLineRequest> Lines);
+    IReadOnlyList<RecurringSupplierBillLineRequest> Lines,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed class RecurringSupplierBillService(
     ApplicationDbContext db,
@@ -39,6 +41,8 @@ public sealed class RecurringSupplierBillService(
             "create recurring bills",
             ct);
 
+        var dimension = await ResolveDimensionAsync(userId, request, ct);
+
         await ValidateRequestAsync(
             request,
             ct);
@@ -47,6 +51,8 @@ public sealed class RecurringSupplierBillService(
             new RecurringSupplierBill
             {
                 OrganisationId = request.OrganisationId,
+                BranchId = dimension.BranchId,
+                DivisionId = dimension.DivisionId,
                 SupplierId = request.SupplierId,
                 SupplierReference = request.SupplierReference.Trim(),
                 Frequency = request.Frequency,
@@ -69,6 +75,8 @@ public sealed class RecurringSupplierBillService(
                 new
                 {
                     recurring.SupplierId,
+                    recurring.BranchId,
+                    recurring.DivisionId,
                     recurring.SupplierReference,
                     recurring.Frequency,
                     recurring.StartDate,
@@ -92,6 +100,8 @@ public sealed class RecurringSupplierBillService(
             request.OrganisationId,
             "update recurring bills",
             ct);
+
+        var dimension = await ResolveDimensionAsync(userId, request, ct);
 
         await ValidateRequestAsync(
             request,
@@ -131,6 +141,8 @@ public sealed class RecurringSupplierBillService(
                 "Recurring supplier bill not found.");
 
         recurring.SupplierId = request.SupplierId;
+        recurring.BranchId = dimension.BranchId;
+        recurring.DivisionId = dimension.DivisionId;
         recurring.SupplierReference =
             request.SupplierReference.Trim();
         recurring.Frequency = request.Frequency;
@@ -159,6 +171,8 @@ public sealed class RecurringSupplierBillService(
                 new
                 {
                     recurring.SupplierId,
+                    recurring.BranchId,
+                    recurring.DivisionId,
                     recurring.SupplierReference,
                     recurring.Frequency,
                     recurring.StartDate,
@@ -521,7 +535,9 @@ var recurring =
                                             x.VatTreatment,
                                             x.ExpenseAccountId,
                                             x.ProductItemId))
-                                    .ToList()),
+                                    .ToList(),
+                                BranchId: template.BranchId,
+                                DivisionId: template.DivisionId),
                             ct);
 
                     db.RecurringSupplierBillGenerations.Add(
@@ -563,6 +579,56 @@ var recurring =
         }
 
         return generated;
+    }
+
+    private async Task<EnterprisePostingDimension> ResolveDimensionAsync(
+        string userId,
+        RecurringSupplierBillRequest request,
+        CancellationToken ct)
+    {
+        var branches = await access.ListAccessibleBranchesAsync(
+            userId,
+            request.OrganisationId,
+            ct);
+        Branch? branch = null;
+        Division? division = null;
+
+        if (request.DivisionId is Guid divisionId)
+        {
+            branch = branches.SingleOrDefault(x =>
+                x.Divisions.Any(candidate => candidate.Id == divisionId));
+            division = branch?.Divisions.Single(x => x.Id == divisionId);
+            if (division is null)
+            {
+                throw new UnauthorizedAccessException(
+                    "The selected division is unavailable for this recurring bill.");
+            }
+        }
+
+        if (request.BranchId is Guid branchId)
+        {
+            var selectedBranch = branches.SingleOrDefault(x => x.Id == branchId)
+                ?? throw new UnauthorizedAccessException(
+                    "The selected branch is unavailable for this recurring bill.");
+            if (branch is not null && branch.Id != selectedBranch.Id)
+            {
+                throw new InvalidOperationException(
+                    "The selected division does not belong to the selected branch.");
+            }
+
+            branch = selectedBranch;
+        }
+
+        branch ??= branches.SingleOrDefault(x => x.IsDefault)
+            ?? branches.FirstOrDefault()
+            ?? throw new UnauthorizedAccessException(
+                "No branch is available for this recurring bill.");
+        division ??= branch.Divisions.SingleOrDefault(x => x.IsDefault)
+            ?? branch.Divisions.FirstOrDefault()
+            ?? throw new UnauthorizedAccessException(
+                "No division is available for this recurring bill.");
+
+        return new EnterprisePostingDimension(branch.Id, division.Id);
     }
 
     internal static DateOnly GetNextDate(

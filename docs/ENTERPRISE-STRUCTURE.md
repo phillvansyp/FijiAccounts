@@ -59,8 +59,8 @@ Sales invoices and supplier bills now capture a selected branch and division,
 including while they are drafts. Their receipts, supplier payments, credit
 notes, voids and reversals inherit that source-document dimension. Existing
 documents are backfilled to the company default (or from their related source
-document for receipts and payments). Recurring templates still use the default
-dimension until template-level allocation is added.
+document for receipts and payments). Recurring sales invoice and supplier bill
+templates retain their selected dimension when generating documents.
 
 ## Next phases
 
@@ -68,8 +68,8 @@ dimension until template-level allocation is added.
 2. ~~Add group administration and multi-company creation.~~
 3. Add branch and division selectors to each financial document workflow. The
    shared journal dimension, manual journals, sales invoices, supplier bills,
-   receipts, payments and related credits/reversals are complete. Recurring
-   templates and the remaining banking/inventory workflows are still pending.
+   receipts, payments, recurring templates and related credits/reversals are
+   complete. The remaining banking/inventory workflows are still pending.
 4. ~~Add explicit branch/division access grants.~~
 5. Add scoped and consolidated reporting. Branch/division financial statements,
    multi-company Profit & Loss and Balance Sheet consolidation, and dated
