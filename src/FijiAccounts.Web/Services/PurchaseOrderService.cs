@@ -1,4 +1,7 @@
+using System.Data;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
@@ -57,11 +60,68 @@ public sealed class PurchaseOrderService(
                 "A purchase order needs at least one line.");
         }
 
+        if (request.ExpectedDate < request.OrderDate ||
+            request.SupplierReference.Trim().Length > 80 ||
+            request.Notes.Trim().Length > 500 ||
+            request.Lines.Any(x =>
+                string.IsNullOrWhiteSpace(x.Description) ||
+                x.Description.Trim().Length > 300 ||
+                x.Quantity <= 0 ||
+                x.UnitPrice < 0 ||
+                x.ExpenseAccountId == Guid.Empty))
+        {
+            throw new InvalidOperationException(
+                "Enter valid purchase order dates, details and lines.");
+        }
+
+        var accountIds = request.Lines
+            .Select(x => x.ExpenseAccountId)
+            .Distinct()
+            .ToArray();
+        var validAccountCount = await db.LedgerAccounts
+            .AsNoTracking()
+            .CountAsync(
+                x =>
+                    x.OrganisationId == request.OrganisationId &&
+                    x.IsActive &&
+                    accountIds.Contains(x.Id) &&
+                    (x.Type == AccountType.Expense || x.Type == AccountType.Asset),
+                ct);
+        if (validAccountCount != accountIds.Length)
+        {
+            throw new InvalidOperationException(
+                "Every purchase order line must use an active expense or asset account from this organisation.");
+        }
+
+        var productIds = request.Lines
+            .Where(x => x.ProductItemId is not null)
+            .Select(x => x.ProductItemId!.Value)
+            .Distinct()
+            .ToArray();
+        var validProductCount = await db.ProductItems
+            .AsNoTracking()
+            .CountAsync(
+                x =>
+                    x.OrganisationId == request.OrganisationId &&
+                    x.IsActive &&
+                    productIds.Contains(x.Id),
+                ct);
+        if (validProductCount != productIds.Length)
+        {
+            throw new InvalidOperationException(
+                "Every selected product must be active and belong to this organisation.");
+        }
+
         var organisation =
             await db.Organisations
                 .SingleAsync(
                     x => x.Id == request.OrganisationId,
                     ct);
+
+        await using var transaction =
+            await db.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                ct);
 
         var sequence =
             (await db.PurchaseOrders
@@ -150,8 +210,18 @@ public sealed class PurchaseOrderService(
             };
 
         db.PurchaseOrders.Add(order);
+        db.AuditEvents.Add(Audit(
+            request.OrganisationId,
+            userId,
+            "PurchaseOrderCreated",
+            order,
+            new
+            {
+                New = Evidence(order)
+            }));
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         return order;
     }
@@ -172,11 +242,14 @@ public sealed class PurchaseOrderService(
 
         var order =
             await db.PurchaseOrders
-                .SingleAsync(
+                .Include(x => x.Lines)
+                .SingleOrDefaultAsync(
                     x =>
                         x.Id == purchaseOrderId &&
                         x.OrganisationId == organisationId,
-                    ct);
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Purchase order not found.");
 
         if (order.Status != PurchaseOrderStatus.Draft)
         {
@@ -184,12 +257,18 @@ public sealed class PurchaseOrderService(
                 "Only draft purchase orders can be approved.");
         }
 
-        order.Status =
-            PurchaseOrderStatus.Approved;
+        var previous = Evidence(order);
+        order.Status = PurchaseOrderStatus.Approved;
 
         order.UpdatedAt =
             DateTimeOffset.UtcNow;
 
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "PurchaseOrderApproved",
+            order,
+            new { Old = previous, New = Evidence(order) }));
         await db.SaveChangesAsync(ct);
     }
 
@@ -209,11 +288,14 @@ public sealed class PurchaseOrderService(
 
         var order =
             await db.PurchaseOrders
-                .SingleAsync(
+                .Include(x => x.Lines)
+                .SingleOrDefaultAsync(
                     x =>
                         x.Id == purchaseOrderId &&
                         x.OrganisationId == organisationId,
-                    ct);
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Purchase order not found.");
 
         if (order.Status != PurchaseOrderStatus.Approved)
         {
@@ -221,12 +303,18 @@ public sealed class PurchaseOrderService(
                 "Only approved purchase orders can be sent.");
         }
 
-        order.Status =
-            PurchaseOrderStatus.Sent;
+        var previous = Evidence(order);
+        order.Status = PurchaseOrderStatus.Sent;
 
         order.UpdatedAt =
             DateTimeOffset.UtcNow;
 
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "PurchaseOrderMarkedSent",
+            order,
+            new { Old = previous, New = Evidence(order) }));
         await db.SaveChangesAsync(ct);
     }
 
@@ -246,11 +334,19 @@ public sealed class PurchaseOrderService(
 
         var order =
             await db.PurchaseOrders
-                .SingleAsync(
+                .Include(x => x.Lines)
+                .SingleOrDefaultAsync(
                     x =>
                         x.Id == purchaseOrderId &&
                         x.OrganisationId == organisationId,
-                    ct);
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Purchase order not found.");
+
+        if (order.Status == PurchaseOrderStatus.Cancelled)
+        {
+            return;
+        }
 
         if (order.Status is PurchaseOrderStatus.Received or
             PurchaseOrderStatus.Closed)
@@ -259,16 +355,22 @@ public sealed class PurchaseOrderService(
                 "Received or closed purchase orders cannot be cancelled.");
         }
 
-        order.Status =
-            PurchaseOrderStatus.Cancelled;
+        var previous = Evidence(order);
+        order.Status = PurchaseOrderStatus.Cancelled;
 
         order.UpdatedAt =
             DateTimeOffset.UtcNow;
 
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "PurchaseOrderCancelled",
+            order,
+            new { Old = previous, New = Evidence(order) }));
         await db.SaveChangesAsync(ct);
     }
 
-        public async Task ReceiveAsync(
+    public async Task ReceiveAsync(
         string userId,
         Guid organisationId,
         Guid purchaseOrderId,
@@ -286,11 +388,13 @@ public sealed class PurchaseOrderService(
         var order =
             await db.PurchaseOrders
                 .Include(x => x.Lines)
-                .SingleAsync(
+                .SingleOrDefaultAsync(
                     x =>
                         x.Id == purchaseOrderId &&
                         x.OrganisationId == organisationId,
-                    ct);
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Purchase order not found.");
 
         if (order.Status is not
             (PurchaseOrderStatus.Sent or
@@ -300,11 +404,16 @@ public sealed class PurchaseOrderService(
                 "Only sent purchase orders can be received.");
         }
 
+        var lineIds = order.Lines.Select(x => x.Id).ToHashSet();
+        if (receivedQuantities.Keys.Any(x => !lineIds.Contains(x)))
+        {
+            throw new InvalidOperationException(
+                "Every received line must belong to this purchase order.");
+        }
+
         foreach (var line in order.Lines)
         {
-            if (!receivedQuantities.TryGetValue(
-                    line.Id,
-                    out var quantity))
+            if (!receivedQuantities.TryGetValue(line.Id, out var quantity))
             {
                 continue;
             }
@@ -315,14 +424,44 @@ public sealed class PurchaseOrderService(
                     "Received quantity cannot be negative.");
             }
 
-            if (line.QuantityReceived + quantity >
-                line.Quantity)
+            if (line.QuantityReceived + quantity > line.Quantity)
             {
                 throw new InvalidOperationException(
                     "Received quantity cannot exceed ordered quantity.");
             }
+        }
 
+        var receiptLines = new List<object>();
+        var previous = Evidence(order);
+        foreach (var line in order.Lines)
+        {
+            if (!receivedQuantities.TryGetValue(
+                    line.Id,
+                    out var quantity))
+            {
+                continue;
+            }
+
+            if (quantity == 0)
+            {
+                continue;
+            }
+
+            var oldQuantityReceived = line.QuantityReceived;
             line.QuantityReceived += quantity;
+            receiptLines.Add(new
+            {
+                LineId = line.Id,
+                line.Description,
+                QuantityReceived = quantity,
+                OldQuantityReceived = oldQuantityReceived,
+                NewQuantityReceived = line.QuantityReceived
+            });
+        }
+
+        if (receiptLines.Count == 0)
+        {
+            return;
         }
 
         order.Status =
@@ -334,6 +473,58 @@ public sealed class PurchaseOrderService(
         order.UpdatedAt =
             DateTimeOffset.UtcNow;
 
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "PurchaseOrderReceiptRecorded",
+            order,
+            new
+            {
+                Old = previous,
+                New = Evidence(order),
+                Lines = receiptLines
+            }));
         await db.SaveChangesAsync(ct);
     }
+
+    private static object Evidence(PurchaseOrder order) =>
+        new
+        {
+            order.PurchaseOrderNumber,
+            order.SupplierId,
+            order.OrderDate,
+            order.ExpectedDate,
+            order.SupplierReference,
+            order.Notes,
+            Status = order.Status.ToString(),
+            order.Subtotal,
+            order.Total,
+            Lines = order.Lines.Select(x => new
+                {
+                    x.Id,
+                    x.Description,
+                    x.Quantity,
+                    x.QuantityReceived,
+                    x.UnitPrice,
+                    x.ExpenseAccountId,
+                    x.ProductItemId
+                })
+                .ToArray()
+        };
+
+    private static AuditEvent Audit(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        PurchaseOrder order,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(PurchaseOrder),
+            EntityId = order.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 }
