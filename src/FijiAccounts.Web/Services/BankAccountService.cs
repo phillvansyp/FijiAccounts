@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -32,12 +33,18 @@ public sealed class BankAccountService(
 
         var code = request.Code.Trim();
         var name = request.Name.Trim();
+        var accountNumber = string.IsNullOrWhiteSpace(request.AccountNumber)
+            ? null
+            : request.AccountNumber.Trim();
 
         if (string.IsNullOrWhiteSpace(code) ||
-            string.IsNullOrWhiteSpace(name))
+            code.Length > 20 ||
+            string.IsNullOrWhiteSpace(name) ||
+            name.Length > 160 ||
+            accountNumber?.Length > 80)
         {
             throw new InvalidOperationException(
-                "Account code and name are required.");
+                "Enter a valid account code, name and account number.");
         }
 
         if (await db.LedgerAccounts.AnyAsync(
@@ -59,8 +66,7 @@ public sealed class BankAccountService(
                 OrganisationId = request.OrganisationId,
                 Code = code,
                 Name = name,
-                BankAccountNumber =
-                    request.AccountNumber?.Trim(),
+                BankAccountNumber = accountNumber,
                 Type = AccountType.Asset,
                 IsBankAccount = true
             };
@@ -69,7 +75,8 @@ public sealed class BankAccountService(
 
         await db.SaveChangesAsync(ct);
 
-                if (request.OpeningBalance != 0m)
+        PostedJournal? openingJournal = null;
+        if (request.OpeningBalance != 0m)
         {
             var openingEquity =
                 await db.LedgerAccounts
@@ -122,7 +129,7 @@ public sealed class BankAccountService(
                             amount)
                     ];
 
-            await posting.PostAsync(
+            openingJournal = await posting.PostAsync(
                 userId,
                 new JournalPostRequest(
                     request.OrganisationId,
@@ -132,6 +139,33 @@ public sealed class BankAccountService(
                     lines),
                 ct);
         }
+
+        db.AuditEvents.Add(
+            new AuditEvent
+            {
+                OrganisationId = request.OrganisationId,
+                UserId = userId,
+                EventType = "BankAccountCreated",
+                EntityType = nameof(LedgerAccount),
+                EntityId = bank.Id.ToString(),
+                JsonData = JsonSerializer.Serialize(
+                    new
+                    {
+                        bank.Code,
+                        bank.Name,
+                        HasAccountNumber = bank.BankAccountNumber is not null,
+                        AccountNumberLast4 = bank.BankAccountNumber is { Length: > 4 }
+                            ? bank.BankAccountNumber[^4..]
+                            : bank.BankAccountNumber,
+                        Type = bank.Type.ToString(),
+                        bank.IsBankAccount,
+                        request.OpeningBalance,
+                        request.OpeningBalanceDate,
+                        OpeningJournalId = openingJournal?.Id
+                    })
+            });
+
+        await db.SaveChangesAsync(ct);
 
         await transaction.CommitAsync(ct);
 
