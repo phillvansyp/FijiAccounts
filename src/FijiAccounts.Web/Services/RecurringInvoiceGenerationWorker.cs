@@ -8,6 +8,9 @@ public sealed class RecurringInvoiceGenerationWorker(
     ILogger<RecurringInvoiceGenerationWorker> logger)
     : BackgroundService
 {
+    private static readonly TimeSpan ActiveRunLease =
+        TimeSpan.FromHours(1);
+
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -58,113 +61,196 @@ public sealed class RecurringInvoiceGenerationWorker(
         CancellationToken ct = default)
     {
         var organisations =
-            await db.Organisations
-                .AsNoTracking()
-                .Where(x =>
-                    x.RecurringInvoiceAutomationEnabled)
-                .ToListAsync(ct);
+            (await db.Organisations
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.RecurringInvoiceAutomationEnabled)
+                    .ToListAsync(ct))
+                .OrderBy(x => x.CreatedAt)
+                .ThenBy(x => x.Id)
+                .ToList();
 
         foreach (var organisation in organisations)
         {
-            var zone =
-                TimeZoneInfo.FindSystemTimeZoneById(
-                    organisation.TimeZoneId);
-
-            var localNow =
-                TimeZoneInfo.ConvertTime(
-                    utcNow,
-                    zone);
-
-            if (localNow.TimeOfDay <
-                organisation.RecurringInvoiceAutomationTime
-                    .ToTimeSpan())
-            {
-                continue;
-            }
-
-            var today =
-                DateOnly.FromDateTime(
-                    localNow.DateTime);
-
-            var existingRun =
-                await db.RecurringInvoiceAutomationRuns
-                    .SingleOrDefaultAsync(
-                        x =>
-                            x.OrganisationId ==
-                                organisation.Id &&
-                            x.RunDate == today,
-                        ct);
-
-            if (existingRun?.Status == "Completed")
-            {
-                continue;
-            }
-
-            var run =
-                existingRun ??
-                new RecurringInvoiceAutomationRun
-                {
-                    OrganisationId =
-                        organisation.Id,
-                    RunDate =
-                        today,
-                    StartedAtUtc =
-                        utcNow,
-                    Status =
-                        "Running"
-                };
-
-            if (existingRun is null)
-            {
-                db.RecurringInvoiceAutomationRuns.Add(run);
-            }
-            else
-            {
-                run.StartedAtUtc =
-                    utcNow;
-
-                run.Status =
-                    "Running";
-
-                run.ErrorMessage =
-                    null;
-
-                run.CompletedAtUtc =
-                    null;
-            }
-
-            await db.SaveChangesAsync(ct);
+            var runDate =
+                DateOnly.FromDateTime(utcNow.UtcDateTime);
 
             try
             {
-                var generated =
-                    await recurring.GenerateDueAutomaticallyAsync(
-                        organisation.Id,
-                        today,
-                        ct);
+                var zone =
+                    TimeZoneInfo.FindSystemTimeZoneById(
+                        organisation.TimeZoneId);
 
-                run.GeneratedCount =
-                    generated.Count;
+                var localNow =
+                    TimeZoneInfo.ConvertTime(
+                        utcNow,
+                        zone);
 
-                run.Status =
-                    "Completed";
+                if (localNow.TimeOfDay <
+                    organisation.RecurringInvoiceAutomationTime
+                        .ToTimeSpan())
+                {
+                    continue;
+                }
 
-                run.CompletedAtUtc =
-                    utcNow;
+                runDate =
+                    DateOnly.FromDateTime(
+                        localNow.DateTime);
+
+                await RunOrganisationAsync(
+                    db,
+                    recurring,
+                    organisation.Id,
+                    runDate,
+                    utcNow,
+                    ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                run.Status =
-                    "Failed";
-
-                run.ErrorMessage =
-                    ex.Message;
-
-                run.CompletedAtUtc =
-                    utcNow;
+                await RecordFailureAsync(
+                    db,
+                    organisation.Id,
+                    runDate,
+                    utcNow,
+                    ex,
+                    ct);
             }
+        }
+    }
+
+    private static async Task RunOrganisationAsync(
+        ApplicationDbContext db,
+        RecurringSalesInvoiceService recurring,
+        Guid organisationId,
+        DateOnly runDate,
+        DateTimeOffset utcNow,
+        CancellationToken ct)
+    {
+        var existingRun =
+            await db.RecurringInvoiceAutomationRuns
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.OrganisationId == organisationId &&
+                        x.RunDate == runDate,
+                    ct);
+
+        if (existingRun?.Status == "Completed" ||
+            existingRun?.Status == "Running" &&
+            utcNow - existingRun.StartedAtUtc < ActiveRunLease)
+        {
+            return;
+        }
+
+        var run =
+            existingRun ??
+            new RecurringInvoiceAutomationRun
+            {
+                OrganisationId = organisationId,
+                RunDate = runDate,
+                StartedAtUtc = utcNow,
+                Status = "Running"
+            };
+
+        if (existingRun is null)
+        {
+            db.RecurringInvoiceAutomationRuns.Add(run);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                if (await db.RecurringInvoiceAutomationRuns.AnyAsync(
+                        x =>
+                            x.OrganisationId == organisationId &&
+                            x.RunDate == runDate,
+                        ct))
+                {
+                    return;
+                }
+
+                throw;
+            }
+        }
+        else
+        {
+            run.StartedAtUtc = utcNow;
+            run.Status = "Running";
+            run.ErrorMessage = null;
+            run.CompletedAtUtc = null;
+            run.GeneratedCount = 0;
 
             await db.SaveChangesAsync(ct);
         }
+
+        var generated =
+            await recurring.GenerateDueAutomaticallyAsync(
+                organisationId,
+                runDate,
+                ct);
+
+        run.GeneratedCount = generated.Count;
+        run.Status = "Completed";
+        run.CompletedAtUtc = utcNow;
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static async Task RecordFailureAsync(
+        ApplicationDbContext db,
+        Guid organisationId,
+        DateOnly runDate,
+        DateTimeOffset startedAtUtc,
+        Exception exception,
+        CancellationToken ct)
+    {
+        db.ChangeTracker.Clear();
+        var run =
+            await db.RecurringInvoiceAutomationRuns
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.OrganisationId == organisationId &&
+                        x.RunDate == runDate,
+                    ct);
+
+        if (run?.Status == "Completed" ||
+            run?.Status == "Running" &&
+            run.StartedAtUtc != startedAtUtc)
+        {
+            return;
+        }
+
+        if (run is null)
+        {
+            run = new RecurringInvoiceAutomationRun
+            {
+                OrganisationId = organisationId,
+                RunDate = runDate,
+                StartedAtUtc = startedAtUtc,
+                Status = "Failed"
+            };
+            db.RecurringInvoiceAutomationRuns.Add(run);
+        }
+
+        run.Status = "Failed";
+        run.ErrorMessage = NormaliseError(exception);
+        run.CompletedAtUtc = startedAtUtc;
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static string NormaliseError(Exception exception)
+    {
+        var message = string.IsNullOrWhiteSpace(exception.Message)
+            ? exception.GetType().Name
+            : exception.Message.Trim();
+
+        return message.Length <= 1000
+            ? message
+            : message[..1000];
     }
 }

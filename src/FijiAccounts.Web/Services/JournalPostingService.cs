@@ -32,18 +32,28 @@ public sealed class JournalPostingService(
         JournalPostRequest request,
         CancellationToken cancellationToken = default)
     {
-        return PostAsync(
+        return PostCoreAsync(
             "system",
             request,
             cancellationToken,
             skipPermissionCheck: true);
     }
 
-    public async Task<PostedJournal> PostAsync(
+    public Task<PostedJournal> PostAsync(
         string userId,
         JournalPostRequest request,
-        CancellationToken cancellationToken = default,
-        bool skipPermissionCheck = false)
+        CancellationToken cancellationToken = default) =>
+        PostCoreAsync(
+            userId,
+            request,
+            cancellationToken,
+            skipPermissionCheck: false);
+
+    private async Task<PostedJournal> PostCoreAsync(
+        string userId,
+        JournalPostRequest request,
+        CancellationToken cancellationToken,
+        bool skipPermissionCheck)
     {
         if (!skipPermissionCheck &&
             !await tenantAccess.CanPostJournalsAsync(

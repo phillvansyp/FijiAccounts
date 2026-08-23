@@ -163,17 +163,28 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         SalesInvoiceRequest request,
         CancellationToken cancellationToken = default)
     {
-        return CreateAndPostAsync(
+        return CreateAndPostCoreAsync(
             "system",
             request,
             cancellationToken,
             skipPermissionCheck: true);
     }
-    public async Task<SalesInvoice> CreateAndPostAsync(
+
+    public Task<SalesInvoice> CreateAndPostAsync(
+        string userId,
+        SalesInvoiceRequest request,
+        CancellationToken cancellationToken = default) =>
+        CreateAndPostCoreAsync(
+            userId,
+            request,
+            cancellationToken,
+            skipPermissionCheck: false);
+
+    private async Task<SalesInvoice> CreateAndPostCoreAsync(
     string userId,
     SalesInvoiceRequest request,
-    CancellationToken cancellationToken = default,
-    bool skipPermissionCheck = false)
+    CancellationToken cancellationToken,
+    bool skipPermissionCheck)
     {
         if (!skipPermissionCheck &&
             !await access.CanPostJournalsAsync(
@@ -237,7 +248,12 @@ if (!controlAccounts.TryGetValue(
         var products = await db.ProductItems.Where(x => x.OrganisationId == request.OrganisationId && productIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
         foreach (var line in lines.Where(x => x.ProductItemId != null)) line.ProductItem = products.GetValueOrDefault(line.ProductItemId!.Value) ?? throw new InvalidOperationException("A selected catalogue item is unavailable.");
 
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var transaction =
+            db.Database.CurrentTransaction is null
+                ? await db.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable,
+                    cancellationToken)
+                : null;
 
         await db.Entry(organisation)
             .ReloadAsync(cancellationToken);
@@ -283,7 +299,13 @@ if (!controlAccounts.TryGetValue(
                     cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) });
-        await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
+        await db.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        return invoice;
     }
 
     private async Task AddInventorySaleLinesAsync(

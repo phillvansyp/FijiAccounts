@@ -81,6 +81,16 @@ public sealed class RecurringInvoiceGenerationWorkerTests
                     x.OrganisationId ==
                         test.Organisation.Id)
                 .ToListAsync());
+        var generation = await test.Db.RecurringSalesInvoiceGenerations
+            .AsNoTracking()
+            .SingleAsync();
+        var generationAudit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .SingleAsync(x =>
+                x.EventType == "RecurringSalesInvoiceGenerated" &&
+                x.EntityId == generation.RecurringSalesInvoiceId.ToString());
+        Assert.Equal("system", generation.GeneratedByUserId);
+        Assert.Equal("system", generationAudit.UserId);
     }
 
     [Fact]
@@ -257,4 +267,183 @@ public sealed class RecurringInvoiceGenerationWorkerTests
 
         Assert.Null(
             run.ErrorMessage);
-    }}
+    }
+
+    [Fact]
+    public async Task RunOnceCoreAsync_WhenRecentRunIsActive_SkipsConcurrentAttempt()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        await CreateRecurringAsync(test, test.Organisation.Id, test.Customer.Id);
+        var utcAtSix = new DateTimeOffset(
+            2026,
+            8,
+            20,
+            18,
+            0,
+            0,
+            TimeSpan.Zero);
+        var run = new RecurringInvoiceAutomationRun
+        {
+            OrganisationId = test.Organisation.Id,
+            RunDate = new DateOnly(2026, 8, 21),
+            StartedAtUtc = utcAtSix.AddMinutes(-10),
+            Status = "Running"
+        };
+        test.Db.RecurringInvoiceAutomationRuns.Add(run);
+        await test.Db.SaveChangesAsync();
+        var recurring = new RecurringSalesInvoiceService(
+            test.Db,
+            test.Access,
+            test.SalesInvoices);
+
+        await RecurringInvoiceGenerationWorker.RunOnceCoreAsync(
+            test.Db,
+            recurring,
+            utcAtSix);
+
+        Assert.Equal("Running", run.Status);
+        Assert.Empty(await test.Db.SalesInvoices.AsNoTracking().ToListAsync());
+        Assert.DoesNotContain(
+            await test.Db.AuditEvents.AsNoTracking().ToListAsync(),
+            x => x.EventType == "RecurringSalesInvoiceGenerated");
+    }
+
+    [Fact]
+    public async Task RunOnceCoreAsync_WhenRunningLeaseIsStale_Retries()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        await CreateRecurringAsync(test, test.Organisation.Id, test.Customer.Id);
+        var utcAtSix = new DateTimeOffset(
+            2026,
+            8,
+            20,
+            18,
+            0,
+            0,
+            TimeSpan.Zero);
+        var run = new RecurringInvoiceAutomationRun
+        {
+            OrganisationId = test.Organisation.Id,
+            RunDate = new DateOnly(2026, 8, 21),
+            StartedAtUtc = utcAtSix.AddHours(-2),
+            Status = "Running"
+        };
+        test.Db.RecurringInvoiceAutomationRuns.Add(run);
+        await test.Db.SaveChangesAsync();
+        var recurring = new RecurringSalesInvoiceService(
+            test.Db,
+            test.Access,
+            test.SalesInvoices);
+
+        await RecurringInvoiceGenerationWorker.RunOnceCoreAsync(
+            test.Db,
+            recurring,
+            utcAtSix);
+
+        Assert.Equal("Completed", run.Status);
+        Assert.Equal(utcAtSix, run.StartedAtUtc);
+        Assert.Single(await test.Db.SalesInvoices.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RunOnceCoreAsync_IsolatesTenantFailureAndContinuesLaterOrganisations()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CreatedAt = new DateTimeOffset(
+            2026,
+            1,
+            1,
+            0,
+            0,
+            0,
+            TimeSpan.Zero);
+        test.Organisation.TimeZoneId = "Invalid/AutomationZone";
+        var structures = new EnterpriseStructureService(test.Db);
+        var second = await structures.AddCompanyAsync(
+            test.UserId,
+            new CreateGroupCompanyRequest(
+                test.Organisation.Id,
+                "Second Automation Limited",
+                null,
+                null,
+                "FJ",
+                OrganisationKind.Business));
+        second.CreatedAt = test.Organisation.CreatedAt.AddDays(1);
+        var customer = new BusinessParty
+        {
+            OrganisationId = second.Id,
+            Name = "Second Automation Customer",
+            Type = PartyType.Customer,
+            IsActive = true
+        };
+        test.Db.BusinessParties.Add(customer);
+        await test.Db.SaveChangesAsync();
+        await CreateRecurringAsync(test, second.Id, customer.Id);
+        var recurring = new RecurringSalesInvoiceService(
+            test.Db,
+            test.Access,
+            test.SalesInvoices);
+        var utcAtSix = new DateTimeOffset(
+            2026,
+            8,
+            20,
+            18,
+            0,
+            0,
+            TimeSpan.Zero);
+
+        await RecurringInvoiceGenerationWorker.RunOnceCoreAsync(
+            test.Db,
+            recurring,
+            utcAtSix);
+
+        var runs = await test.Db.RecurringInvoiceAutomationRuns
+            .AsNoTracking()
+            .OrderBy(x => x.OrganisationId)
+            .ToListAsync();
+        Assert.Equal(2, runs.Count);
+        var failed = runs.Single(x => x.OrganisationId == test.Organisation.Id);
+        Assert.Equal("Failed", failed.Status);
+        Assert.NotNull(failed.ErrorMessage);
+        Assert.InRange(failed.ErrorMessage!.Length, 1, 1000);
+        Assert.Equal(
+            "Completed",
+            runs.Single(x => x.OrganisationId == second.Id).Status);
+        Assert.Single(
+            await test.Db.SalesInvoices
+                .AsNoTracking()
+                .Where(x => x.OrganisationId == second.Id)
+                .ToListAsync());
+    }
+
+    private static async Task CreateRecurringAsync(
+        AccountingTestDatabase test,
+        Guid organisationId,
+        Guid customerId)
+    {
+        var revenueAccountId = await test.Db.LedgerAccounts
+            .Where(x => x.OrganisationId == organisationId && x.Code == "4000")
+            .Select(x => x.Id)
+            .SingleAsync();
+        var recurring = new RecurringSalesInvoiceService(
+            test.Db,
+            test.Access,
+            test.SalesInvoices);
+        await recurring.CreateAsync(
+            test.UserId,
+            new(
+                organisationId,
+                customerId,
+                RecurringSalesInvoiceFrequency.Monthly,
+                new DateOnly(2026, 8, 1),
+                14,
+                [
+                    new(
+                        "Automation helper",
+                        1m,
+                        100m,
+                        VatTreatment.Standard,
+                        revenueAccountId)
+                ]));
+    }
+}
