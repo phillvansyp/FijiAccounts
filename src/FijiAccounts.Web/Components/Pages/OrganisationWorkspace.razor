@@ -2,8 +2,6 @@
 @attribute [Authorize]
 @implements IDisposable
 @using System.ComponentModel.DataAnnotations
-@using System.Security.Cryptography
-@using System.Text
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
@@ -11,6 +9,7 @@
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject OrganisationInvitationService Invitations
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -206,13 +205,13 @@ else
             }
         </details>
     }
-    @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="invite.Email" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
+    @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label">Email</label><InputText class="form-control" @bind-Value="invite.Email" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationError is not null) { <div class="alert alert-danger mt-3">@invitationError</div> }@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
     </section>
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private InviteModel invite = new(); private string? invitationLink; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private InviteModel invite = new(); private string? invitationLink; private string? invitationError; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private List<OrganisationMembership> RestrictableMembers => members.Where(x => x.Role is not OrganisationRole.Owner and not OrganisationRole.Administrator).OrderBy(x => x.User.Email).ToList();
     private OrganisationMembership? SelectedMember => members.SingleOrDefault(x => x.UserId == selectedMemberUserId);
     private List<OrganisationDimensionAccessGrant> SelectedMemberGrants => dimensionGrants.Where(x => x.UserId == selectedMemberUserId).OrderBy(x => x.Branch.Code).ThenBy(x => x.Division == null ? "" : x.Division.Code).ToList();
@@ -527,7 +526,25 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         }
     }
 
-    private async Task CreateInvitation() { if (!await TenantAccess.CanManageTeamAsync(userId, OrganisationId)) return; var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))); Db.OrganisationInvitations.Add(new OrganisationInvitation { OrganisationId = OrganisationId, Email = invite.Email.Trim().ToLowerInvariant(), Role = invite.Role, TokenHash = hash, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) }); await Db.SaveChangesAsync(); invitationLink = Navigation.ToAbsoluteUri($"invite/{token}").ToString(); invite = new(); }
+    private async Task CreateInvitation()
+    {
+        invitationLink = null;
+        invitationError = null;
+        try
+        {
+            var result = await Invitations.IssueAsync(
+                userId,
+                OrganisationId,
+                invite.Email,
+                invite.Role);
+            invitationLink = Navigation.ToAbsoluteUri($"invite/{result.Token}").ToString();
+            invite = new();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            invitationError = ex.Message;
+        }
+    }
     private static string Initials(string name) => string.Concat(name.Split(' ',StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x=>char.ToUpperInvariant(x[0])));
     private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
 }
