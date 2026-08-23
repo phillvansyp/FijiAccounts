@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
@@ -482,68 +483,82 @@ var recurring =
                             template.Frequency,
                             template.StartDate);
 
+                    await db.SaveChangesAsync(ct);
+
                     continue;
                 }
 
                 var dueDate =
                     scheduledDate.AddDays(template.DueDays);
-
-                var bill =
-                    await purchasing.PostBillAsync(
-                        userId,
-                        new SupplierBillRequest(
-                            template.OrganisationId,
-                            template.SupplierId,
-                            BuildSupplierReference(
-                                template.SupplierReference,
-                                scheduledDate),
-                            scheduledDate,
-                            dueDate,
-                            template.Lines
-                                .Select(x =>
-                                    new SupplierBillLineRequest(
-                                        x.Description,
-                                        x.Quantity,
-                                        x.UnitPrice,
-                                        x.VatTreatment,
-                                        x.ExpenseAccountId,
-                                        x.ProductItemId))
-                                .ToList()),
-                        ct);
-
-                db.RecurringSupplierBillGenerations.Add(
-                    new RecurringSupplierBillGeneration
-                    {
-                        OrganisationId = organisationId,
-                        RecurringSupplierBillId = template.Id,
-                        ScheduledDate = scheduledDate,
-                        SupplierBillId = bill.Id,
-                        GeneratedByUserId = userId
-                    });
-
-                template.NextBillDate =
+                var nextBillDate =
                     GetNextDate(
                         scheduledDate,
                         template.Frequency,
                         template.StartDate);
+                await using var transaction =
+                    await db.Database.BeginTransactionAsync(
+                        IsolationLevel.Serializable,
+                        ct);
+                try
+                {
+                    var bill =
+                        await purchasing.PostBillAsync(
+                            userId,
+                            new SupplierBillRequest(
+                                template.OrganisationId,
+                                template.SupplierId,
+                                BuildSupplierReference(
+                                    template.SupplierReference,
+                                    scheduledDate),
+                                scheduledDate,
+                                dueDate,
+                                template.Lines
+                                    .Select(x =>
+                                        new SupplierBillLineRequest(
+                                            x.Description,
+                                            x.Quantity,
+                                            x.UnitPrice,
+                                            x.VatTreatment,
+                                            x.ExpenseAccountId,
+                                            x.ProductItemId))
+                                    .ToList()),
+                            ct);
 
-                db.AuditEvents.Add(
-                    Audit(
-                        organisationId,
-                        userId,
-                        "RecurringSupplierBillGenerated",
-                        nameof(RecurringSupplierBill),
-                        template.Id,
-                        new
+                    db.RecurringSupplierBillGenerations.Add(
+                        new RecurringSupplierBillGeneration
                         {
+                            OrganisationId = organisationId,
+                            RecurringSupplierBillId = template.Id,
                             ScheduledDate = scheduledDate,
                             SupplierBillId = bill.Id,
-                            bill.BillNumber
-                        }));
+                            GeneratedByUserId = userId
+                        });
 
-                await db.SaveChangesAsync(ct);
+                    template.NextBillDate = nextBillDate;
+                    db.AuditEvents.Add(
+                        Audit(
+                            organisationId,
+                            userId,
+                            "RecurringSupplierBillGenerated",
+                            nameof(RecurringSupplierBill),
+                            template.Id,
+                            new
+                            {
+                                ScheduledDate = scheduledDate,
+                                SupplierBillId = bill.Id,
+                                bill.BillNumber
+                            }));
 
-                generated.Add(bill);
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    generated.Add(bill);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    db.ChangeTracker.Clear();
+                    throw;
+                }
             }
         }
 

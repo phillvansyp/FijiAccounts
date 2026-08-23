@@ -295,6 +295,14 @@ public sealed class RecurringSalesInvoiceServiceTests
                 test.Organisation.Id,
                 new DateOnly(2027, 2, 1));
 
+        await test.Db.RecurringSalesInvoices
+            .Where(x => x.Id == recurring.Id)
+            .ExecuteUpdateAsync(update =>
+                update.SetProperty(
+                    x => x.NextInvoiceDate,
+                    new DateOnly(2027, 2, 1)));
+        test.Db.ChangeTracker.Clear();
+
         var second =
             await service.GenerateDueAsync(
                 test.UserId,
@@ -310,6 +318,12 @@ public sealed class RecurringSalesInvoiceServiceTests
                 .Where(x =>
                     x.RecurringSalesInvoiceId == recurring.Id)
                 .ToListAsync());
+        Assert.Equal(
+            new DateOnly(2027, 3, 1),
+            await test.Db.RecurringSalesInvoices
+                .Where(x => x.Id == recurring.Id)
+                .Select(x => x.NextInvoiceDate)
+                .SingleAsync());
     }
 
     [Fact]

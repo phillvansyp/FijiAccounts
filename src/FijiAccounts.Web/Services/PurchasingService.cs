@@ -161,7 +161,12 @@ public sealed class PurchasingService(
             }
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        await using var transaction =
+            db.Database.CurrentTransaction is null
+                ? await db.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable,
+                    ct)
+                : null;
 
         SupplierBillDraft? draft = null;
         PurchaseOrder? sourcePurchaseOrder = null;
@@ -263,7 +268,10 @@ public sealed class PurchasingService(
         }
 
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
 
         return bill;
     }

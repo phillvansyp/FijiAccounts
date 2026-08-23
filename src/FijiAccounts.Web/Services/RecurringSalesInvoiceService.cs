@@ -538,82 +538,83 @@ public sealed class RecurringSalesInvoiceService(
                             template.Frequency,
                             template.StartDate);
 
+                    await db.SaveChangesAsync(ct);
+
                     continue;
                 }
 
                 var dueDate =
                     scheduledDate.AddDays(
                         template.DueDays);
-
-                var invoice =
-                    await salesInvoices.CreateAndPostAsync(
-                        userId,
-                        new SalesInvoiceRequest(
-                            template.OrganisationId,
-                            template.CustomerId,
-                            scheduledDate,
-                            dueDate,
-                            template.Lines
-                                .Select(x =>
-                                    new SalesInvoiceLineRequest(
-                                        x.Description,
-                                        x.Quantity,
-                                        x.UnitPrice,
-                                        x.VatTreatment,
-                                        x.RevenueAccountId,
-                                        x.ProductItemId))
-                                .ToList()),
-                        ct);
-
-                db.RecurringSalesInvoiceGenerations.Add(
-                    new RecurringSalesInvoiceGeneration
-                    {
-                        OrganisationId =
-                            organisationId,
-                        RecurringSalesInvoiceId =
-                            template.Id,
-                        ScheduledDate =
-                            scheduledDate,
-                        SalesInvoiceId =
-                            invoice.Id,
-                        GeneratedByUserId =
-                            userId
-                    });
-
-                template.NextInvoiceDate =
+                var nextInvoiceDate =
                     GetNextDate(
                         scheduledDate,
                         template.Frequency,
                         template.StartDate);
-
-                db.AuditEvents.Add(
-                    new AuditEvent
-                    {
-                        OrganisationId =
-                            organisationId,
-                        EventType =
-                            "RecurringSalesInvoiceGenerated",
-                        EntityType =
-                            nameof(RecurringSalesInvoice),
-                        EntityId =
-                            template.Id.ToString(),
-                        UserId =
+                await using var transaction =
+                    await db.Database.BeginTransactionAsync(
+                        IsolationLevel.Serializable,
+                        ct);
+                try
+                {
+                    var invoice =
+                        await salesInvoices.CreateAndPostAsync(
                             userId,
-                        JsonData =
-                            JsonSerializer.Serialize(
+                            new SalesInvoiceRequest(
+                                template.OrganisationId,
+                                template.CustomerId,
+                                scheduledDate,
+                                dueDate,
+                                template.Lines
+                                    .Select(x =>
+                                        new SalesInvoiceLineRequest(
+                                            x.Description,
+                                            x.Quantity,
+                                            x.UnitPrice,
+                                            x.VatTreatment,
+                                            x.RevenueAccountId,
+                                            x.ProductItemId))
+                                    .ToList()),
+                            ct);
+
+                    db.RecurringSalesInvoiceGenerations.Add(
+                        new RecurringSalesInvoiceGeneration
+                        {
+                            OrganisationId = organisationId,
+                            RecurringSalesInvoiceId = template.Id,
+                            ScheduledDate = scheduledDate,
+                            SalesInvoiceId = invoice.Id,
+                            GeneratedByUserId = userId
+                        });
+
+                    template.NextInvoiceDate = nextInvoiceDate;
+                    db.AuditEvents.Add(
+                        new AuditEvent
+                        {
+                            OrganisationId = organisationId,
+                            EventType = "RecurringSalesInvoiceGenerated",
+                            EntityType = nameof(RecurringSalesInvoice),
+                            EntityId = template.Id.ToString(),
+                            UserId = userId,
+                            JsonData = JsonSerializer.Serialize(
                                 new
                                 {
-                                    ScheduledDate =
-                                        scheduledDate,
-                                    SalesInvoiceId =
-                                        invoice.Id,
+                                    ScheduledDate = scheduledDate,
+                                    SalesInvoiceId = invoice.Id,
                                     invoice.InvoiceNumber
                                 })
-                    });
+                        });
 
-                await db.SaveChangesAsync(ct);
-
-                generated.Add(invoice);
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    generated.Add(invoice);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    db.ChangeTracker.Clear();
+                    throw;
+                }
             }
         }
 

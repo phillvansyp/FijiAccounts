@@ -171,6 +171,14 @@ public sealed class RecurringSupplierBillServiceTests
                 test.Organisation.Id,
                 new DateOnly(2026, 9, 1));
 
+        await test.Db.RecurringSupplierBills
+            .Where(x => x.Id == recurring.Id)
+            .ExecuteUpdateAsync(update =>
+                update.SetProperty(
+                    x => x.NextBillDate,
+                    new DateOnly(2026, 9, 1)));
+        test.Db.ChangeTracker.Clear();
+
         var second =
             await service.GenerateDueAsync(
                 test.UserId,
@@ -195,6 +203,12 @@ public sealed class RecurringSupplierBillServiceTests
                     x.OrganisationId == test.Organisation.Id &&
                     x.SupplierReference ==
                         "SOFTWARE-20260901"));
+        Assert.Equal(
+            new DateOnly(2026, 10, 1),
+            await test.Db.RecurringSupplierBills
+                .Where(x => x.Id == recurring.Id)
+                .Select(x => x.NextBillDate)
+                .SingleAsync());
     }
 
     [Fact]
