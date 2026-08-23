@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -38,36 +39,64 @@ public sealed class OrganisationSettingsService(
             request.DefaultSupplierBillDueDays,
             "supplier bill");
 
-        var changed =
-            await db.Organisations
-                .Where(x => x.Id == request.OrganisationId)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(x => x.LegalName, legalName)
-                    .SetProperty(x => x.TradingName, tradingName)
-                    .SetProperty(x => x.Tin, tin)
-                    .SetProperty(
-                        x => x.DefaultSalesInvoicePaymentTermType,
-                        request.DefaultSalesInvoicePaymentTermType)
-                    .SetProperty(
-                        x => x.DefaultSalesInvoiceDueDays,
-                        request.DefaultSalesInvoiceDueDays)
-                    .SetProperty(
-                        x => x.DefaultSupplierBillPaymentTermType,
-                        request.DefaultSupplierBillPaymentTermType)
-                    .SetProperty(
-                        x => x.DefaultSupplierBillDueDays,
-                        request.DefaultSupplierBillDueDays),
-                    cancellationToken);
-
-        if (changed != 1)
+        var organisation = await db.Organisations.SingleOrDefaultAsync(
+            x => x.Id == request.OrganisationId,
+            cancellationToken);
+        if (organisation is null)
         {
             throw new InvalidOperationException(
                 "The organisation could not be updated.");
         }
 
-        return await GetOrganisationAsync(
+        var previous = new
+        {
+            organisation.LegalName,
+            organisation.TradingName,
+            organisation.Tin,
+            DefaultSalesInvoicePaymentTermType =
+                organisation.DefaultSalesInvoicePaymentTermType.ToString(),
+            organisation.DefaultSalesInvoiceDueDays,
+            DefaultSupplierBillPaymentTermType =
+                organisation.DefaultSupplierBillPaymentTermType.ToString(),
+            organisation.DefaultSupplierBillDueDays
+        };
+        var updated = new
+        {
+            LegalName = legalName,
+            TradingName = tradingName,
+            Tin = tin,
+            DefaultSalesInvoicePaymentTermType =
+                request.DefaultSalesInvoicePaymentTermType.ToString(),
+            request.DefaultSalesInvoiceDueDays,
+            DefaultSupplierBillPaymentTermType =
+                request.DefaultSupplierBillPaymentTermType.ToString(),
+            request.DefaultSupplierBillDueDays
+        };
+        if (previous.Equals(updated))
+        {
+            return organisation;
+        }
+
+        organisation.LegalName = legalName;
+        organisation.TradingName = tradingName;
+        organisation.Tin = tin;
+        organisation.DefaultSalesInvoicePaymentTermType =
+            request.DefaultSalesInvoicePaymentTermType;
+        organisation.DefaultSalesInvoiceDueDays =
+            request.DefaultSalesInvoiceDueDays;
+        organisation.DefaultSupplierBillPaymentTermType =
+            request.DefaultSupplierBillPaymentTermType;
+        organisation.DefaultSupplierBillDueDays =
+            request.DefaultSupplierBillDueDays;
+
+        db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,
-            cancellationToken);
+            userId,
+            "OrganisationSettingsUpdated",
+            new { Old = previous, New = updated }));
+        await db.SaveChangesAsync(cancellationToken);
+
+        return organisation;
     }
 
     public async Task<Organisation> ChangeJurisdictionAsync(
@@ -87,29 +116,55 @@ public sealed class OrganisationSettingsService(
         }
 
         var jurisdiction = IslandJurisdictions.Get(countryCode);
-        var changed =
-            await db.Organisations
-                .Where(x => x.Id == organisationId)
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(x => x.CountryCode, jurisdiction.CountryCode)
-                    .SetProperty(x => x.BaseCurrency, jurisdiction.CurrencyCode)
-                    .SetProperty(x => x.TimeZoneId, jurisdiction.TimeZoneId)
-                    .SetProperty(x => x.TaxLabel, jurisdiction.TaxLabel)
-                    .SetProperty(
-                        x => x.FinancialYearEndMonth,
-                        jurisdiction.FinancialYearEndMonth)
-                    .SetProperty(
-                        x => x.FinancialYearEndDay,
-                        jurisdiction.FinancialYearEndDay),
-                    cancellationToken);
-
-        if (changed != 1)
+        var organisation = await db.Organisations.SingleOrDefaultAsync(
+            x => x.Id == organisationId,
+            cancellationToken);
+        if (organisation is null)
         {
             throw new InvalidOperationException(
                 "The organisation could not be updated.");
         }
 
-        return await GetOrganisationAsync(organisationId, cancellationToken);
+        var previous = new
+        {
+            organisation.CountryCode,
+            organisation.BaseCurrency,
+            organisation.TimeZoneId,
+            organisation.TaxLabel,
+            organisation.FinancialYearEndMonth,
+            organisation.FinancialYearEndDay
+        };
+        var updated = new
+        {
+            CountryCode = jurisdiction.CountryCode,
+            BaseCurrency = jurisdiction.CurrencyCode,
+            TimeZoneId = jurisdiction.TimeZoneId,
+            TaxLabel = jurisdiction.TaxLabel,
+            jurisdiction.FinancialYearEndMonth,
+            jurisdiction.FinancialYearEndDay
+        };
+        if (previous.Equals(updated))
+        {
+            return organisation;
+        }
+
+        organisation.CountryCode = jurisdiction.CountryCode;
+        organisation.BaseCurrency = jurisdiction.CurrencyCode;
+        organisation.TimeZoneId = jurisdiction.TimeZoneId;
+        organisation.TaxLabel = jurisdiction.TaxLabel;
+        organisation.FinancialYearEndMonth =
+            jurisdiction.FinancialYearEndMonth;
+        organisation.FinancialYearEndDay =
+            jurisdiction.FinancialYearEndDay;
+
+        db.AuditEvents.Add(CreateAuditEvent(
+            organisationId,
+            userId,
+            "OrganisationJurisdictionChanged",
+            new { Old = previous, New = updated }));
+        await db.SaveChangesAsync(cancellationToken);
+
+        return organisation;
     }
 
     private async Task RequireManagerAsync(
@@ -134,12 +189,20 @@ public sealed class OrganisationSettingsService(
         }
     }
 
-    private async Task<Organisation> GetOrganisationAsync(
+    private static AuditEvent CreateAuditEvent(
         Guid organisationId,
-        CancellationToken cancellationToken) =>
-        await db.Organisations
-            .AsNoTracking()
-            .SingleAsync(x => x.Id == organisationId, cancellationToken);
+        string userId,
+        string eventType,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(Organisation),
+            EntityId = organisationId.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 
     private static string RequiredText(
         string value,

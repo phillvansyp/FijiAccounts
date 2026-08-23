@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -31,6 +32,42 @@ public sealed class OrganisationSettingsServiceTests
         Assert.Equal("WST", relocated.BaseCurrency);
         Assert.Equal("Pacific/Apia", relocated.TimeZoneId);
         Assert.Equal("VAGST", relocated.TaxLabel);
+
+        var auditEvents = await test.Db.AuditEvents
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+        Assert.Equal(
+            ["OrganisationSettingsUpdated", "OrganisationJurisdictionChanged"],
+            auditEvents.Select(x => x.EventType));
+        Assert.All(auditEvents, audit =>
+        {
+            Assert.Equal(test.UserId, audit.UserId);
+            Assert.Equal(nameof(Organisation), audit.EntityType);
+            Assert.Equal(test.Organisation.Id.ToString(), audit.EntityId);
+        });
+
+        using var settingsEvidence = JsonDocument.Parse(auditEvents[0].JsonData);
+        Assert.Equal(
+            "Accounting Test Limited",
+            settingsEvidence.RootElement.GetProperty("Old").GetProperty("LegalName").GetString());
+        Assert.Equal(
+            "Updated Company Limited",
+            settingsEvidence.RootElement.GetProperty("New").GetProperty("LegalName").GetString());
+        Assert.Equal(
+            20,
+            settingsEvidence.RootElement.GetProperty("New").GetProperty("DefaultSupplierBillDueDays").GetInt32());
+
+        using var jurisdictionEvidence = JsonDocument.Parse(auditEvents[1].JsonData);
+        Assert.Equal(
+            "FJ",
+            jurisdictionEvidence.RootElement.GetProperty("Old").GetProperty("CountryCode").GetString());
+        Assert.Equal(
+            "WS",
+            jurisdictionEvidence.RootElement.GetProperty("New").GetProperty("CountryCode").GetString());
+        Assert.Equal(
+            "WST",
+            jurisdictionEvidence.RootElement.GetProperty("New").GetProperty("BaseCurrency").GetString());
     }
 
     [Fact]
@@ -56,6 +93,35 @@ public sealed class OrganisationSettingsServiceTests
                 .Where(x => x.Id == test.Organisation.Id)
                 .Select(x => x.LegalName)
                 .SingleAsync());
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task UnchangedSettings_DoNotCreateAuditNoise()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationSettingsService(test.Db);
+        var organisation = await test.Db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == test.Organisation.Id);
+
+        await service.UpdateAsync(
+            test.UserId,
+            new UpdateOrganisationSettingsRequest(
+                organisation.Id,
+                $" {organisation.LegalName} ",
+                organisation.TradingName,
+                organisation.Tin,
+                organisation.DefaultSalesInvoicePaymentTermType,
+                organisation.DefaultSalesInvoiceDueDays,
+                organisation.DefaultSupplierBillPaymentTermType,
+                organisation.DefaultSupplierBillDueDays));
+        await service.ChangeJurisdictionAsync(
+            test.UserId,
+            organisation.Id,
+            organisation.CountryCode.ToLowerInvariant());
+
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -87,6 +153,28 @@ public sealed class OrganisationSettingsServiceTests
             "after accounting transactions",
             exception.Message,
             StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task InvalidSettings_DoNotChangeOrganisationOrCreateAudit()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationSettingsService(test.Db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateAsync(
+                test.UserId,
+                Request(test.Organisation.Id) with
+                {
+                    DefaultSupplierBillDueDays = 366
+                }));
+
+        var organisation = await test.Db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == test.Organisation.Id);
+        Assert.Equal("Accounting Test Limited", organisation.LegalName);
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
     }
 
     private static UpdateOrganisationSettingsRequest Request(
