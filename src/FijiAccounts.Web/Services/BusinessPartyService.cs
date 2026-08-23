@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -116,6 +117,32 @@ public sealed class BusinessPartyService(
             };
 
         db.BusinessParties.Add(party);
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "BusinessPartyCreated",
+            party.Id,
+            new
+            {
+                party.Name,
+                party.Email,
+                party.Tin,
+                Type = party.Type.ToString(),
+                CustomerDefaults = new
+                {
+                    party.DefaultSalesAccountId,
+                    VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
+                    PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
+                    DueDays = party.DefaultSalesInvoiceDueDays
+                },
+                SupplierDefaults = new
+                {
+                    party.DefaultPurchaseAccountId,
+                    VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
+                    PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
+                    DueDays = party.DefaultSupplierBillDueDays
+                }
+            }));
         await db.SaveChangesAsync(cancellationToken);
 
         return party;
@@ -142,11 +169,36 @@ public sealed class BusinessPartyService(
             request.BusinessPartyId,
             PartyType.Customer,
             cancellationToken);
+        var previous = new
+        {
+            SalesAccountId = party.DefaultSalesAccountId,
+            VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
+            DueDays = party.DefaultSalesInvoiceDueDays
+        };
+        var updated = new
+        {
+            SalesAccountId = request.SalesAccountId,
+            VatTreatment = request.VatTreatment?.ToString(),
+            PaymentTermType = request.PaymentTermType.ToString(),
+            DueDays = request.DueDays
+        };
+        if (previous.Equals(updated))
+        {
+            return;
+        }
+
         party.DefaultSalesInvoicePaymentTermType = request.PaymentTermType;
         party.DefaultSalesInvoiceDueDays = request.DueDays;
         party.DefaultSalesAccountId = request.SalesAccountId;
         party.DefaultSalesVatTreatment = request.VatTreatment;
 
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "CustomerDefaultsUpdated",
+            party.Id,
+            new { party.Name, Old = previous, New = updated }));
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -171,13 +223,54 @@ public sealed class BusinessPartyService(
             request.BusinessPartyId,
             PartyType.Supplier,
             cancellationToken);
+        var previous = new
+        {
+            PurchaseAccountId = party.DefaultPurchaseAccountId,
+            VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
+            PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
+            DueDays = party.DefaultSupplierBillDueDays
+        };
+        var updated = new
+        {
+            PurchaseAccountId = request.PurchaseAccountId,
+            VatTreatment = request.VatTreatment?.ToString(),
+            PaymentTermType = request.PaymentTermType.ToString(),
+            DueDays = request.DueDays
+        };
+        if (previous.Equals(updated))
+        {
+            return;
+        }
+
         party.DefaultPurchaseAccountId = request.PurchaseAccountId;
         party.DefaultPurchaseVatTreatment = request.VatTreatment;
         party.DefaultSupplierBillPaymentTermType = request.PaymentTermType;
         party.DefaultSupplierBillDueDays = request.DueDays;
 
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "SupplierDefaultsUpdated",
+            party.Id,
+            new { party.Name, Old = previous, New = updated }));
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    private static AuditEvent CreateAuditEvent(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        Guid businessPartyId,
+        object evidence) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(BusinessParty),
+            EntityId = businessPartyId.ToString(),
+            JsonData = JsonSerializer.Serialize(evidence)
+        };
 
     private async Task RequireAccessAsync(
         string userId,
