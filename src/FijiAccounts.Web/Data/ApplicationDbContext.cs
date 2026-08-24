@@ -741,7 +741,11 @@ builder.Entity<BankReconciliationSession>()
             .WithMany()
             .HasForeignKey(x => x.PostedJournalId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.Entity<AccountBudget>().HasIndex(x => new { x.OrganisationId, x.LedgerAccountId, x.Month }).IsUnique(); builder.Entity<AccountBudget>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<AccountBudget>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AccountBudget>().HasIndex(x => new { x.OrganisationId, x.LedgerAccountId, x.Month, x.ScopeKey }).IsUnique();
+        builder.Entity<AccountBudget>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<AccountBudget>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AccountBudget>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<AccountBudget>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesQuote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SalesQuote>().HasIndex(x => new { x.OrganisationId, x.QuoteNumber }).IsUnique();
         builder.Entity<SalesQuote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);

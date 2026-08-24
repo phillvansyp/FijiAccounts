@@ -8,7 +8,9 @@ public sealed record BudgetReportRequest(
     Guid OrganisationId,
     int Year,
     decimal AlertThresholdPercent = 10m,
-    decimal AlertThresholdAmount = 100m);
+    decimal AlertThresholdAmount = 100m,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed record BudgetVarianceRow(
     Guid AccountId,
@@ -34,6 +36,9 @@ public sealed record MonthlyBudgetVariance(
 
 public sealed record BudgetPerformanceReport(
     int Year,
+    string ScopeLabel,
+    Guid? BranchId,
+    Guid? DivisionId,
     decimal AlertThresholdPercent,
     decimal AlertThresholdAmount,
     IReadOnlyList<LedgerAccount> Accounts,
@@ -54,21 +59,24 @@ public sealed record BudgetPerformanceReport(
     public decimal ActualProfit => RevenueActual - ExpenseActual;
 }
 
-public sealed class BudgetReportingService(
-    ApplicationDbContext db,
-    TenantAccessService access)
+public sealed class BudgetReportingService
 {
+    private readonly ApplicationDbContext db;
+    private readonly BudgetScopeService scopes;
+
+    public BudgetReportingService(
+        ApplicationDbContext db,
+        BudgetScopeService scopes)
+    {
+        this.db = db;
+        this.scopes = scopes;
+    }
+
     public async Task<BudgetPerformanceReport> GetAsync(
         string userId,
         BudgetReportRequest request,
         CancellationToken ct = default)
     {
-        if (await access.FindAsync(userId, request.OrganisationId) is null)
-        {
-            throw new UnauthorizedAccessException(
-                "You cannot view budgets for this organisation.");
-        }
-
         if (request.Year is < 2000 or > 2200 ||
             request.AlertThresholdPercent is < 0 or > 10_000 ||
             request.AlertThresholdAmount < 0)
@@ -76,6 +84,13 @@ public sealed class BudgetReportingService(
             throw new InvalidOperationException(
                 "Enter a valid year and non-negative variance thresholds.");
         }
+
+        var scope = await scopes.ResolveAsync(
+            userId,
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            ct);
 
         var from = new DateOnly(request.Year, 1, 1);
         var to = new DateOnly(request.Year, 12, 31);
@@ -88,15 +103,26 @@ public sealed class BudgetReportingService(
         var budgets = await db.AccountBudgets.AsNoTracking()
             .Where(x =>
                 x.OrganisationId == request.OrganisationId &&
+                x.ScopeKey == scope.Key &&
                 x.Month >= from && x.Month <= to)
             .ToListAsync(ct);
-        var actuals = await db.PostedJournalLines.AsNoTracking()
+        var actualQuery = db.PostedJournalLines.AsNoTracking()
             .Where(x =>
                 x.PostedJournal.OrganisationId == request.OrganisationId &&
                 x.PostedJournal.EntryDate >= from &&
                 x.PostedJournal.EntryDate <= to &&
                 (x.LedgerAccount.Type == AccountType.Revenue ||
-                 x.LedgerAccount.Type == AccountType.Expense))
+                 x.LedgerAccount.Type == AccountType.Expense));
+        if (scope.DivisionId is Guid divisionId)
+        {
+            actualQuery = actualQuery.Where(x => x.DivisionId == divisionId);
+        }
+        else if (scope.BranchId is Guid branchId)
+        {
+            actualQuery = actualQuery.Where(x => x.BranchId == branchId);
+        }
+
+        var actuals = await actualQuery
             .GroupBy(x => new
             {
                 x.LedgerAccountId,
@@ -144,6 +170,9 @@ public sealed class BudgetReportingService(
 
         return new(
             request.Year,
+            scope.Label,
+            scope.BranchId,
+            scope.DivisionId,
             request.AlertThresholdPercent,
             request.AlertThresholdAmount,
             accounts,

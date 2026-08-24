@@ -9,6 +9,11 @@ public sealed class AccountBudget
     public Organisation Organisation { get; set; } = null!;
     public Guid LedgerAccountId { get; set; }
     public LedgerAccount LedgerAccount { get; set; } = null!;
+    [MaxLength(80)] public string ScopeKey { get; set; } = "organisation";
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
     public DateOnly Month { get; set; }
     public decimal Amount { get; set; }
     [MaxLength(450)] public required string UpdatedByUserId { get; set; }

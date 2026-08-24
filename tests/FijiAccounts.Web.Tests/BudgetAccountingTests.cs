@@ -221,6 +221,28 @@ public sealed class BudgetAccountingTests
     }
 
     [Fact]
+    public async Task SetAsync_KeepsOrganisationAndDivisionBudgetsSeparate()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var branch = await test.Db.Branches.Include(x => x.Divisions)
+            .SingleAsync(x => x.OrganisationId == test.Organisation.Id && x.IsDefault);
+        var division = branch.Divisions.Single(x => x.IsDefault);
+        var service = new BudgetService(test.Db, test.Access);
+        var month = new DateOnly(2026, 8, 1);
+
+        var organisationBudget = await service.SetAsync(test.UserId, new BudgetRequest(
+            test.Organisation.Id, test.Account("6500").Id, month, 2_000m));
+        var divisionBudget = await service.SetAsync(test.UserId, new BudgetRequest(
+            test.Organisation.Id, test.Account("6500").Id, month, 750m,
+            branch.Id, division.Id));
+
+        Assert.NotEqual(organisationBudget.Id, divisionBudget.Id);
+        Assert.Equal("organisation", organisationBudget.ScopeKey);
+        Assert.Equal($"division:{division.Id:N}", divisionBudget.ScopeKey);
+        Assert.Equal(2, await test.Db.AccountBudgets.CountAsync());
+    }
+
+    [Fact]
     public async Task SetAsync_CreatesAndUpdatesAuditEvents()
     {
         await using var test =

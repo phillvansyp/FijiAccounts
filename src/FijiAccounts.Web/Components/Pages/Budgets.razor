@@ -20,13 +20,14 @@
 else
 {
     <div class="page-heading">
-        <div><p class="eyebrow">Planning</p><h1>Budget versus actual</h1><p class="page-intro">Compare organisation-wide monthly targets with posted ledger evidence and surface material adverse variances.</p></div>
+        <div><p class="eyebrow">Planning</p><h1>Budget versus actual</h1><p class="page-intro">Compare organisation, branch, or division targets with posted ledger evidence and surface material adverse variances.</p></div>
         <button class="btn btn-outline-secondary no-print" onclick="window.print()">Print report</button>
     </div>
 
     <section class="report-controls no-print">
         <EditForm Model="filter" OnValidSubmit="Reload" FormName="budget-report-filter">
             <DataAnnotationsValidator />
+            <div><label class="form-label">Reporting scope</label><InputSelect class="form-select" @bind-Value="filter.Scope">@foreach (var scope in scopeOptions) { <option value="@scope.Value">@scope.Label</option> }</InputSelect></div>
             <div><label class="form-label">Calendar year</label><InputNumber class="form-control" @bind-Value="filter.Year" /></div>
             <div><label class="form-label">Alert variance %</label><InputNumber class="form-control" @bind-Value="filter.AlertPercent" /></div>
             <div><label class="form-label">Minimum alert amount</label><InputNumber class="form-control" @bind-Value="filter.AlertAmount" /></div>
@@ -48,10 +49,11 @@ else
                 <EditForm Model="model" OnValidSubmit="Save" FormName="set-budget" class="mt-3">
                     <DataAnnotationsValidator /><ValidationSummary />
                     <div class="row">
-                        <div class="col-md-5 mb-3"><label class="form-label">Revenue or expense account</label><InputSelect class="form-select" @bind-Value="model.AccountId">@foreach (var account in report.Accounts.Where(x => x.IsActive)) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
-                        <div class="col-md-3 mb-3"><label class="form-label">Month</label><InputDate class="form-control" @bind-Value="model.Month" /></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Revenue or expense account</label><InputSelect class="form-select" @bind-Value="model.AccountId">@foreach (var account in report.Accounts.Where(x => x.IsActive)) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-3"><label class="form-label">Budget scope</label><InputSelect class="form-select" @bind-Value="model.Scope">@foreach (var scope in scopeOptions) { <option value="@scope.Value">@scope.Label</option> }</InputSelect></div>
+                        <div class="col-md-2 mb-3"><label class="form-label">Month</label><InputDate class="form-control" @bind-Value="model.Month" /></div>
                         <div class="col-md-2 mb-3"><label class="form-label">Budget amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
-                        <div class="col-md-2 d-flex align-items-end mb-3"><button class="btn btn-primary w-100">Save budget</button></div>
+                        <div class="col-md-1 d-flex align-items-end mb-3"><button class="btn btn-primary w-100">Save</button></div>
                     </div>
                 </EditForm>
             </details>
@@ -66,7 +68,7 @@ else
         </div>
 
         <section class="detail-card mb-4">
-            <div class="card-heading"><div><span class="eyebrow">Annual comparison</span><h2>@report.Year performance</h2></div><span>@report.AccountsPerformance.Count accounts</span></div>
+            <div class="card-heading"><div><span class="eyebrow">Annual comparison</span><h2>@report.Year performance</h2><small>@report.ScopeLabel</small></div><span>@report.AccountsPerformance.Count accounts</span></div>
             @if (report.AccountsPerformance.Count == 0)
             {
                 <div class="empty-state"><strong>No budget or actual activity</strong><span>Set a monthly budget or post transactions for this year.</span></div>
@@ -110,6 +112,7 @@ else
     private string userId = "";
     private bool canManage;
     private BudgetPerformanceReport? report;
+    private List<ScopeOption> scopeOptions = [];
     private FilterModel filter = new();
     private EntryModel model = new();
     private string? message;
@@ -122,7 +125,33 @@ else
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is null) return;
         canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        var branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        var hasFullDimensionAccess = await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null;
+        scopeOptions = [];
+        if (hasFullDimensionAccess)
+        {
+            scopeOptions.Add(new("organisation", "Whole organisation", null, null));
+        }
+        foreach (var branch in branches)
+        {
+            if (hasFullDimensionAccess)
+            {
+                scopeOptions.Add(new($"branch:{branch.Id:N}", $"Branch: {branch.Code} — {branch.Name}", branch.Id, null));
+            }
+            scopeOptions.AddRange(branch.Divisions.Select(division => new ScopeOption(
+                $"division:{division.Id:N}",
+                $"Division: {branch.Code} — {division.Code} — {division.Name}",
+                branch.Id,
+                division.Id)));
+        }
+        if (scopeOptions.Count == 0)
+        {
+            messageClass = "alert-danger";
+            message = "No reporting dimensions are available within your access.";
+            return;
+        }
         filter.Year = DateTime.Today.Year;
+        filter.Scope = scopeOptions[0].Value;
         await Reload();
         Reset();
     }
@@ -131,8 +160,10 @@ else
     {
         try
         {
+            var scope = SelectedScope(filter.Scope);
             report = await BudgetReporting.GetAsync(userId, new BudgetReportRequest(
-                OrganisationId, filter.Year, filter.AlertPercent, filter.AlertAmount));
+                OrganisationId, filter.Year, filter.AlertPercent, filter.AlertAmount,
+                scope.BranchId, scope.DivisionId));
             if (model.AccountId == Guid.Empty || !report.Accounts.Any(x => x.Id == model.AccountId && x.IsActive)) Reset();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
@@ -145,17 +176,21 @@ else
     private void Reset() => model = new EntryModel
     {
         AccountId = report?.Accounts.FirstOrDefault(x => x.IsActive)?.Id ?? Guid.Empty,
-        Month = new DateOnly(filter.Year, DateTime.Today.Month, 1)
+        Month = new DateOnly(filter.Year, DateTime.Today.Month, 1),
+        Scope = filter.Scope
     };
 
     private async Task Save()
     {
         try
         {
+            var scope = SelectedScope(model.Scope);
             var budget = await BudgetService.SetAsync(userId,
-                new(OrganisationId, model.AccountId, model.Month, model.Amount));
+                new(OrganisationId, model.AccountId, model.Month, model.Amount,
+                    scope.BranchId, scope.DivisionId));
             messageClass = "alert-success";
-            message = $"Budget saved for {budget.Month:MMM yyyy}.";
+            message = $"Budget saved for {budget.Month:MMM yyyy} — {scope.Label}.";
+            filter.Scope = model.Scope;
             await Reload();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
@@ -165,12 +200,22 @@ else
         }
     }
 
-    private string LedgerLink(Guid accountId) =>
-        $"/o/{OrganisationId}/general-ledger?from={filter.Year}-01-01&to={filter.Year}-12-31&account={accountId}";
+    private string LedgerLink(Guid accountId)
+    {
+        var scope = SelectedScope(filter.Scope);
+        var dimensionQuery = scope.DivisionId is Guid divisionId
+            ? $"&branch={scope.BranchId}&division={divisionId}"
+            : scope.BranchId is Guid branchId ? $"&branch={branchId}" : "";
+        return $"/o/{OrganisationId}/general-ledger?from={filter.Year}-01-01&to={filter.Year}-12-31&account={accountId}{dimensionQuery}";
+    }
+
+    private ScopeOption SelectedScope(string value) =>
+        scopeOptions.Single(x => x.Value == value);
 
     private sealed class FilterModel
     {
         [Range(2000, 2200)] public int Year { get; set; }
+        public string Scope { get; set; } = "organisation";
         [Range(0, 10000)] public decimal AlertPercent { get; set; } = 10m;
         [Range(0, 999999999)] public decimal AlertAmount { get; set; } = 100m;
     }
@@ -179,6 +224,13 @@ else
     {
         public Guid AccountId { get; set; }
         public DateOnly Month { get; set; }
+        public string Scope { get; set; } = "organisation";
         [Range(0, 999999999)] public decimal Amount { get; set; }
     }
+
+    private sealed record ScopeOption(
+        string Value,
+        string Label,
+        Guid? BranchId,
+        Guid? DivisionId);
 }
