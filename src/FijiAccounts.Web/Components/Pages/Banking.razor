@@ -175,6 +175,7 @@ else
                                 <th>Transactions</th>
                                 <th class="text-end">Net amount</th>
                                 <th>Imported</th>
+                                <th>Statement</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -188,6 +189,19 @@ else
                                     <td>@item.LineCount</td>
                                     <td class="text-end">$@item.NetAmount.ToString("N2")</td>
                                     <td>@item.ImportedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</td>
+                                    <td>
+                                        @if (item.DocumentId is not null)
+                                        {
+                                            <a class="btn btn-sm btn-outline-primary"
+                                               href="@StatementDocumentUrl(item.BatchId)"
+                                               target="_blank"
+                                               rel="noopener">View statement</a>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">Not retained</span>
+                                        }
+                                    </td>
                                     <td class="text-end">
                                         @if (confirmingImportBatchId == item.BatchId)
                                         {
@@ -623,7 +637,9 @@ reconciliationSessions =
         .ThenByDescending(x => x.CreatedAt)
         .ToList();
         await LoadCodedAccounts();
-        balances = transactions.GroupBy(x => x.LedgerAccountId).ToDictionary(x => x.Key, x => x.Sum(y => y.Debit - y.Credit));
+        balances = (await BankAccounts.GetBalancesAsync(
+            userId,
+            OrganisationId)).ToDictionary();
         if (accounts.Count > 0 && statementModel.BankAccountId == Guid.Empty) statementModel.BankAccountId = accounts[0].Id;
         if (accounts.Count > 0 && importBankAccountId == Guid.Empty) importBankAccountId = accounts[0].Id;
     }
@@ -1024,7 +1040,15 @@ await Reload();
 
     private async Task SelectStatement(InputFileChangeEventArgs args)
     {
-        ResetStatementSelection();
+        /*
+         * Keep the current InputFile component alive until the browser file
+         * has been copied. Replacing it here invalidates the IBrowserFile
+         * reference and can cause _blazorFilesById failures during upload.
+         */
+        selectedStatement = null;
+        statementPreview = null;
+        statementError = null;
+        readingStatement = false;
         status = null;
         var file = args.File;
 
@@ -1035,6 +1059,7 @@ await Reload();
             await input.CopyToAsync(content);
             selectedStatement = new SelectedStatementFile(
                 file.Name,
+                file.ContentType,
                 file.Size,
                 content.ToArray());
         }
@@ -1043,6 +1068,7 @@ await Reload();
             statementError = ex.Message.Contains("_blazorFilesById", StringComparison.Ordinal)
                 ? "The selected file is no longer available. Choose the statement file again."
                 : $"We could not load this statement file: {ex.Message}";
+            statementInputVersion++;
         }
     }
 
@@ -1104,7 +1130,12 @@ await Reload();
                 OrganisationId,
                 importBankAccountId,
                 statementPreview.Lines,
-                statementPreview.Format);
+                statementPreview.Format,
+                new BankStatementDocumentRequest(
+                    selectedStatement!.Name,
+                    selectedStatement.ContentType,
+                    selectedStatement.Size,
+                    selectedStatement.Content));
             statusClass = "alert-success";
             status = $"Imported {result.Imported} statement line{(result.Imported == 1 ? "" : "s")}. " +
                      $"Skipped {result.Skipped} duplicate{(result.Skipped == 1 ? "" : "s")}.";
@@ -1117,12 +1148,20 @@ await Reload();
             statusClass = "alert-danger";
             status = ex.Message;
         }
+        catch (DbUpdateException)
+        {
+            statusClass = "alert-danger";
+            status = "The statement could not be saved. Reload the page and try the import again.";
+        }
     }
 
     private sealed record SelectedStatementFile(
         string Name,
+        string? ContentType,
         long Size,
         byte[] Content);
+    private string StatementDocumentUrl(Guid batchId) =>
+        $"api/o/{OrganisationId}/banking/imports/{batchId}/statement";
     private static bool AmountMatches(decimal left, decimal right) => Math.Round(left, 2, MidpointRounding.AwayFromZero) == Math.Round(right, 2, MidpointRounding.AwayFromZero);
     private sealed class BankModel
 {

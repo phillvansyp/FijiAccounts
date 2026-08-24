@@ -14,6 +14,11 @@ namespace FijiAccounts.Web.Services;
 public sealed record BankImportResult(int Imported, int Skipped, Guid BatchId);
 public sealed record StatementPreviewLine(DateOnly Date, string Description, string? Reference, decimal Amount);
 public sealed record StatementPreview(string Format, IReadOnlyList<StatementPreviewLine> Lines);
+public sealed record BankStatementDocumentRequest(
+    string FileName,
+    string? ContentType,
+    long OriginalSize,
+    byte[] Content);
 public sealed record BankStatementImportBatch(
     Guid BatchId,
     Guid BankAccountId,
@@ -24,7 +29,9 @@ public sealed record BankStatementImportBatch(
     int LineCount,
     decimal NetAmount,
     DateTimeOffset ImportedAt,
-    bool CanDelete);
+    bool CanDelete,
+    Guid? DocumentId,
+    string? DocumentFileName);
 public sealed record BankStatementImportDeleteResult(Guid BatchId, int Deleted);
 
 public sealed class BankStatementImportService(ApplicationDbContext db, TenantAccessService access)
@@ -55,10 +62,24 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
         };
     }
 
-    public async Task<BankImportResult> ImportAsync(string userId, Guid organisationId, Guid bankAccountId, IReadOnlyList<StatementPreviewLine> lines, string source, CancellationToken ct = default)
+    public async Task<BankImportResult> ImportAsync(
+        string userId,
+        Guid organisationId,
+        Guid bankAccountId,
+        IReadOnlyList<StatementPreviewLine> lines,
+        string source,
+        BankStatementDocumentRequest? document = null,
+        CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot import statements for this organisation.");
         if (!await db.LedgerAccounts.AnyAsync(x => x.Id == bankAccountId && x.OrganisationId == organisationId && x.IsActive && x.IsBankAccount, ct)) throw new InvalidOperationException("Select an active bank account.");
+        var storedDocument = document is null
+            ? null
+            : CreateDocument(
+                organisationId,
+                bankAccountId,
+                userId,
+                document);
         if (lines.Count > 0)
 {
     var earliestDate =
@@ -96,13 +117,52 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
     }
 }
         var batchId = Guid.NewGuid(); var imported = 0; var skipped = 0;
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var row in lines)
         {
-            var hash = Hash(row.Date, row.Description, row.Reference, row.Amount);
+            var baseHash = Hash(row.Date, row.Description, row.Reference, row.Amount);
+            var occurrence = occurrences.GetValueOrDefault(baseHash) + 1;
+            occurrences[baseHash] = occurrence;
+            var hash = occurrence == 1
+                ? baseHash
+                : HashOccurrence(baseHash, occurrence);
             if (await db.BankStatementLines.AnyAsync(x => x.OrganisationId == organisationId && x.BankAccountId == bankAccountId && x.SourceHash == hash, ct)) { skipped++; continue; }
             db.BankStatementLines.Add(new BankStatementLine { OrganisationId = organisationId, BankAccountId = bankAccountId, TransactionDate = row.Date, Description = row.Description, Reference = row.Reference, Amount = row.Amount, Source = source, ImportBatchId = batchId, SourceHash = hash }); imported++;
         }
-        if (imported > 0) { db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, UserId = userId, EventType = "BankStatementImported", EntityType = nameof(BankStatementLine), EntityId = batchId.ToString(), JsonData = System.Text.Json.JsonSerializer.Serialize(new { bankAccountId, source, imported, skipped }) }); await db.SaveChangesAsync(ct); }
+        if (imported > 0)
+        {
+            if (storedDocument is not null)
+            {
+                storedDocument.ImportBatchId = batchId;
+                db.BankStatementImportDocuments.Add(storedDocument);
+            }
+
+            db.AuditEvents.Add(new AuditEvent
+            {
+                OrganisationId = organisationId,
+                UserId = userId,
+                EventType = "BankStatementImported",
+                EntityType = nameof(BankStatementLine),
+                EntityId = batchId.ToString(),
+                JsonData = JsonSerializer.Serialize(new
+                {
+                    bankAccountId,
+                    source,
+                    imported,
+                    skipped,
+                    StatementDocument = storedDocument is null
+                        ? null
+                        : new
+                        {
+                            storedDocument.Id,
+                            storedDocument.FileName,
+                            storedDocument.ContentType,
+                            storedDocument.OriginalSize
+                        }
+                })
+            });
+            await db.SaveChangesAsync(ct);
+        }
         return new(imported, skipped, batchId);
     }
 
@@ -125,6 +185,17 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 x.ImportBatchId != null)
             .ToListAsync(ct);
 
+        var batchIds = importedLines
+            .Select(x => x.ImportBatchId!.Value)
+            .Distinct()
+            .ToList();
+        var documents = await db.BankStatementImportDocuments
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                batchIds.Contains(x.ImportBatchId))
+            .ToDictionaryAsync(x => x.ImportBatchId, ct);
+
         return importedLines
             .GroupBy(x => x.ImportBatchId!.Value)
             .Select(group => new BankStatementImportBatch(
@@ -139,7 +210,9 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 group.Min(x => x.ImportedAt),
                 group.All(x =>
                     x.ReconciledAt == null &&
-                    x.MatchedPostedJournalLineId == null)))
+                    x.MatchedPostedJournalLineId == null),
+                documents.GetValueOrDefault(group.Key)?.Id,
+                documents.GetValueOrDefault(group.Key)?.FileName))
             .OrderByDescending(x => x.ImportedAt)
             .ToList();
     }
@@ -196,6 +269,12 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 "This import cannot be deleted because it is inside a completed reconciliation period.");
         }
 
+        var document = await db.BankStatementImportDocuments
+            .SingleOrDefaultAsync(x =>
+                x.OrganisationId == organisationId &&
+                x.ImportBatchId == batchId,
+                ct);
+
         var evidence = new
         {
             BankAccountId = bankAccountId,
@@ -204,10 +283,23 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
             FirstDate = firstDate,
             LastDate = lastDate,
             NetAmount = lines.Sum(x => x.Amount),
-            ImportedAt = lines.Min(x => x.ImportedAt)
+            ImportedAt = lines.Min(x => x.ImportedAt),
+            StatementDocument = document is null
+                ? null
+                : new
+                {
+                    document.Id,
+                    document.FileName,
+                    document.ContentType,
+                    document.OriginalSize
+                }
         };
 
         db.BankStatementLines.RemoveRange(lines);
+        if (document is not null)
+        {
+            db.BankStatementImportDocuments.Remove(document);
+        }
         db.AuditEvents.Add(new AuditEvent
         {
             OrganisationId = organisationId,
@@ -220,6 +312,25 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
 
         await db.SaveChangesAsync(ct);
         return new BankStatementImportDeleteResult(batchId, lines.Count);
+    }
+
+    public async Task<BankStatementImportDocument?> GetDocumentAsync(
+        string userId,
+        Guid organisationId,
+        Guid batchId,
+        CancellationToken ct = default)
+    {
+        if (await access.FindAsync(userId, organisationId) is null)
+        {
+            return null;
+        }
+
+        return await db.BankStatementImportDocuments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x =>
+                x.OrganisationId == organisationId &&
+                x.ImportBatchId == batchId,
+                ct);
     }
 
     public async Task<BankImportResult> ImportCsvAsync(
@@ -252,7 +363,7 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
         bankAccountId,
         preview.Lines,
         preview.Format,
-        ct);
+        ct: ct);
 }
 
     private static List<StatementPreviewLine> ParseCsv(string text)
@@ -599,5 +710,61 @@ if (amounts.Count == 1 &&
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool TryDate(string value, out DateOnly date) { foreach (var format in new[] { "yyyy-MM-dd", "dd/MM/yyyy", "d/M/yyyy", "dd/MM/yy", "d/M/yy", "dd-MM-yyyy", "d-M-yyyy", "dd-MM-yy", "d-M-yy", "MM/dd/yyyy", "M/d/yyyy", "dd MMM yyyy", "dd MMM yy" }) if (DateOnly.TryParseExact(value.Trim(), format, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true; return DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date); }
     private static string Hash(DateOnly date, string description, string? reference, decimal amount) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{date:yyyy-MM-dd}|{description.Trim().ToUpperInvariant()}|{reference?.Trim().ToUpperInvariant()}|{amount:F2}")));
+    private static string HashOccurrence(string baseHash, int occurrence) =>
+        Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{baseHash}|{occurrence}")));
     private static List<string> ParseRow(string row, char delimiter) { var values = new List<string>(); var value = new StringBuilder(); var quoted = false; for (var i = 0; i < row.Length; i++) { var c = row[i]; if (c == '"') { if (quoted && i + 1 < row.Length && row[i + 1] == '"') { value.Append('"'); i++; } else quoted = !quoted; } else if (c == delimiter && !quoted) { values.Add(value.ToString()); value.Clear(); } else value.Append(c); } if (quoted) throw new InvalidOperationException("CSV contains an unclosed quoted field."); values.Add(value.ToString()); return values; }
+
+    private static BankStatementImportDocument CreateDocument(
+        Guid organisationId,
+        Guid bankAccountId,
+        string userId,
+        BankStatementDocumentRequest request)
+    {
+        const int maximumBytes = 5 * 1024 * 1024;
+        var fileName = request.FileName.Trim();
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        var hasPath = Path.GetFileName(fileName) != fileName;
+        var contentType = extension switch
+        {
+            ".pdf" => "application/pdf",
+            ".csv" => "text/csv",
+            ".txt" => "text/plain",
+            ".ofx" or ".qfx" => "application/x-ofx",
+            ".qif" => "application/qif",
+            _ => ""
+        };
+        var validPdf = extension != ".pdf" ||
+            (request.Content.Length >= 5 &&
+             request.Content[0] == (byte)'%' &&
+             request.Content[1] == (byte)'P' &&
+             request.Content[2] == (byte)'D' &&
+             request.Content[3] == (byte)'F' &&
+             request.Content[4] == (byte)'-');
+
+        if (string.IsNullOrWhiteSpace(fileName) ||
+            fileName.Length > 255 ||
+            hasPath ||
+            string.IsNullOrWhiteSpace(contentType) ||
+            request.OriginalSize <= 0 ||
+            request.OriginalSize > maximumBytes ||
+            request.Content.LongLength != request.OriginalSize ||
+            !validPdf)
+        {
+            throw new InvalidOperationException(
+                "The statement attachment must be a valid PDF, CSV, OFX, QFX, QIF or text file no larger than 5 MB.");
+        }
+
+        return new BankStatementImportDocument
+        {
+            OrganisationId = organisationId,
+            BankAccountId = bankAccountId,
+            ImportBatchId = Guid.Empty,
+            FileName = fileName,
+            ContentType = contentType,
+            OriginalSize = request.OriginalSize,
+            Content = request.Content,
+            UploadedByUserId = userId
+        };
+    }
 }

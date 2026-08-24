@@ -23,6 +23,22 @@ public sealed class BankStatementLine
     [MaxLength(64)] public string? SourceHash { get; set; }
 }
 
+public sealed class BankStatementImportDocument
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid BankAccountId { get; set; }
+    public LedgerAccount BankAccount { get; set; } = null!;
+    public Guid ImportBatchId { get; set; }
+    [MaxLength(255)] public required string FileName { get; set; }
+    [MaxLength(100)] public required string ContentType { get; set; }
+    public long OriginalSize { get; set; }
+    public required byte[] Content { get; set; }
+    public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string UploadedByUserId { get; set; }
+}
+
     public sealed class BankReconciliationSession
 {
     public Guid Id { get; set; } = Guid.NewGuid();

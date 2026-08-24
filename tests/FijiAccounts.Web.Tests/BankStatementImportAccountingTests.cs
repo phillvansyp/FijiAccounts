@@ -478,6 +478,44 @@ public sealed class BankStatementImportAccountingTests
     }
 
     [Fact]
+    public async Task ImportAsync_IdenticalTransactionsInOneStatement_AreRetainedAndReimportDeduplicates()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+        var duplicate = new StatementPreviewLine(
+            new DateOnly(2026, 1, 20),
+            "Repeated card purchase",
+            null,
+            -12.50m);
+        StatementPreviewLine[] lines = [duplicate, duplicate];
+
+        var first = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            lines,
+            "PDF");
+        var second = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            lines,
+            "PDF");
+
+        Assert.Equal(2, first.Imported);
+        Assert.Equal(0, first.Skipped);
+        Assert.Equal(0, second.Imported);
+        Assert.Equal(2, second.Skipped);
+        var stored = await test.Db.BankStatementLines
+            .AsNoTracking()
+            .Where(x => x.ImportBatchId == first.BatchId)
+            .ToListAsync();
+        Assert.Equal(2, stored.Count);
+        Assert.Equal(2, stored.Select(x => x.SourceHash).Distinct().Count());
+    }
+
+    [Fact]
     public async Task GetImportBatchesAsync_GroupsImportedLinesWithDeletionStatus()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -508,6 +546,79 @@ public sealed class BankStatementImportAccountingTests
         Assert.Equal(2, batch.LineCount);
         Assert.Equal(65m, batch.NetAmount);
         Assert.True(batch.CanDelete);
+        Assert.Null(batch.DocumentId);
+        Assert.Null(batch.DocumentFileName);
+    }
+
+    [Fact]
+    public async Task ImportAsync_WithStatementDocument_StoresAndScopesOriginalFile()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+        var content = System.Text.Encoding.ASCII.GetBytes("%PDF-test-statement");
+
+        var imported = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [new StatementPreviewLine(new DateOnly(2026, 2, 20), "Card purchase", "FEB-1", -25m)],
+            "PDF",
+            new BankStatementDocumentRequest(
+                "February card.pdf",
+                "application/pdf",
+                content.LongLength,
+                content));
+
+        var batch = Assert.Single(await service.GetImportBatchesAsync(
+            test.UserId,
+            test.Organisation.Id));
+        Assert.NotNull(batch.DocumentId);
+        Assert.Equal("February card.pdf", batch.DocumentFileName);
+
+        var document = await service.GetDocumentAsync(
+            test.UserId,
+            test.Organisation.Id,
+            imported.BatchId);
+        Assert.NotNull(document);
+        Assert.Equal("application/pdf", document.ContentType);
+        Assert.Equal(content, document.Content);
+        Assert.Null(await service.GetDocumentAsync(
+            "not-a-member",
+            test.Organisation.Id,
+            imported.BatchId));
+
+        await service.DeleteImportBatchAsync(
+            test.UserId,
+            test.Organisation.Id,
+            imported.BatchId);
+        Assert.False(await test.Db.BankStatementImportDocuments.AnyAsync(x =>
+            x.ImportBatchId == imported.BatchId));
+    }
+
+    [Fact]
+    public async Task ImportAsync_InvalidStatementDocument_IsAtomic()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankStatementImportService(test.Db, test.Access);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ImportAsync(
+                test.UserId,
+                test.Organisation.Id,
+                bank.Id,
+                [new StatementPreviewLine(new DateOnly(2026, 2, 20), "Card purchase", "FEB-2", -25m)],
+                "PDF",
+                new BankStatementDocumentRequest(
+                    "February card.pdf",
+                    "application/pdf",
+                    4,
+                    [1, 2, 3, 4])));
+
+        Assert.Empty(await test.Db.BankStatementLines.AsNoTracking().ToListAsync());
+        Assert.Empty(await test.Db.BankStatementImportDocuments.AsNoTracking().ToListAsync());
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
     }
 
     [Fact]

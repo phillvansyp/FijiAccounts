@@ -146,6 +146,7 @@ app.MapAdditionalIdentityEndpoints();
 // Supplier bill attachment endpoint (single registration only).
 app.MapSupplierBillAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
+app.MapBankStatementDocumentEndpoints();
 
 if (app.Environment.IsDevelopment())
 {

@@ -19,6 +19,38 @@ public sealed class BankAccountService(
     TenantAccessService access,
     JournalPostingService posting)
 {
+    public async Task<IReadOnlyDictionary<Guid, decimal>> GetBalancesAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        if (await access.FindAsync(userId, organisationId) is null)
+        {
+            throw new UnauthorizedAccessException(
+                "You do not have access to these bank balances.");
+        }
+
+        var lines = await db.PostedJournalLines
+            .AsNoTracking()
+            .Where(x =>
+                x.LedgerAccount.OrganisationId == organisationId &&
+                x.LedgerAccount.IsActive &&
+                x.LedgerAccount.IsBankAccount)
+            .Select(x => new
+            {
+                x.LedgerAccountId,
+                x.Debit,
+                x.Credit
+            })
+            .ToListAsync(ct);
+
+        return lines
+            .GroupBy(x => x.LedgerAccountId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Sum(x => x.Debit - x.Credit));
+    }
+
     public async Task<LedgerAccount> CreateAsync(
         string userId,
         CreateBankAccountRequest request,

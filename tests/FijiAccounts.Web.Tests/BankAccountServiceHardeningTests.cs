@@ -67,6 +67,39 @@ public sealed class BankAccountServiceHardeningTests
     }
 
     [Fact]
+    public async Task GetBalancesAsync_ReturnsEveryBankAccountIndependentOfSelection()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var operating = await test.BankAccounts.CreateAsync(
+            test.UserId,
+            Request(test) with
+            {
+                OpeningBalance = 14_447.51m
+            });
+        var card = await test.BankAccounts.CreateAsync(
+            test.UserId,
+            Request(test) with
+            {
+                Code = "1011",
+                Name = "Debit Card",
+                OpeningBalance = 102.70m,
+                AccountKind = BankAccountKind.DebitCard
+            });
+
+        var balances = await test.BankAccounts.GetBalancesAsync(
+            test.UserId,
+            test.Organisation.Id);
+
+        Assert.Equal(14_447.51m, balances[operating.Id]);
+        Assert.Equal(102.70m, balances[card.Id]);
+        Assert.Equal(14_550.21m, balances.Values.Sum());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            test.BankAccounts.GetBalancesAsync(
+                "not-a-member",
+                test.Organisation.Id));
+    }
+
+    [Fact]
     public async Task InvalidAndUnauthorizedRequests_CreateNoAccountOrAudit()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

@@ -73,6 +73,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<SupplierCreditNoteReversal> SupplierCreditNoteReversals =>
     Set<SupplierCreditNoteReversal>();
     public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
+    public DbSet<BankStatementImportDocument> BankStatementImportDocuments =>
+        Set<BankStatementImportDocument>();
     public DbSet<BankReconciliationSession> BankReconciliationSessions =>
     Set<BankReconciliationSession>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
@@ -638,6 +640,19 @@ builder.Entity<SupplierCreditNoteReversal>()
         builder.Entity<BankStatementLine>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().HasOne(x => x.MatchedPostedJournalLine).WithMany().HasForeignKey(x => x.MatchedPostedJournalLineId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementImportDocument>()
+            .HasIndex(x => new { x.OrganisationId, x.ImportBatchId })
+            .IsUnique();
+        builder.Entity<BankStatementImportDocument>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementImportDocument>()
+            .HasOne(x => x.BankAccount)
+            .WithMany()
+            .HasForeignKey(x => x.BankAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankReconciliationSession>()
     .HasIndex(x => new
     {
