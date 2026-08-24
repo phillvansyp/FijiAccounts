@@ -113,6 +113,28 @@ else
                     </tbody>
                 </table>
             </div>
+            <details class="forecast-detail">
+                <summary>View 12-month source breakdown</summary>
+                <div class="table-responsive mt-3">
+                    <table class="table">
+                        <thead><tr><th>Month</th><th class="text-end">Posted receipts</th><th class="text-end">Recurring receipts</th><th class="text-end">Posted bills</th><th class="text-end">Recurring bills</th><th class="text-end">Planned purchases</th><th class="text-end">Net</th></tr></thead>
+                        <tbody>
+                            @foreach (var month in cashflowForecast.Monthly)
+                            {
+                                <tr>
+                                    <th scope="row">@month.MonthStart.ToString("MMM yyyy")</th>
+                                    <td class="text-end">$@month.Sources.PostedReceipts.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.RecurringReceipts.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.PostedPayments.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.RecurringPayments.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.PlannedPurchasePayments.ToString("N2")</td>
+                                    <td class="text-end"><strong>@FormatCashflowAmount(month.Summary.NetMovement)</strong></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         </section>
     }
 
@@ -395,7 +417,8 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
             ("7 days", cashflowForecast.Next7Days),
             ("30 days", cashflowForecast.Next30Days),
             ("60 days", cashflowForecast.Next60Days),
-            ("90 days", cashflowForecast.Next90Days)
+            ("90 days", cashflowForecast.Next90Days),
+            ("12 months", cashflowForecast.Next12Months)
         ];
     }
 

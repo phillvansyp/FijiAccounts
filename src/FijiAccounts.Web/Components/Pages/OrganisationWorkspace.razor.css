@@ -67,6 +67,18 @@
     background: #c44536;
 }
 
+.forecast-detail {
+    border-top: 1px solid #e4ebee;
+    margin-top: 1rem;
+    padding-top: .8rem;
+}
+
+.forecast-detail summary {
+    color: #176b5b;
+    cursor: pointer;
+    font-weight: 700;
+}
+
 .intelligence-card {
     margin-top: 1rem;
 }
