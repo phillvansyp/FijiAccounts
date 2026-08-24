@@ -14,6 +14,26 @@ public sealed class PurchaseRequisitionServiceTests
         var service = new PurchaseRequisitionService(test.Db, test.Access, test.PurchaseOrders, policies);
         var approver = await AddAdministratorAsync(test);
         var request = await RequestAsync(test);
+        var projects = new ProjectService(test.Db, test.Access);
+        var project = await projects.SaveAsync(test.UserId, new(
+            test.Organisation.Id, null, "JOB-REQ", "Requisition project", null,
+            request.DivisionId, test.Customer.Id, new DateOnly(2026, 8, 1), null,
+            1_000m, 0m, 500m, 0m));
+        project = await projects.ChangeStatusAsync(
+            test.UserId, test.Organisation.Id, project.Id, ProjectStatus.Active);
+        var costCode = await projects.AddCostCodeAsync(test.UserId,
+            new(test.Organisation.Id, project.Id, "SUP", "Supplies", 500m));
+        request = request with
+        {
+            Lines =
+            [
+                request.Lines[0] with
+                {
+                    ProjectId = project.Id,
+                    ProjectCostCodeId = costCode.Id
+                }
+            ]
+        };
 
         var requisition = await service.CreateDraftAsync(test.UserId, request);
         await service.SubmitAsync(test.UserId, test.Organisation.Id, requisition.Id);
@@ -35,6 +55,11 @@ public sealed class PurchaseRequisitionServiceTests
         Assert.Equal(PurchaseOrderStatus.Approved, order.Status);
         Assert.Equal(requisition.Id, order.PurchaseRequisitionId);
         Assert.Equal(requisition.RequisitionNumber, order.SupplierReference);
+        var orderLine = Assert.Single(order.Lines);
+        Assert.Equal(project.Id, orderLine.ProjectId);
+        Assert.Equal(costCode.Id, orderLine.ProjectCostCodeId);
+        Assert.Equal(100m, Assert.Single(await new ProjectProfitabilityService(test.Db, projects)
+            .GetAsync(test.UserId, test.Organisation.Id)).CommittedCost);
         Assert.Empty(await test.Db.PostedJournals.ToListAsync());
         var orderApproval = await test.Db.AuditEvents.AsNoTracking().SingleAsync(x =>
             x.EntityType == nameof(PurchaseOrder) &&

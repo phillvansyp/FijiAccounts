@@ -391,6 +391,10 @@ builder.Entity<SupplierBillVoid>()
             .HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PurchaseRequisitionLine>()
             .HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PurchaseRequisitionLine>()
+            .HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PurchaseRequisitionLine>()
+            .HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PurchaseRequisitionLine>().Property(x => x.Quantity).HasPrecision(18, 4);
         builder.Entity<PurchaseRequisitionLine>().Property(x => x.EstimatedUnitPrice).HasPrecision(18, 4);
         builder.Entity<PurchaseRequisitionLine>().Property(x => x.EstimatedTotal).HasPrecision(18, 2);
@@ -559,6 +563,18 @@ builder.Entity<RecurringSalesInvoiceLine>()
     .HasForeignKey(x => x.ProductItemId)
     .OnDelete(DeleteBehavior.Restrict);
 
+builder.Entity<RecurringSalesInvoiceLine>()
+    .HasOne(x => x.Project)
+    .WithMany()
+    .HasForeignKey(x => x.ProjectId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSalesInvoiceLine>()
+    .HasOne(x => x.ProjectCostCode)
+    .WithMany()
+    .HasForeignKey(x => x.ProjectCostCodeId)
+    .OnDelete(DeleteBehavior.Restrict);
+
 builder.Entity<RecurringSalesInvoiceGeneration>()
     .HasIndex(x => new
     {
@@ -634,6 +650,18 @@ builder.Entity<RecurringSupplierBillLine>()
     .HasOne(x => x.ProductItem)
     .WithMany()
     .HasForeignKey(x => x.ProductItemId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBillLine>()
+    .HasOne(x => x.Project)
+    .WithMany()
+    .HasForeignKey(x => x.ProjectId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBillLine>()
+    .HasOne(x => x.ProjectCostCode)
+    .WithMany()
+    .HasForeignKey(x => x.ProjectCostCodeId)
     .OnDelete(DeleteBehavior.Restrict);
 
 builder.Entity<RecurringSupplierBillGeneration>()

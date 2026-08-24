@@ -13,7 +13,9 @@ public sealed record RecurringSalesInvoiceLineRequest(
     decimal UnitPrice,
     VatTreatment VatTreatment,
     Guid RevenueAccountId,
-    Guid? ProductItemId = null);
+    Guid? ProductItemId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed record RecurringSalesInvoiceRequest(
     Guid OrganisationId,
@@ -44,6 +46,14 @@ public sealed class RecurringSalesInvoiceService(
         }
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            dimension.BranchId,
+            dimension.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
 
         if (request.DueDays < 0)
         {
@@ -146,7 +156,9 @@ public sealed class RecurringSalesInvoiceService(
                             UnitPrice = x.UnitPrice,
                             VatTreatment = x.VatTreatment,
                             RevenueAccountId = x.RevenueAccountId,
-                            ProductItemId = x.ProductItemId
+                            ProductItemId = x.ProductItemId,
+                            ProjectId = x.ProjectId,
+                            ProjectCostCodeId = x.ProjectCostCodeId
                         })
                     .ToList()
             };
@@ -195,6 +207,14 @@ public sealed class RecurringSalesInvoiceService(
         }
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            dimension.BranchId,
+            dimension.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
 
         if (request.DueDays < 0)
         {
@@ -341,7 +361,11 @@ public sealed class RecurringSalesInvoiceService(
                         RevenueAccountId =
                             x.RevenueAccountId,
                         ProductItemId =
-                            x.ProductItemId
+                            x.ProductItemId,
+                        ProjectId =
+                            x.ProjectId,
+                        ProjectCostCodeId =
+                            x.ProjectCostCodeId
                     })
                 .ToList();
 
@@ -587,7 +611,9 @@ public sealed class RecurringSalesInvoiceService(
                                             x.UnitPrice,
                                             x.VatTreatment,
                                             x.RevenueAccountId,
-                                            x.ProductItemId))
+                                            x.ProductItemId,
+                                            ProjectId: x.ProjectId,
+                                            ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
                                 DivisionId: template.DivisionId),
@@ -713,7 +739,9 @@ public sealed class RecurringSalesInvoiceService(
                                             x.UnitPrice,
                                             x.VatTreatment,
                                             x.RevenueAccountId,
-                                            x.ProductItemId))
+                                            x.ProductItemId,
+                                            ProjectId: x.ProjectId,
+                                            ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
                                 DivisionId: template.DivisionId),

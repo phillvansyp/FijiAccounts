@@ -31,7 +31,7 @@ else
         <section class="invoice-parties"><div><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId" @bind-Value:after="ApplySelectedCustomerDefaultsAsync">@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div><div><label class="form-label">Issue date</label><InputDate class="form-control" @bind-Value="model.IssueDate" @bind-Value:after="ApplySelectedCustomerPaymentTerms" /></div><div><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="model.DueDate" /></div><div><label class="form-label">Currency</label><input class="form-control" value="@access.Organisation.BaseCurrency" disabled /></div></section>
         <div class="mb-4"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="model.DivisionId" @bind-Value:after="DimensionChanged">@foreach (var branch in branches) { <optgroup label="@($"{branch.Code} — {branch.Name}")">@foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@branch.Code — @branch.Name / @division.Code — @division.Name</option> }</optgroup> }</InputSelect></div>
         <section class="line-editor"><div class="line-header"><span>Description</span><span>Customer PO</span><span>Quantity</span><span>Unit price</span><span>Tax</span><span>Account</span><span></span></div>
-            @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputText class="form-control" @bind-Value="line.CustomerPurchaseOrderNumber" placeholder="PO number" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div> @if (!isRecurringInvoice) { <div class="project-coding-row"><div><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => ProjectChanged(line)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="line.ProjectCostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(line.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> } }
+            @for (var index = 0; index < model.Lines.Count; index++) { var line = model.Lines[index]; var captured = index; <div class="invoice-line"><InputText class="form-control" @bind-Value="line.Description" /><InputText class="form-control" @bind-Value="line.CustomerPurchaseOrderNumber" placeholder="PO number" /><InputNumber class="form-control" @bind-Value="line.Quantity" /><InputNumber class="form-control" @bind-Value="line.UnitPrice" /><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@treatment</option> }</InputSelect><InputSelect class="form-select" @bind-Value="line.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect><button type="button" class="remove-line" title="Remove line" @onclick="() => RemoveLine(captured)">×</button></div><div class="project-coding-row"><div><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => ProjectChanged(line)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="line.ProjectCostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(line.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> }
             <button type="button" class="add-line" @onclick="AddLine">+ Add another line</button>
         </section>
         @if (InvoiceId is null)
@@ -232,7 +232,11 @@ else
                                     RevenueAccountId =
                                         x.RevenueAccountId,
                                     ProductItemId =
-                                        x.ProductItemId
+                                        x.ProductItemId,
+                                    ProjectId =
+                                        x.ProjectId,
+                                    ProjectCostCodeId =
+                                        x.ProjectCostCodeId
                                 })
                             .ToList()
                 };
@@ -329,7 +333,9 @@ else
                                 x.UnitPrice,
                                 x.VatTreatment,
                                 x.RevenueAccountId,
-                                x.ProductItemId))
+                                x.ProductItemId,
+                                x.ProjectId,
+                                x.ProjectCostCodeId))
                         .ToList(),
                     DivisionId: model.DivisionId);
 

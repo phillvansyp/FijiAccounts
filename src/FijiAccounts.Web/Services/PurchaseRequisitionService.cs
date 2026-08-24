@@ -21,7 +21,9 @@ public sealed record PurchaseRequisitionLineRequest(
     decimal Quantity,
     decimal EstimatedUnitPrice,
     Guid ExpenseAccountId,
-    Guid? ProductItemId = null);
+    Guid? ProductItemId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed class PurchaseRequisitionService(
     ApplicationDbContext db,
@@ -82,7 +84,9 @@ public sealed class PurchaseRequisitionService(
             EstimatedUnitPrice = x.EstimatedUnitPrice,
             EstimatedTotal = x.Quantity * x.EstimatedUnitPrice,
             ExpenseAccountId = x.ExpenseAccountId,
-            ProductItemId = x.ProductItemId
+            ProductItemId = x.ProductItemId,
+            ProjectId = x.ProjectId,
+            ProjectCostCodeId = x.ProjectCostCodeId
         }).ToList();
         var requisition = new PurchaseRequisition
         {
@@ -230,7 +234,9 @@ public sealed class PurchaseRequisitionService(
                 x.Quantity,
                 x.EstimatedUnitPrice,
                 x.ExpenseAccountId,
-                x.ProductItemId)).ToArray(),
+                x.ProductItemId,
+                x.ProjectId,
+                x.ProjectCostCodeId)).ToArray(),
             requisition.BranchId,
             requisition.DivisionId), ct);
         order.PurchaseRequisitionId = requisition.Id;
@@ -300,6 +306,14 @@ public sealed class PurchaseRequisitionService(
         {
             throw new InvalidOperationException("Every line must use active accounts and products from this organisation.");
         }
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
     }
 
     private async Task<PurchaseRequisition> RequireRequisitionAsync(
@@ -353,7 +367,9 @@ public sealed class PurchaseRequisitionService(
             x.EstimatedUnitPrice,
             x.EstimatedTotal,
             x.ExpenseAccountId,
-            x.ProductItemId
+            x.ProductItemId,
+            x.ProjectId,
+            x.ProjectCostCodeId
         }).ToArray()
     };
 

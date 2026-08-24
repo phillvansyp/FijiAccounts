@@ -2,11 +2,86 @@ using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using FijiAccounts.Domain.Tax;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Tests;
 
 public sealed class ProjectProfitabilityTests
 {
+    [Fact]
+    public async Task RecurringSalesInvoice_CarriesProjectCodingIntoInvoiceAndJournal()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (branch, division) = await DefaultDimension(test);
+        var projects = new ProjectService(test.Db, test.Access);
+        var project = await CreateActiveProject(test, projects, division.Id, "JOB-RECUR-SALE", 500m);
+        var costCode = await projects.AddCostCodeAsync(test.UserId,
+            new(test.Organisation.Id, project.Id, "SERV", "Services", 500m));
+        var recurring = new RecurringSalesInvoiceService(test.Db, test.Access, test.SalesInvoices);
+
+        await recurring.CreateAsync(test.UserId, new(
+            test.Organisation.Id,
+            test.Customer.Id,
+            RecurringSalesInvoiceFrequency.Monthly,
+            new DateOnly(2026, 9, 1),
+            14,
+            [new("Monthly project service", 1m, 250m, VatTreatment.ZeroRated,
+                test.Account("4000").Id, ProjectId: project.Id, ProjectCostCodeId: costCode.Id)],
+            branch.Id,
+            division.Id));
+
+        var invoice = Assert.Single(await recurring.GenerateDueAsync(
+            test.UserId, test.Organisation.Id, new DateOnly(2026, 9, 1)));
+        var invoiceLine = await test.Db.SalesInvoiceLines.AsNoTracking()
+            .SingleAsync(x => x.SalesInvoiceId == invoice.Id);
+        var revenueLine = await test.Db.PostedJournalLines.AsNoTracking()
+            .SingleAsync(x => x.PostedJournalId == invoice.PostedJournalId &&
+                x.LedgerAccountId == test.Account("4000").Id);
+
+        Assert.Equal(project.Id, invoiceLine.ProjectId);
+        Assert.Equal(costCode.Id, invoiceLine.ProjectCostCodeId);
+        Assert.Equal(project.Id, revenueLine.ProjectId);
+        Assert.Equal(costCode.Id, revenueLine.ProjectCostCodeId);
+    }
+
+    [Fact]
+    public async Task RecurringSupplierBill_CarriesProjectCodingIntoGeneratedDraft()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (branch, division) = await DefaultDimension(test);
+        var projects = new ProjectService(test.Db, test.Access);
+        var project = await CreateActiveProject(test, projects, division.Id, "JOB-RECUR-BILL", 500m);
+        var costCode = await projects.AddCostCodeAsync(test.UserId,
+            new(test.Organisation.Id, project.Id, "RENT", "Site rent", 500m));
+        var recurring = new RecurringSupplierBillService(test.Db, test.Access, test.Purchasing);
+
+        await recurring.CreateAsync(test.UserId, new(
+            test.Organisation.Id,
+            test.Supplier.Id,
+            "PROJECT-RENT",
+            RecurringSupplierBillFrequency.Monthly,
+            new DateOnly(2026, 9, 1),
+            14,
+            [
+                new("Site rent", 1m, 300m, VatTreatment.ZeroRated,
+                    test.Account("6500").Id, ProjectId: project.Id, ProjectCostCodeId: costCode.Id),
+                new("Site utilities", 1m, 50m, VatTreatment.ZeroRated,
+                    test.Account("6500").Id, ProjectId: project.Id)
+            ],
+            branch.Id,
+            division.Id));
+
+        var draft = Assert.Single(await recurring.GenerateDueDraftsAsync(
+            test.UserId, test.Organisation.Id, new DateOnly(2026, 9, 1)));
+        var additional = Assert.Single(JsonSerializer.Deserialize<List<SupplierBillDraftLineRequest>>(
+            draft.AdditionalLinesJson)!);
+
+        Assert.Equal(project.Id, draft.ProjectId);
+        Assert.Equal(costCode.Id, draft.ProjectCostCodeId);
+        Assert.Equal(project.Id, additional.ProjectId);
+        Assert.Null(additional.ProjectCostCodeId);
+    }
+
     [Fact]
     public async Task TaggedSalesInvoiceAndSupplierBill_DriveProfitabilityAndCreditsNetActuals()
     {

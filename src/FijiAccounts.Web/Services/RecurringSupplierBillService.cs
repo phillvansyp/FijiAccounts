@@ -12,7 +12,9 @@ public sealed record RecurringSupplierBillLineRequest(
     decimal UnitPrice,
     FijiAccounts.Domain.Tax.VatTreatment VatTreatment,
     Guid ExpenseAccountId,
-    Guid? ProductItemId = null);
+    Guid? ProductItemId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed record RecurringSupplierBillRequest(
     Guid OrganisationId,
@@ -42,6 +44,14 @@ public sealed class RecurringSupplierBillService(
             ct);
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            dimension.BranchId,
+            dimension.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
 
         await ValidateRequestAsync(
             request,
@@ -102,6 +112,14 @@ public sealed class RecurringSupplierBillService(
             ct);
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            dimension.BranchId,
+            dimension.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
 
         await ValidateRequestAsync(
             request,
@@ -446,7 +464,11 @@ var recurring =
                     ExpenseAccountId =
                         x.ExpenseAccountId,
                     ProductItemId =
-                        x.ProductItemId
+                        x.ProductItemId,
+                    ProjectId =
+                        x.ProjectId,
+                    ProjectCostCodeId =
+                        x.ProjectCostCodeId
                 })
             .ToList();
     public async Task<IReadOnlyList<SupplierBill>> GenerateDueAsync(
@@ -534,7 +556,9 @@ var recurring =
                                             x.UnitPrice,
                                             x.VatTreatment,
                                             x.ExpenseAccountId,
-                                            x.ProductItemId))
+                                            x.ProductItemId,
+                                            x.ProjectId,
+                                            x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
                                 DivisionId: template.DivisionId),
@@ -673,7 +697,9 @@ var recurring =
                             x.UnitPrice,
                             x.VatTreatment,
                             x.ExpenseAccountId,
-                            x.ProductItemId))
+                            x.ProductItemId,
+                            x.ProjectId,
+                            x.ProjectCostCodeId))
                         .ToList();
                     var draft = new SupplierBillDraft
                     {
@@ -692,6 +718,8 @@ var recurring =
                         VatTreatment = firstLine.VatTreatment,
                         ExpenseAccountId = firstLine.ExpenseAccountId,
                         ProductItemId = firstLine.ProductItemId,
+                        ProjectId = firstLine.ProjectId,
+                        ProjectCostCodeId = firstLine.ProjectCostCodeId,
                         AdditionalLinesJson = JsonSerializer.Serialize(additionalLines),
                         CreatedByUserId = generatedByUserId
                     };

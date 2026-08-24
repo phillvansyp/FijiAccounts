@@ -119,8 +119,8 @@ else
             }
             <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="bill.Description" /></div>
             <div class="row align-items-end"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="bill.Quantity" /></div><div class="col-md-3 mb-3"><label class="form-label d-block">Price entry</label><div class="btn-group btn-group-sm mb-2 w-100" role="group" aria-label="Choose whether entered prices include VAT"><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-outline-secondary" : "btn-primary")" aria-pressed="@(!bill.AmountsIncludeVat)" @onclick="() => SetBillPriceEntryMode(false)">VAT exclusive</button><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-primary" : "btn-outline-secondary")" aria-pressed="@bill.AmountsIncludeVat" @onclick="() => SetBillPriceEntryMode(true)">VAT included</button></div><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><InputNumber class="form-control" @bind-Value="bill.UnitPrice" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div></div>
-            @if (!isRecurringBill) { <div class="row border rounded bg-light py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="bill.ProjectId" @bind-Value:after="() => BillProjectChanged(bill)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="bill.ProjectCostCodeId" disabled="@(bill.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(bill.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> }
-            @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><InputText class="form-control" @bind-Value="line.Description" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="line.Quantity" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><InputNumber class="form-control" @bind-Value="line.UnitPrice" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div> @if (!isRecurringBill) { <div class="row bg-light rounded py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => BillProjectChanged(line)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="line.ProjectCostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(line.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> } }
+            <div class="row border rounded bg-light py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="bill.ProjectId" @bind-Value:after="() => BillProjectChanged(bill)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="bill.ProjectCostCodeId" disabled="@(bill.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(bill.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div>
+            @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><InputText class="form-control" @bind-Value="line.Description" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="line.Quantity" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><InputNumber class="form-control" @bind-Value="line.UnitPrice" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div><div class="row bg-light rounded py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => BillProjectChanged(line)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="line.ProjectCostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(line.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> }
             @if (!isRecurringBill)
             {
                 <div class="bill-attachment mb-4">
@@ -1241,7 +1241,9 @@ private void ToggleRecurringBill()
                         RecurringUnitPrice(bill.UnitPrice, bill.VatTreatment),
                         bill.VatTreatment,
                         bill.ExpenseAccountId,
-                        bill.ProductItemId)
+                        bill.ProductItemId,
+                        bill.ProjectId,
+                        bill.ProjectCostCodeId)
                 };
 
             lines.AddRange(
@@ -1253,7 +1255,9 @@ private void ToggleRecurringBill()
                             RecurringUnitPrice(x.UnitPrice, x.VatTreatment),
                             x.VatTreatment,
                             x.ExpenseAccountId,
-                            x.ProductItemId)));
+                            x.ProductItemId,
+                            x.ProjectId,
+                            x.ProjectCostCodeId)));
 
             var request =
                 new RecurringSupplierBillRequest(
@@ -1350,6 +1354,12 @@ private void ToggleRecurringBill()
 
             bill.ProductItemId =
                 firstLine.ProductItemId;
+
+            bill.ProjectId =
+                firstLine.ProjectId;
+
+            bill.ProjectCostCodeId =
+                firstLine.ProjectCostCodeId;
         }
 
         additionalBillLines =
@@ -1369,7 +1379,11 @@ private void ToggleRecurringBill()
                         ExpenseAccountId =
                             x.ExpenseAccountId,
                         ProductItemId =
-                            x.ProductItemId
+                            x.ProductItemId,
+                        ProjectId =
+                            x.ProjectId,
+                        ProjectCostCodeId =
+                            x.ProjectCostCodeId
                     })
                 .ToList();
 

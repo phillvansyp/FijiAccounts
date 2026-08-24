@@ -280,6 +280,12 @@ public sealed class RecurringSupplierBillLine
 
     public Guid? ProductItemId { get; set; }
     public ProductItem? ProductItem { get; set; }
+
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+
+    public Guid? ProjectCostCodeId { get; set; }
+    public ProjectCostCode? ProjectCostCode { get; set; }
 }
 
 public sealed class RecurringSupplierBillGeneration
@@ -403,6 +409,10 @@ public sealed class PurchaseRequisitionLine
     public LedgerAccount ExpenseAccount { get; set; } = null!;
     public Guid? ProductItemId { get; set; }
     public ProductItem? ProductItem { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? ProjectCostCodeId { get; set; }
+    public ProjectCostCode? ProjectCostCode { get; set; }
 }
 
 public sealed class PurchaseOrder

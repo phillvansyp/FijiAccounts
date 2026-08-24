@@ -173,6 +173,12 @@ public sealed class RecurringSalesInvoiceLine
 
     public Guid? ProductItemId { get; set; }
     public ProductItem? ProductItem { get; set; }
+
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+
+    public Guid? ProjectCostCodeId { get; set; }
+    public ProjectCostCode? ProjectCostCode { get; set; }
 }
 
 public sealed class RecurringSalesInvoiceGeneration
