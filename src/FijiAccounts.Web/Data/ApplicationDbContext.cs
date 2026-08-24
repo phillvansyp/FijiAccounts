@@ -246,6 +246,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<SalesInvoiceLine>().Property(x => x.GrossAmount).HasPrecision(18, 2);
         builder.Entity<SalesInvoiceLine>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesInvoiceLine>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoiceLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SalesInvoiceLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesCreditNote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SalesCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
         builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
@@ -322,6 +324,8 @@ builder.Entity<SupplierBillVoid>()
         builder.Entity<SupplierBillLine>().Property(x => x.Quantity).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.UnitPrice).HasPrecision(18, 4); builder.Entity<SupplierBillLine>().Property(x => x.VatRate).HasPrecision(8, 6); builder.Entity<SupplierBillLine>().Property(x => x.NetAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.VatAmount).HasPrecision(18, 2); builder.Entity<SupplierBillLine>().Property(x => x.GrossAmount).HasPrecision(18, 2);
         builder.Entity<SupplierBillLine>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillLine>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillAttachment>().HasIndex(x => new { x.OrganisationId, x.SupplierBillId });
         builder.Entity<SupplierBillAttachment>().HasOne(x => x.SupplierBill).WithMany(x => x.Attachments).HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<SupplierBillDraft>().HasIndex(x => new { x.OrganisationId, x.UpdatedAt });
@@ -330,6 +334,8 @@ builder.Entity<SupplierBillVoid>()
         builder.Entity<SupplierBillDraft>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillDraft>().HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillDraft>().HasOne<Division>().WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillDraft>().HasOne<Project>().WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillDraft>().HasOne<ProjectCostCode>().WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillDraft>().HasIndex(x => new { x.BranchId, x.DivisionId });
 
         builder.Entity<PurchaseOrder>()
@@ -408,6 +414,12 @@ builder.Entity<SupplierBillVoid>()
             .WithMany()
             .HasForeignKey(x => x.SupplierId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<PurchaseOrder>()
+            .HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<PurchaseOrder>()
+            .HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<PurchaseOrder>()
             .HasOne(x => x.SupplierBillDraft)
@@ -490,6 +502,12 @@ builder.Entity<SupplierBillVoid>()
             .WithMany()
             .HasForeignKey(x => x.ProductItemId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<PurchaseOrderLine>()
+            .HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<PurchaseOrderLine>()
+            .HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<RecurringSalesInvoice>()
     .HasIndex(x => new { x.OrganisationId, x.NextInvoiceDate });

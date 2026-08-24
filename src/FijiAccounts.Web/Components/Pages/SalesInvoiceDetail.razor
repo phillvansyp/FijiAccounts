@@ -43,7 +43,7 @@ else
     @if (status is not null) { <div class="alert alert-danger no-print">@status</div> }
     <article class="invoice-document"><header><div><span class="document-brand">Account Island</span><h1>Tax Invoice</h1></div><div class="document-number"><strong>@invoice.InvoiceNumber</strong><span class="status-badge">@(invoice.Status == InvoiceStatus.PartPaid ? "Part paid" : invoice.Status.ToString())</span></div></header>
         <section class="invoice-meta"><div><small>From</small><strong>@access.Organisation.LegalName</strong><span>@access.Organisation.Tin</span></div><div><small>Bill to</small><strong>@invoice.Customer.Name</strong><span>@invoice.Customer.Address</span><span>@invoice.Customer.Tin</span></div><dl><dt>Issue date</dt><dd>@invoice.IssueDate.ToString("dd MMM yyyy")</dd><dt>Due date</dt><dd>@invoice.DueDate.ToString("dd MMM yyyy")</dd><dt>Currency</dt><dd>@invoice.Currency</dd><dt>Branch / division</dt><dd>@invoice.Branch?.Name / @invoice.Division?.Name</dd></dl></section>
-        <table class="document-lines"><thead><tr><th>Description</th><th>Customer PO</th><th class="number">Qty</th><th class="number">Unit price</th><th>Tax</th><th class="number">Amount</th></tr></thead><tbody>@foreach (var line in invoice.Lines) { <tr><td>@line.Description</td><td>@(string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber)</td><td class="number">@line.Quantity.ToString("N2")</td><td class="number">$@line.UnitPrice.ToString("N2")</td><td>@line.VatTreatment</td><td class="number">$@line.NetAmount.ToString("N2")</td></tr> }</tbody></table>
+        <table class="document-lines"><thead><tr><th>Description</th><th>Project</th><th>Customer PO</th><th class="number">Qty</th><th class="number">Unit price</th><th>Tax</th><th class="number">Amount</th></tr></thead><tbody>@foreach (var line in invoice.Lines) { <tr><td>@line.Description</td><td>@ProjectLabel(line)</td><td>@(string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber)</td><td class="number">@line.Quantity.ToString("N2")</td><td class="number">$@line.UnitPrice.ToString("N2")</td><td>@line.VatTreatment</td><td class="number">$@line.NetAmount.ToString("N2")</td></tr> }</tbody></table>
         <section class="document-totals"><div><span>Subtotal</span><strong>$@invoice.Subtotal.ToString("N2")</strong></div><div><span>@access.Organisation.TaxLabel</span><strong>$@invoice.VatTotal.ToString("N2")</strong></div><div class="grand-total"><span>Total</span><strong>$@invoice.Total.ToString("N2")</strong></div><div><span>Credits</span><strong>$@invoice.AmountCredited.ToString("N2")</strong></div><div><span>Paid</span><strong>$@invoice.AmountPaid.ToString("N2")</strong></div><div><span>Amount due</span><strong>$@AvailableCredit.ToString("N2")</strong></div></section>
         @if (invoice.Status == InvoiceStatus.Draft) { <footer>DRAFT — Not posted to the ledger</footer> }
     </article>
@@ -250,6 +250,9 @@ else
                 .Include(x => x.Branch)
                 .Include(x => x.Division)
                 .Include(x => x.Lines)
+                    .ThenInclude(x => x.Project)
+                .Include(x => x.Lines)
+                    .ThenInclude(x => x.ProjectCostCode)
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == InvoiceId &&
@@ -312,7 +315,9 @@ else
                                 line.VatTreatment,
                                 line.RevenueAccountId,
                                 line.ProductItemId,
-                                line.CustomerPurchaseOrderNumber))
+                                line.CustomerPurchaseOrderNumber,
+                                line.ProjectId,
+                                line.ProjectCostCodeId))
                         .ToList(),
                     invoice.BranchId,
                     invoice.DivisionId);
@@ -373,6 +378,10 @@ else
             status = ex.Message;
         }
     }
+
+    private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
+        ? "—"
+        : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? "" : $" / {line.ProjectCostCode.Code}")}";
 
     private void OpenCreditReversal(Guid creditNoteId)
     {

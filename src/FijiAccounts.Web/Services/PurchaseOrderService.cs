@@ -13,18 +13,23 @@ public sealed record PurchaseOrderRequest(
     DateOnly? ExpectedDate,
     string SupplierReference,
     string Notes,
-    IReadOnlyList<PurchaseOrderLineRequest> Lines);
+    IReadOnlyList<PurchaseOrderLineRequest> Lines,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed record PurchaseOrderLineRequest(
     string Description,
     decimal Quantity,
     decimal UnitPrice,
     Guid ExpenseAccountId,
-    Guid? ProductItemId = null);
+    Guid? ProductItemId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed class PurchaseOrderService(
     ApplicationDbContext db,
-    TenantAccessService access)
+    TenantAccessService access,
+    EnterpriseStructureService structures)
 {
     public async Task<PurchaseOrder> CreateDraftAsync(
         string userId,
@@ -53,6 +58,19 @@ public sealed class PurchaseOrderService(
             throw new InvalidOperationException(
                 "Select an active supplier.");
         }
+
+        var dimension = await structures.ResolveActiveDimensionAsync(
+            request.OrganisationId, request.BranchId, request.DivisionId, ct);
+        if (!await access.CanAccessDimensionAsync(
+                userId, request.OrganisationId, dimension.BranchId, dimension.DivisionId, ct))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot create purchase orders for this branch and division.");
+        }
+        await ProjectCodingValidator.ValidateAsync(
+            db, request.OrganisationId, dimension.BranchId, dimension.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
 
         if (request.Lines.Count == 0)
         {
@@ -152,6 +170,12 @@ public sealed class PurchaseOrderService(
                             ProductItemId =
                                 x.ProductItemId,
 
+                            ProjectId =
+                                x.ProjectId,
+
+                            ProjectCostCodeId =
+                                x.ProjectCostCodeId,
+
                             NetAmount =
                                 x.Quantity *
                                 x.UnitPrice,
@@ -170,6 +194,12 @@ public sealed class PurchaseOrderService(
 
                 SupplierId =
                     request.SupplierId,
+
+                BranchId =
+                    dimension.BranchId,
+
+                DivisionId =
+                    dimension.DivisionId,
 
                 SequenceNumber =
                     sequence,
@@ -494,6 +524,8 @@ public sealed class PurchaseOrderService(
         {
             order.PurchaseOrderNumber,
             order.SupplierId,
+            order.BranchId,
+            order.DivisionId,
             order.OrderDate,
             order.ExpectedDate,
             order.SupplierReference,
@@ -509,7 +541,9 @@ public sealed class PurchaseOrderService(
                     x.QuantityReceived,
                     x.UnitPrice,
                     x.ExpenseAccountId,
-                    x.ProductItemId
+                    x.ProductItemId,
+                    x.ProjectId,
+                    x.ProjectCostCodeId
                 })
                 .ToArray()
         };

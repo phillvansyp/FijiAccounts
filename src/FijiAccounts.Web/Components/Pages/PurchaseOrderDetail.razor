@@ -201,6 +201,7 @@ else
                     <thead>
                         <tr>
                             <th>Description</th>
+                            <th>Project</th>
                             <th>Quantity</th>
                             <th class="text-end">Unit price</th>
                             <th class="text-end">Total</th>
@@ -216,6 +217,8 @@ else
                                 <td>
                                     @line.Description
                                 </td>
+
+                                <td>@ProjectLabel(line)</td>
 
                                 <td>
                                     @line.Quantity
@@ -404,6 +407,9 @@ else
             .AsNoTracking()
             .Include(x => x.Supplier)
             .Include(x => x.Lines)
+                .ThenInclude(x => x.Project)
+            .Include(x => x.Lines)
+                .ThenInclude(x => x.ProjectCostCode)
             .SingleAsync(
                 x =>
                     x.Id == PurchaseOrderId &&
@@ -485,6 +491,9 @@ private async Task ReloadOrder()
             .AsNoTracking()
             .Include(x => x.Supplier)
             .Include(x => x.Lines)
+                .ThenInclude(x => x.Project)
+            .Include(x => x.Lines)
+                .ThenInclude(x => x.ProjectCostCode)
             .SingleAsync(
                 x =>
                     x.Id == PurchaseOrderId &&
@@ -607,6 +616,9 @@ private void SetReceiveQuantity(
             .AsNoTracking()
             .Include(x => x.Supplier)
             .Include(x => x.Lines)
+                .ThenInclude(x => x.Project)
+            .Include(x => x.Lines)
+                .ThenInclude(x => x.ProjectCostCode)
             .SingleAsync(
                 x =>
                     x.Id == PurchaseOrderId &&
@@ -639,6 +651,9 @@ private void SetReceiveQuantity(
                 .AsNoTracking()
                 .Include(x => x.Supplier)
                 .Include(x => x.Lines)
+                    .ThenInclude(x => x.Project)
+                .Include(x => x.Lines)
+                    .ThenInclude(x => x.ProjectCostCode)
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == PurchaseOrderId &&
@@ -652,4 +667,8 @@ private void SetReceiveQuantity(
                     x => 0m);
         }
         }
+
+        private static string ProjectLabel(PurchaseOrderLine line) => line.Project is null
+            ? "—"
+            : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? "" : $" / {line.ProjectCostCode.Code}")}";
 }

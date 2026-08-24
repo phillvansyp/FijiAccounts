@@ -11,6 +11,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchaseOrderService PurchaseOrderService
+@inject ProjectService ProjectService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -79,6 +80,21 @@ else
                     </option>
                 }
 
+            </InputSelect>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Branch and division</label>
+            <InputSelect class="form-select" @bind-Value="orderModel.DivisionId" @bind-Value:after="OrderDimensionChanged">
+                @foreach (var branch in branches)
+                {
+                    <optgroup label="@($"{branch.Code} — {branch.Name}")">
+                        @foreach (var division in branch.Divisions.Where(x => x.IsActive))
+                        {
+                            <option value="@division.Id">@division.Code — @division.Name</option>
+                        }
+                    </optgroup>
+                }
             </InputSelect>
         </div>
 
@@ -179,6 +195,29 @@ else
                     </InputSelect>
                 </div>
 
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Project</label>
+                    <InputSelect class="form-select" @bind-Value="lineModel.ProjectId" @bind-Value:after="OrderProjectChanged">
+                        <option value="">No project</option>
+                        @foreach (var project in EligibleProjects)
+                        {
+                            <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Cost code</label>
+                    <InputSelect class="form-select" @bind-Value="lineModel.ProjectCostCodeId" disabled="@(lineModel.ProjectId is null)">
+                        <option value="">No cost code</option>
+                        @foreach (var costCode in CostCodes(lineModel.ProjectId))
+                        {
+                            <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option>
+                        }
+                    </InputSelect>
+                </div>
             </div>
 
         </div>
@@ -308,6 +347,10 @@ private List<PurchaseOrder> orders = [];
 
     private List<LedgerAccount> expenseAccounts = [];
 
+    private List<Branch> branches = [];
+
+    private List<Project> projects = [];
+
 private PurchaseOrderLineModel lineModel = new();
 
     private bool showOrderForm;
@@ -321,6 +364,10 @@ private PurchaseOrderLineModel lineModel = new();
     public decimal UnitPrice { get; set; }
 
     public Guid ExpenseAccountId { get; set; }
+
+    public Guid? ProjectId { get; set; }
+
+    public Guid? ProjectCostCodeId { get; set; }
 }
 
     private PurchaseOrderModel orderModel = new();
@@ -330,7 +377,7 @@ private PurchaseOrderLineModel lineModel = new();
     showOrderForm = true;
 
     orderModel =
-        new PurchaseOrderModel();
+        new PurchaseOrderModel { DivisionId = DefaultDivisionId };
 }
 
     private async Task SavePurchaseOrder()
@@ -363,8 +410,11 @@ private PurchaseOrderLineModel lineModel = new();
                     lineModel.Description,
                     lineModel.Quantity,
                     lineModel.UnitPrice,
-                    lineModel.ExpenseAccountId)
-            ]);
+                    lineModel.ExpenseAccountId,
+                    ProjectId: lineModel.ProjectId,
+                    ProjectCostCodeId: lineModel.ProjectCostCodeId)
+            ],
+            DivisionId: orderModel.DivisionId);
 
     await PurchaseOrderService.CreateDraftAsync(
         userId,
@@ -421,6 +471,10 @@ private PurchaseOrderLineModel lineModel = new();
                     x => x.Name)
                 .ToListAsync();
 
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        projects = await ProjectService.ListAsync(userId, OrganisationId);
+        orderModel.DivisionId = DefaultDivisionId;
+
                         expenseAccounts =
             await Db.LedgerAccounts
                 .AsNoTracking()
@@ -460,5 +514,13 @@ private PurchaseOrderLineModel lineModel = new();
         public string SupplierReference { get; set; } = "";
 
         public string Notes { get; set; } = "";
+
+        public Guid DivisionId { get; set; }
     }
+
+    private Guid DefaultDivisionId => (branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault) ?? branches.SelectMany(x => x.Divisions).FirstOrDefault())?.Id ?? Guid.Empty;
+    private IEnumerable<Project> EligibleProjects => projects.Where(x => x.DivisionId == orderModel.DivisionId && x.Status is ProjectStatus.Active or ProjectStatus.OnHold);
+    private IEnumerable<ProjectCostCode> CostCodes(Guid? projectId) => projects.SingleOrDefault(x => x.Id == projectId)?.CostCodes.Where(x => x.IsActive) ?? [];
+    private Task OrderProjectChanged() { lineModel.ProjectCostCodeId = null; return Task.CompletedTask; }
+    private Task OrderDimensionChanged() { lineModel.ProjectId = null; lineModel.ProjectCostCodeId = null; return Task.CompletedTask; }
 }

@@ -46,7 +46,7 @@ if (!controls.TryGetValue(
 }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var sequence = (await db.SalesCreditNotes.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1; var number = $"CN-{sequence:D6}";
-        var journalLines = invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, number, decimal.Round(x.Sum(y => y.NetAmount) * ratio, 2, MidpointRounding.AwayFromZero), 0)).ToList();
+        var journalLines = invoice.Lines.GroupBy(x => new { x.RevenueAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.RevenueAccountId, number, decimal.Round(x.Sum(y => y.NetAmount) * ratio, 2, MidpointRounding.AwayFromZero), 0, ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)).ToList();
         var allocatedNet = journalLines.Sum(x => x.Debit); if (journalLines.Count > 0 && allocatedNet != net) journalLines[0] = journalLines[0] with { Debit = journalLines[0].Debit + net - allocatedNet };
         if (vat > 0)
 {

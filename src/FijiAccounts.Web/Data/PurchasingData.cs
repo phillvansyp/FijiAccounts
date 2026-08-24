@@ -23,6 +23,8 @@ public sealed class SupplierBillDraft
     public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard;
     public Guid? ExpenseAccountId { get; set; }
     public Guid? ProductItemId { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Guid? ProjectCostCodeId { get; set; }
     public string AdditionalLinesJson { get; set; } = "[]";
     [MaxLength(255)] public string? AttachmentFileName { get; set; }
     [MaxLength(100)] public string? AttachmentContentType { get; set; }
@@ -165,6 +167,10 @@ public sealed class SupplierBillLine
     public LedgerAccount ExpenseAccount { get; set; } = null!;
     public Guid? ProductItemId { get; set; }
     public ProductItem? ProductItem { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? ProjectCostCodeId { get; set; }
+    public ProjectCostCode? ProjectCostCode { get; set; }
 }
 
 public sealed class SupplierPayment
@@ -409,6 +415,14 @@ public sealed class PurchaseOrder
     public Organisation Organisation { get; set; } =
         null!;
 
+    public Guid? BranchId { get; set; }
+
+    public Branch? Branch { get; set; }
+
+    public Guid? DivisionId { get; set; }
+
+    public Division? Division { get; set; }
+
     public Guid SupplierId { get; set; }
 
     public BusinessParty Supplier { get; set; } =
@@ -528,4 +542,12 @@ public sealed class PurchaseOrderLine
     public Guid? ProductItemId { get; set; }
 
     public ProductItem? ProductItem { get; set; }
+
+    public Guid? ProjectId { get; set; }
+
+    public Project? Project { get; set; }
+
+    public Guid? ProjectCostCodeId { get; set; }
+
+    public ProjectCostCode? ProjectCostCode { get; set; }
 }

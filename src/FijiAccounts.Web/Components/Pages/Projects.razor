@@ -96,7 +96,7 @@ else
         else
         {
             <div class="table-responsive"><table class="table">
-                <thead><tr><th>Project</th><th>Scope</th><th>Status</th><th class="text-end">Revised contract</th><th class="text-end">Actual revenue</th><th class="text-end">Actual cost</th><th class="text-end">Actual margin</th><th class="text-end">Cost to complete</th><th>Cost codes</th><th class="no-print">Actions</th></tr></thead>
+                <thead><tr><th>Project</th><th>Scope</th><th>Status</th><th class="text-end">Revised contract</th><th class="text-end">Actual revenue</th><th class="text-end">Actual cost</th><th class="text-end">Actual margin</th><th class="text-end">Committed / uncommitted</th><th>Cost codes</th><th class="no-print">Actions</th></tr></thead>
                 <tbody>
                 @foreach (var project in projects)
                 {
@@ -109,8 +109,8 @@ else
                         <td class="text-end">$@performance.ActualRevenue.ToString("N2")</td>
                         <td class="text-end">$@performance.ActualCost.ToString("N2")</td>
                         <td class="text-end @(performance.ActualMargin < 0 ? "text-danger" : "text-success")">$@performance.ActualMargin.ToString("N2")</td>
-                        <td class="text-end">$@performance.ForecastCostToComplete.ToString("N2")</td>
-                        <td>@if (performance.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in performance.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.ActualCost.ToString("N2") actual / $@costCode.Budget.ToString("N2") budget</small> } } @if (performance.UncodedActualCost != 0) { <small class="d-block text-warning"><strong>Uncoded</strong> &middot; $@performance.UncodedActualCost.ToString("N2")</small> }</td>
+                        <td class="text-end">$@performance.CommittedCost.ToString("N2")<small class="d-block text-muted">$@performance.UncommittedForecastCost.ToString("N2") uncommitted</small></td>
+                        <td>@if (performance.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in performance.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.ActualCost.ToString("N2") actual + $@costCode.CommittedCost.ToString("N2") committed / $@costCode.Budget.ToString("N2") budget</small> } } @if (performance.UncodedActualCost != 0) { <small class="d-block text-warning"><strong>Uncoded</strong> &middot; $@performance.UncodedActualCost.ToString("N2")</small> }</td>
                         <td class="no-print"><div class="d-flex flex-wrap gap-1">@if (canManage) { @if (project.Status is ProjectStatus.Draft or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Active)">Activate</button> } @if (project.Status == ProjectStatus.Active) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => ChangeStatus(project, ProjectStatus.OnHold)">Hold</button><button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Completed)">Complete</button> } @if (project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-danger" @onclick="() => ChangeStatus(project, ProjectStatus.Cancelled)">Cancel</button> } }</div></td>
                     </tr>
                 }

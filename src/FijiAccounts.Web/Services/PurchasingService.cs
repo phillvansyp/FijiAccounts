@@ -7,7 +7,7 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null);
+public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null, Guid? ProjectId = null, Guid? ProjectCostCodeId = null);
 public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null, bool AmountsIncludeVat = false);
 public sealed record SupplierBillAttachmentRequest(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
 public sealed record SupplierPaymentRequest(
@@ -84,6 +84,9 @@ public sealed class PurchasingService(
             request.DivisionId,
             ct);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, ct);
+        await ProjectCodingValidator.ValidateAsync(db, request.OrganisationId, dimension.BranchId,
+            dimension.DivisionId, request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: ct);
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.BillDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter a valid bill date, due date and at least one line.");
@@ -159,7 +162,9 @@ public sealed class PurchasingService(
                 VatAmount = tax.Vat.Amount,
                 GrossAmount = tax.Inclusive.Amount,
                 ExpenseAccountId = x.ExpenseAccountId,
-                ProductItemId = x.ProductItemId
+                ProductItemId = x.ProductItemId,
+                ProjectId = x.ProjectId,
+                ProjectCostCodeId = x.ProjectCostCodeId
             };
         }).ToList();
         var trackedIds =
@@ -252,7 +257,9 @@ public sealed class PurchasingService(
                     x.UnitPrice,
                     x.VatTreatment,
                     x.ExpenseAccountId,
-                    x.ProductItemId)).ToList());
+                    x.ProductItemId,
+                    x.ProjectId,
+                    x.ProjectCostCodeId)).ToList());
             var previousStatus = sourcePurchaseOrder.MatchStatus;
             var previousFingerprint = sourcePurchaseOrder.MatchFingerprint;
             var approvalRemainsValid =
@@ -319,7 +326,7 @@ public sealed class PurchasingService(
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
         var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = supplierReference, BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
-        var journalLines = lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, bill.BillNumber, x.Sum(y => y.NetAmount), 0)).ToList();
+        var journalLines = lines.GroupBy(x => new { x.ExpenseAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.ExpenseAccountId, bill.BillNumber, x.Sum(y => y.NetAmount), 0, ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)).ToList();
         if (bill.VatTotal > 0)
         {
             journalLines.Add(

@@ -12,7 +12,9 @@ public sealed record SupplierBillDraftLineRequest(
     decimal UnitPrice,
     VatTreatment VatTreatment,
     Guid? ExpenseAccountId,
-    Guid? ProductItemId = null);
+    Guid? ProductItemId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed record SaveSupplierBillDraftRequest(
     Guid OrganisationId,
@@ -81,6 +83,8 @@ public sealed class SupplierBillDraftService(
             draft.VatTreatment == firstLine.VatTreatment &&
             draft.ExpenseAccountId == firstLine.ExpenseAccountId &&
             draft.ProductItemId == firstLine.ProductItemId &&
+            draft.ProjectId == firstLine.ProjectId &&
+            draft.ProjectCostCodeId == firstLine.ProjectCostCodeId &&
             draft.AdditionalLinesJson == additionalLinesJson &&
             draft.AttachmentFileName == attachment?.FileName.Trim() &&
             draft.AttachmentContentType == attachment?.ContentType.Trim() &&
@@ -105,6 +109,8 @@ public sealed class SupplierBillDraftService(
         draft.VatTreatment = firstLine.VatTreatment;
         draft.ExpenseAccountId = firstLine.ExpenseAccountId;
         draft.ProductItemId = firstLine.ProductItemId;
+        draft.ProjectId = firstLine.ProjectId;
+        draft.ProjectCostCodeId = firstLine.ProjectCostCodeId;
         draft.AdditionalLinesJson = additionalLinesJson;
         draft.AttachmentFileName = attachment?.FileName.Trim();
         draft.AttachmentContentType = attachment?.ContentType.Trim();
@@ -230,7 +236,9 @@ public sealed class SupplierBillDraftService(
                 x.UnitPrice,
                 x.VatTreatment,
                 x.ExpenseAccountId,
-                x.ProductItemId))
+                x.ProductItemId,
+                x.ProjectId,
+                x.ProjectCostCodeId))
             .ToList();
         var draft = new SupplierBillDraft
         {
@@ -247,6 +255,10 @@ public sealed class SupplierBillDraftService(
             VatTreatment = firstLine.VatTreatment,
             ExpenseAccountId = firstLine.ExpenseAccountId,
             ProductItemId = firstLine.ProductItemId,
+            ProjectId = firstLine.ProjectId,
+            ProjectCostCodeId = firstLine.ProjectCostCodeId,
+            BranchId = order.BranchId,
+            DivisionId = order.DivisionId,
             AdditionalLinesJson = JsonSerializer.Serialize(additionalLines),
             CreatedByUserId = userId,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -320,6 +332,14 @@ public sealed class SupplierBillDraftService(
                     "Select an active branch and division from this organisation.");
             }
         }
+
+        await ProjectCodingValidator.ValidateAsync(
+            db,
+            request.OrganisationId,
+            request.BranchId,
+            request.DivisionId,
+            request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: cancellationToken);
 
         var accountIds = request.Lines
             .Where(x =>
@@ -396,7 +416,9 @@ public sealed class SupplierBillDraftService(
                 draft.UnitPrice,
                 VatTreatment = draft.VatTreatment.ToString(),
                 draft.ExpenseAccountId,
-                draft.ProductItemId
+                draft.ProductItemId,
+                draft.ProjectId,
+                draft.ProjectCostCodeId
             },
             AdditionalLineCount = CountAdditionalLines(draft.AdditionalLinesJson),
             Attachment = draft.AttachmentContent is null

@@ -230,7 +230,9 @@ public sealed class PurchaseRequisitionService(
                 x.Quantity,
                 x.EstimatedUnitPrice,
                 x.ExpenseAccountId,
-                x.ProductItemId)).ToArray()), ct);
+                x.ProductItemId)).ToArray(),
+            requisition.BranchId,
+            requisition.DivisionId), ct);
         order.PurchaseRequisitionId = requisition.Id;
         order.Status = PurchaseOrderStatus.Approved;
         order.UpdatedAt = DateTimeOffset.UtcNow;

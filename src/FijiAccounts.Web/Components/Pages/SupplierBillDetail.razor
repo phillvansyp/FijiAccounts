@@ -415,6 +415,7 @@ else
                         <thead>
                             <tr>
                                 <th>Description</th>
+                                <th>Project</th>
                                 <th class="number">Qty</th>
                                 <th class="number">Unit price</th>
                                 <th>Tax</th>
@@ -427,6 +428,7 @@ else
                             {
                                 <tr>
                                     <td><strong>@line.Description</strong></td>
+                                    <td>@ProjectLabel(line)</td>
                                     <td class="number">@line.Quantity.ToString("N2")</td>
                                     <td class="number">$@line.UnitPrice.ToString("N2")</td>
                                     <td><span class="tax-pill">@line.VatTreatment</span></td>
@@ -1037,6 +1039,10 @@ private Guid paymentBankAccountId;
     private bool HasTrackedItems =>
         bill?.Lines.Any(x => x.ProductItem?.Kind == ProductKind.TrackedItem) == true;
 
+    private static string ProjectLabel(SupplierBillLine line) => line.Project is null
+        ? "—"
+        : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? "" : $" / {line.ProjectCostCode.Code}")}";
+
     protected override async Task OnParametersSetAsync()
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -1129,6 +1135,10 @@ private async Task RecordPayment()
             .Include(x => x.Division)
             .Include(x => x.Lines)
             .ThenInclude(x => x.ProductItem)
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.Project)
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.ProjectCostCode)
             .Include(x => x.Attachments)
             .SingleOrDefaultAsync(
                 x => x.Id == BillId &&

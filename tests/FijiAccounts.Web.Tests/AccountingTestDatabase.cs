@@ -55,7 +55,8 @@ var structures =
 PurchaseOrders =
     new PurchaseOrderService(
         Db,
-        Access);
+        Access,
+        structures);
 
 BankAccounts =
     new BankAccountService(

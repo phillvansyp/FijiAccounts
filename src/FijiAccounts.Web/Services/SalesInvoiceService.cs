@@ -7,7 +7,7 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record SalesInvoiceLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid RevenueAccountId, Guid? ProductItemId = null, string? CustomerPurchaseOrderNumber = null);
+public sealed record SalesInvoiceLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid RevenueAccountId, Guid? ProductItemId = null, string? CustomerPurchaseOrderNumber = null, Guid? ProjectId = null, Guid? ProjectCostCodeId = null);
 public sealed record SalesInvoiceRequest(Guid OrganisationId, Guid CustomerId, DateOnly IssueDate, DateOnly DueDate, IReadOnlyList<SalesInvoiceLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null);
 
 public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting, EnterpriseStructureService structures)
@@ -28,6 +28,9 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
             cancellationToken);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
+        await ProjectCodingValidator.ValidateAsync(db, request.OrganisationId, dimension.BranchId,
+            dimension.DivisionId, request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: cancellationToken);
         var sequence = (await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1;
         var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = $"DRAFT-{sequence:D6}", IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Draft, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         db.SalesInvoices.Add(invoice); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoiceDraftCreated", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, Lines = lines.Count }) }); await db.SaveChangesAsync(cancellationToken); return invoice;
@@ -70,7 +73,7 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         invoice.InvoiceNumber =
             AllocateSalesInvoiceNumber(organisation);
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
-        journalLines.AddRange(invoice.Lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
+        journalLines.AddRange(invoice.Lines.GroupBy(x => new { x.RevenueAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.RevenueAccountId, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount), ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
         await AddInventorySaleLinesAsync(
     organisationId,
@@ -86,8 +89,11 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot edit invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be edited.");
-        var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken); var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
         var dimension = await structures.ResolveActiveDimensionAsync(request.OrganisationId, request.BranchId, request.DivisionId, cancellationToken);
+        var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken); var lines = await PrepareLinesAsync(organisation, request, cancellationToken);
+        await ProjectCodingValidator.ValidateAsync(db, request.OrganisationId, dimension.BranchId,
+            dimension.DivisionId, request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: cancellationToken);
         var existingLines =
     invoice.Lines.ToList();
 
@@ -155,7 +161,7 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
         if (request.DueDate < request.IssueDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter valid invoice dates and at least one line.");
         if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer in this organisation.");
         var accountIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray(); if (await db.LedgerAccounts.CountAsync(x => x.OrganisationId == request.OrganisationId && x.IsActive && accountIds.Contains(x.Id) && x.Type == AccountType.Revenue, cancellationToken) != accountIds.Length) throw new InvalidOperationException("Every line must use an active revenue account.");
-        var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.IssueDate, x.VatTreatment); return new SalesInvoiceLine { Description = x.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(x.CustomerPurchaseOrderNumber) ? null : x.CustomerPurchaseOrderNumber.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId }; }).ToList();
+        var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.IssueDate, x.VatTreatment); return new SalesInvoiceLine { Description = x.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(x.CustomerPurchaseOrderNumber) ? null : x.CustomerPurchaseOrderNumber.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = x.RevenueAccountId, ProductItemId = x.ProductItemId, ProjectId = x.ProjectId, ProjectCostCodeId = x.ProjectCostCodeId }; }).ToList();
     }
 
     internal Task<SalesInvoice> CreateAndPostAutomaticallyAsync(
@@ -200,6 +206,9 @@ db.SalesInvoiceVoids.Add(invoiceVoid);
             request.DivisionId,
             cancellationToken);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
+        await ProjectCodingValidator.ValidateAsync(db, request.OrganisationId, dimension.BranchId,
+            dimension.DivisionId, request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
+            cancellationToken: cancellationToken);
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.IssueDate) throw new InvalidOperationException("The due date cannot be before the issue date.");
@@ -241,7 +250,7 @@ if (!controlAccounts.TryGetValue(
         {
             if (line.Quantity <= 0 || line.UnitPrice < 0) throw new InvalidOperationException("Invoice quantities must be positive and prices cannot be negative.");
             var net = new Money(line.Quantity * line.UnitPrice, organisation.BaseCurrency).Round(); var tax = vatSchedule.CalculateFromExclusive(net, request.IssueDate, line.VatTreatment);
-            return new SalesInvoiceLine { Description = line.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? null : line.CustomerPurchaseOrderNumber.Trim(), Quantity = line.Quantity, UnitPrice = line.UnitPrice, VatTreatment = line.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = line.RevenueAccountId, ProductItemId = line.ProductItemId };
+            return new SalesInvoiceLine { Description = line.Description.Trim(), CustomerPurchaseOrderNumber = string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? null : line.CustomerPurchaseOrderNumber.Trim(), Quantity = line.Quantity, UnitPrice = line.UnitPrice, VatTreatment = line.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, RevenueAccountId = line.RevenueAccountId, ProductItemId = line.ProductItemId, ProjectId = line.ProjectId, ProjectCostCodeId = line.ProjectCostCodeId };
         }).ToList();
 
         var productIds = lines.Where(x => x.ProductItemId != null).Select(x => x.ProductItemId!.Value).Distinct().ToArray();
@@ -267,7 +276,7 @@ if (!controlAccounts.TryGetValue(
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
-        journalLines.AddRange(lines.GroupBy(x => x.RevenueAccountId).Select(x => new JournalLineInput(x.Key, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount))));
+        journalLines.AddRange(lines.GroupBy(x => new { x.RevenueAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.RevenueAccountId, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount), ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
         await AddInventorySaleLinesAsync(
     request.OrganisationId,
@@ -316,9 +325,9 @@ if (!controlAccounts.TryGetValue(
 {
     foreach (var group in lines
         .Where(x => x.ProductItem?.Kind == ProductKind.TrackedItem)
-        .GroupBy(x => x.ProductItem!))
+        .GroupBy(x => new { Product = x.ProductItem!, x.ProjectId, x.ProjectCostCodeId }))
     {
-        var item = group.Key;
+        var item = group.Key.Product;
         var quantity = group.Sum(x => x.Quantity);
 
         if (quantity > item.QuantityOnHand)
@@ -334,12 +343,11 @@ if (!controlAccounts.TryGetValue(
                 $"Set opening stock and inventory accounts for {item.Code} before selling it.");
         }
 
-        var accountIds =
-            new[]
-            {
+        Guid[] accountIds =
+            [
                 item.InventoryAccountId.Value,
                 item.CostAdjustmentAccountId.Value
-            };
+            ];
 
         var accounts =
             await db.LedgerAccounts
@@ -381,14 +389,18 @@ if (!controlAccounts.TryGetValue(
                     costAccount.Id,
                     $"Cost of {item.Code}",
                     value,
-                    0));
+                    0,
+                    ProjectId: group.Key.ProjectId,
+                    ProjectCostCodeId: group.Key.ProjectCostCodeId));
 
             journalLines.Add(
                 new(
                     inventoryAccount.Id,
                     $"Stock issued {item.Code}",
                     0,
-                    value));
+                    value,
+                    ProjectId: group.Key.ProjectId,
+                    ProjectCostCodeId: group.Key.ProjectCostCodeId));
         }
     }
 }
