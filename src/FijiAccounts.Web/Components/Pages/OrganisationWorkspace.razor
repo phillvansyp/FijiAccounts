@@ -16,6 +16,7 @@
 @inject NotificationService NotificationService
 @inject CashflowForecastService CashflowForecastService
 @inject FinancialRiskService FinancialRiskService
+@inject FinancialIntelligenceService FinancialIntelligenceService
 @inject CashRunwayService CashRunwayService
 @inject OrganisationUpdateBroker Updates
 @inject IServiceScopeFactory ScopeFactory
@@ -115,7 +116,7 @@ else
         </section>
     }
 
-    @if (cashflowForecast is not null && financialRisk is not null && cashRunway is not null)
+    @if (cashflowForecast is not null && financialRisk is not null && cashRunway is not null && financialIntelligence is not null)
     {
         <section class="detail-card intelligence-card">
             <div class="card-heading">
@@ -178,6 +179,40 @@ else
                     <small>@financialRisk.Payables.OverduePercentage.ToString("N0")% overdue · $@financialRisk.Payables.Over90.ToString("N2") over 90 days</small>
                 </a>
             </div>
+            <div class="trend-intelligence">
+                <div class="margin-snapshot">
+                    <span>Gross margin &middot; latest 30 days</span>
+                    <strong>@FormatMargin(financialIntelligence.CurrentGrossMarginPercent)</strong>
+                    <small>
+                        Revenue $@financialIntelligence.CurrentRevenue.ToString("N2")
+                        &middot; Gross profit $@financialIntelligence.CurrentGrossProfit.ToString("N2")
+                        @if (financialIntelligence.PriorGrossMarginPercent is decimal priorMargin)
+                        {
+                            <text>&middot; Previous @priorMargin.ToString("N1")%</text>
+                        }
+                    </small>
+                </div>
+                <div class="health-signals">
+                    <div class="health-signals-heading">
+                        <div><span class="eyebrow">Trend signals</span><h3>Financial health checks</h3></div>
+                        <span>@financialIntelligence.Insights.Count signal@(financialIntelligence.Insights.Count == 1 ? "" : "s")</span>
+                    </div>
+                    @if (financialIntelligence.Insights.Count == 0)
+                    {
+                        <p class="health-clear">No material margin, supplier-cost or concentration warnings were detected.</p>
+                    }
+                    else
+                    {
+                        @foreach (var insight in financialIntelligence.Insights)
+                        {
+                            <a class="health-signal" href="@InsightLink(insight.Category)">
+                                <span class="risk-badge @(insight.Severity == FinancialInsightSeverity.High ? "high" : "watch")">@insight.Severity</span>
+                                <span><strong>@insight.Title</strong><small>@insight.Explanation</small></span>
+                            </a>
+                        }
+                    }
+                </div>
+            </div>
         </section>
     }
 
@@ -217,6 +252,7 @@ else
     private List<OrganisationDimensionAccessGrant> SelectedMemberGrants => dimensionGrants.Where(x => x.UserId == selectedMemberUserId).OrderBy(x => x.Branch.Code).ThenBy(x => x.Division == null ? "" : x.Division.Code).ToList();
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
+    private FinancialIntelligenceSummary? financialIntelligence;
     private CashRunwayForecast? cashRunway;
     private IDisposable? updateSubscription;
     private bool liveRefreshInProgress;
@@ -230,6 +266,7 @@ await LoadFinancialInsightsAsync(
     NotificationService,
     CashflowForecastService,
     FinancialRiskService,
+    FinancialIntelligenceService,
     CashRunwayService);
 var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
 
@@ -238,6 +275,7 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         NotificationService notifications,
         CashflowForecastService cashflow,
         FinancialRiskService risk,
+        FinancialIntelligenceService intelligence,
         CashRunwayService runway)
     {
         var today =
@@ -287,6 +325,8 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
             await cashflow.GetAsync(OrganisationId);
         financialRisk =
             await risk.GetAsync(OrganisationId);
+        financialIntelligence =
+            await intelligence.GetAsync(userId, OrganisationId);
         cashRunway =
             await runway.GetAsync(OrganisationId);
         cashPosition = cashRunway.OpeningCash;
@@ -327,6 +367,7 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
                     scope.ServiceProvider.GetRequiredService<NotificationService>(),
                     scope.ServiceProvider.GetRequiredService<CashflowForecastService>(),
                     scope.ServiceProvider.GetRequiredService<FinancialRiskService>(),
+                    scope.ServiceProvider.GetRequiredService<FinancialIntelligenceService>(),
                     scope.ServiceProvider.GetRequiredService<CashRunwayService>());
 
                 StateHasChanged();
@@ -387,6 +428,20 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         amount < 0
             ? $"-${Math.Abs(amount):N2}"
             : $"${amount:N2}";
+
+    private static string FormatMargin(decimal? margin) =>
+        margin is null ? "No revenue" : $"{margin:N1}%";
+
+    private string InsightLink(FinancialInsightCategory category) =>
+        category switch
+        {
+            FinancialInsightCategory.CustomerConcentration =>
+                $"o/{OrganisationId}/reports/aging/receivables",
+            FinancialInsightCategory.SupplierConcentration or
+            FinancialInsightCategory.SupplierCost =>
+                $"o/{OrganisationId}/purchases",
+            _ => $"o/{OrganisationId}/reports"
+        };
 
     private static string GetRiskLabel(FinancialRiskLevel riskLevel) =>
         riskLevel switch

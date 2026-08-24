@@ -197,12 +197,85 @@
     color: #a8372a;
 }
 
+.trend-intelligence {
+    display: grid;
+    gap: .8rem;
+    grid-template-columns: minmax(220px, .55fr) 1.45fr;
+    margin-top: .8rem;
+}
+
+.margin-snapshot,
+.health-signals {
+    background: #f6f9fa;
+    border: 1px solid #e4ebee;
+    border-radius: .8rem;
+    padding: 1rem;
+}
+
+.margin-snapshot {
+    display: flex;
+    flex-direction: column;
+}
+
+.margin-snapshot > span {
+    color: #607681;
+    font-size: .82rem;
+    font-weight: 700;
+}
+
+.margin-snapshot > strong {
+    font-size: 1.7rem;
+    margin: .7rem 0;
+}
+
+.margin-snapshot > small,
+.health-signal small {
+    color: #687b86;
+}
+
+.health-signals-heading {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+}
+
+.health-signals-heading h3 {
+    font-size: 1.05rem;
+    margin: .1rem 0 .6rem;
+}
+
+.health-signal {
+    align-items: flex-start;
+    border-top: 1px solid #e4ebee;
+    color: #17324d;
+    display: grid;
+    gap: .7rem;
+    grid-template-columns: auto 1fr;
+    padding: .7rem 0;
+    text-decoration: none;
+}
+
+.health-signal > span:last-child {
+    display: flex;
+    flex-direction: column;
+    gap: .15rem;
+}
+
+.health-clear {
+    color: #087057;
+    margin: .4rem 0 0;
+}
+
 @media (max-width: 1000px) {
     .intelligence-grid {
         grid-template-columns: 1fr 1fr;
     }
 
     .runway-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .trend-intelligence {
         grid-template-columns: 1fr;
     }
 }
