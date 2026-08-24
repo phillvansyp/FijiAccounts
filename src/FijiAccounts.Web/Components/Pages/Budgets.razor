@@ -3,35 +3,182 @@
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
-@using Microsoft.EntityFrameworkCore
-@using FijiAccounts.Domain.Accounting
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
-@inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject BudgetService BudgetService
+@inject BudgetReportingService BudgetReporting
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Budgets · Account Island</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+<PageTitle>Budgets &middot; Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Planning</p><h1>Budget versus actual</h1><p class="page-intro">Set monthly targets and compare them with posted revenue and expenses.</p></div><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print report</button></div>
-    <section class="report-controls no-print"><EditForm Model="yearFilter" OnValidSubmit="Reload" FormName="budget-year"><div><label class="form-label">Calendar year</label><InputNumber class="form-control" @bind-Value="yearFilter.Year" /></div><button class="btn btn-primary">Update report</button></EditForm></section>
-    @if (message is not null) { <div class="alert @messageClass">@message</div> }
-    @if (canManage && accounts.Count > 0) { <details class="setup-card mb-4"><summary><strong>+ Set monthly budget</strong></summary><EditForm Model="model" OnValidSubmit="Save" FormName="set-budget" class="mt-3"><DataAnnotationsValidator /><ValidationSummary /><div class="row"><div class="col-md-5 mb-3"><label class="form-label">Revenue or expense account</label><InputSelect class="form-select" @bind-Value="model.AccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Month</label><InputDate class="form-control" @bind-Value="model.Month" /></div><div class="col-md-2 mb-3"><label class="form-label">Budget amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div><div class="col-md-2 d-flex align-items-end mb-3"><button class="btn btn-primary w-100">Save budget</button></div></div></EditForm></details> }
-    <div class="row g-3 mb-4"><div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Revenue budget</span><h2>$@RevenueBudget.ToString("N2")</h2></div></div><div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual revenue</span><h2>$@RevenueActual.ToString("N2")</h2></div></div><div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Expense budget</span><h2>$@ExpenseBudget.ToString("N2")</h2></div></div><div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual expenses</span><h2>$@ExpenseActual.ToString("N2")</h2></div></div></div>
-    <section class="detail-card mb-4"><div class="card-heading"><div><span class="eyebrow">Annual comparison</span><h2>@yearFilter.Year performance</h2></div><span>@rows.Count accounts</span></div>@if (rows.Count == 0) { <div class="empty-state"><strong>No budget or actual activity</strong><span>Set a monthly budget or post transactions for this year.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Account</th><th>Type</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">Used / achieved</th></tr></thead><tbody>@foreach (var row in rows) { <tr><td><strong>@row.Code</strong> — @row.Name</td><td>@row.Type</td><td class="text-end">$@row.Budget.ToString("N2")</td><td class="text-end">$@row.Actual.ToString("N2")</td><td class="text-end @(row.FavourableVariance < 0 ? "text-danger" : "text-success")">@row.FavourableVariance.ToString("+$0.00;-$0.00;$0.00")</td><td class="text-end">@(row.Budget == 0 ? "—" : $"{row.Actual / row.Budget:P1}")</td></tr> }</tbody><tfoot><tr><th colspan="2">Net operating result</th><th class="text-end">$@BudgetProfit.ToString("N2")</th><th class="text-end">$@ActualProfit.ToString("N2")</th><th class="text-end">@((ActualProfit-BudgetProfit).ToString("+$0.00;-$0.00;$0.00"))</th><th></th></tr></tfoot></table></div> }</section>
-    <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Monthly trend</span><h2>Plan and performance</h2></div></div><div class="table-responsive"><table class="table"><thead><tr><th>Month</th><th class="text-end">Revenue budget</th><th class="text-end">Revenue actual</th><th class="text-end">Expense budget</th><th class="text-end">Expense actual</th><th class="text-end">Actual result</th></tr></thead><tbody>@foreach (var month in months) { <tr><td>@month.Month.ToString("MMM yyyy")</td><td class="text-end">$@month.RevenueBudget.ToString("N2")</td><td class="text-end">$@month.RevenueActual.ToString("N2")</td><td class="text-end">$@month.ExpenseBudget.ToString("N2")</td><td class="text-end">$@month.ExpenseActual.ToString("N2")</td><td class="text-end"><strong>$@((month.RevenueActual-month.ExpenseActual).ToString("N2"))</strong></td></tr> }</tbody></table></div></section>
+    <div class="page-heading">
+        <div><p class="eyebrow">Planning</p><h1>Budget versus actual</h1><p class="page-intro">Compare organisation-wide monthly targets with posted ledger evidence and surface material adverse variances.</p></div>
+        <button class="btn btn-outline-secondary no-print" onclick="window.print()">Print report</button>
+    </div>
+
+    <section class="report-controls no-print">
+        <EditForm Model="filter" OnValidSubmit="Reload" FormName="budget-report-filter">
+            <DataAnnotationsValidator />
+            <div><label class="form-label">Calendar year</label><InputNumber class="form-control" @bind-Value="filter.Year" /></div>
+            <div><label class="form-label">Alert variance %</label><InputNumber class="form-control" @bind-Value="filter.AlertPercent" /></div>
+            <div><label class="form-label">Minimum alert amount</label><InputNumber class="form-control" @bind-Value="filter.AlertAmount" /></div>
+            <button class="btn btn-primary">Update report</button>
+        </EditForm>
+    </section>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">@message</div>
+    }
+
+    @if (report is not null)
+    {
+        @if (canManage && report.Accounts.Count > 0)
+        {
+            <details class="setup-card mb-4">
+                <summary><strong>+ Set monthly budget</strong></summary>
+                <EditForm Model="model" OnValidSubmit="Save" FormName="set-budget" class="mt-3">
+                    <DataAnnotationsValidator /><ValidationSummary />
+                    <div class="row">
+                        <div class="col-md-5 mb-3"><label class="form-label">Revenue or expense account</label><InputSelect class="form-select" @bind-Value="model.AccountId">@foreach (var account in report.Accounts.Where(x => x.IsActive)) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-3"><label class="form-label">Month</label><InputDate class="form-control" @bind-Value="model.Month" /></div>
+                        <div class="col-md-2 mb-3"><label class="form-label">Budget amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
+                        <div class="col-md-2 d-flex align-items-end mb-3"><button class="btn btn-primary w-100">Save budget</button></div>
+                    </div>
+                </EditForm>
+            </details>
+        }
+
+        <div class="row g-3 mb-4">
+            <div class="col-md"><div class="detail-card h-100"><span class="eyebrow">Revenue budget</span><h2>$@report.RevenueBudget.ToString("N2")</h2></div></div>
+            <div class="col-md"><div class="detail-card h-100"><span class="eyebrow">Actual revenue</span><h2>$@report.RevenueActual.ToString("N2")</h2></div></div>
+            <div class="col-md"><div class="detail-card h-100"><span class="eyebrow">Expense budget</span><h2>$@report.ExpenseBudget.ToString("N2")</h2></div></div>
+            <div class="col-md"><div class="detail-card h-100"><span class="eyebrow">Actual expenses</span><h2>$@report.ExpenseActual.ToString("N2")</h2></div></div>
+            <div class="col-md"><div class="detail-card h-100"><span class="eyebrow">Variance alerts</span><h2 class="@(report.AlertCount > 0 ? "text-danger" : "text-success")">@report.AlertCount</h2></div></div>
+        </div>
+
+        <section class="detail-card mb-4">
+            <div class="card-heading"><div><span class="eyebrow">Annual comparison</span><h2>@report.Year performance</h2></div><span>@report.AccountsPerformance.Count accounts</span></div>
+            @if (report.AccountsPerformance.Count == 0)
+            {
+                <div class="empty-state"><strong>No budget or actual activity</strong><span>Set a monthly budget or post transactions for this year.</span></div>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table">
+                    <thead><tr><th>Account</th><th>Type</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">Adverse variance</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var row in report.AccountsPerformance)
+                    {
+                        <tr class="@(row.RequiresAttention ? "table-warning" : null)">
+                            <td><a href="@LedgerLink(row.AccountId)"><strong>@row.Code</strong> &mdash; @row.Name</a></td>
+                            <td>@row.Type</td>
+                            <td class="text-end">$@row.Budget.ToString("N2")</td>
+                            <td class="text-end">$@row.Actual.ToString("N2")</td>
+                            <td class="text-end @(row.FavourableVariance < 0 ? "text-danger" : "text-success")">@row.FavourableVariance.ToString("+$0.00;-$0.00;$0.00")</td>
+                            <td class="text-end">@(row.AdverseVariance == 0 ? "$0.00" : $"${row.AdverseVariance:N2}" + (row.AdverseVariancePercent is decimal percent ? $" / {percent:N1}%" : " / unbudgeted"))</td>
+                            <td><span class="risk-badge @(row.RequiresAttention ? "high" : "current")">@(row.RequiresAttention ? "Review" : "On track")</span></td>
+                        </tr>
+                    }
+                    </tbody>
+                    <tfoot><tr><th colspan="2">Net operating result</th><th class="text-end">$@report.BudgetProfit.ToString("N2")</th><th class="text-end">$@report.ActualProfit.ToString("N2")</th><th class="text-end">@((report.ActualProfit - report.BudgetProfit).ToString("+$0.00;-$0.00;$0.00"))</th><th colspan="2"></th></tr></tfoot>
+                </table></div>
+            }
+        </section>
+
+        <section class="detail-card">
+            <div class="card-heading"><div><span class="eyebrow">Monthly trend</span><h2>Plan and performance</h2></div><span>Alerts require both configured thresholds</span></div>
+            <div class="table-responsive"><table class="table">
+                <thead><tr><th>Month</th><th class="text-end">Revenue budget</th><th class="text-end">Revenue actual</th><th class="text-end">Expense budget</th><th class="text-end">Expense actual</th><th class="text-end">Result variance</th><th>Status</th></tr></thead>
+                <tbody>@foreach (var month in report.Months) { <tr class="@(month.RequiresAttention ? "table-warning" : null)"><td>@month.Month.ToString("MMM yyyy")</td><td class="text-end">$@month.RevenueBudget.ToString("N2")</td><td class="text-end">$@month.RevenueActual.ToString("N2")</td><td class="text-end">$@month.ExpenseBudget.ToString("N2")</td><td class="text-end">$@month.ExpenseActual.ToString("N2")</td><td class="text-end @(month.FavourableVariance < 0 ? "text-danger" : "text-success")">@month.FavourableVariance.ToString("+$0.00;-$0.00;$0.00")</td><td>@(month.RequiresAttention ? "Review" : "On track")</td></tr> }</tbody>
+            </table></div>
+        </section>
+    }
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage; private List<LedgerAccount> accounts = []; private List<BudgetRow> rows = []; private List<MonthRow> months = []; private YearModel yearFilter = new(); private EntryModel model = new(); private string? message; private string messageClass = "alert-success"; private decimal RevenueBudget => rows.Where(x => x.Type == AccountType.Revenue).Sum(x => x.Budget); private decimal RevenueActual => rows.Where(x => x.Type == AccountType.Revenue).Sum(x => x.Actual); private decimal ExpenseBudget => rows.Where(x => x.Type == AccountType.Expense).Sum(x => x.Budget); private decimal ExpenseActual => rows.Where(x => x.Type == AccountType.Expense).Sum(x => x.Actual); private decimal BudgetProfit => RevenueBudget - ExpenseBudget; private decimal ActualProfit => RevenueActual - ExpenseActual;
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Revenue || x.Type == AccountType.Expense)).OrderBy(x => x.Code).ToListAsync(); yearFilter.Year = DateTime.Today.Year; Reset(); await Reload(); }
-    private void Reset() => model = new EntryModel { AccountId = accounts.FirstOrDefault()?.Id ?? Guid.Empty, Month = new DateOnly(yearFilter.Year, DateTime.Today.Month, 1) };
-    private async Task Reload() { if (yearFilter.Year is < 2000 or > 2200) return; var from = new DateOnly(yearFilter.Year, 1, 1); var to = new DateOnly(yearFilter.Year, 12, 31); var budgets = await Db.AccountBudgets.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.Month >= from && x.Month <= to).ToListAsync(); var actuals = await Db.PostedJournalLines.AsNoTracking().Where(x => x.PostedJournal.OrganisationId == OrganisationId && x.PostedJournal.EntryDate >= from && x.PostedJournal.EntryDate <= to && (x.LedgerAccount.Type == AccountType.Revenue || x.LedgerAccount.Type == AccountType.Expense)).GroupBy(x => new { x.LedgerAccountId, x.LedgerAccount.Code, x.LedgerAccount.Name, x.LedgerAccount.Type }).Select(x => new { x.Key.LedgerAccountId, x.Key.Code, x.Key.Name, x.Key.Type, Amount = x.Key.Type == AccountType.Revenue ? x.Sum(y => y.Credit-y.Debit) : x.Sum(y => y.Debit-y.Credit) }).ToListAsync(); rows = accounts.Select(x => { var budget = budgets.Where(y => y.LedgerAccountId == x.Id).Sum(y => y.Amount); var actual = actuals.FirstOrDefault(y => y.LedgerAccountId == x.Id)?.Amount ?? 0; var favourable = x.Type == AccountType.Revenue ? actual-budget : budget-actual; return new BudgetRow(x.Code,x.Name,x.Type,budget,actual,favourable); }).Where(x => x.Budget != 0 || x.Actual != 0).ToList(); var monthlyActuals = await Db.PostedJournalLines.AsNoTracking().Where(x => x.PostedJournal.OrganisationId == OrganisationId && x.PostedJournal.EntryDate >= from && x.PostedJournal.EntryDate <= to && (x.LedgerAccount.Type == AccountType.Revenue || x.LedgerAccount.Type == AccountType.Expense)).GroupBy(x => new { x.PostedJournal.EntryDate.Year, x.PostedJournal.EntryDate.Month, x.LedgerAccount.Type }).Select(x => new { x.Key.Year, x.Key.Month, x.Key.Type, Amount = x.Key.Type == AccountType.Revenue ? x.Sum(y => y.Credit-y.Debit) : x.Sum(y => y.Debit-y.Credit) }).ToListAsync(); months = Enumerable.Range(1,12).Select(m => new MonthRow(new DateOnly(yearFilter.Year,m,1),budgets.Where(x => x.Month.Month==m && accounts.First(a=>a.Id==x.LedgerAccountId).Type==AccountType.Revenue).Sum(x=>x.Amount),monthlyActuals.Where(x=>x.Month==m&&x.Type==AccountType.Revenue).Sum(x=>x.Amount),budgets.Where(x => x.Month.Month==m && accounts.First(a=>a.Id==x.LedgerAccountId).Type==AccountType.Expense).Sum(x=>x.Amount),monthlyActuals.Where(x=>x.Month==m&&x.Type==AccountType.Expense).Sum(x=>x.Amount))).ToList(); }
-    private async Task Save() { try { var budget = await BudgetService.SetAsync(userId, new(OrganisationId, model.AccountId, model.Month, model.Amount)); messageClass = "alert-success"; message = $"Budget saved for {budget.Month:MMM yyyy}."; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { messageClass = "alert-danger"; message = ex.Message; } }
-    private sealed class YearModel { [Range(2000,2200)] public int Year { get; set; } } private sealed class EntryModel { public Guid AccountId { get; set; } public DateOnly Month { get; set; } [Range(0,999999999)] public decimal Amount { get; set; } } private sealed record BudgetRow(string Code,string Name,AccountType Type,decimal Budget,decimal Actual,decimal FavourableVariance); private sealed record MonthRow(DateOnly Month,decimal RevenueBudget,decimal RevenueActual,decimal ExpenseBudget,decimal ExpenseActual);
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canManage;
+    private BudgetPerformanceReport? report;
+    private FilterModel filter = new();
+    private EntryModel model = new();
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        filter.Year = DateTime.Today.Year;
+        await Reload();
+        Reset();
+    }
+
+    private async Task Reload()
+    {
+        try
+        {
+            report = await BudgetReporting.GetAsync(userId, new BudgetReportRequest(
+                OrganisationId, filter.Year, filter.AlertPercent, filter.AlertAmount));
+            if (model.AccountId == Guid.Empty || !report.Accounts.Any(x => x.Id == model.AccountId && x.IsActive)) Reset();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private void Reset() => model = new EntryModel
+    {
+        AccountId = report?.Accounts.FirstOrDefault(x => x.IsActive)?.Id ?? Guid.Empty,
+        Month = new DateOnly(filter.Year, DateTime.Today.Month, 1)
+    };
+
+    private async Task Save()
+    {
+        try
+        {
+            var budget = await BudgetService.SetAsync(userId,
+                new(OrganisationId, model.AccountId, model.Month, model.Amount));
+            messageClass = "alert-success";
+            message = $"Budget saved for {budget.Month:MMM yyyy}.";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+    }
+
+    private string LedgerLink(Guid accountId) =>
+        $"/o/{OrganisationId}/general-ledger?from={filter.Year}-01-01&to={filter.Year}-12-31&account={accountId}";
+
+    private sealed class FilterModel
+    {
+        [Range(2000, 2200)] public int Year { get; set; }
+        [Range(0, 10000)] public decimal AlertPercent { get; set; } = 10m;
+        [Range(0, 999999999)] public decimal AlertAmount { get; set; } = 100m;
+    }
+
+    private sealed class EntryModel
+    {
+        public Guid AccountId { get; set; }
+        public DateOnly Month { get; set; }
+        [Range(0, 999999999)] public decimal Amount { get; set; }
+    }
 }

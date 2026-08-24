@@ -102,6 +102,7 @@ builder.Services.AddScoped<SupplierCreditNoteService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankTransferService>();
 builder.Services.AddScoped<BudgetService>();
+builder.Services.AddScoped<BudgetReportingService>();
 builder.Services.AddScoped<BankStatementImportService>();
 builder.Services.AddScoped<AccountingPeriodService>();
 builder.Services.AddScoped<SalesCreditNoteService>();
