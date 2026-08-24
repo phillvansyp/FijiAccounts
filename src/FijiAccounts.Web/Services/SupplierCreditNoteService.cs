@@ -167,7 +167,9 @@ if (!controls.TryGetValue(
                         x.Credit,
                         x.Debit,
                         x.BranchId,
-                        x.DivisionId))
+                        x.DivisionId,
+                        x.ProjectId,
+                        x.ProjectCostCodeId))
             .ToList();
 
     var journal =

@@ -12,7 +12,9 @@ public sealed record JournalLineInput(
     decimal Debit,
     decimal Credit,
     Guid? BranchId = null,
-    Guid? DivisionId = null);
+    Guid? DivisionId = null,
+    Guid? ProjectId = null,
+    Guid? ProjectCostCodeId = null);
 
 public sealed record JournalPostRequest(
     Guid OrganisationId,
@@ -93,6 +95,51 @@ public sealed class JournalPostingService(
                     line.BranchId ?? request.BranchId,
                     line.DivisionId ?? request.DivisionId))
                 .ToList();
+        var projectIds = request.Lines
+            .Where(x => x.ProjectId is not null)
+            .Select(x => x.ProjectId!.Value)
+            .Distinct()
+            .ToArray();
+        var organisationProjects = await db.Projects.AsNoTracking()
+            .Include(x => x.CostCodes)
+            .Where(x => x.OrganisationId == request.OrganisationId && projectIds.Contains(x.Id))
+            .ToListAsync(cancellationToken);
+        var projects = organisationProjects
+            .Where(x => projectIds.Contains(x.Id))
+            .ToDictionary(x => x.Id);
+        if (projects.Count != projectIds.Length)
+        {
+            throw new InvalidOperationException(
+                "Every project must belong to the selected organisation.");
+        }
+        for (var index = 0; index < request.Lines.Count; index++)
+        {
+            var line = request.Lines[index];
+            if (line.ProjectCostCodeId is not null && line.ProjectId is null)
+            {
+                throw new InvalidOperationException(
+                    "A project cost code requires a project.");
+            }
+            if (line.ProjectId is not Guid projectId) continue;
+            var project = projects[projectId];
+            if (project.Status is ProjectStatus.Draft or ProjectStatus.Cancelled)
+            {
+                throw new InvalidOperationException(
+                    "Transactions can only use active, on-hold, or completed projects.");
+            }
+            if (project.BranchId != dimensions[index].BranchId ||
+                project.DivisionId != dimensions[index].DivisionId)
+            {
+                throw new InvalidOperationException(
+                    "The project must belong to the journal line's branch and division.");
+            }
+            if (line.ProjectCostCodeId is Guid costCodeId &&
+                !project.CostCodes.Any(x => x.Id == costCodeId && x.IsActive))
+            {
+                throw new InvalidOperationException(
+                    "The project cost code must be active and belong to the selected project.");
+            }
+        }
         if (!skipPermissionCheck)
         {
             foreach (var dimension in dimensions.Distinct())
@@ -139,7 +186,7 @@ foreach (var bankAccountId in bankAccountIds)
         {
             OrganisationId = request.OrganisationId, SequenceNumber = sequence, EntryDate = request.Date,
             Reference = request.Reference.Trim(), Description = request.Description?.Trim(), PostedAt = DateTimeOffset.UtcNow, PostedByUserId = userId,
-            Lines = request.Lines.Select((x, index) => new PostedJournalLine { LedgerAccountId = x.AccountId, BranchId = dimensions[index].BranchId, DivisionId = dimensions[index].DivisionId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
+            Lines = request.Lines.Select((x, index) => new PostedJournalLine { LedgerAccountId = x.AccountId, BranchId = dimensions[index].BranchId, DivisionId = dimensions[index].DivisionId, ProjectId = x.ProjectId, ProjectCostCodeId = x.ProjectCostCodeId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
         };
         db.PostedJournals.Add(journal);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "JournalPosted", EntityType = nameof(PostedJournal), EntityId = journal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { journal.SequenceNumber, journal.EntryDate, journal.Reference }) });

@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject JournalPostingService Posting
+@inject ProjectService ProjectService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -35,7 +36,7 @@ else
                 <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
                 <div class="mb-3">
                     <label class="form-label">Branch and division</label>
-                    <InputSelect class="form-select" @bind-Value="model.DivisionId">
+                    <InputSelect class="form-select" @bind-Value="model.DivisionId" @bind-Value:after="DimensionChanged">
                         @foreach (var branch in branches)
                         {
                             <optgroup label="@($"{branch.Code} — {branch.Name}")">
@@ -46,6 +47,28 @@ else
                             </optgroup>
                         }
                     </InputSelect>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Project (optional)</label>
+                        <InputSelect class="form-select" @bind-Value="model.ProjectId" @bind-Value:after="ProjectChanged">
+                            <option value="">No project</option>
+                            @foreach (var project in EligibleProjects)
+                            {
+                                <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Cost code (optional)</label>
+                        <InputSelect class="form-select" @bind-Value="model.ProjectCostCodeId" disabled="@(model.ProjectId is null)">
+                            <option value="">No cost code</option>
+                            @foreach (var costCode in EligibleCostCodes)
+                            {
+                                <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
                 </div>
                 <div class="row">
                     <div class="col-md-6 mb-3"><label class="form-label">Debit account</label><InputSelect class="form-select" @bind-Value="model.DebitAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div>
@@ -60,11 +83,11 @@ else
     <h2>Posted journals</h2>
     <div class="table-responsive">
         <table class="table">
-            <thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Branch / division</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
+            <thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Branch / division</th><th>Project</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
             <tbody>
                 @foreach (var journal in journals)
                 {
-                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@DimensionLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
+                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@DimensionLabel(journal)</td><td>@ProjectLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
                 }
             </tbody>
         </table>
@@ -78,6 +101,7 @@ else
     private string userId = string.Empty;
     private List<LedgerAccount> accounts = [];
     private List<Branch> branches = [];
+    private List<Project> projects = [];
     private List<PostedJournal> journals = [];
     private JournalModel model = new();
     private string? status;
@@ -92,6 +116,7 @@ else
         canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.Code).ToListAsync();
         branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        projects = await ProjectService.ListAsync(userId, OrganisationId);
         ResetModel();
         await Reload();
     }
@@ -102,6 +127,8 @@ else
         journals = await Db.PostedJournals.AsNoTracking()
             .Include(x => x.Lines).ThenInclude(x => x.Branch)
             .Include(x => x.Lines).ThenInclude(x => x.Division)
+            .Include(x => x.Lines).ThenInclude(x => x.Project)
+            .Include(x => x.Lines).ThenInclude(x => x.ProjectCostCode)
             .Where(x => x.OrganisationId == OrganisationId && x.Lines.All(line => line.DivisionId != null && accessibleDivisionIds.Contains(line.DivisionId.Value)))
             .OrderByDescending(x => x.SequenceNumber)
             .Take(100)
@@ -125,7 +152,7 @@ else
         try
         {
             var dimension = branches.SelectMany(branch => branch.Divisions.Select(division => new { Branch = branch, Division = division })).Single(x => x.Division.Id == model.DivisionId);
-            var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0), new(model.CreditAccountId, model.Description, 0, model.Amount)], dimension.Branch.Id, dimension.Division.Id));
+            var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId), new(model.CreditAccountId, model.Description, 0, model.Amount, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId)], dimension.Branch.Id, dimension.Division.Id));
             statusClass = "alert-success";
             status = $"Journal J-{result.SequenceNumber:D6} posted.";
             ResetModel();
@@ -149,12 +176,39 @@ else
             : "Multiple allocations";
     }
 
+    private IEnumerable<Project> EligibleProjects => projects.Where(x =>
+        x.DivisionId == model.DivisionId &&
+        x.Status is ProjectStatus.Active or ProjectStatus.OnHold or ProjectStatus.Completed);
+    private IEnumerable<ProjectCostCode> EligibleCostCodes => projects
+        .SingleOrDefault(x => x.Id == model.ProjectId)?.CostCodes
+        .Where(x => x.IsActive) ?? [];
+    private Task ProjectChanged()
+    {
+        model.ProjectCostCodeId = null;
+        return Task.CompletedTask;
+    }
+    private Task DimensionChanged()
+    {
+        model.ProjectId = null;
+        model.ProjectCostCodeId = null;
+        return Task.CompletedTask;
+    }
+    private static string ProjectLabel(PostedJournal journal)
+    {
+        var tags = journal.Lines.Where(x => x.Project is not null)
+            .Select(x => $"{x.Project!.ProjectNumber}{(x.ProjectCostCode is null ? "" : $" / {x.ProjectCostCode.Code}")}")
+            .Distinct().ToList();
+        return tags.Count == 0 ? "—" : string.Join(", ", tags);
+    }
+
     private sealed class JournalModel
     {
         public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         [Required, StringLength(80)] public string Reference { get; set; } = string.Empty;
         [Required, StringLength(300)] public string Description { get; set; } = string.Empty;
         [Required] public Guid DivisionId { get; set; }
+        public Guid? ProjectId { get; set; }
+        public Guid? ProjectCostCodeId { get; set; }
         public Guid DebitAccountId { get; set; }
         public Guid CreditAccountId { get; set; }
         [Range(0.01, 999999999999)] public decimal Amount { get; set; }

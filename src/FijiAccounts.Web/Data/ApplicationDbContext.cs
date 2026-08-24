@@ -838,6 +838,9 @@ builder.Entity<FixedAsset>()
         builder.Entity<ProjectCostCode>().HasIndex(x => new { x.ProjectId, x.Code }).IsUnique();
         builder.Entity<ProjectCostCode>().Property(x => x.BudgetAmount).HasPrecision(18, 2);
         builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournalLine>().HasIndex(x => new { x.ProjectId, x.ProjectCostCodeId });
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }

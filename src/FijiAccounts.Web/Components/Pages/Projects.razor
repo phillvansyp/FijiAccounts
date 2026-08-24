@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject ProjectService ProjectService
+@inject ProjectProfitabilityService ProjectProfitabilityService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -81,9 +82,9 @@ else
 
     <div class="row g-3 mb-4">
         <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Open projects</span><h2>@projects.Count(x => x.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold)</h2></div></div>
-        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Revised contract value</span><h2>$@projects.Where(IsOpen).Sum(x => x.RevisedContractValue).ToString("N2")</h2></div></div>
-        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Forecast margin</span><h2>$@projects.Where(IsOpen).Sum(x => x.ForecastMargin).ToString("N2")</h2></div></div>
-        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Retention exposure</span><h2>$@projects.Where(IsOpen).Sum(x => x.RetentionExposure).ToString("N2")</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual revenue</span><h2>$@OpenProfitability.Sum(x => x.ActualRevenue).ToString("N2")</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual cost</span><h2>$@OpenProfitability.Sum(x => x.ActualCost).ToString("N2")</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual margin</span><h2>$@OpenProfitability.Sum(x => x.ActualMargin).ToString("N2")</h2></div></div>
     </div>
 
     <section class="detail-card">
@@ -95,20 +96,21 @@ else
         else
         {
             <div class="table-responsive"><table class="table">
-                <thead><tr><th>Project</th><th>Scope</th><th>Status</th><th class="text-end">Original</th><th class="text-end">Variations</th><th class="text-end">Revised</th><th class="text-end">Forecast cost</th><th class="text-end">Forecast margin</th><th>Cost codes</th><th class="no-print">Actions</th></tr></thead>
+                <thead><tr><th>Project</th><th>Scope</th><th>Status</th><th class="text-end">Revised contract</th><th class="text-end">Actual revenue</th><th class="text-end">Actual cost</th><th class="text-end">Actual margin</th><th class="text-end">Cost to complete</th><th>Cost codes</th><th class="no-print">Actions</th></tr></thead>
                 <tbody>
                 @foreach (var project in projects)
                 {
+                    var performance = Profitability(project.Id);
                     <tr>
                         <td><strong>@project.ProjectNumber &mdash; @project.Name</strong><small class="d-block text-muted">@(project.Customer?.Name ?? "No customer") &middot; @project.StartDate.ToString("dd MMM yyyy")</small></td>
                         <td>@project.Branch.Code &mdash; @project.Division.Code</td>
                         <td><span class="badge @StatusClass(project.Status)">@StatusLabel(project.Status)</span></td>
-                        <td class="text-end">$@project.OriginalContractValue.ToString("N2")</td>
-                        <td class="text-end">$@project.ApprovedVariationValue.ToString("N2")</td>
                         <td class="text-end">$@project.RevisedContractValue.ToString("N2")</td>
-                        <td class="text-end">$@project.ForecastCost.ToString("N2")</td>
-                        <td class="text-end @(project.ForecastMargin < 0 ? "text-danger" : "text-success")">$@project.ForecastMargin.ToString("N2")</td>
-                        <td>@if (project.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in project.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.BudgetAmount.ToString("N2")</small> } }</td>
+                        <td class="text-end">$@performance.ActualRevenue.ToString("N2")</td>
+                        <td class="text-end">$@performance.ActualCost.ToString("N2")</td>
+                        <td class="text-end @(performance.ActualMargin < 0 ? "text-danger" : "text-success")">$@performance.ActualMargin.ToString("N2")</td>
+                        <td class="text-end">$@performance.ForecastCostToComplete.ToString("N2")</td>
+                        <td>@if (performance.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in performance.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.ActualCost.ToString("N2") actual / $@costCode.Budget.ToString("N2") budget</small> } } @if (performance.UncodedActualCost != 0) { <small class="d-block text-warning"><strong>Uncoded</strong> &middot; $@performance.UncodedActualCost.ToString("N2")</small> }</td>
                         <td class="no-print"><div class="d-flex flex-wrap gap-1">@if (canManage) { @if (project.Status is ProjectStatus.Draft or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Active)">Activate</button> } @if (project.Status == ProjectStatus.Active) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => ChangeStatus(project, ProjectStatus.OnHold)">Hold</button><button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Completed)">Complete</button> } @if (project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-danger" @onclick="() => ChangeStatus(project, ProjectStatus.Cancelled)">Cancel</button> } }</div></td>
                     </tr>
                 }
@@ -124,6 +126,7 @@ else
     private string userId = "";
     private bool canManage;
     private List<Project> projects = [];
+    private List<ProjectProfitability> profitability = [];
     private List<DivisionOption> divisions = [];
     private List<BusinessParty> customers = [];
     private ProjectModel model = new();
@@ -151,6 +154,7 @@ else
     private async Task Reload()
     {
         projects = await ProjectService.ListAsync(userId, OrganisationId);
+        profitability = (await ProjectProfitabilityService.GetAsync(userId, OrganisationId)).ToList();
         if (costCodeModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == costCodeModel.ProjectId && IsOpen(x)))
             costCodeModel.ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty;
     }
@@ -208,6 +212,8 @@ else
     private void Success(string value) { messageClass = "alert-success"; message = value; }
     private void Error(string value) { messageClass = "alert-danger"; message = value; }
     private static bool IsOpen(Project project) => project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold;
+    private IEnumerable<ProjectProfitability> OpenProfitability => profitability.Where(x => projects.Any(project => project.Id == x.ProjectId && IsOpen(project)));
+    private ProjectProfitability Profitability(Guid projectId) => profitability.Single(x => x.ProjectId == projectId);
     private static string StatusLabel(ProjectStatus status) => status == ProjectStatus.OnHold ? "On hold" : status.ToString();
     private static string StatusClass(ProjectStatus status) => status switch { ProjectStatus.Active => "text-bg-success", ProjectStatus.OnHold => "text-bg-warning", ProjectStatus.Completed => "text-bg-primary", ProjectStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
 

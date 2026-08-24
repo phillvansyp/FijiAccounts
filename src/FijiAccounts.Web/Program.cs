@@ -111,6 +111,7 @@ builder.Services.AddScoped<SalesQuoteService>();
 builder.Services.AddScoped<ChartOfAccountsService>();
 builder.Services.AddScoped<FixedAssetService>();
 builder.Services.AddScoped<ProjectService>();
+builder.Services.AddScoped<ProjectProfitabilityService>();
 builder.Services.AddScoped<BankRuleService>();
 builder.Services.AddScoped<BankTransactionCodingService>();
 builder.Services.AddScoped<ProductCatalogService>();

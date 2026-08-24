@@ -41,6 +41,10 @@ public sealed class PostedJournalLine
     public Branch? Branch { get; set; }
     public Guid? DivisionId { get; set; }
     public Division? Division { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public Guid? ProjectCostCodeId { get; set; }
+    public ProjectCostCode? ProjectCostCode { get; set; }
     [MaxLength(300)] public required string Description { get; set; }
     public decimal Debit { get; set; }
     public decimal Credit { get; set; }

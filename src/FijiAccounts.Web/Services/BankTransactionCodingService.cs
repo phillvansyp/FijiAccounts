@@ -97,7 +97,11 @@ if (completedReconciliationExists)
                         x.LedgerAccountId,
                         $"Reverse {x.Description}",
                         x.Credit,
-                        x.Debit))
+                        x.Debit,
+                        x.BranchId,
+                        x.DivisionId,
+                        x.ProjectId,
+                        x.ProjectCostCodeId))
                     .ToList()),
             ct);
 
