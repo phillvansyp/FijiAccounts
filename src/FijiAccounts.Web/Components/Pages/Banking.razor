@@ -640,8 +640,8 @@ private string reconciliationStatusClass = "alert-success";
                   accounts.Any(x => x.Id == selectedId)
             ? new[] { selectedId }
             : accounts.Select(x => x.Id).ToArray();
-        transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
-        statementLines = await Db.BankStatementLines.AsNoTracking().Include(x => x.BankAccount).Where(x => x.OrganisationId == OrganisationId && ids.Contains(x.BankAccountId)).OrderByDescending(x => x.TransactionDate).Take(100).ToListAsync();
+        transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).ToListAsync();
+        statementLines = await Db.BankStatementLines.AsNoTracking().Include(x => x.BankAccount).Where(x => x.OrganisationId == OrganisationId && ids.Contains(x.BankAccountId)).OrderByDescending(x => x.TransactionDate).ToListAsync();
         outstandingSupplierBills = await Db.SupplierBills
             .AsNoTracking()
             .Include(x => x.Supplier)
@@ -805,7 +805,8 @@ reconciliationSessions =
         var candidates = outstandingSupplierBills
             .Where(x =>
                 Math.Abs(Outstanding(x) - amount) <= 0.01m &&
-                x.BillDate <= item.TransactionDate.AddDays(3))
+                x.BillDate <= item.TransactionDate.AddDays(3) &&
+                !SupplierReferenceConflicts(x, item))
             .Select(x => new
             {
                 Bill = x,
@@ -816,6 +817,7 @@ reconciliationSessions =
             .ToList();
 
         if (candidates.Count == 0 ||
+            candidates[0].Score < 50 ||
             (candidates.Count > 1 && candidates[0].Score == candidates[1].Score))
         {
             return null;
@@ -839,6 +841,24 @@ reconciliationSessions =
         score += Math.Max(0, 30 - Math.Abs(statementDate.DayNumber - bill.BillDate.DayNumber));
         return score;
     }
+
+    private static bool SupplierReferenceConflicts(
+        SupplierBill bill,
+        BankStatementLine statement)
+    {
+        var billNumbers = LongNumbers(bill.SupplierReference);
+        var statementNumbers = LongNumbers($"{statement.Description} {statement.Reference}");
+        return billNumbers.Count > 0 &&
+               statementNumbers.Count > 0 &&
+               !billNumbers.Intersect(statementNumbers, StringComparer.Ordinal).Any();
+    }
+
+    private static IReadOnlyList<string> LongNumbers(string? value) =>
+        System.Text.RegularExpressions.Regex
+            .Matches(value ?? string.Empty, @"\d{5,}")
+            .Select(x => x.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     private static string NormalizeMatchText(string? value) =>
         new((value ?? string.Empty)
