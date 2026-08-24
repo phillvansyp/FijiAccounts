@@ -42,7 +42,7 @@ else
                             <optgroup label="@($"{branch.Code} — {branch.Name}")">
                                 @foreach (var division in branch.Divisions.Where(x => x.IsActive))
                                 {
-                                    <option value="@division.Id">@division.Code — @division.Name</option>
+                                    <option value="@division.Id">@branch.Code — @branch.Name / @division.Code — @division.Name</option>
                                 }
                             </optgroup>
                         }
