@@ -122,6 +122,15 @@ public sealed class Organisation
     [Range(0, 365)]
     public int DefaultSupplierBillDueDays { get; set; } = 30;
 
+    [Range(0, 100)]
+    public decimal PurchaseQuantityTolerancePercent { get; set; }
+
+    [Range(0, 100)]
+    public decimal PurchasePriceTolerancePercent { get; set; } = 2m;
+
+    [Range(0, 1000000)]
+    public decimal PurchaseTotalToleranceAmount { get; set; } = 5m;
+
     [MaxLength(32)] public string TaxLabel { get; set; } = "VAT";
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;

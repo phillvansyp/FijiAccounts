@@ -101,6 +101,15 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Organisation>()
             .HasIndex(x => x.OrganisationGroupId);
+        builder.Entity<Organisation>()
+            .Property(x => x.PurchaseQuantityTolerancePercent)
+            .HasPrecision(8, 4);
+        builder.Entity<Organisation>()
+            .Property(x => x.PurchasePriceTolerancePercent)
+            .HasPrecision(8, 4);
+        builder.Entity<Organisation>()
+            .Property(x => x.PurchaseTotalToleranceAmount)
+            .HasPrecision(18, 2);
         builder.Entity<OrganisationGroupMembership>()
             .HasKey(x => new { x.OrganisationGroupId, x.UserId });
         builder.Entity<OrganisationGroupMembership>()
@@ -408,6 +417,18 @@ builder.Entity<SupplierBillVoid>()
 
         builder.Entity<PurchaseOrder>()
             .Property(x => x.Total)
+            .HasPrecision(18, 2);
+
+        builder.Entity<PurchaseOrder>()
+            .Property(x => x.MatchQuantityVariance)
+            .HasPrecision(18, 4);
+
+        builder.Entity<PurchaseOrder>()
+            .Property(x => x.MatchPriceVariance)
+            .HasPrecision(18, 2);
+
+        builder.Entity<PurchaseOrder>()
+            .Property(x => x.MatchTotalVariance)
             .HasPrecision(18, 2);
 
         builder.Entity<PurchaseOrderLine>()

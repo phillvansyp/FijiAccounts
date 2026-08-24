@@ -161,13 +161,6 @@ public sealed class PurchasingService(
             }
         }
 
-        await using var transaction =
-            db.Database.CurrentTransaction is null
-                ? await db.Database.BeginTransactionAsync(
-                    IsolationLevel.Serializable,
-                    ct)
-                : null;
-
         SupplierBillDraft? draft = null;
         PurchaseOrder? sourcePurchaseOrder = null;
 
@@ -188,12 +181,85 @@ public sealed class PurchasingService(
             }
 
             sourcePurchaseOrder =
-                await db.PurchaseOrders.SingleOrDefaultAsync(
+                await db.PurchaseOrders
+                    .Include(x => x.Lines)
+                    .SingleOrDefaultAsync(
                     x =>
                         x.OrganisationId == request.OrganisationId &&
                         x.SupplierBillDraftId == id,
                     ct);
         }
+
+        if (sourcePurchaseOrder is not null)
+        {
+            var match = PurchaseOrderMatchService.Evaluate(
+                sourcePurchaseOrder,
+                organisation,
+                request.SupplierId,
+                request.Lines);
+            var previousStatus = sourcePurchaseOrder.MatchStatus;
+            var previousFingerprint = sourcePurchaseOrder.MatchFingerprint;
+            var approvalRemainsValid =
+                match.IsException &&
+                previousStatus == PurchaseMatchStatus.ExceptionApproved &&
+                previousFingerprint == match.Fingerprint;
+
+            sourcePurchaseOrder.MatchStatus = match.IsException
+                ? approvalRemainsValid
+                    ? PurchaseMatchStatus.ExceptionApproved
+                    : PurchaseMatchStatus.Exception
+                : PurchaseMatchStatus.Matched;
+            sourcePurchaseOrder.MatchQuantityVariance = match.QuantityVariance;
+            sourcePurchaseOrder.MatchPriceVariance = match.PriceVariance;
+            sourcePurchaseOrder.MatchTotalVariance = match.TotalVariance;
+            sourcePurchaseOrder.MatchSummary = match.Summary;
+            sourcePurchaseOrder.MatchFingerprint = match.Fingerprint;
+            sourcePurchaseOrder.MatchEvaluatedAt = DateTimeOffset.UtcNow;
+            sourcePurchaseOrder.UpdatedAt = DateTimeOffset.UtcNow;
+            if (!approvalRemainsValid)
+            {
+                sourcePurchaseOrder.MatchApprovedAt = null;
+                sourcePurchaseOrder.MatchApprovedByUserId = null;
+                sourcePurchaseOrder.MatchApprovalReason = null;
+            }
+
+            if (previousStatus != sourcePurchaseOrder.MatchStatus ||
+                previousFingerprint != match.Fingerprint)
+            {
+                db.AuditEvents.Add(PurchaseOrderMatchService.Audit(
+                    request.OrganisationId,
+                    userId,
+                    match.IsException
+                        ? "PurchaseMatchExceptionDetected"
+                        : "PurchaseThreeWayMatchCompleted",
+                    nameof(PurchaseOrder),
+                    sourcePurchaseOrder.Id,
+                    new
+                    {
+                        sourcePurchaseOrder.PurchaseOrderNumber,
+                        Status = sourcePurchaseOrder.MatchStatus.ToString(),
+                        match.QuantityVariance,
+                        match.PriceVariance,
+                        match.TotalVariance,
+                        match.Summary,
+                        match.Fingerprint
+                    }));
+            }
+
+            if (match.IsException && !approvalRemainsValid)
+            {
+                await db.SaveChangesAsync(ct);
+                throw new InvalidOperationException(
+                    $"Three-way match blocked for {sourcePurchaseOrder.PurchaseOrderNumber}: {match.Summary}. An organisation owner must approve the exception before posting.");
+            }
+        }
+
+        await using var transaction =
+            db.Database.CurrentTransaction is null
+                ? await db.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable,
+                    ct)
+                : null;
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
         var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };

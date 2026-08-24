@@ -306,6 +306,14 @@ public enum PurchaseOrderStatus
     Cancelled
 }
 
+public enum PurchaseMatchStatus
+{
+    NotEvaluated,
+    Matched,
+    Exception,
+    ExceptionApproved
+}
+
 public enum PurchaseRequisitionStatus
 {
     Draft,
@@ -440,6 +448,31 @@ public sealed class PurchaseOrder
     public Guid? PurchaseRequisitionId { get; set; }
 
     public PurchaseRequisition? PurchaseRequisition { get; set; }
+
+    public PurchaseMatchStatus MatchStatus { get; set; } =
+        PurchaseMatchStatus.NotEvaluated;
+
+    public decimal MatchQuantityVariance { get; set; }
+
+    public decimal MatchPriceVariance { get; set; }
+
+    public decimal MatchTotalVariance { get; set; }
+
+    [MaxLength(1000)]
+    public string MatchSummary { get; set; } = "";
+
+    [MaxLength(64)]
+    public string? MatchFingerprint { get; set; }
+
+    public DateTimeOffset? MatchEvaluatedAt { get; set; }
+
+    public DateTimeOffset? MatchApprovedAt { get; set; }
+
+    [MaxLength(450)]
+    public string? MatchApprovedByUserId { get; set; }
+
+    [MaxLength(500)]
+    public string? MatchApprovalReason { get; set; }
 
     public List<PurchaseOrderLine> Lines { get; set; } =
         [];
