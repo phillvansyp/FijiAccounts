@@ -41,11 +41,44 @@ Software tests support compliance but do not constitute legal or FRCS approval. 
 
 ## Roadmap
 
+Development is deliberately gated so regulatory and workforce products are not
+built on an unfinished accounting foundation.
+
+### Phase 1 — Fiji accounting core
+
 1. Tenant context, invitations, permissions and accountant client switching
 2. Chart of accounts, immutable posting, periods and audit events
 3. Customers, suppliers, invoices, bills, credit notes and payments
 4. VAT workpapers and return preparation
 5. Bank imports and reconciliation
 6. Financial statements, budgets and management reports
-7. Payroll, assets, inventory and multi-currency
-8. FRCS VMS integration and accreditation
+7. Enterprise dimensions, consolidation and eliminations
+8. Fixed assets, inventory and multi-currency accounting
+9. Country-aware Fiji demo data and accounting gap closure
+
+Exit gate: a Fiji business can run its complete accounting operation and produce
+the required financial and tax workpapers. Fiji rules must be verified from
+primary sources and signed off by a qualified practitioner.
+
+### Phase 2 — FRCS integration
+
+- Implement the applicable VMS/EFD protocol without coupling it to the core
+  posting engine.
+- Complete required FRCS testing and accreditation before representing the
+  product as approved.
+
+### Phase 3 — Fiji payroll
+
+- Build effective-dated PAYE, statutory deductions, payroll liabilities,
+  journals and compliance reporting from a practitioner-approved specification.
+
+### Phase 4 — Time, attendance and rostering
+
+- Add employee scheduling, attendance capture, approvals and payroll-ready time
+  inputs after the payroll calculation boundary is stable.
+
+### Phase 5 — Three-click payroll
+
+- Combine approved employee, payroll and time data into the streamlined payroll
+  experience only after the preceding compliance and workflow controls are
+  proven.
