@@ -1,0 +1,236 @@
+@page "/o/{OrganisationId:guid}/projects"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject ProjectService ProjectService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Projects &amp; jobs &middot; Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Operations</p>
+            <h1>Projects &amp; jobs</h1>
+            <p class="page-intro">Control contract value, variations, forecast cost, retention exposure and cost-code budgets by branch and division.</p>
+        </div>
+        <button class="btn btn-outline-secondary no-print" onclick="window.print()">Print register</button>
+    </div>
+
+    @if (canManage && divisions.Count > 0)
+    {
+        <details class="setup-card mb-4">
+            <summary><strong>+ Create project</strong></summary>
+            <EditForm Model="model" OnValidSubmit="SaveProject" FormName="project-register" class="mt-3">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="row">
+                    <div class="col-md-2 mb-3"><label class="form-label">Project number</label><InputText class="form-control" @bind-Value="model.ProjectNumber" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Project name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="model.DivisionId">@foreach (var item in divisions) { <option value="@item.DivisionId">@item.Label</option> }</InputSelect></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId"><option value="">No customer selected</option>@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-3 mb-3"><label class="form-label">Start date</label><InputDate class="form-control" @bind-Value="model.StartDate" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Expected completion</label><InputDate class="form-control" @bind-Value="model.ExpectedCompletionDate" /></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-3 mb-3"><label class="form-label">Original contract</label><InputNumber class="form-control" @bind-Value="model.OriginalContractValue" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Approved variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Forecast cost</label><InputNumber class="form-control" @bind-Value="model.ForecastCost" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Retention %</label><InputNumber class="form-control" @bind-Value="model.RetentionPercent" /></div>
+                </div>
+                <button class="btn btn-primary">Create project</button>
+            </EditForm>
+        </details>
+    }
+
+    @if (canManage && projects.Any(x => x.Status is not ProjectStatus.Completed and not ProjectStatus.Cancelled))
+    {
+        <details class="setup-card mb-4">
+            <summary><strong>+ Add project cost code</strong></summary>
+            <EditForm Model="costCodeModel" OnValidSubmit="AddCostCode" FormName="project-cost-code" class="mt-3">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="costCodeModel.ProjectId">@foreach (var project in projects.Where(x => x.Status is not ProjectStatus.Completed and not ProjectStatus.Cancelled)) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="costCodeModel.Code" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="costCodeModel.Name" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Budget</label><InputNumber class="form-control" @bind-Value="costCodeModel.BudgetAmount" /></div>
+                </div>
+                <button class="btn btn-primary">Add cost code</button>
+            </EditForm>
+        </details>
+    }
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">@message</div>
+    }
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Open projects</span><h2>@projects.Count(x => x.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold)</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Revised contract value</span><h2>$@projects.Where(IsOpen).Sum(x => x.RevisedContractValue).ToString("N2")</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Forecast margin</span><h2>$@projects.Where(IsOpen).Sum(x => x.ForecastMargin).ToString("N2")</h2></div></div>
+        <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Retention exposure</span><h2>$@projects.Where(IsOpen).Sum(x => x.RetentionExposure).ToString("N2")</h2></div></div>
+    </div>
+
+    <section class="detail-card">
+        <div class="card-heading"><div><span class="eyebrow">Project control</span><h2>Project register</h2></div><span>@projects.Count projects</span></div>
+        @if (projects.Count == 0)
+        {
+            <div class="empty-state"><strong>No projects</strong><span>Create a project to establish contract, forecast and cost-code controls.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table">
+                <thead><tr><th>Project</th><th>Scope</th><th>Status</th><th class="text-end">Original</th><th class="text-end">Variations</th><th class="text-end">Revised</th><th class="text-end">Forecast cost</th><th class="text-end">Forecast margin</th><th>Cost codes</th><th class="no-print">Actions</th></tr></thead>
+                <tbody>
+                @foreach (var project in projects)
+                {
+                    <tr>
+                        <td><strong>@project.ProjectNumber &mdash; @project.Name</strong><small class="d-block text-muted">@(project.Customer?.Name ?? "No customer") &middot; @project.StartDate.ToString("dd MMM yyyy")</small></td>
+                        <td>@project.Branch.Code &mdash; @project.Division.Code</td>
+                        <td><span class="badge @StatusClass(project.Status)">@StatusLabel(project.Status)</span></td>
+                        <td class="text-end">$@project.OriginalContractValue.ToString("N2")</td>
+                        <td class="text-end">$@project.ApprovedVariationValue.ToString("N2")</td>
+                        <td class="text-end">$@project.RevisedContractValue.ToString("N2")</td>
+                        <td class="text-end">$@project.ForecastCost.ToString("N2")</td>
+                        <td class="text-end @(project.ForecastMargin < 0 ? "text-danger" : "text-success")">$@project.ForecastMargin.ToString("N2")</td>
+                        <td>@if (project.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in project.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.BudgetAmount.ToString("N2")</small> } }</td>
+                        <td class="no-print"><div class="d-flex flex-wrap gap-1">@if (canManage) { @if (project.Status is ProjectStatus.Draft or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Active)">Activate</button> } @if (project.Status == ProjectStatus.Active) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => ChangeStatus(project, ProjectStatus.OnHold)">Hold</button><button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Completed)">Complete</button> } @if (project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-danger" @onclick="() => ChangeStatus(project, ProjectStatus.Cancelled)">Cancel</button> } }</div></td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canManage;
+    private List<Project> projects = [];
+    private List<DivisionOption> divisions = [];
+    private List<BusinessParty> customers = [];
+    private ProjectModel model = new();
+    private CostCodeModel costCodeModel = new();
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        var branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        divisions = branches.SelectMany(branch => branch.Divisions.Select(division =>
+            new DivisionOption(division.Id, $"{branch.Code} — {branch.Name} / {division.Code} — {division.Name}"))).ToList();
+        customers = await Db.BusinessParties.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0)
+            .OrderBy(x => x.Name).ToListAsync();
+        ResetModels();
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        projects = await ProjectService.ListAsync(userId, OrganisationId);
+        if (costCodeModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == costCodeModel.ProjectId && IsOpen(x)))
+            costCodeModel.ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty;
+    }
+
+    private async Task SaveProject()
+    {
+        try
+        {
+            var project = await ProjectService.SaveAsync(userId, new ProjectRequest(
+                OrganisationId, null, model.ProjectNumber, model.Name, model.Description,
+                model.DivisionId, model.CustomerId, model.StartDate, model.ExpectedCompletionDate,
+                model.OriginalContractValue, model.ApprovedVariationValue, model.ForecastCost,
+                model.RetentionPercent));
+            Success($"Project {project.ProjectNumber} created.");
+            ResetModels();
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task AddCostCode()
+    {
+        try
+        {
+            await ProjectService.AddCostCodeAsync(userId, new ProjectCostCodeRequest(
+                OrganisationId, costCodeModel.ProjectId, costCodeModel.Code,
+                costCodeModel.Name, costCodeModel.BudgetAmount));
+            Success("Project cost code added.");
+            costCodeModel = new CostCodeModel { ProjectId = costCodeModel.ProjectId };
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task ChangeStatus(Project project, ProjectStatus status)
+    {
+        try
+        {
+            await ProjectService.ChangeStatusAsync(userId, OrganisationId, project.Id, status);
+            Success($"Project {project.ProjectNumber} is now {StatusLabel(status).ToLowerInvariant()}.");
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private void ResetModels()
+    {
+        model = new ProjectModel
+        {
+            DivisionId = divisions.FirstOrDefault()?.DivisionId ?? Guid.Empty,
+            StartDate = DateOnly.FromDateTime(DateTime.Today)
+        };
+        costCodeModel = new CostCodeModel { ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty };
+    }
+    private void Success(string value) { messageClass = "alert-success"; message = value; }
+    private void Error(string value) { messageClass = "alert-danger"; message = value; }
+    private static bool IsOpen(Project project) => project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold;
+    private static string StatusLabel(ProjectStatus status) => status == ProjectStatus.OnHold ? "On hold" : status.ToString();
+    private static string StatusClass(ProjectStatus status) => status switch { ProjectStatus.Active => "text-bg-success", ProjectStatus.OnHold => "text-bg-warning", ProjectStatus.Completed => "text-bg-primary", ProjectStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
+
+    private sealed record DivisionOption(Guid DivisionId, string Label);
+    private sealed class ProjectModel
+    {
+        [Required, StringLength(40)] public string ProjectNumber { get; set; } = "";
+        [Required, StringLength(160)] public string Name { get; set; } = "";
+        [StringLength(1000)] public string? Description { get; set; }
+        [Required] public Guid DivisionId { get; set; }
+        public Guid? CustomerId { get; set; }
+        public DateOnly StartDate { get; set; }
+        public DateOnly? ExpectedCompletionDate { get; set; }
+        [Range(0, 999999999999)] public decimal OriginalContractValue { get; set; }
+        [Range(0, 999999999999)] public decimal ApprovedVariationValue { get; set; }
+        [Range(0, 999999999999)] public decimal ForecastCost { get; set; }
+        [Range(0, 100)] public decimal RetentionPercent { get; set; }
+    }
+    private sealed class CostCodeModel
+    {
+        [Required] public Guid ProjectId { get; set; }
+        [Required, StringLength(30)] public string Code { get; set; } = "";
+        [Required, StringLength(120)] public string Name { get; set; } = "";
+        [Range(0, 999999999999)] public decimal BudgetAmount { get; set; }
+    }
+}

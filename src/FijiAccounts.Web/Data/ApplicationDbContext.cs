@@ -90,7 +90,9 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<ProductItem> ProductItems => Set<ProductItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<FixedAssetDisposal> FixedAssetDisposals =>
-    Set<FixedAssetDisposal>();
+        Set<FixedAssetDisposal>();
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<ProjectCostCode> ProjectCostCodes => Set<ProjectCostCode>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -825,6 +827,17 @@ builder.Entity<FixedAsset>()
         builder.Entity<BankRule>().HasIndex(x => new { x.OrganisationId, x.Name }).IsUnique(); builder.Entity<BankRule>().HasOne(x => x.TargetAccount).WithMany().HasForeignKey(x => x.TargetAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<ProductItem>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique(); builder.Entity<ProductItem>().Property(x => x.SalePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.PurchasePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.QuantityOnHand).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.AverageCost).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.ReorderLevel).HasPrecision(18, 4); builder.Entity<ProductItem>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.InventoryAccount).WithMany().HasForeignKey(x => x.InventoryAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.CostAdjustmentAccount).WithMany().HasForeignKey(x => x.CostAdjustmentAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<InventoryMovement>().HasIndex(x => new { x.OrganisationId, x.ProductItemId, x.MovementDate }); builder.Entity<InventoryMovement>().Property(x => x.QuantityChange).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.UnitCost).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.ValueChange).HasPrecision(18, 2); builder.Entity<InventoryMovement>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Project>().HasIndex(x => new { x.OrganisationId, x.ProjectNumber }).IsUnique();
+        builder.Entity<Project>().HasIndex(x => new { x.BranchId, x.DivisionId, x.Status });
+        builder.Entity<Project>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Project>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Project>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Project>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(Project.OriginalContractValue), nameof(Project.ApprovedVariationValue), nameof(Project.ForecastCost) }) builder.Entity<Project>().Property(property).HasPrecision(18, 2);
+        builder.Entity<Project>().Property(x => x.RetentionPercent).HasPrecision(8, 4);
+        builder.Entity<ProjectCostCode>().HasIndex(x => new { x.ProjectId, x.Code }).IsUnique();
+        builder.Entity<ProjectCostCode>().Property(x => x.BudgetAmount).HasPrecision(18, 2);
+        builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }

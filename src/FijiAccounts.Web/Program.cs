@@ -110,6 +110,7 @@ builder.Services.AddScoped<SalesCreditNoteService>();
 builder.Services.AddScoped<SalesQuoteService>();
 builder.Services.AddScoped<ChartOfAccountsService>();
 builder.Services.AddScoped<FixedAssetService>();
+builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<BankRuleService>();
 builder.Services.AddScoped<BankTransactionCodingService>();
 builder.Services.AddScoped<ProductCatalogService>();
