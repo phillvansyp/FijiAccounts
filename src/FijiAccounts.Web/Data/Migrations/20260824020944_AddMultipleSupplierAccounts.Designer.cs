@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824020944_AddMultipleSupplierAccounts")]
+    partial class AddMultipleSupplierAccounts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -2497,15 +2500,10 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<DateOnly>("ScheduledDate")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SupplierBillDraftId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("SupplierBillId")
+                    b.Property<Guid>("SupplierBillId")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("SupplierBillDraftId");
 
                     b.HasIndex("SupplierBillId");
 
@@ -4646,21 +4644,15 @@ namespace FijiAccounts.Web.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("FijiAccounts.Web.Data.SupplierBillDraft", "SupplierBillDraft")
-                        .WithMany()
-                        .HasForeignKey("SupplierBillDraftId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("FijiAccounts.Web.Data.SupplierBill", "SupplierBill")
                         .WithMany()
                         .HasForeignKey("SupplierBillId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("RecurringSupplierBill");
 
                     b.Navigation("SupplierBill");
-
-                    b.Navigation("SupplierBillDraft");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.RecurringSupplierBillLine", b =>

@@ -10,7 +10,14 @@ namespace FijiAccounts.Web.Services;
 public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null);
 public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null);
 public sealed record SupplierBillAttachmentRequest(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
-public sealed record SupplierPaymentRequest(Guid OrganisationId, Guid SupplierBillId, DateOnly Date, string Reference, decimal Amount, Guid BankAccountId);
+public sealed record SupplierPaymentRequest(
+    Guid OrganisationId,
+    Guid SupplierBillId,
+    DateOnly Date,
+    string Reference,
+    decimal Amount,
+    Guid BankAccountId,
+    Guid? StatementLineId = null);
 
 public sealed class PurchasingService(
     ApplicationDbContext db,
@@ -311,6 +318,20 @@ public sealed class PurchasingService(
 
         if (draft is not null)
         {
+            var recurringGeneration =
+                await db.RecurringSupplierBillGenerations
+                    .SingleOrDefaultAsync(
+                        x =>
+                            x.OrganisationId == request.OrganisationId &&
+                            x.SupplierBillDraftId == draft.Id,
+                        ct);
+
+            if (recurringGeneration is not null)
+            {
+                recurringGeneration.SupplierBillId = bill.Id;
+                recurringGeneration.SupplierBillDraftId = null;
+            }
+
             if (sourcePurchaseOrder is not null)
             {
                 sourcePurchaseOrder.SupplierBillId = bill.Id;
@@ -345,6 +366,26 @@ public sealed class PurchasingService(
     public async Task<SupplierPayment> PayBillAsync(string userId, SupplierPaymentRequest request, CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        BankStatementLine? statement = null;
+        if (request.StatementLineId is Guid statementLineId)
+        {
+            statement = await db.BankStatementLines.SingleOrDefaultAsync(
+                x => x.Id == statementLineId && x.OrganisationId == request.OrganisationId,
+                ct) ?? throw new InvalidOperationException("Bank statement line not found.");
+            if (statement.ReconciledAt is not null)
+            {
+                throw new InvalidOperationException("This bank statement line is already reconciled.");
+            }
+            if (statement.BankAccountId != request.BankAccountId || statement.TransactionDate != request.Date)
+            {
+                throw new InvalidOperationException("The supplier payment must use the bank account and date from the statement line.");
+            }
+            var statementPaymentAmount = Math.Abs(Math.Round(statement.Amount, 2, MidpointRounding.AwayFromZero));
+            if (statement.Amount >= 0 || Math.Abs(statementPaymentAmount - request.Amount) > 0.01m)
+            {
+                throw new InvalidOperationException("The supplier payment must exactly match the outgoing statement amount.");
+            }
+        }
         var bill = await db.SupplierBills.Include(x => x.Supplier).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
         if (bill.Status is BillStatus.Voided or BillStatus.Credited)
         {
@@ -381,6 +422,16 @@ public sealed class PurchasingService(
                 ct: ct);
         }
         db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
+        if (statement is not null)
+        {
+            var bankJournalLine = journal.Lines.Single(x => x.LedgerAccountId == bank.Id);
+            await reconciliation.ReconcileAsync(
+                userId,
+                request.OrganisationId,
+                statement.Id,
+                bankJournalLine.Id,
+                ct);
+        }
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(request.OrganisationId); return payment;
     }
 

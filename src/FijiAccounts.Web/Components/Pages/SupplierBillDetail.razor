@@ -1,5 +1,6 @@
 @page "/o/{OrganisationId:guid}/purchases/{BillId:guid}"
 @attribute [Authorize]
+@implements IAsyncDisposable
 
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
@@ -15,6 +16,7 @@
 @inject SupplierCreditNoteService SupplierCredits
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IJSRuntime JS
 
 <PageTitle>@(bill?.BillNumber ?? "Supplier bill") · Account Island</PageTitle>
 
@@ -335,6 +337,11 @@ else
                     {
                         <span class="supplier-detail">TIN: @bill.Supplier.Tin</span>
                     }
+
+                    @if (!string.IsNullOrWhiteSpace(bill.Supplier.VatRegistrationNumber))
+                    {
+                        <span class="supplier-detail">VAT: @bill.Supplier.VatRegistrationNumber</span>
+                    }
                 </div>
 
                 <div class="document-identity">
@@ -366,6 +373,11 @@ else
                     else
                     {
                         <span class="muted">No supplier reference</span>
+                    }
+
+                    @if (bill.Supplier.SupplierAccounts.Count > 0)
+                    {
+                        <span>Accounts: @string.Join(", ", bill.Supplier.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).Select(x => $"{x.Label}: {x.AccountNumber}"))</span>
                     }
                 </div>
 
@@ -446,13 +458,18 @@ else
             @if (canManage)
 {
     <div class="bill-attachment mt-4 no-print">
-        <label class="bill-drop-zone">
-            <InputFile class="bill-file-input"
+        <label class="bill-drop-zone @(uploadingDocument ? "is-reading" : null)"
+               @ref="documentDropZone"
+               aria-busy="@uploadingDocument">
+            <InputFile @key="documentInputKey"
+                       id="supplierBillDocumentUpload"
+                       class="bill-file-input"
                        OnChange="UploadDocuments"
                        accept=".pdf,.jpg,.jpeg,.png"
+                       disabled="@uploadingDocument"
                        multiple />
 
-            <strong>Drop a supplier invoice or supporting document here</strong>
+            <strong>@(uploadingDocument ? "Uploading document..." : "Drop a supplier invoice or supporting document here")</strong>
 
             <span>
                 or click to choose a file. Maximum 10 MB per file.
@@ -969,6 +986,9 @@ else
     private bool showCredit;
     private bool showAttachmentMenu;
     private bool uploadingDocument;
+    private bool documentDropZoneRegistered;
+    private ElementReference documentDropZone;
+    private Guid documentInputKey = Guid.NewGuid();
 
     private string? documentError;
     private string? status;
@@ -1034,6 +1054,19 @@ private Guid paymentBankAccountId;
         await Reload();
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (canManage && bill is not null && !documentDropZoneRegistered)
+        {
+            await JS.InvokeVoidAsync(
+                "fileDrop.register",
+                documentDropZone,
+                "supplierBillDocumentUpload");
+
+            documentDropZoneRegistered = true;
+        }
+    }
+
     private void OpenPayment()
 {
     showPayment = true;
@@ -1091,6 +1124,7 @@ private async Task RecordPayment()
         bill = await Db.SupplierBills
             .AsNoTracking()
             .Include(x => x.Supplier)
+                .ThenInclude(x => x.SupplierAccounts)
             .Include(x => x.Branch)
             .Include(x => x.Division)
             .Include(x => x.Lines)
@@ -1236,6 +1270,23 @@ creditReversals =
         finally
         {
             uploadingDocument = false;
+            documentInputKey = Guid.NewGuid();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!documentDropZoneRegistered)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("fileDrop.unregister", documentDropZone);
+        }
+        catch (JSDisconnectedException)
+        {
         }
     }
 

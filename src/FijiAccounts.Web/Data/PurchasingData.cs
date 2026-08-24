@@ -286,8 +286,11 @@ public sealed class RecurringSupplierBillGeneration
 
     public DateOnly ScheduledDate { get; set; }
 
-    public Guid SupplierBillId { get; set; }
-    public SupplierBill SupplierBill { get; set; } = null!;
+    public Guid? SupplierBillId { get; set; }
+    public SupplierBill? SupplierBill { get; set; }
+
+    public Guid? SupplierBillDraftId { get; set; }
+    public SupplierBillDraft? SupplierBillDraft { get; set; }
 
     public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.UtcNow;
 

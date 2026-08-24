@@ -581,6 +581,163 @@ var recurring =
         return generated;
     }
 
+    public async Task<IReadOnlyList<SupplierBillDraft>> GenerateDueDraftsAsync(
+        string userId,
+        Guid organisationId,
+        DateOnly throughDate,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot generate recurring bill drafts for this organisation.");
+        }
+
+        return await GenerateDueDraftsCoreAsync(
+            userId,
+            organisationId,
+            throughDate,
+            ct);
+    }
+
+    internal Task<IReadOnlyList<SupplierBillDraft>> GenerateDueDraftsAutomaticallyAsync(
+        Guid organisationId,
+        DateOnly throughDate,
+        CancellationToken ct = default) =>
+        GenerateDueDraftsCoreAsync(
+            "system",
+            organisationId,
+            throughDate,
+            ct);
+
+    private async Task<IReadOnlyList<SupplierBillDraft>> GenerateDueDraftsCoreAsync(
+        string generatedByUserId,
+        Guid organisationId,
+        DateOnly throughDate,
+        CancellationToken ct)
+    {
+        var templates = await db.RecurringSupplierBills
+            .Include(x => x.Lines)
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.IsActive &&
+                x.Status == RecurringSupplierBillStatus.Active &&
+                x.NextBillDate <= throughDate)
+            .OrderBy(x => x.NextBillDate)
+            .ToListAsync(ct);
+
+        var generated = new List<SupplierBillDraft>();
+
+        foreach (var template in templates)
+        {
+            while (template.IsActive &&
+                   template.Status == RecurringSupplierBillStatus.Active &&
+                   template.NextBillDate <= throughDate)
+            {
+                var scheduledDate = template.NextBillDate;
+                var alreadyGenerated = await db.RecurringSupplierBillGenerations
+                    .AnyAsync(
+                        x =>
+                            x.RecurringSupplierBillId == template.Id &&
+                            x.ScheduledDate == scheduledDate,
+                        ct);
+
+                if (alreadyGenerated)
+                {
+                    template.NextBillDate = GetNextDate(
+                        scheduledDate,
+                        template.Frequency,
+                        template.StartDate);
+                    await db.SaveChangesAsync(ct);
+                    continue;
+                }
+
+                var nextBillDate = GetNextDate(
+                    scheduledDate,
+                    template.Frequency,
+                    template.StartDate);
+
+                await using var transaction =
+                    await db.Database.BeginTransactionAsync(
+                        IsolationLevel.Serializable,
+                        ct);
+
+                try
+                {
+                    var firstLine = template.Lines[0];
+                    var additionalLines = template.Lines
+                        .Skip(1)
+                        .Select(x => new SupplierBillDraftLineRequest(
+                            x.Description,
+                            x.Quantity,
+                            x.UnitPrice,
+                            x.VatTreatment,
+                            x.ExpenseAccountId,
+                            x.ProductItemId))
+                        .ToList();
+                    var draft = new SupplierBillDraft
+                    {
+                        OrganisationId = organisationId,
+                        BranchId = template.BranchId,
+                        DivisionId = template.DivisionId,
+                        SupplierId = template.SupplierId,
+                        SupplierReference = BuildSupplierReference(
+                            template.SupplierReference,
+                            scheduledDate),
+                        BillDate = scheduledDate,
+                        DueDate = scheduledDate.AddDays(template.DueDays),
+                        Description = firstLine.Description,
+                        Quantity = firstLine.Quantity,
+                        UnitPrice = firstLine.UnitPrice,
+                        VatTreatment = firstLine.VatTreatment,
+                        ExpenseAccountId = firstLine.ExpenseAccountId,
+                        ProductItemId = firstLine.ProductItemId,
+                        AdditionalLinesJson = JsonSerializer.Serialize(additionalLines),
+                        CreatedByUserId = generatedByUserId
+                    };
+
+                    db.SupplierBillDrafts.Add(draft);
+                    db.RecurringSupplierBillGenerations.Add(
+                        new RecurringSupplierBillGeneration
+                        {
+                            OrganisationId = organisationId,
+                            RecurringSupplierBillId = template.Id,
+                            ScheduledDate = scheduledDate,
+                            SupplierBillDraftId = draft.Id,
+                            GeneratedByUserId = generatedByUserId
+                        });
+
+                    template.NextBillDate = nextBillDate;
+                    db.AuditEvents.Add(
+                        Audit(
+                            organisationId,
+                            generatedByUserId,
+                            "RecurringSupplierBillDraftGenerated",
+                            nameof(RecurringSupplierBill),
+                            template.Id,
+                            new
+                            {
+                                ScheduledDate = scheduledDate,
+                                SupplierBillDraftId = draft.Id,
+                                draft.SupplierReference
+                            }));
+
+                    await db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    generated.Add(draft);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    db.ChangeTracker.Clear();
+                    throw;
+                }
+            }
+        }
+
+        return generated;
+    }
+
     private async Task<EnterprisePostingDimension> ResolveDimensionAsync(
         string userId,
         RecurringSupplierBillRequest request,

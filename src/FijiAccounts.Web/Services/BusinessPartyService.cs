@@ -19,7 +19,9 @@ public sealed record CreateBusinessPartyRequest(
     PaymentTermType DefaultSalesInvoicePaymentTermType,
     int DefaultSalesInvoiceDueDays,
     PaymentTermType DefaultSupplierBillPaymentTermType,
-    int DefaultSupplierBillDueDays);
+    int DefaultSupplierBillDueDays,
+    string? SupplierAccountNumber = null,
+    string? VatRegistrationNumber = null);
 
 public sealed record UpdateCustomerDefaultsRequest(
     Guid OrganisationId,
@@ -35,7 +37,15 @@ public sealed record UpdateSupplierDefaultsRequest(
     Guid? PurchaseAccountId,
     VatTreatment? VatTreatment,
     PaymentTermType PaymentTermType,
-    int DueDays);
+    int DueDays,
+    string? VatRegistrationNumber);
+
+public sealed record SupplierAccountProfileRequest(
+    Guid OrganisationId,
+    Guid SupplierId,
+    string Label,
+    string AccountNumber,
+    bool MakeDefault);
 
 public sealed record LearnCustomerSalesDefaultsRequest(
     Guid OrganisationId,
@@ -104,6 +114,9 @@ public sealed class BusinessPartyService(
                     request.Tin,
                     32,
                     "tax identification number"),
+                VatRegistrationNumber = (request.Type & PartyType.Supplier) != 0
+                    ? OptionalText(request.VatRegistrationNumber, 80, "VAT registration number")
+                    : null,
                 Type = request.Type,
                 DefaultSalesAccountId = (request.Type & PartyType.Customer) != 0
                     ? request.DefaultSalesAccountId
@@ -128,6 +141,22 @@ public sealed class BusinessPartyService(
                     request.DefaultSupplierBillDueDays
             };
 
+        var initialSupplierAccountNumber =
+            (request.Type & PartyType.Supplier) != 0
+                ? OptionalText(request.SupplierAccountNumber, 80, "supplier account number")
+                : null;
+        if (initialSupplierAccountNumber is not null)
+        {
+            party.SupplierAccounts.Add(new SupplierAccountProfile
+            {
+                OrganisationId = request.OrganisationId,
+                SupplierId = party.Id,
+                Label = "Primary",
+                AccountNumber = initialSupplierAccountNumber,
+                IsDefault = true
+            });
+        }
+
         db.BusinessParties.Add(party);
         db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,
@@ -139,6 +168,8 @@ public sealed class BusinessPartyService(
                 party.Name,
                 party.Email,
                 party.Tin,
+                InitialSupplierAccountNumber = initialSupplierAccountNumber,
+                party.VatRegistrationNumber,
                 Type = party.Type.ToString(),
                 CustomerDefaults = new
                 {
@@ -235,8 +266,13 @@ public sealed class BusinessPartyService(
             request.BusinessPartyId,
             PartyType.Supplier,
             cancellationToken);
+        var vatRegistrationNumber = OptionalText(
+            request.VatRegistrationNumber,
+            80,
+            "VAT registration number");
         var previous = new
         {
+            party.VatRegistrationNumber,
             PurchaseAccountId = party.DefaultPurchaseAccountId,
             VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
             PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
@@ -244,6 +280,7 @@ public sealed class BusinessPartyService(
         };
         var updated = new
         {
+            VatRegistrationNumber = vatRegistrationNumber,
             PurchaseAccountId = request.PurchaseAccountId,
             VatTreatment = request.VatTreatment?.ToString(),
             PaymentTermType = request.PaymentTermType.ToString(),
@@ -254,6 +291,7 @@ public sealed class BusinessPartyService(
             return;
         }
 
+        party.VatRegistrationNumber = vatRegistrationNumber;
         party.DefaultPurchaseAccountId = request.PurchaseAccountId;
         party.DefaultPurchaseVatTreatment = request.VatTreatment;
         party.DefaultSupplierBillPaymentTermType = request.PaymentTermType;
@@ -265,6 +303,143 @@ public sealed class BusinessPartyService(
             "SupplierDefaultsUpdated",
             party.Id,
             new { party.Name, Old = previous, New = updated }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<SupplierAccountProfile> AddSupplierAccountAsync(
+        string userId,
+        SupplierAccountProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, request.OrganisationId, cancellationToken);
+        var supplier = await GetPartyAsync(
+            request.OrganisationId,
+            request.SupplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var label = RequiredText(request.Label, 80, "supplier account label");
+        var accountNumber = RequiredText(request.AccountNumber, 80, "supplier account number");
+        if (await db.SupplierAccountProfiles.AnyAsync(x =>
+                x.OrganisationId == request.OrganisationId &&
+                x.SupplierId == request.SupplierId &&
+                x.AccountNumber == accountNumber,
+                cancellationToken))
+        {
+            throw new InvalidOperationException("This supplier account number already exists.");
+        }
+
+        var existing = await db.SupplierAccountProfiles
+            .Where(x => x.OrganisationId == request.OrganisationId &&
+                        x.SupplierId == request.SupplierId &&
+                        x.IsActive)
+            .ToListAsync(cancellationToken);
+        var makeDefault = request.MakeDefault || existing.Count == 0;
+        if (makeDefault)
+        {
+            foreach (var item in existing)
+            {
+                item.IsDefault = false;
+            }
+        }
+
+        var account = new SupplierAccountProfile
+        {
+            OrganisationId = request.OrganisationId,
+            SupplierId = request.SupplierId,
+            Label = label,
+            AccountNumber = accountNumber,
+            IsDefault = makeDefault
+        };
+        db.SupplierAccountProfiles.Add(account);
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "SupplierAccountAdded",
+            supplier.Id,
+            new { supplier.Name, account.Id, account.Label, account.AccountNumber, account.IsDefault }));
+        await db.SaveChangesAsync(cancellationToken);
+        return account;
+    }
+
+    public async Task SetDefaultSupplierAccountAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierId,
+        Guid supplierAccountId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, organisationId, cancellationToken);
+        var supplier = await GetPartyAsync(
+            organisationId,
+            supplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var accounts = await db.SupplierAccountProfiles
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.SupplierId == supplierId &&
+                        x.IsActive)
+            .ToListAsync(cancellationToken);
+        var selected = accounts.SingleOrDefault(x => x.Id == supplierAccountId)
+            ?? throw new InvalidOperationException("Supplier account was not found.");
+        if (selected.IsDefault)
+        {
+            return;
+        }
+
+        foreach (var account in accounts)
+        {
+            account.IsDefault = account.Id == selected.Id;
+        }
+        db.AuditEvents.Add(CreateAuditEvent(
+            organisationId,
+            userId,
+            "SupplierAccountDefaultChanged",
+            supplier.Id,
+            new { supplier.Name, selected.Id, selected.Label, selected.AccountNumber }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteSupplierAccountAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierId,
+        Guid supplierAccountId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, organisationId, cancellationToken);
+        var supplier = await GetPartyAsync(
+            organisationId,
+            supplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var account = await db.SupplierAccountProfiles.SingleOrDefaultAsync(x =>
+                x.Id == supplierAccountId &&
+                x.OrganisationId == organisationId &&
+                x.SupplierId == supplierId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Supplier account was not found.");
+        var wasDefault = account.IsDefault;
+        db.SupplierAccountProfiles.Remove(account);
+        if (wasDefault)
+        {
+            var replacement = await db.SupplierAccountProfiles
+                .Where(x => x.OrganisationId == organisationId &&
+                            x.SupplierId == supplierId &&
+                            x.Id != supplierAccountId &&
+                            x.IsActive)
+                .OrderBy(x => x.Label)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (replacement is not null)
+            {
+                replacement.IsDefault = true;
+            }
+        }
+        db.AuditEvents.Add(CreateAuditEvent(
+            organisationId,
+            userId,
+            "SupplierAccountDeleted",
+            supplier.Id,
+            new { supplier.Name, account.Id, account.Label, account.AccountNumber }));
         await db.SaveChangesAsync(cancellationToken);
     }
 

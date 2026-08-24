@@ -40,7 +40,8 @@ public sealed class BusinessPartyServiceTests
                 expenseAccount.Id,
                 VatTreatment.Standard,
                 PaymentTermType.EndOfFollowingMonth,
-                0));
+                0,
+                " VAT-5599 "));
 
         var stored =
             await test.Db.BusinessParties
@@ -57,6 +58,13 @@ public sealed class BusinessPartyServiceTests
         Assert.Equal(expenseAccount.Id, stored.DefaultPurchaseAccountId);
         Assert.Equal(VatTreatment.Standard, stored.DefaultPurchaseVatTreatment);
         Assert.Equal(PaymentTermType.EndOfFollowingMonth, stored.DefaultSupplierBillPaymentTermType);
+        Assert.Equal("VAT-5599", stored.VatRegistrationNumber);
+        var supplierAccount = await test.Db.SupplierAccountProfiles
+            .AsNoTracking()
+            .SingleAsync(x => x.SupplierId == stored.Id);
+        Assert.Equal("SUP-001", supplierAccount.AccountNumber);
+        Assert.Equal("Primary", supplierAccount.Label);
+        Assert.True(supplierAccount.IsDefault);
 
         var auditEvents = await test.Db.AuditEvents
             .AsNoTracking()
@@ -84,6 +92,44 @@ public sealed class BusinessPartyServiceTests
         Assert.Equal(
             15,
             customerEvidence.RootElement.GetProperty("New").GetProperty("DueDays").GetInt32());
+    }
+
+    [Fact]
+    public async Task Supplier_CanHaveMultipleLabelledAccountNumbers()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var party = await service.CreateAsync(
+            test.UserId,
+            CreateRequest(test.Organisation.Id, test.Account("4000").Id, test.Account("6000").Id));
+        var second = await service.AddSupplierAccountAsync(
+            test.UserId,
+            new SupplierAccountProfileRequest(
+                test.Organisation.Id,
+                party.Id,
+                "Nadi",
+                "SUP-002",
+                true));
+
+        var accounts = await test.Db.SupplierAccountProfiles
+            .AsNoTracking()
+            .Where(x => x.SupplierId == party.Id)
+            .OrderBy(x => x.AccountNumber)
+            .ToListAsync();
+        Assert.Equal(2, accounts.Count);
+        Assert.False(accounts[0].IsDefault);
+        Assert.True(accounts[1].IsDefault);
+
+        await service.DeleteSupplierAccountAsync(
+            test.UserId,
+            test.Organisation.Id,
+            party.Id,
+            second.Id);
+        var remaining = await test.Db.SupplierAccountProfiles
+            .AsNoTracking()
+            .SingleAsync(x => x.SupplierId == party.Id);
+        Assert.Equal("SUP-001", remaining.AccountNumber);
+        Assert.True(remaining.IsDefault);
     }
 
     [Fact]
@@ -123,7 +169,8 @@ public sealed class BusinessPartyServiceTests
                     null,
                     null,
                     PaymentTermType.DaysAfterDocumentDate,
-                    7)));
+                    7,
+                    null)));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.LearnCustomerSalesDefaultsAsync(
                 test.UserId,
@@ -172,7 +219,8 @@ public sealed class BusinessPartyServiceTests
                 expenseAccount.Id,
                 VatTreatment.Standard,
                 PaymentTermType.DaysAfterDocumentDate,
-                30));
+                30,
+                "VAT-123"));
 
         var auditEvents = await test.Db.AuditEvents
             .AsNoTracking()
@@ -323,5 +371,7 @@ public sealed class BusinessPartyServiceTests
             PaymentTermType.DaysAfterDocumentDate,
             30,
             PaymentTermType.DaysAfterDocumentDate,
-            30);
+            30,
+            " SUP-001 ",
+            " VAT-123 ");
 }

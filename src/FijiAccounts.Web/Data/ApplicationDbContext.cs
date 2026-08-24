@@ -26,6 +26,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
+    public DbSet<SupplierAccountProfile> SupplierAccountProfiles => Set<SupplierAccountProfile>();
     public DbSet<BusinessPartyDocument> BusinessPartyDocuments =>
         Set<BusinessPartyDocument>();
     public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
@@ -215,6 +216,14 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<BusinessParty>().HasIndex(x => new { x.OrganisationId, x.Name });
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultSalesAccount).WithMany().HasForeignKey(x => x.DefaultSalesAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultPurchaseAccount).WithMany().HasForeignKey(x => x.DefaultPurchaseAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierAccountProfile>()
+            .HasOne(x => x.Supplier)
+            .WithMany(x => x.SupplierAccounts)
+            .HasForeignKey(x => x.SupplierId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<SupplierAccountProfile>()
+            .HasIndex(x => new { x.OrganisationId, x.SupplierId, x.AccountNumber })
+            .IsUnique();
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.InvoiceNumber }).IsUnique();
         builder.Entity<SalesInvoice>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
@@ -622,6 +631,12 @@ builder.Entity<RecurringSupplierBillGeneration>()
     .HasOne(x => x.SupplierBill)
     .WithMany()
     .HasForeignKey(x => x.SupplierBillId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+builder.Entity<RecurringSupplierBillGeneration>()
+    .HasOne(x => x.SupplierBillDraft)
+    .WithMany()
+    .HasForeignKey(x => x.SupplierBillDraftId)
     .OnDelete(DeleteBehavior.Restrict);
     builder.Entity<SupplierPayment>().Property(x => x.Amount).HasPrecision(18, 2);
         builder.Entity<SupplierPayment>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);

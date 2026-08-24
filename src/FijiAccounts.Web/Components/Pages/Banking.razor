@@ -18,6 +18,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject BankAccountService BankAccounts
+@inject PurchasingService Purchasing
 
 <PageTitle>Banking - Account Island</PageTitle>
     @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
@@ -429,6 +430,22 @@ else
     <section class="reconciliation"><div class="reconcile-heading"><div><h2>Reconciliation</h2><p>Match statement activity to the ledger</p></div><span>@VisibleStatementLines.Count(x => x.ReconciledAt is null) unreconciled</span></div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>Add a statement line to begin reconciling.</span></div> }
         else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }</div></div>
+            @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
+            {
+                <div class="alert alert-info mx-3 mb-3 d-flex justify-content-between align-items-center gap-3">
+                    <div>
+                        <small class="d-block">Suggested supplier bill</small>
+                        <strong>@suggestedBill.Supplier.Name - @suggestedBill.SupplierReference</strong>
+                        <span class="d-block">Outstanding $@Outstanding(suggestedBill).ToString("N2")</span>
+                    </div>
+                    <button type="button"
+                            class="btn btn-primary"
+                            disabled="@payingSuggestedBill"
+                            @onclick="() => PayAndReconcileSupplierBill(item, suggestedBill)">
+                        @(payingSuggestedBill ? "Processing..." : "Pay bill & reconcile")
+                    </button>
+                </div>
+            }
             @if (codingStatementId == item.Id)
             {
                 <div class="coding-panel" @key="item.Id">
@@ -460,7 +477,10 @@ else
     </option>
                                         @foreach (var account in accounts.Where(a => a.Id != item.BankAccountId))
                                         {
+                                            <option value="@account.Id">@account.Code - @account.Name</option>
+                                            @*
                                             <option value="@account.Id">@account.Code ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â @account.Name</option>
+                                            *@
                                         }
                                     </InputSelect>
                                 </div>
@@ -604,6 +624,8 @@ else
     private const long MaxStatementBytes = 5 * 1024 * 1024;
     private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
     private List<BankReconciliationSession> reconciliationSessions = [];
+    private List<SupplierBill> outstandingSupplierBills = [];
+    private bool payingSuggestedBill;
 private ReconciliationSessionModel reconciliationModel = new();
 private bool showReconciliationSession;
 private bool savingReconciliationSession;
@@ -620,6 +642,14 @@ private string reconciliationStatusClass = "alert-success";
             : accounts.Select(x => x.Id).ToArray();
         transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
         statementLines = await Db.BankStatementLines.AsNoTracking().Include(x => x.BankAccount).Where(x => x.OrganisationId == OrganisationId && ids.Contains(x.BankAccountId)).OrderByDescending(x => x.TransactionDate).Take(100).ToListAsync();
+        outstandingSupplierBills = await Db.SupplierBills
+            .AsNoTracking()
+            .Include(x => x.Supplier)
+            .Where(x =>
+                x.OrganisationId == OrganisationId &&
+                (x.Status == BillStatus.Posted || x.Status == BillStatus.PartPaid) &&
+                x.Total > x.AmountPaid + x.AmountCredited)
+            .ToListAsync();
         statementImports = canReconcile
             ? (await StatementImport.GetImportBatchesAsync(userId, OrganisationId)).ToList()
             : [];
@@ -761,6 +791,97 @@ reconciliationSessions =
         return candidates
             .FirstOrDefault()?
             .Line;
+    }
+
+    private SupplierBill? SuggestedSupplierBill(BankStatementLine item)
+    {
+        if (item.Amount >= 0 || item.ReconciledAt is not null)
+        {
+            return null;
+        }
+
+        var amount = Math.Abs(Math.Round(item.Amount, 2, MidpointRounding.AwayFromZero));
+        var description = NormalizeMatchText($"{item.Description} {item.Reference}");
+        var candidates = outstandingSupplierBills
+            .Where(x =>
+                Math.Abs(Outstanding(x) - amount) <= 0.01m &&
+                x.BillDate <= item.TransactionDate.AddDays(3))
+            .Select(x => new
+            {
+                Bill = x,
+                Score = SupplierBillMatchScore(x, description, item.TransactionDate)
+            })
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => Math.Abs(x.Bill.BillDate.DayNumber - item.TransactionDate.DayNumber))
+            .ToList();
+
+        if (candidates.Count == 0 ||
+            (candidates.Count > 1 && candidates[0].Score == candidates[1].Score))
+        {
+            return null;
+        }
+
+        return candidates[0].Bill;
+    }
+
+    private static int SupplierBillMatchScore(
+        SupplierBill bill,
+        string statementDescription,
+        DateOnly statementDate)
+    {
+        var score = 0;
+        var supplierReference = NormalizeMatchText(bill.SupplierReference);
+        var billNumber = NormalizeMatchText(bill.BillNumber);
+        var supplierName = NormalizeMatchText(bill.Supplier.Name);
+        if (supplierReference.Length > 0 && statementDescription.Contains(supplierReference, StringComparison.Ordinal)) score += 100;
+        if (billNumber.Length > 0 && statementDescription.Contains(billNumber, StringComparison.Ordinal)) score += 80;
+        if (supplierName.Length > 2 && statementDescription.Contains(supplierName, StringComparison.Ordinal)) score += 50;
+        score += Math.Max(0, 30 - Math.Abs(statementDate.DayNumber - bill.BillDate.DayNumber));
+        return score;
+    }
+
+    private static string NormalizeMatchText(string? value) =>
+        new((value ?? string.Empty)
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToUpperInvariant)
+            .ToArray());
+
+    private static decimal Outstanding(SupplierBill bill) =>
+        bill.Total - bill.AmountPaid - bill.AmountCredited;
+
+    private async Task PayAndReconcileSupplierBill(
+        BankStatementLine statement,
+        SupplierBill bill)
+    {
+        try
+        {
+            payingSuggestedBill = true;
+            var reference = string.IsNullOrWhiteSpace(statement.Reference)
+                ? bill.SupplierReference
+                : statement.Reference;
+            await Purchasing.PayBillAsync(
+                userId,
+                new SupplierPaymentRequest(
+                    OrganisationId,
+                    bill.Id,
+                    statement.TransactionDate,
+                    reference,
+                    Math.Abs(statement.Amount),
+                    statement.BankAccountId,
+                    statement.Id));
+            statusClass = "alert-success";
+            status = $"{bill.Supplier.Name} bill {bill.SupplierReference} paid and reconciled.";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = $"Could not pay and reconcile this bill: {ex.Message}";
+        }
+        finally
+        {
+            payingSuggestedBill = false;
+        }
     }
     private async Task Reconcile(Guid statementId, Guid journalLineId)
     {

@@ -49,7 +49,20 @@ else
         <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="model.Email" /></div><div class="col-md-6 mb-3"><label class="form-label">TIN</label><InputText class="form-control" @bind-Value="model.Tin" /></div></div>
         <div class="mb-3"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="model.Type"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="3">Customer and supplier</option></InputSelect></div>
         @if ((model.Type & PartyType.Customer) != 0) { <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Default sales account</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesAccountId"><option value="">Choose when entering an invoice</option>@foreach (var account in salesAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default sales VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesVatTreatment"><option value="">Choose when entering an invoice</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Sales invoice payment terms</label><div class="input-group"><InputNumber class="form-control" @bind-Value="model.DefaultSalesInvoiceDueDays" /><span class="input-group-text">days</span></div><div class="form-text">Due date will default to this many days after the invoice date.</div></div></div> }
-        @if ((model.Type & PartyType.Supplier) != 0) { <div class="row"><div class="col-md-8 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div></div> }
+        @if ((model.Type & PartyType.Supplier) != 0)
+        {
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Supplier account number</label>
+                    <InputText class="form-control" @bind-Value="model.SupplierAccountNumber" />
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">VAT registration number</label>
+                    <InputText class="form-control" @bind-Value="model.VatRegistrationNumber" />
+                </div>
+            </div>
+            <div class="row"><div class="col-md-8 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div></div>
+        }
         <button class="btn btn-primary">Add contact</button>
     </EditForm></div> }
     @if (!string.IsNullOrWhiteSpace(searchTerm))
@@ -67,6 +80,7 @@ else
                     <th>Type</th>
                     <th>Email</th>
                     <th>TIN</th>
+                    <th>Supplier details</th>
                     <th>Payment terms</th>
                     <th>Sales defaults</th>
                     <th>Purchase defaults</th>
@@ -84,6 +98,27 @@ else
                         <td>@party.Type</td>
                         <td>@party.Email</td>
                         <td>@party.Tin</td>
+                        <td>
+                            @if ((party.Type & PartyType.Supplier) != 0)
+                            {
+                                @if (party.SupplierAccounts.Count == 0)
+                                {
+                                    <div>Account: -</div>
+                                }
+                                else
+                                {
+                                    @foreach (var account in party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label))
+                                    {
+                                        <div>@account.Label: @account.AccountNumber @(account.IsDefault ? "(default)" : "")</div>
+                                    }
+                                }
+                                <div>VAT: @(party.VatRegistrationNumber ?? "-")</div>
+                            }
+                            else
+                            {
+                                <span>-</span>
+                            }
+                        </td>
 
                         <td>
                             @if ((party.Type & PartyType.Customer) != 0)
@@ -183,7 +218,7 @@ else
                     @if (editingCustomerPartyId == party.Id)
                     {
                         <tr>
-                            <td colspan="8">
+                            <td colspan="9">
                                 <div class="setup-card">
                                     <h3>@party.Name customer settings</h3>
 
@@ -270,9 +305,71 @@ else
                     @if (editingPartyId == party.Id)
                     {
                         <tr>
-                            <td colspan="8">
+                            <td colspan="9">
                                 <div class="setup-card">
-                                    <h3>@party.Name purchase defaults</h3>
+                                    <h3>@party.Name supplier settings</h3>
+
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">VAT registration number</label>
+                                            <InputText class="form-control"
+                                                       @bind-Value="editDefaults.VatRegistrationNumber" />
+                                        </div>
+                                    </div>
+
+                                    <div class="border rounded p-3 mb-3">
+                                        <h4>Supplier accounts</h4>
+                                        @if (editingSupplierAccounts.Count == 0)
+                                        {
+                                            <p class="text-muted">No account numbers have been added.</p>
+                                        }
+                                        else
+                                        {
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm align-middle">
+                                                    <thead><tr><th>Label</th><th>Account number</th><th></th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var account in editingSupplierAccounts)
+                                                        {
+                                                            <tr>
+                                                                <td>@account.Label</td>
+                                                                <td>@account.AccountNumber</td>
+                                                                <td class="text-end">
+                                                                    @if (account.IsDefault)
+                                                                    {
+                                                                        <span class="badge text-bg-success me-2">Default</span>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <button type="button" class="btn btn-sm btn-outline-secondary me-2" @onclick="() => MakeDefaultSupplierAccount(account.Id)">Make default</button>
+                                                                    }
+                                                                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteSupplierAccount(account.Id)">Delete</button>
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        <div class="row align-items-end">
+                                            <div class="col-md-4 mb-2">
+                                                <label class="form-label">Label</label>
+                                                <InputText class="form-control" @bind-Value="newSupplierAccount.Label" placeholder="e.g. Lautoka" />
+                                            </div>
+                                            <div class="col-md-4 mb-2">
+                                                <label class="form-label">Account number</label>
+                                                <InputText class="form-control" @bind-Value="newSupplierAccount.AccountNumber" />
+                                            </div>
+                                            <div class="col-md-2 mb-2 form-check">
+                                                <InputCheckbox class="form-check-input" @bind-Value="newSupplierAccount.MakeDefault" />
+                                                <label class="form-check-label">Default</label>
+                                            </div>
+                                            <div class="col-md-2 mb-2">
+                                                <button type="button" class="btn btn-outline-primary w-100" @onclick="AddSupplierAccount">Add account</button>
+                                            </div>
+                                        </div>
+                                    </div>
 
                                     <div class="row">
                                         <div class="col-md-8">
@@ -384,6 +481,8 @@ else
     private int editingCustomerDueDays = 30;
     private PaymentTermType editingCustomerPaymentTermType = PaymentTermType.DaysAfterDocumentDate;
     private PurchaseDefaultsModel editDefaults = new();
+    private List<SupplierAccountProfile> editingSupplierAccounts = [];
+    private NewSupplierAccountModel newSupplierAccount = new();
     private string searchTerm = string.Empty;
     private string? status;
     private string statusClass = "alert-success";
@@ -487,7 +586,10 @@ else
             var normalized = NormalizeForSearch(searchTerm);
             query = query.Where(x => x.Name.ToUpper().Contains(normalized) ||
                                      (x.Email ?? "").ToUpper().Contains(normalized) ||
-                                     (x.Tin ?? "").ToUpper().Contains(normalized));
+                                     (x.Tin ?? "").ToUpper().Contains(normalized) ||
+                                     x.SupplierAccounts.Any(a => a.AccountNumber.ToUpper().Contains(normalized) ||
+                                                                 a.Label.ToUpper().Contains(normalized)) ||
+                                     (x.VatRegistrationNumber ?? "").ToUpper().Contains(normalized));
         }
         query = NormalizedView switch
         {
@@ -498,6 +600,7 @@ else
         parties = await query
             .Include(x => x.DefaultSalesAccount)
             .Include(x => x.DefaultPurchaseAccount)
+            .Include(x => x.SupplierAccounts)
             .OrderBy(x => x.Name)
             .ToListAsync();
     }
@@ -522,7 +625,9 @@ else
                     model.DefaultSalesInvoicePaymentTermType,
                     model.DefaultSalesInvoiceDueDays,
                     model.DefaultSupplierBillPaymentTermType,
-                    model.DefaultSupplierBillDueDays));
+                    model.DefaultSupplierBillDueDays,
+                    model.SupplierAccountNumber,
+                    model.VatRegistrationNumber));
             model = new ContactModel
             {
                 Type = NormalizedView == "suppliers"
@@ -608,8 +713,8 @@ else
         }
     }
 
-    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; }
-    private void CancelDefaults() { editingPartyId = null; editDefaults = new(); }
+    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { VatRegistrationNumber = party.VatRegistrationNumber, DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; editingSupplierAccounts = party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList(); newSupplierAccount = new(); }
+    private void CancelDefaults() { editingPartyId = null; editDefaults = new(); editingSupplierAccounts = []; newSupplierAccount = new(); }
     private async Task SaveDefaults()
     {
         if (editingPartyId is not Guid id || !canEdit) return;
@@ -623,7 +728,8 @@ else
                     editDefaults.DefaultPurchaseAccountId,
                     editDefaults.DefaultPurchaseVatTreatment,
                     editDefaults.DefaultSupplierBillPaymentTermType,
-                    editDefaults.DefaultSupplierBillDueDays));
+                    editDefaults.DefaultSupplierBillDueDays,
+                    editDefaults.VatRegistrationNumber));
             CancelDefaults();
             ShowStatus("Supplier settings saved.", "alert-success");
             await Reload();
@@ -634,7 +740,66 @@ else
         }
     }
 
-    private class PurchaseDefaultsModel { public Guid? DefaultSalesAccountId { get; set; } public VatTreatment? DefaultSalesVatTreatment { get; set; } public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private async Task AddSupplierAccount()
+    {
+        if (editingPartyId is not Guid supplierId || !canEdit) return;
+        try
+        {
+            await BusinessParties.AddSupplierAccountAsync(
+                userId,
+                new SupplierAccountProfileRequest(
+                    OrganisationId,
+                    supplierId,
+                    newSupplierAccount.Label,
+                    newSupplierAccount.AccountNumber,
+                    newSupplierAccount.MakeDefault));
+            newSupplierAccount = new();
+            ShowStatus("Supplier account added.", "alert-success");
+            await Reload();
+            editingSupplierAccounts = parties.Single(x => x.Id == supplierId).SupplierAccounts
+                .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Supplier account was not added: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task MakeDefaultSupplierAccount(Guid accountId)
+    {
+        if (editingPartyId is not Guid supplierId || !canEdit) return;
+        try
+        {
+            await BusinessParties.SetDefaultSupplierAccountAsync(userId, OrganisationId, supplierId, accountId);
+            ShowStatus("Default supplier account updated.", "alert-success");
+            await Reload();
+            editingSupplierAccounts = parties.Single(x => x.Id == supplierId).SupplierAccounts
+                .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Default supplier account was not updated: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task DeleteSupplierAccount(Guid accountId)
+    {
+        if (editingPartyId is not Guid supplierId || !canEdit) return;
+        try
+        {
+            await BusinessParties.DeleteSupplierAccountAsync(userId, OrganisationId, supplierId, accountId);
+            ShowStatus("Supplier account deleted.", "alert-success");
+            await Reload();
+            editingSupplierAccounts = parties.Single(x => x.Id == supplierId).SupplierAccounts
+                .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Supplier account was not deleted: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private class PurchaseDefaultsModel { [StringLength(80)] public string? VatRegistrationNumber { get; set; } public Guid? DefaultSalesAccountId { get; set; } public VatTreatment? DefaultSalesVatTreatment { get; set; } public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
     private static string FormatPaymentTerms(
         PaymentTermType type,
         int value)
@@ -662,6 +827,13 @@ else
         [Required, StringLength(160)] public string Name { get; set; } = string.Empty;
         [EmailAddress, StringLength(320)] public string? Email { get; set; }
         [StringLength(32)] public string? Tin { get; set; }
+        [StringLength(80)] public string? SupplierAccountNumber { get; set; }
         public PartyType Type { get; set; } = PartyType.Customer;
+    }
+    private sealed class NewSupplierAccountModel
+    {
+        [Required, StringLength(80)] public string Label { get; set; } = string.Empty;
+        [Required, StringLength(80)] public string AccountNumber { get; set; } = string.Empty;
+        public bool MakeDefault { get; set; }
     }
 }

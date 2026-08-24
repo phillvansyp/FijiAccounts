@@ -150,6 +150,19 @@ public sealed class SupplierBillDraftService(
             linkedOrder.UpdatedAt = DateTimeOffset.UtcNow;
         }
 
+        var recurringGeneration =
+            await db.RecurringSupplierBillGenerations
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.OrganisationId == organisationId &&
+                        x.SupplierBillDraftId == draftId,
+                    cancellationToken);
+
+        if (recurringGeneration is not null)
+        {
+            recurringGeneration.SupplierBillDraftId = null;
+        }
+
         db.SupplierBillDrafts.Remove(draft);
         db.AuditEvents.Add(Audit(
             organisationId,

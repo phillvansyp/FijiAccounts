@@ -60,6 +60,128 @@ public sealed class RecurringSupplierBillServiceTests
     }
 
     [Fact]
+    public async Task GenerateDueDraftsAsync_CreatesReviewDraftsWithoutPostingLedger()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new RecurringSupplierBillService(
+            test.Db,
+            test.Access,
+            test.Purchasing);
+        var recurring = await service.CreateAsync(
+            test.UserId,
+            new RecurringSupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "RENT",
+                RecurringSupplierBillFrequency.Monthly,
+                new DateOnly(2026, 7, 1),
+                14,
+                [
+                    new RecurringSupplierBillLineRequest(
+                        "Monthly rent",
+                        1m,
+                        1_000m,
+                        VatTreatment.Standard,
+                        test.Account("6500").Id)
+                ]));
+        var billCountBefore = await test.Db.SupplierBills.CountAsync();
+        var journalCountBefore = await test.Db.PostedJournals.CountAsync();
+
+        var generated = await service.GenerateDueDraftsAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 24));
+        var duplicateAttempt = await service.GenerateDueDraftsAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 24));
+
+        Assert.Equal(2, generated.Count);
+        Assert.Empty(duplicateAttempt);
+        Assert.Equal(
+            [new DateOnly(2026, 7, 1), new DateOnly(2026, 8, 1)],
+            generated.Select(x => x.BillDate).ToArray());
+        Assert.All(generated, draft =>
+        {
+            Assert.Equal(test.Supplier.Id, draft.SupplierId);
+            Assert.Equal("Monthly rent", draft.Description);
+            Assert.Equal(1_000m, draft.UnitPrice);
+        });
+        Assert.Equal(billCountBefore, await test.Db.SupplierBills.CountAsync());
+        Assert.Equal(journalCountBefore, await test.Db.PostedJournals.CountAsync());
+
+        var generations = await test.Db.RecurringSupplierBillGenerations
+            .AsNoTracking()
+            .Where(x => x.RecurringSupplierBillId == recurring.Id)
+            .OrderBy(x => x.ScheduledDate)
+            .ToListAsync();
+        Assert.Equal(2, generations.Count);
+        Assert.All(generations, generation =>
+        {
+            Assert.NotNull(generation.SupplierBillDraftId);
+            Assert.Null(generation.SupplierBillId);
+        });
+    }
+
+    [Fact]
+    public async Task PostingGeneratedDraft_TransfersOccurrenceToPostedBill()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new RecurringSupplierBillService(
+            test.Db,
+            test.Access,
+            test.Purchasing);
+        var recurring = await service.CreateAsync(
+            test.UserId,
+            new RecurringSupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "RENT",
+                RecurringSupplierBillFrequency.Monthly,
+                new DateOnly(2026, 8, 1),
+                14,
+                [
+                    new RecurringSupplierBillLineRequest(
+                        "Monthly rent",
+                        1m,
+                        1_000m,
+                        VatTreatment.Standard,
+                        test.Account("6500").Id)
+                ]));
+        var draft = Assert.Single(await service.GenerateDueDraftsAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 24)));
+
+        var bill = await test.Purchasing.PostDraftBillAsync(
+            test.UserId,
+            draft.Id,
+            new SupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                draft.SupplierReference,
+                draft.BillDate,
+                draft.DueDate,
+                [
+                    new SupplierBillLineRequest(
+                        draft.Description,
+                        draft.Quantity,
+                        draft.UnitPrice,
+                        draft.VatTreatment,
+                        draft.ExpenseAccountId!.Value)
+                ],
+                draft.BranchId,
+                draft.DivisionId));
+
+        var generation = await test.Db.RecurringSupplierBillGenerations
+            .AsNoTracking()
+            .SingleAsync(x => x.RecurringSupplierBillId == recurring.Id);
+        Assert.Equal(bill.Id, generation.SupplierBillId);
+        Assert.Null(generation.SupplierBillDraftId);
+        Assert.False(await test.Db.SupplierBillDrafts.AnyAsync(x => x.Id == draft.Id));
+    }
+
+    [Fact]
     public async Task GenerateDueAsync_CreatesSupplierBillAndAdvancesSchedule()
     {
         await using var test =

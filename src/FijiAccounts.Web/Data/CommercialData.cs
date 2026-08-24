@@ -15,9 +15,11 @@ public sealed class BusinessParty
     [MaxLength(320)] public string? Email { get; set; }
     [MaxLength(40)] public string? Phone { get; set; }
     [MaxLength(32)] public string? Tin { get; set; }
+    [MaxLength(80)] public string? VatRegistrationNumber { get; set; }
     [MaxLength(500)] public string? Address { get; set; }
     public PartyType Type { get; set; }
     public List<BusinessPartyDocument> Documents { get; set; } = [];
+    public List<SupplierAccountProfile> SupplierAccounts { get; set; } = [];
     public Guid? DefaultSalesAccountId { get; set; }
     public LedgerAccount? DefaultSalesAccount { get; set; }
     public VatTreatment? DefaultSalesVatTreatment { get; set; }
@@ -37,6 +39,19 @@ public sealed class BusinessParty
     [Range(0, 365)]
     public int DefaultSupplierBillDueDays { get; set; } = 30;
 
+    public bool IsActive { get; set; } = true;
+}
+
+public sealed class SupplierAccountProfile
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid SupplierId { get; set; }
+    public BusinessParty Supplier { get; set; } = null!;
+    [MaxLength(80)] public required string Label { get; set; }
+    [MaxLength(80)] public required string AccountNumber { get; set; }
+    public bool IsDefault { get; set; }
     public bool IsActive { get; set; } = true;
 }
 
