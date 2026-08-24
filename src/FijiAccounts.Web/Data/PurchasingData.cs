@@ -19,6 +19,7 @@ public sealed class SupplierBillDraft
     [MaxLength(300)] public string Description { get; set; } = "";
     public decimal Quantity { get; set; } = 1;
     public decimal UnitPrice { get; set; }
+    public bool AmountsIncludeVat { get; set; }
     public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard;
     public Guid? ExpenseAccountId { get; set; }
     public Guid? ProductItemId { get; set; }

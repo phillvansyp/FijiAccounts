@@ -246,4 +246,51 @@ public async Task PayBillAsync_WhenAccountsPayableControlAccountHasWrongType_IsR
         Assert.Equal(0m, afterRejected.AmountPaid);
         Assert.Equal(BillStatus.Posted, afterRejected.Status);
     }
+
+    [Fact]
+    public async Task PayBillAsync_WhenStatementMovementAlreadyCoded_IsRejected()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var date = new DateOnly(2026, 8, 18);
+        var bill = await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "NO-DUPLICATE-PAYMENT",
+                date,
+                date.AddDays(30),
+                [new("Office supplies", 1m, 100m, VatTreatment.OutOfScope, test.Account("6500").Id)]));
+        var statement = await test.Reconciliation.AddStatementLineAsync(
+            test.UserId,
+            new StatementLineRequest(
+                test.Organisation.Id,
+                bank.Id,
+                date,
+                "Supplier card purchase",
+                null,
+                -100m));
+        await test.BankCoding.PostAndReconcileAsync(
+            test.UserId,
+            new BankTransactionCodingRequest(
+                test.Organisation.Id,
+                statement.Id,
+                "6500",
+                statement.Description,
+                VatTreatment.OutOfScope));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Purchasing.PayBillAsync(
+                test.UserId,
+                new SupplierPaymentRequest(
+                    test.Organisation.Id,
+                    bill.Id,
+                    date,
+                    "PAY-LATER",
+                    100m,
+                    bank.Id)));
+
+        Assert.Contains("already coded from the statement", exception.Message);
+    }
 }

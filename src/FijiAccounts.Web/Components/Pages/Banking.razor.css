@@ -209,6 +209,37 @@
     color: #17324d;
 }
 
+.reconciliation-filters {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) 220px 180px 180px auto;
+    gap: .75rem;
+    align-items: start;
+}
+
+.reconciliation-search-filter small {
+    display: block;
+    margin-top: .25rem;
+}
+
+.reconciliation-clear-filter {
+    align-self: start;
+    margin-top: 2rem;
+}
+
+@media (max-width: 900px) {
+    .reconciliation-filters {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .reconciliation-search-filter {
+        grid-column: 1 / -1;
+    }
+
+    .reconciliation-clear-filter {
+        margin-top: 0;
+    }
+}
+
 
 /* =========================================================
    BANK TRANSACTION CODING PANEL
@@ -318,6 +349,21 @@
 
 .coded-account span {
     color: #93a1a8;
+}
+
+.matched-marker {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    margin-left: auto;
+    border-radius: 50%;
+    background: #dff7ef;
+    color: #087f5b;
+    font-size: .7rem;
+    font-weight: 900;
+    line-height: 1;
 }
 
 

@@ -117,8 +117,8 @@ else
                 </div>
             }
             <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="bill.Description" /></div>
-            <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="bill.Quantity" /></div><div class="col-md-3 mb-3"><label class="form-label">Unit price excl. VAT</label><InputNumber class="form-control" @bind-Value="bill.UnitPrice" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div></div>
-            @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><InputText class="form-control" @bind-Value="line.Description" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="line.Quantity" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price</label><InputNumber class="form-control" @bind-Value="line.UnitPrice" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div> }
+            <div class="row align-items-end"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="bill.Quantity" /></div><div class="col-md-3 mb-3"><label class="form-label d-block">Price entry</label><div class="btn-group btn-group-sm mb-2 w-100" role="group" aria-label="Choose whether entered prices include VAT"><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-outline-secondary" : "btn-primary")" aria-pressed="@(!bill.AmountsIncludeVat)" @onclick="() => SetBillPriceEntryMode(false)">VAT exclusive</button><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-primary" : "btn-outline-secondary")" aria-pressed="@bill.AmountsIncludeVat" @onclick="() => SetBillPriceEntryMode(true)">VAT included</button></div><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><InputNumber class="form-control" @bind-Value="bill.UnitPrice" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div></div>
+            @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><InputText class="form-control" @bind-Value="line.Description" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="line.Quantity" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><InputNumber class="form-control" @bind-Value="line.UnitPrice" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div> }
             @if (!isRecurringBill)
             {
                 <div class="bill-attachment mb-4">
@@ -161,7 +161,7 @@ else
 
                 <div>
                     <strong class="me-3">
-                        Subtotal $@BillSubtotal.ToString("N2")
+                        @(bill.AmountsIncludeVat ? "Total (VAT incl.)" : "Subtotal") $@BillSubtotal.ToString("N2")
                     </strong>
 
                     @if (!isRecurringBill)
@@ -860,7 +860,7 @@ private void ToggleRecurringBill()
         {
             bill.Description = description;
             bill.Quantity = 1;
-            bill.UnitPrice = item.PurchasePrice;
+            bill.UnitPrice = DisplayUnitPrice(item.PurchasePrice, item.PurchaseTaxTreatment);
             bill.VatTreatment = item.PurchaseTaxTreatment;
             bill.ExpenseAccountId = item.Kind == ProductKind.TrackedItem ? item.InventoryAccountId ?? item.ExpenseAccountId ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty : item.ExpenseAccountId ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty;
             bill.ProductItemId = item.Id;
@@ -871,13 +871,38 @@ private void ToggleRecurringBill()
         {
             Description = description,
             Quantity = 1,
-            UnitPrice = item.PurchasePrice,
+            UnitPrice = DisplayUnitPrice(item.PurchasePrice, item.PurchaseTaxTreatment),
             VatTreatment = item.PurchaseTaxTreatment,
             ExpenseAccountId = item.Kind == ProductKind.TrackedItem ? item.InventoryAccountId ?? item.ExpenseAccountId ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty : item.ExpenseAccountId ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty,
             ProductItemId = item.Id
         });
     }
     private void RemoveBillLine(int index) => additionalBillLines.RemoveAt(index);
+    private void SetBillPriceEntryMode(bool amountsIncludeVat) =>
+        bill.AmountsIncludeVat = amountsIncludeVat;
+
+    private decimal DisplayUnitPrice(decimal exclusiveUnitPrice, VatTreatment treatment)
+    {
+        if (!bill.AmountsIncludeVat || treatment != VatTreatment.Standard)
+        {
+            return exclusiveUnitPrice;
+        }
+
+        var rate = new FijiVatSchedule().StandardRateOn(bill.BillDate);
+        return decimal.Round(exclusiveUnitPrice * (1m + rate), 4, MidpointRounding.AwayFromZero);
+    }
+
+    private decimal RecurringUnitPrice(decimal enteredUnitPrice, VatTreatment treatment)
+    {
+        if (!bill.AmountsIncludeVat || treatment != VatTreatment.Standard)
+        {
+            return enteredUnitPrice;
+        }
+
+        var rate = new FijiVatSchedule().StandardRateOn(bill.BillDate);
+        return decimal.Round(enteredUnitPrice / (1m + rate), 4, MidpointRounding.AwayFromZero);
+    }
+
     private async Task SelectBillAttachment(InputFileChangeEventArgs args)
     {
         attachmentError = null;
@@ -990,22 +1015,24 @@ private void ToggleRecurringBill()
             if (hasNet)
             {
                 bill.UnitPrice = net;
+                bill.AmountsIncludeVat = false;
                 if (hasVat) bill.VatTreatment = vat > 0 ? VatTreatment.Standard : VatTreatment.OutOfScope;
                 populated.Add(hasVat ? "cost and VAT" : "cost");
             }
             else if (hasVat && vat >= 0 && gross >= vat)
             {
                 bill.UnitPrice = gross - vat;
+                bill.AmountsIncludeVat = false;
                 bill.VatTreatment = vat > 0 ? VatTreatment.Standard : VatTreatment.OutOfScope;
                 populated.Add("cost and VAT");
             }
-            else if (Regex.IsMatch(text, @"(?i)(?:incl(?:uding)?\s+(?:vat|tax)|(?:vat|tax)\s+inclusive)"))
+            else if (bill.VatTreatment == VatTreatment.Standard)
             {
-                bill.UnitPrice = decimal.Round(gross / 1.125m, 2, MidpointRounding.AwayFromZero);
-                bill.VatTreatment = VatTreatment.Standard;
+                bill.UnitPrice = gross;
+                bill.AmountsIncludeVat = true;
                 populated.Add("VAT-inclusive cost");
             }
-            else { bill.UnitPrice = gross; populated.Add("cost"); }
+            else { bill.UnitPrice = gross; bill.AmountsIncludeVat = false; populated.Add("cost"); }
         }
 
         documentReadMessage = populated.Count == 0
@@ -1089,7 +1116,8 @@ private void ToggleRecurringBill()
                     bill.BillDate,
                     bill.DueDate,
                     lines,
-                    attachment));
+                    attachment,
+                    bill.AmountsIncludeVat));
             var message = isNew
                 ? "Draft bill saved. Nothing has been posted to the ledger."
                 : "Draft bill updated. Nothing has been posted to the ledger.";
@@ -1112,7 +1140,7 @@ private void ToggleRecurringBill()
     {
         showBillForm = true;
         editingDraftId = draft.Id;
-        bill = new BillModel { SupplierId = draft.SupplierId ?? Guid.Empty, DivisionId = draft.DivisionId ?? branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty, SupplierReference = draft.SupplierReference, BillDate = draft.BillDate, DueDate = draft.DueDate, Description = draft.Description, Quantity = draft.Quantity, UnitPrice = draft.UnitPrice, VatTreatment = draft.VatTreatment, ExpenseAccountId = draft.ExpenseAccountId ?? Guid.Empty, ProductItemId = draft.ProductItemId };
+        bill = new BillModel { SupplierId = draft.SupplierId ?? Guid.Empty, DivisionId = draft.DivisionId ?? branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)?.Id ?? Guid.Empty, SupplierReference = draft.SupplierReference, BillDate = draft.BillDate, DueDate = draft.DueDate, Description = draft.Description, Quantity = draft.Quantity, UnitPrice = draft.UnitPrice, AmountsIncludeVat = draft.AmountsIncludeVat, VatTreatment = draft.VatTreatment, ExpenseAccountId = draft.ExpenseAccountId ?? Guid.Empty, ProductItemId = draft.ProductItemId };
         try { additionalBillLines = JsonSerializer.Deserialize<List<DraftLineData>>(draft.AdditionalLinesJson)?.Select(x => new BillLineModel { Description = x.Description, Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }).ToList() ?? []; }
         catch (JsonException) { additionalBillLines = []; }
         pendingAttachment = draft.AttachmentContent is null ? null : new PendingAttachment(draft.AttachmentFileName ?? "attachment", draft.AttachmentContentType ?? "application/octet-stream", draft.AttachmentOriginalSize ?? draft.AttachmentContent.LongLength, draft.AttachmentContent, draft.AttachmentIsCompressed);
@@ -1203,7 +1231,7 @@ private void ToggleRecurringBill()
                     new(
                         bill.Description,
                         bill.Quantity,
-                        bill.UnitPrice,
+                        RecurringUnitPrice(bill.UnitPrice, bill.VatTreatment),
                         bill.VatTreatment,
                         bill.ExpenseAccountId,
                         bill.ProductItemId)
@@ -1215,7 +1243,7 @@ private void ToggleRecurringBill()
                         new RecurringSupplierBillLineRequest(
                             x.Description,
                             x.Quantity,
-                            x.UnitPrice,
+                            RecurringUnitPrice(x.UnitPrice, x.VatTreatment),
                             x.VatTreatment,
                             x.ExpenseAccountId,
                             x.ProductItemId)));
@@ -1504,7 +1532,8 @@ private void ToggleRecurringBill()
                     bill.BillDate,
                     bill.DueDate,
                     lines,
-                    DivisionId: bill.DivisionId);
+                    DivisionId: bill.DivisionId,
+                    AmountsIncludeVat: bill.AmountsIncludeVat);
 
             SupplierBill result;
             SupplierBillAttachmentRequest? attachment =
@@ -1576,7 +1605,7 @@ private void ToggleRecurringBill()
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
     private int OverdueCount => bills.Count(IsOverdue);
     private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);
-    private sealed class BillModel { public Guid SupplierId {get;set;} public Guid DivisionId {get;set;} [Required,StringLength(80)] public string SupplierReference {get;set;}=""; public DateOnly BillDate {get;set;}=DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate {get;set;}=DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
+    private sealed class BillModel { public Guid SupplierId {get;set;} public Guid DivisionId {get;set;} [Required,StringLength(80)] public string SupplierReference {get;set;}=""; public DateOnly BillDate {get;set;}=DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate {get;set;}=DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public bool AmountsIncludeVat {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
     private sealed class BillLineModel { [Required,StringLength(300)] public string Description {get;set;}=""; [Range(.0001,99999999)] public decimal Quantity {get;set;}=1; [Range(0,999999999)] public decimal UnitPrice {get;set;} public VatTreatment VatTreatment {get;set;}=VatTreatment.Standard; public Guid ExpenseAccountId {get;set;} public Guid? ProductItemId {get;set;} }
     private sealed class RecurringBillModel
     {

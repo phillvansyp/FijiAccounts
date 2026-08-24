@@ -194,6 +194,107 @@ public sealed class BankReconciliationSessionService(
         return session;
     }
 
+    public async Task<BankReconciliationSession> UpdateAsync(
+        string userId,
+        Guid organisationId,
+        Guid sessionId,
+        BankReconciliationSessionRequest request,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot reconcile bank accounts for this organisation.");
+        }
+
+        if (request.OrganisationId != organisationId)
+        {
+            throw new InvalidOperationException(
+                "The reconciliation organisation cannot be changed.");
+        }
+
+        if (request.StatementStartDate > request.StatementEndDate)
+        {
+            throw new InvalidOperationException(
+                "Statement start date cannot be after the end date.");
+        }
+
+        var session =
+            await db.BankReconciliationSessions
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == sessionId &&
+                        x.OrganisationId == organisationId,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Reconciliation session not found.");
+
+        if (session.IsCompleted)
+        {
+            throw new InvalidOperationException(
+                "A completed reconciliation cannot be changed.");
+        }
+
+        var bank =
+            await db.LedgerAccounts
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == request.BankAccountId &&
+                        x.OrganisationId == organisationId &&
+                        x.IsActive &&
+                        x.IsBankAccount,
+                    ct)
+            ?? throw new InvalidOperationException(
+                "Select an active bank account.");
+
+        var overlaps =
+            await db.BankReconciliationSessions
+                .AnyAsync(
+                    x =>
+                        x.Id != session.Id &&
+                        x.OrganisationId == organisationId &&
+                        x.BankAccountId == request.BankAccountId &&
+                        x.StatementStartDate <= request.StatementEndDate &&
+                        x.StatementEndDate >= request.StatementStartDate,
+                    ct);
+
+        if (overlaps)
+        {
+            throw new InvalidOperationException(
+                "A reconciliation already exists for part of this statement period.");
+        }
+
+        var ledgerBalance = await LedgerBalanceAsync(
+            organisationId,
+            request.BankAccountId,
+            request.StatementEndDate,
+            ct);
+        var difference = Math.Round(
+            request.ClosingStatementBalance - ledgerBalance,
+            2,
+            MidpointRounding.AwayFromZero);
+        var previous = Evidence(session);
+
+        session.BankAccountId = bank.Id;
+        session.StatementStartDate = request.StatementStartDate;
+        session.StatementEndDate = request.StatementEndDate;
+        session.OpeningStatementBalance = request.OpeningStatementBalance;
+        session.ClosingStatementBalance = request.ClosingStatementBalance;
+        session.LedgerBalance = ledgerBalance;
+        session.Difference = difference;
+
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "BankReconciliationSessionUpdated",
+            session,
+            new { Old = previous, New = Evidence(session) }));
+
+        await db.SaveChangesAsync(ct);
+        return session;
+    }
+
     public async Task<BankReconciliationSession> CompleteAsync(
         string userId,
         Guid organisationId,

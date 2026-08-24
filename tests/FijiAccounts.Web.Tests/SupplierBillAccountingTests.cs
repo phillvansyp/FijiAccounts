@@ -78,6 +78,41 @@ public sealed class SupplierBillAccountingTests
     }
 
     [Fact]
+    public async Task PostBill_WithVatIncludedPrices_ExtractsVatFromEnteredTotal()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+
+        var bill = await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                OrganisationId: test.Organisation.Id,
+                SupplierId: test.Supplier.Id,
+                SupplierReference: "SUP-VAT-INCLUSIVE",
+                BillDate: new DateOnly(2026, 8, 18),
+                DueDate: new DateOnly(2026, 9, 17),
+                Lines:
+                [
+                    new SupplierBillLineRequest(
+                        Description: "VAT-inclusive supplies",
+                        Quantity: 1m,
+                        UnitPrice: 112.50m,
+                        VatTreatment: VatTreatment.Standard,
+                        ExpenseAccountId: test.Account("6500").Id)
+                ],
+                AmountsIncludeVat: true));
+
+        Assert.Equal(100m, bill.Subtotal);
+        Assert.Equal(12.50m, bill.VatTotal);
+        Assert.Equal(112.50m, bill.Total);
+        Assert.Equal(100m, bill.Lines.Single().UnitPrice);
+
+        var journal = await test.LoadJournalAsync(bill.PostedJournalId);
+        Assert.Equal(100m, journal.Lines.Single(x => x.LedgerAccount.Code == "6500").Debit);
+        Assert.Equal(12.50m, journal.Lines.Single(x => x.LedgerAccount.Code == "1150").Debit);
+        Assert.Equal(112.50m, journal.Lines.Single(x => x.LedgerAccount.Code == "2000").Credit);
+    }
+
+    [Fact]
 public async Task PostBill_WhenVatReceivableControlIsMissing_FailsWithoutRecreatingIt()
 {
     await using var test =

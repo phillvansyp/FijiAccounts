@@ -209,5 +209,58 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
     await db.SaveChangesAsync(ct);
 }
 
+    public async Task UnreconcileAsync(
+        string userId,
+        Guid organisationId,
+        Guid statementLineId,
+        string reason,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot change reconciliations for this organisation.");
+        }
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new InvalidOperationException(
+                "Enter a reason for removing the reconciliation match.");
+        }
+
+        var statement = await db.BankStatementLines.SingleOrDefaultAsync(
+            x => x.Id == statementLineId && x.OrganisationId == organisationId,
+            ct) ?? throw new InvalidOperationException("Statement line not found.");
+        if (statement.ReconciledAt is null || statement.MatchedPostedJournalLineId is null)
+        {
+            throw new InvalidOperationException("This statement line is not reconciled.");
+        }
+        if (await IsInsideCompletedReconciliationAsync(
+                organisationId,
+                statement.BankAccountId,
+                statement.TransactionDate,
+                ct))
+        {
+            throw new InvalidOperationException(
+                "A statement line inside a completed reconciliation period cannot be changed.");
+        }
+
+        var previousJournalLineId = statement.MatchedPostedJournalLineId.Value;
+        statement.MatchedPostedJournalLineId = null;
+        statement.ReconciledAt = null;
+        statement.ReconciledByUserId = null;
+        db.AuditEvents.Add(
+            Audit(
+                organisationId,
+                userId,
+                "BankStatementLineUnreconciled",
+                statement.Id,
+                new
+                {
+                    PreviousJournalLineId = previousJournalLineId,
+                    Reason = reason.Trim()
+                }));
+        await db.SaveChangesAsync(ct);
+    }
+
     private static AuditEvent Audit(Guid organisationId, string userId, string eventType, Guid entityId, object data) => new() { OrganisationId = organisationId, UserId = userId, EventType = eventType, EntityType = nameof(BankStatementLine), EntityId = entityId.ToString(), JsonData = JsonSerializer.Serialize(data) };
 }

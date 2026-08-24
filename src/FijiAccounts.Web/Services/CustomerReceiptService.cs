@@ -6,7 +6,14 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record CustomerReceiptRequest(Guid OrganisationId, Guid SalesInvoiceId, DateOnly Date, string Reference, decimal Amount, Guid BankAccountId);
+public sealed record CustomerReceiptRequest(
+    Guid OrganisationId,
+    Guid SalesInvoiceId,
+    DateOnly Date,
+    string Reference,
+    decimal Amount,
+    Guid BankAccountId,
+    Guid? StatementLineId = null);
 
 public sealed class CustomerReceiptService(
     ApplicationDbContext db,
@@ -19,6 +26,26 @@ public sealed class CustomerReceiptService(
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot record receipts for this organisation.");
         if (request.Amount <= 0) throw new InvalidOperationException("Receipt amount must be greater than zero.");
+        BankStatementLine? statement = null;
+        if (request.StatementLineId is Guid statementLineId)
+        {
+            statement = await db.BankStatementLines.SingleOrDefaultAsync(
+                x => x.Id == statementLineId && x.OrganisationId == request.OrganisationId,
+                cancellationToken) ?? throw new InvalidOperationException("Bank statement line not found.");
+            if (statement.ReconciledAt is not null)
+            {
+                throw new InvalidOperationException("This bank statement line is already reconciled.");
+            }
+            if (statement.BankAccountId != request.BankAccountId || statement.TransactionDate != request.Date)
+            {
+                throw new InvalidOperationException("The customer receipt must use the bank account and date from the statement line.");
+            }
+            var statementReceiptAmount = Math.Round(statement.Amount, 2, MidpointRounding.AwayFromZero);
+            if (statement.Amount <= 0 || Math.Abs(statementReceiptAmount - request.Amount) > 0.01m)
+            {
+                throw new InvalidOperationException("The customer receipt must exactly match the incoming statement amount.");
+            }
+        }
         var invoice = await db.SalesInvoices.Include(x => x.Customer).SingleOrDefaultAsync(x => x.Id == request.SalesInvoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found in this organisation.");
         if (invoice.Status is InvoiceStatus.Voided or InvoiceStatus.Draft or InvoiceStatus.Credited) throw new InvalidOperationException("Only outstanding posted invoices can receive payments.");
         var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
@@ -55,6 +82,16 @@ if (receivable is null ||
         }
         db.CustomerReceipts.Add(receipt);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "CustomerReceiptRecorded", EntityType = nameof(CustomerReceipt), EntityId = receipt.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, receipt.Reference, receipt.Amount }) });
+        if (statement is not null)
+        {
+            var bankJournalLine = journal.Lines.Single(x => x.LedgerAccountId == bank.Id);
+            await reconciliation.ReconcileAsync(
+                userId,
+                request.OrganisationId,
+                statement.Id,
+                bankJournalLine.Id,
+                cancellationToken);
+        }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         notifications.PublishOrganisationUpdate(request.OrganisationId);

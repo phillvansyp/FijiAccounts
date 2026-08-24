@@ -1,3 +1,4 @@
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -323,6 +324,119 @@ public sealed class BankReconciliationSessionAccountingTests
                         test.UserId,
                         test.Organisation.Id,
                         session.Id));
+
+        Assert.Contains(
+            "completed reconciliation cannot be changed",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task UpdateSession_ChangesBalancesAndRecalculatesDifference()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankReconciliationSessionService(test.Db, test.Access);
+        var session = await service.CreateAsync(
+            test.UserId,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                bank.Id,
+                new DateOnly(2026, 7, 1),
+                new DateOnly(2026, 7, 31),
+                100m,
+                84_114.93m));
+
+        var updated = await service.UpdateAsync(
+            test.UserId,
+            test.Organisation.Id,
+            session.Id,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                bank.Id,
+                new DateOnly(2026, 7, 1),
+                new DateOnly(2026, 7, 31),
+                100m,
+                1_250m));
+
+        Assert.Equal(1_250m, updated.ClosingStatementBalance);
+        Assert.Equal(1_250m, updated.Difference);
+        Assert.Contains(
+            await test.Db.AuditEvents.ToListAsync(),
+            x =>
+                x.EntityId == session.Id.ToString() &&
+                x.EventType == "BankReconciliationSessionUpdated");
+    }
+
+    [Fact]
+    public async Task UpdateSession_CanChangeBankAccount()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var originalBank = test.Account("1000");
+        var debitCard = new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id,
+            Code = "1001",
+            Name = "JCR Debit Card",
+            Type = AccountType.Asset,
+            IsBankAccount = true,
+            BankAccountKind = BankAccountKind.CreditCard,
+            IsSystemAccount = false,
+            IsActive = true
+        };
+        test.Db.LedgerAccounts.Add(debitCard);
+        await test.Db.SaveChangesAsync();
+
+        var service = new BankReconciliationSessionService(test.Db, test.Access);
+        var session = await service.CreateAsync(
+            test.UserId,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                originalBank.Id,
+                new DateOnly(2026, 5, 1),
+                new DateOnly(2026, 5, 31),
+                509.91m,
+                375.16m));
+
+        var updated = await service.UpdateAsync(
+            test.UserId,
+            test.Organisation.Id,
+            session.Id,
+            new BankReconciliationSessionRequest(
+                test.Organisation.Id,
+                debitCard.Id,
+                session.StatementStartDate,
+                session.StatementEndDate,
+                session.OpeningStatementBalance,
+                session.ClosingStatementBalance));
+
+        Assert.Equal(debitCard.Id, updated.BankAccountId);
+        Assert.Equal(0m, updated.LedgerBalance);
+        Assert.Equal(375.16m, updated.Difference);
+    }
+
+    [Fact]
+    public async Task UpdateSession_RejectsCompletedReconciliation()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var service = new BankReconciliationSessionService(test.Db, test.Access);
+        var request = new BankReconciliationSessionRequest(
+            test.Organisation.Id,
+            bank.Id,
+            new DateOnly(2026, 7, 1),
+            new DateOnly(2026, 7, 31),
+            0m,
+            0m);
+        var session = await service.CreateAsync(test.UserId, request);
+        await service.CompleteAsync(test.UserId, test.Organisation.Id, session.Id);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateAsync(
+                test.UserId,
+                test.Organisation.Id,
+                session.Id,
+                request with { ClosingStatementBalance = 1m }));
 
         Assert.Contains(
             "completed reconciliation cannot be changed",

@@ -79,6 +79,14 @@ Purchasing =
         Notifications,
         structures);
 
+CustomerReceipts =
+    new CustomerReceiptService(
+        Db,
+        Access,
+        Posting,
+        Reconciliation,
+        Notifications);
+
 BankCoding =
     new BankTransactionCodingService(
         Db,
@@ -104,6 +112,8 @@ BankCoding =
     public SalesInvoiceService SalesInvoices { get; }
 
     public PurchasingService Purchasing { get; }
+
+    public CustomerReceiptService CustomerReceipts { get; }
 
     public PurchaseOrderService PurchaseOrders { get; }
 

@@ -24,7 +24,8 @@ public sealed record SaveSupplierBillDraftRequest(
     DateOnly BillDate,
     DateOnly DueDate,
     IReadOnlyList<SupplierBillDraftLineRequest> Lines,
-    SupplierBillAttachmentRequest? Attachment = null);
+    SupplierBillAttachmentRequest? Attachment = null,
+    bool AmountsIncludeVat = false);
 
 public sealed class SupplierBillDraftService(
     ApplicationDbContext db,
@@ -76,6 +77,7 @@ public sealed class SupplierBillDraftService(
             draft.Description == firstLine.Description.Trim() &&
             draft.Quantity == firstLine.Quantity &&
             draft.UnitPrice == firstLine.UnitPrice &&
+            draft.AmountsIncludeVat == request.AmountsIncludeVat &&
             draft.VatTreatment == firstLine.VatTreatment &&
             draft.ExpenseAccountId == firstLine.ExpenseAccountId &&
             draft.ProductItemId == firstLine.ProductItemId &&
@@ -99,6 +101,7 @@ public sealed class SupplierBillDraftService(
         draft.Description = firstLine.Description.Trim();
         draft.Quantity = firstLine.Quantity;
         draft.UnitPrice = firstLine.UnitPrice;
+        draft.AmountsIncludeVat = request.AmountsIncludeVat;
         draft.VatTreatment = firstLine.VatTreatment;
         draft.ExpenseAccountId = firstLine.ExpenseAccountId;
         draft.ProductItemId = firstLine.ProductItemId;
@@ -385,6 +388,7 @@ public sealed class SupplierBillDraftService(
             draft.SupplierReference,
             draft.BillDate,
             draft.DueDate,
+            draft.AmountsIncludeVat,
             FirstLine = new
             {
                 draft.Description,

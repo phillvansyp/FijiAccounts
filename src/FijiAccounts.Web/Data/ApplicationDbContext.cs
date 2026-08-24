@@ -291,7 +291,10 @@ builder.Entity<SalesCreditNoteReversal>()
         builder.Entity<CustomerReceiptAllocation>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CustomerReceiptReversal>().HasIndex(x => x.CustomerReceiptId).IsUnique(); builder.Entity<CustomerReceiptReversal>().HasOne(x => x.CustomerReceipt).WithMany().HasForeignKey(x => x.CustomerReceiptId).OnDelete(DeleteBehavior.Restrict); builder.Entity<CustomerReceiptReversal>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
-        builder.Entity<SupplierBill>().HasIndex(x => new { x.OrganisationId, x.SupplierId, x.SupplierReference }).IsUnique();
+        builder.Entity<SupplierBill>()
+            .HasIndex(x => new { x.OrganisationId, x.SupplierId, x.SupplierReference })
+            .IsUnique()
+            .HasFilter("\"Status\" <> 4");
         builder.Entity<SupplierBill>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBill>().HasOne<PostedJournal>().WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);

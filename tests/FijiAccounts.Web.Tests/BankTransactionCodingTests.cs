@@ -321,4 +321,44 @@ public async Task PostAndReconcileAsync_WhenVatPayableControlAccountHasWrongType
                 .AsNoTracking()
                 .AnyAsync(x => x.Id == journal.Id));
     }
+
+    [Fact]
+    public async Task PostAndReconcileAsync_WhenExistingLedgerEntryMatches_IsRejected()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bank = test.Account("1000");
+        var date = new DateOnly(2026, 8, 18);
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                date,
+                "PAY-EXISTING",
+                "Existing supplier payment",
+                [
+                    new(test.Account("6500").Id, "Existing expense", 100m, 0m),
+                    new(bank.Id, "Existing payment", 0m, 100m)
+                ]));
+        var statement = await test.Reconciliation.AddStatementLineAsync(
+            test.UserId,
+            new StatementLineRequest(
+                test.Organisation.Id,
+                bank.Id,
+                date,
+                "Existing supplier payment",
+                null,
+                -100m));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.BankCoding.PostAndReconcileAsync(
+                test.UserId,
+                new BankTransactionCodingRequest(
+                    test.Organisation.Id,
+                    statement.Id,
+                    "6500",
+                    statement.Description,
+                    VatTreatment.OutOfScope)));
+
+        Assert.Contains("Match that entry instead", exception.Message);
+    }
 }

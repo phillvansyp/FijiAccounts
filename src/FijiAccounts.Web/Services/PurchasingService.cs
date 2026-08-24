@@ -8,7 +8,7 @@ using FijiAccounts.Web.Data;
 namespace FijiAccounts.Web.Services;
 
 public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null);
-public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null);
+public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null, bool AmountsIncludeVat = false);
 public sealed record SupplierBillAttachmentRequest(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
 public sealed record SupplierPaymentRequest(
     Guid OrganisationId,
@@ -88,6 +88,21 @@ public sealed class PurchasingService(
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.BillDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter a valid bill date, due date and at least one line.");
         if (!await db.BusinessParties.AnyAsync(x => x.Id == request.SupplierId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0, ct)) throw new InvalidOperationException("Select an active supplier in this organisation.");
+        var supplierReference = request.SupplierReference.Trim();
+        var duplicateBill = await db.SupplierBills
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == request.OrganisationId &&
+                x.SupplierId == request.SupplierId &&
+                x.SupplierReference == supplierReference &&
+                x.Status != BillStatus.Voided)
+            .Select(x => new { x.BillNumber, x.Status })
+            .SingleOrDefaultAsync(ct);
+        if (duplicateBill is not null)
+        {
+            throw new InvalidOperationException(
+                $"Supplier reference {supplierReference} has already been used for {duplicateBill.BillNumber} ({duplicateBill.Status.ToString().ToLowerInvariant()}). Enter a different supplier reference.");
+        }
         var expenseIds = request.Lines.Select(x => x.ExpenseAccountId).Distinct().ToArray();
         var expenses = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && expenseIds.Contains(x.Id) && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).ToDictionaryAsync(x => x.Id, ct);
         if (expenses.Count != expenseIds.Length) throw new InvalidOperationException("Every bill line must use an active expense or asset account.");
@@ -118,7 +133,35 @@ public sealed class PurchasingService(
                 "Accounts Payable (2000) must be an active Liability account.");
         }
         var schedule = new FijiVatSchedule();
-        var lines = request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round(), request.BillDate, x.VatTreatment); return new SupplierBillLine { Description = x.Description.Trim(), Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, VatRate = tax.Rate, NetAmount = tax.Exclusive.Amount, VatAmount = tax.Vat.Amount, GrossAmount = tax.Inclusive.Amount, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId }; }).ToList();
+        var lines = request.Lines.Select(x =>
+        {
+            if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0)
+            {
+                throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price.");
+            }
+
+            var enteredAmount = new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round();
+            var tax = request.AmountsIncludeVat
+                ? schedule.CalculateFromInclusive(enteredAmount, request.BillDate, x.VatTreatment)
+                : schedule.CalculateFromExclusive(enteredAmount, request.BillDate, x.VatTreatment);
+            var exclusiveUnitPrice = request.AmountsIncludeVat
+                ? decimal.Round(tax.Exclusive.Amount / x.Quantity, 4, MidpointRounding.AwayFromZero)
+                : x.UnitPrice;
+
+            return new SupplierBillLine
+            {
+                Description = x.Description.Trim(),
+                Quantity = x.Quantity,
+                UnitPrice = exclusiveUnitPrice,
+                VatTreatment = x.VatTreatment,
+                VatRate = tax.Rate,
+                NetAmount = tax.Exclusive.Amount,
+                VatAmount = tax.Vat.Amount,
+                GrossAmount = tax.Inclusive.Amount,
+                ExpenseAccountId = x.ExpenseAccountId,
+                ProductItemId = x.ProductItemId
+            };
+        }).ToList();
         var trackedIds =
     lines
         .Where(x => x.ProductItemId != null)
@@ -203,7 +246,13 @@ public sealed class PurchasingService(
                 sourcePurchaseOrder,
                 organisation,
                 request.SupplierId,
-                request.Lines);
+                lines.Select(x => new SupplierBillLineRequest(
+                    x.Description,
+                    x.Quantity,
+                    x.UnitPrice,
+                    x.VatTreatment,
+                    x.ExpenseAccountId,
+                    x.ProductItemId)).ToList());
             var previousStatus = sourcePurchaseOrder.MatchStatus;
             var previousFingerprint = sourcePurchaseOrder.MatchFingerprint;
             var approvalRemainsValid =
@@ -269,7 +318,7 @@ public sealed class PurchasingService(
                 : null;
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
-        var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = request.SupplierReference.Trim(), BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = supplierReference, BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var journalLines = lines.GroupBy(x => x.ExpenseAccountId).Select(x => new JournalLineInput(x.Key, bill.BillNumber, x.Sum(y => y.NetAmount), 0)).ToList();
         if (bill.VatTotal > 0)
         {
@@ -366,6 +415,32 @@ public sealed class PurchasingService(
     public async Task<SupplierPayment> PayBillAsync(string userId, SupplierPaymentRequest request, CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        if (request.StatementLineId is null)
+        {
+            var matchingCodedStatement = await db.BankStatementLines
+                .AsNoTracking()
+                .Include(x => x.MatchedPostedJournalLine!)
+                    .ThenInclude(x => x.PostedJournal)
+                .FirstOrDefaultAsync(x =>
+                    x.OrganisationId == request.OrganisationId &&
+                    x.BankAccountId == request.BankAccountId &&
+                    x.TransactionDate == request.Date &&
+                    x.ReconciledAt != null &&
+                    x.MatchedPostedJournalLineId != null &&
+                    x.MatchedPostedJournalLine!.PostedJournal.Description != null &&
+                    x.MatchedPostedJournalLine.PostedJournal.Description.StartsWith("Coded from bank statement") &&
+                    x.Amount >= -request.Amount - 0.01m &&
+                    x.Amount <= -request.Amount + 0.01m,
+                    ct);
+
+            if (matchingCodedStatement is not null)
+            {
+                throw new InvalidOperationException(
+                    $"This bank movement is already coded from the statement as " +
+                    $"'{matchingCodedStatement.Description}'. Edit that reconciliation line, reverse its coding, " +
+                    $"then pay and reconcile it against this bill.");
+            }
+        }
         BankStatementLine? statement = null;
         if (request.StatementLineId is Guid statementLineId)
         {

@@ -1,9 +1,22 @@
 using FijiAccounts.Web.Services;
+using FijiAccounts.Domain.Tax;
 
 namespace FijiAccounts.Web.Tests;
 
 public sealed class SupplierBillDocumentFieldParserTests
 {
+    [Fact]
+    public void CalculateExclusiveAmount_ConvertsFijiVatInclusiveTotal()
+    {
+        var result = SupplierBillDocumentFieldParser.CalculateExclusiveAmount(
+            78.26m,
+            new DateOnly(2026, 6, 24),
+            "FJD",
+            VatTreatment.Standard);
+
+        Assert.Equal(69.56m, result);
+    }
+
     [Fact]
     public void ExtractReference_DoesNotTreatCreditCodeAsInvoiceNumber()
     {

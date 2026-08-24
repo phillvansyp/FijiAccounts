@@ -220,6 +220,37 @@ if (completedReconciliationExists)
                 "A zero-value statement line cannot be posted.");
         }
 
+        var roundedStatementAmount = Math.Round(
+            statement.Amount,
+            2,
+            MidpointRounding.AwayFromZero);
+        var earliestMatchDate = statement.TransactionDate.AddDays(-3);
+        var latestMatchDate = statement.TransactionDate.AddDays(3);
+        var existingLedgerMatch = await db.PostedJournalLines
+            .AsNoTracking()
+            .Include(x => x.PostedJournal)
+            .Where(x =>
+                x.PostedJournal.OrganisationId == request.OrganisationId &&
+                x.LedgerAccountId == statement.BankAccountId &&
+                x.PostedJournal.EntryDate >= earliestMatchDate &&
+                x.PostedJournal.EntryDate <= latestMatchDate &&
+                !x.PostedJournal.Description!.StartsWith("Coded from bank statement") &&
+                !x.PostedJournal.Reference.StartsWith("REV-BANK-") &&
+                !db.BankStatementLines.Any(s =>
+                    s.MatchedPostedJournalLineId == x.Id))
+            .FirstOrDefaultAsync(x =>
+                x.Debit - x.Credit >= roundedStatementAmount - 0.01m &&
+                x.Debit - x.Credit <= roundedStatementAmount + 0.01m,
+                ct);
+
+        if (existingLedgerMatch is not null)
+        {
+            throw new InvalidOperationException(
+                $"An existing ledger entry already matches this statement amount " +
+                $"({existingLedgerMatch.PostedJournal.EntryDate:dd MMM yyyy}, " +
+                $"{existingLedgerMatch.PostedJournal.Description}). Match that entry instead of coding a new transaction.");
+        }
+
         var description =
             string.IsNullOrWhiteSpace(request.Description)
                 ? statement.Description

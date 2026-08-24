@@ -13,7 +13,7 @@ public sealed class SupplierBillDraftServiceTests
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var service = new SupplierBillDraftService(test.Db, test.Access);
-        var request = await RequestAsync(test);
+        var request = (await RequestAsync(test)) with { AmountsIncludeVat = true };
 
         var draft = await service.SaveAsync(test.UserId, request);
         await service.SaveAsync(
@@ -32,6 +32,7 @@ public sealed class SupplierBillDraftServiceTests
             .SingleAsync(x => x.Id == draft.Id);
         Assert.Equal("SUP-UPDATED", stored.SupplierReference);
         Assert.Equal(test.Supplier.Id, stored.SupplierId);
+        Assert.True(stored.AmountsIncludeVat);
 
         var audits = await test.Db.AuditEvents
             .AsNoTracking()

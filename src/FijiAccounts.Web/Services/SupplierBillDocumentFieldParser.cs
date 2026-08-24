@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using FijiAccounts.Domain.Accounting;
+using FijiAccounts.Domain.Tax;
 
 namespace FijiAccounts.Web.Services;
 
@@ -34,6 +36,18 @@ public static partial class SupplierBillDocumentFieldParser
             ? fileStem
             : null;
     }
+
+    public static decimal CalculateExclusiveAmount(
+        decimal gross,
+        DateOnly billDate,
+        string currency,
+        VatTreatment vatTreatment) =>
+        new FijiVatSchedule()
+            .CalculateFromInclusive(
+                new Money(gross, currency),
+                billDate,
+                vatTreatment)
+            .Exclusive.Amount;
 
     private static bool IsPlausible(string value)
     {
