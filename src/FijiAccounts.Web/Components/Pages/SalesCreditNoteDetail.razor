@@ -1,0 +1,91 @@
+@page "/o/{OrganisationId:guid}/sales/credits/{CreditNoteId:guid}"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>@(credit?.CreditNoteNumber ?? "Credit note") · Account Island</PageTitle>
+
+@if (credit is null || access is null)
+{
+    <div class="alert alert-danger">Credit note not found or access denied.</div>
+}
+else
+{
+    <div class="detail-actions no-print">
+        <a href="o/@OrganisationId/sales/@credit.SalesInvoiceId">← Invoice @credit.SalesInvoice.InvoiceNumber</a>
+        <button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button>
+    </div>
+    <article class="credit-document">
+        <header>
+            <div><span class="document-brand">Account Island</span><h1>Credit Note</h1></div>
+            <div class="document-number"><strong>@credit.CreditNoteNumber</strong>@if (isReversed) { <span>Reversed</span> }</div>
+        </header>
+        <section class="credit-meta">
+            <div><small>From</small><strong>@SupplierName</strong><span>@SupplierAddress</span>@if (!string.IsNullOrWhiteSpace(SupplierTin)) { <span>TIN: @SupplierTin</span> }</div>
+            <div><small>Issued to</small><strong>@RecipientName</strong><span>@RecipientAddress</span>@if (!string.IsNullOrWhiteSpace(RecipientTin)) { <span>TIN: @RecipientTin</span> }</div>
+            <dl><dt>Date</dt><dd>@credit.CreditDate.ToString("dd MMM yyyy")</dd><dt>Currency</dt><dd>@credit.Currency</dd><dt>Original invoice</dt><dd>@credit.SalesInvoice.InvoiceNumber</dd></dl>
+        </section>
+        <section class="adjustment">
+            <small>Reason for adjustment</small>
+            <strong>@credit.Reason</strong>
+            <span>Adjustment to tax invoice @credit.SalesInvoice.InvoiceNumber dated @credit.SalesInvoice.IssueDate.ToString("dd MMM yyyy").</span>
+        </section>
+        <section class="document-totals">
+            <div><span>Credit excluding VAT</span><strong>$@credit.Subtotal.ToString("N2")</strong></div>
+            <div><span>VAT adjustment</span><strong>$@credit.VatTotal.ToString("N2")</strong></div>
+            <div><span>Original invoice VAT</span><strong>$@credit.OriginalInvoiceVatAmount.ToString("N2")</strong></div>
+            <div><span>Adjusted invoice VAT</span><strong>$@credit.AdjustedInvoiceVatAmount.ToString("N2")</strong></div>
+            <div class="grand-total"><span>Total credit including VAT</span><strong>$@credit.Total.ToString("N2")</strong></div>
+        </section>
+        @if (credit.SalesInvoice.IsTaxInvoice is null)
+        {
+            <footer>Legacy source invoice — the compliance profile was not captured when the invoice was issued.</footer>
+        }
+    </article>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid CreditNoteId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private SalesCreditNote? credit;
+    private bool isReversed;
+    private string SupplierName => credit?.SalesInvoice.SupplierNameSnapshot ?? access?.Organisation.LegalName ?? string.Empty;
+    private string? SupplierAddress => credit?.SalesInvoice.SupplierAddressSnapshot ?? access?.Organisation.BusinessAddress;
+    private string? SupplierTin => credit?.SalesInvoice.SupplierTinSnapshot ?? access?.Organisation.Tin;
+    private string RecipientName => credit?.SalesInvoice.RecipientNameSnapshot ?? credit?.SalesInvoice.Customer.Name ?? string.Empty;
+    private string? RecipientAddress => credit?.SalesInvoice.RecipientAddressSnapshot ?? credit?.SalesInvoice.Customer.Address;
+    private string? RecipientTin => credit?.SalesInvoice.RecipientTinSnapshot ?? credit?.SalesInvoice.Customer.Tin;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User);
+        if (userId is null) return;
+
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+
+        var divisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
+        credit = await Db.SalesCreditNotes
+            .AsNoTracking()
+            .Include(x => x.SalesInvoice)
+                .ThenInclude(x => x.Customer)
+            .SingleOrDefaultAsync(x =>
+                x.Id == CreditNoteId &&
+                x.OrganisationId == OrganisationId &&
+                x.SalesInvoice.DivisionId != null &&
+                divisionIds.Contains(x.SalesInvoice.DivisionId.Value));
+        isReversed = credit is not null && await Db.SalesCreditNoteReversals
+            .AsNoTracking()
+            .AnyAsync(x => x.SalesCreditNoteId == credit.Id && x.OrganisationId == OrganisationId);
+    }
+}

@@ -26,6 +26,9 @@ public sealed class OrganisationSettingsServiceTests
         Assert.Equal("Updated Company Limited", updated.LegalName);
         Assert.Equal("Updated Company", updated.TradingName);
         Assert.Equal("TIN-UPDATED", updated.Tin);
+        Assert.Equal("Level 3, Test House, Suva", updated.BusinessAddress);
+        Assert.True(updated.IsVatRegistered);
+        Assert.Equal(new DateOnly(2020, 1, 1), updated.VatRegistrationDate);
         Assert.Equal(new DateOnly(2026, 1, 1), updated.ConversionDate);
         Assert.Equal(14, updated.DefaultSalesInvoiceDueDays);
         Assert.Equal(20, updated.DefaultSupplierBillDueDays);
@@ -125,7 +128,11 @@ public sealed class OrganisationSettingsServiceTests
                 organisation.DefaultSalesInvoicePaymentTermType,
                 organisation.DefaultSalesInvoiceDueDays,
                 organisation.DefaultSupplierBillPaymentTermType,
-                organisation.DefaultSupplierBillDueDays));
+                organisation.DefaultSupplierBillDueDays,
+                organisation.RequireSupplierPaymentApproval,
+                organisation.BusinessAddress,
+                organisation.IsVatRegistered,
+                organisation.VatRegistrationDate));
         await service.ChangeJurisdictionAsync(
             test.UserId,
             organisation.Id,
@@ -228,5 +235,8 @@ public sealed class OrganisationSettingsServiceTests
             PaymentTermType.DaysAfterDocumentDate,
             14,
             PaymentTermType.DayOfFollowingMonth,
-            20);
+            20,
+            BusinessAddress: " Level 3, Test House, Suva ",
+            IsVatRegistered: true,
+            VatRegistrationDate: new DateOnly(2020, 1, 1));
 }

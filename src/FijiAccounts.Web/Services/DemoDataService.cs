@@ -883,6 +883,8 @@ public sealed class DemoDataService(
         {
             Id = id, OrganisationGroupId = groupId, LegalName = legalName,
             TradingName = tradingName, Tin = tin, CountryCode = "FJ", BaseCurrency = "FJD",
+            BusinessAddress = "Level 2, Victoria Parade, Suva, Fiji",
+            IsVatRegistered = true, VatRegistrationDate = new DateOnly(2020, 1, 1),
             TimeZoneId = "Pacific/Fiji", TaxLabel = "VAT", Kind = OrganisationKind.Business,
             FinancialYearEndMonth = 12, FinancialYearEndDay = 31, CreatedAt = createdAt
         };
@@ -899,6 +901,9 @@ public sealed class DemoDataService(
         company.LegalName = legalName;
         company.TradingName = tradingName;
         company.Tin = tin;
+        company.BusinessAddress = "Level 2, Victoria Parade, Suva, Fiji";
+        company.IsVatRegistered = true;
+        company.VatRegistrationDate = new DateOnly(2020, 1, 1);
         company.CountryCode = "FJ";
         company.BaseCurrency = "FJD";
         company.TimeZoneId = "Pacific/Fiji";

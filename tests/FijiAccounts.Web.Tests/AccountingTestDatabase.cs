@@ -165,6 +165,10 @@ public BankTransactionCodingService BankCoding { get; }
         {
             LegalName = "Accounting Test Limited",
             TradingName = "Accounting Test",
+            Tin = "123456789",
+            BusinessAddress = "1 Test Street, Suva, Fiji",
+            IsVatRegistered = true,
+            VatRegistrationDate = new DateOnly(2020, 1, 1),
             CountryCode = "FJ",
             BaseCurrency = "FJD",
             TaxLabel = "VAT",
@@ -199,6 +203,8 @@ public BankTransactionCodingService BankCoding { get; }
             OrganisationId = organisation.Id,
             Organisation = organisation,
             Name = "Test Customer",
+            Address = "2 Customer Road, Suva, Fiji",
+            Tin = "987654321",
             Type = PartyType.Customer,
             IsActive = true
         };

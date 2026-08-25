@@ -18,6 +18,11 @@ public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccess
         var available = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; if (request.Amount <= 0 || request.Amount > available) throw new InvalidOperationException($"Credit must be between $0.01 and ${available:N2}.");
         if (string.IsNullOrWhiteSpace(request.Reason)) throw new InvalidOperationException("Enter a reason for the credit note.");
         var ratio = request.Amount / invoice.Total; var net = decimal.Round(invoice.Subtotal * ratio, 2, MidpointRounding.AwayFromZero); var vat = request.Amount - net;
+        var previouslyCreditedVat = await db.SalesCreditNotes
+            .Where(x =>
+                x.SalesInvoiceId == invoice.Id &&
+                !db.SalesCreditNoteReversals.Any(r => r.SalesCreditNoteId == x.Id))
+            .SumAsync(x => (decimal?)x.VatTotal, ct) ?? 0m;
         var controls = await db.LedgerAccounts
     .Where(x =>
         x.OrganisationId == request.OrganisationId &&
@@ -130,7 +135,7 @@ journalLines.Add(
     }
 }
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines, invoice.BranchId, invoice.DivisionId), ct);
-        var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, OriginalInvoiceVatAmount = invoice.VatTotal, AdjustedInvoiceVatAmount = Math.Max(0m, invoice.VatTotal - previouslyCreditedVat - vat), PostedJournalId = journal.Id, CreatedByUserId = userId };
         foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         invoice.AmountCredited += request.Amount;
 
@@ -145,7 +150,7 @@ invoice.Status =
         : invoice.AmountPaid > 0 || invoice.AmountCredited > 0
             ? InvoiceStatus.PartPaid
             : InvoiceStatus.Posted;
-        db.SalesCreditNotes.Add(credit); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, UserId = userId, EventType = "SalesCreditNotePosted", EntityType = nameof(SalesCreditNote), EntityId = credit.Id.ToString(), JsonData = JsonSerializer.Serialize(new { credit.CreditNoteNumber, invoice.InvoiceNumber, credit.Total, credit.VatTotal }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return credit;
+        db.SalesCreditNotes.Add(credit); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, UserId = userId, EventType = "SalesCreditNotePosted", EntityType = nameof(SalesCreditNote), EntityId = credit.Id.ToString(), JsonData = JsonSerializer.Serialize(new { credit.CreditNoteNumber, invoice.InvoiceNumber, credit.Total, credit.VatTotal, credit.OriginalInvoiceVatAmount, credit.AdjustedInvoiceVatAmount, invoice.TaxDocumentComplianceVersion }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return credit;
     }
 
     public async Task<SalesCreditNoteReversal> ReverseAsync(

@@ -369,10 +369,15 @@ public sealed class RecurringInvoiceGenerationWorkerTests
                 "FJ",
                 OrganisationKind.Business));
         second.CreatedAt = test.Organisation.CreatedAt.AddDays(1);
+        second.Tin = "246813579";
+        second.BusinessAddress = "2 Automation Street, Suva";
+        second.IsVatRegistered = true;
+        second.VatRegistrationDate = new DateOnly(2020, 1, 1);
         var customer = new BusinessParty
         {
             OrganisationId = second.Id,
             Name = "Second Automation Customer",
+            Address = "3 Customer Road, Lautoka",
             Type = PartyType.Customer,
             IsActive = true
         };

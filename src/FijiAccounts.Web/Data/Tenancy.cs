@@ -84,6 +84,9 @@ public sealed class Organisation
     [MaxLength(160)] public required string LegalName { get; set; }
     [MaxLength(80)] public string? TradingName { get; set; }
     [MaxLength(32)] public string? Tin { get; set; }
+    [MaxLength(500)] public string? BusinessAddress { get; set; }
+    public bool IsVatRegistered { get; set; }
+    public DateOnly? VatRegistrationDate { get; set; }
     [MaxLength(2)] public string CountryCode { get; set; } = "FJ";
     [MaxLength(3)] public string BaseCurrency { get; set; } = "FJD";
     [MaxLength(64)] public string TimeZoneId { get; set; } = "Pacific/Fiji";

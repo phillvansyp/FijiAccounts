@@ -265,6 +265,15 @@ public sealed class SalesInvoice
     public decimal Total { get; set; }
     public decimal AmountPaid { get; set; }
     public decimal AmountCredited { get; set; }
+    public bool? IsTaxInvoice { get; set; }
+    public bool IsSimplifiedTaxInvoice { get; set; }
+    [MaxLength(80)] public string? TaxDocumentComplianceVersion { get; set; }
+    [MaxLength(160)] public string? SupplierNameSnapshot { get; set; }
+    [MaxLength(500)] public string? SupplierAddressSnapshot { get; set; }
+    [MaxLength(32)] public string? SupplierTinSnapshot { get; set; }
+    [MaxLength(160)] public string? RecipientNameSnapshot { get; set; }
+    [MaxLength(500)] public string? RecipientAddressSnapshot { get; set; }
+    [MaxLength(32)] public string? RecipientTinSnapshot { get; set; }
     public Guid? PostedJournalId { get; set; }
     public List<SalesInvoiceLine> Lines { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -307,6 +316,8 @@ public sealed class SalesCreditNote
     public decimal Subtotal { get; set; }
     public decimal VatTotal { get; set; }
     public decimal Total { get; set; }
+    public decimal OriginalInvoiceVatAmount { get; set; }
+    public decimal AdjustedInvoiceVatAmount { get; set; }
     public Guid PostedJournalId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public required string CreatedByUserId { get; set; }

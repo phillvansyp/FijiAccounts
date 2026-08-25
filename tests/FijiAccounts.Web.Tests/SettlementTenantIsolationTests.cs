@@ -453,6 +453,10 @@ public async Task ReversePaymentAsync_RejectsPaymentFromAnotherOrganisation()
             {
                 LegalName = "Other Organisation Limited",
                 TradingName = "Other Organisation",
+                Tin = "987654321",
+                BusinessAddress = "9 Other Street, Suva",
+                IsVatRegistered = true,
+                VatRegistrationDate = new DateOnly(2020, 1, 1),
                 CountryCode = "FJ",
                 BaseCurrency = "FJD",
                 TaxLabel = "VAT",
@@ -485,6 +489,7 @@ public async Task ReversePaymentAsync_RejectsPaymentFromAnotherOrganisation()
                 OrganisationId = organisation.Id,
                 Organisation = organisation,
                 Name = "Other Organisation Customer",
+                Address = "10 Customer Road, Nadi",
                 Type = PartyType.Customer,
                 IsActive = true
             };

@@ -15,7 +15,10 @@ public sealed record UpdateOrganisationSettingsRequest(
     int DefaultSalesInvoiceDueDays,
     PaymentTermType DefaultSupplierBillPaymentTermType,
     int DefaultSupplierBillDueDays,
-    bool RequireSupplierPaymentApproval = false);
+    bool RequireSupplierPaymentApproval = false,
+    string? BusinessAddress = null,
+    bool IsVatRegistered = false,
+    DateOnly? VatRegistrationDate = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -39,6 +42,20 @@ public sealed class OrganisationSettingsService(
         var legalName = RequiredText(request.LegalName, 160, "legal name");
         var tradingName = OptionalText(request.TradingName, 80, "trading name");
         var tin = OptionalText(request.Tin, 32, "tax identification number");
+        var businessAddress = OptionalText(request.BusinessAddress, 500, "business address");
+        if (request.IsVatRegistered &&
+            string.Equals((await db.Organisations.AsNoTracking()
+                .Where(x => x.Id == request.OrganisationId)
+                .Select(x => x.CountryCode)
+                .SingleOrDefaultAsync(cancellationToken)) ?? "", "FJ", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tin is null) throw new InvalidOperationException(
+                "A Fiji VAT-registered organisation must have a TIN.");
+            if (businessAddress is null) throw new InvalidOperationException(
+                "A Fiji VAT-registered organisation must have a business address.");
+            if (request.VatRegistrationDate is null) throw new InvalidOperationException(
+                "Enter the Fiji VAT registration effective date.");
+        }
         ValidatePaymentTerm(
             request.DefaultSalesInvoicePaymentTermType,
             request.DefaultSalesInvoiceDueDays,
@@ -62,6 +79,9 @@ public sealed class OrganisationSettingsService(
             organisation.LegalName,
             organisation.TradingName,
             organisation.Tin,
+            organisation.BusinessAddress,
+            organisation.IsVatRegistered,
+            organisation.VatRegistrationDate,
             organisation.ConversionDate,
             DefaultSalesInvoicePaymentTermType =
                 organisation.DefaultSalesInvoicePaymentTermType.ToString(),
@@ -76,6 +96,9 @@ public sealed class OrganisationSettingsService(
             LegalName = legalName,
             TradingName = tradingName,
             Tin = tin,
+            BusinessAddress = businessAddress,
+            request.IsVatRegistered,
+            request.VatRegistrationDate,
             request.ConversionDate,
             DefaultSalesInvoicePaymentTermType =
                 request.DefaultSalesInvoicePaymentTermType.ToString(),
@@ -93,6 +116,11 @@ public sealed class OrganisationSettingsService(
         organisation.LegalName = legalName;
         organisation.TradingName = tradingName;
         organisation.Tin = tin;
+        organisation.BusinessAddress = businessAddress;
+        organisation.IsVatRegistered = request.IsVatRegistered;
+        organisation.VatRegistrationDate = request.IsVatRegistered
+            ? request.VatRegistrationDate
+            : null;
         organisation.ConversionDate = request.ConversionDate;
         organisation.DefaultSalesInvoicePaymentTermType =
             request.DefaultSalesInvoicePaymentTermType;

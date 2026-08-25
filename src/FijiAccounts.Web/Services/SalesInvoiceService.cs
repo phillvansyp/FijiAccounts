@@ -69,6 +69,11 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
             await db.Organisations.SingleAsync(
                 x => x.Id == organisationId,
                 cancellationToken);
+        var customer = await db.BusinessParties.AsNoTracking().SingleAsync(
+            x => x.Id == invoice.CustomerId && x.OrganisationId == organisationId,
+            cancellationToken);
+
+        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
 
         invoice.InvoiceNumber =
             AllocateSalesInvoiceNumber(organisation);
@@ -81,7 +86,7 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
     journalLines,
     cancellationToken);
         var journal = await posting.PostAsync(userId, new(organisationId, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", journalLines, invoice.BranchId, invoice.DivisionId), cancellationToken);
-        RecordSaleMovements(invoice, journal.Id, userId); invoice.Status = InvoiceStatus.Posted; invoice.PostedJournalId = journal.Id; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
+        RecordSaleMovements(invoice, journal.Id, userId); invoice.Status = InvoiceStatus.Posted; invoice.PostedJournalId = journal.Id; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal, invoice.IsTaxInvoice, invoice.IsSimplifiedTaxInvoice, invoice.TaxDocumentComplianceVersion }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
     }
 
     public async Task<SalesInvoice> UpdateDraftAsync(string userId, Guid invoiceId, SalesInvoiceRequest request, CancellationToken cancellationToken = default)
@@ -273,6 +278,10 @@ if (!controlAccounts.TryGetValue(
             AllocateSalesInvoiceNumber(organisation);
 
         var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = invoiceNumber, IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var customer = await db.BusinessParties.AsNoTracking().SingleAsync(
+            x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId,
+            cancellationToken);
+        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
@@ -307,7 +316,7 @@ if (!controlAccounts.TryGetValue(
                         dimension.DivisionId),
                     cancellationToken);
         RecordSaleMovements(invoice, journal.Id, userId); invoice.PostedJournalId = journal.Id;
-        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal }) });
+        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoicePosted", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, invoice.VatTotal, invoice.IsTaxInvoice, invoice.IsSimplifiedTaxInvoice, invoice.TaxDocumentComplianceVersion }) });
         await db.SaveChangesAsync(cancellationToken);
         if (transaction is not null)
         {

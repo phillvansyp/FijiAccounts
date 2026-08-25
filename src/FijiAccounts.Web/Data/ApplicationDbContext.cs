@@ -323,7 +323,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<SalesCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
         builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesCreditNote>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
-        foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
+        foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total), nameof(SalesCreditNote.OriginalInvoiceVatAmount), nameof(SalesCreditNote.AdjustedInvoiceVatAmount) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
         builder.Entity<SalesInvoiceVoid>()
     .HasIndex(x => x.SalesInvoiceId)
     .IsUnique();
