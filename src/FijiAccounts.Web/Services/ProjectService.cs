@@ -26,7 +26,8 @@ public sealed record ProjectCostCodeRequest(
     Guid ProjectId,
     string Code,
     string Name,
-    decimal BudgetAmount);
+    decimal BudgetAmount,
+    ProjectCostCategory Category = ProjectCostCategory.Other);
 
 public sealed record ProjectVariationRequest(
     Guid OrganisationId,
@@ -220,6 +221,11 @@ public sealed class ProjectService(
             throw new InvalidOperationException(
                 "Cost code budget cannot be negative.");
         }
+        if (!Enum.IsDefined(request.Category))
+        {
+            throw new InvalidOperationException(
+                "Select a valid project cost category.");
+        }
 
         var project = await db.Projects.SingleOrDefaultAsync(
             x => x.Id == request.ProjectId && x.OrganisationId == request.OrganisationId,
@@ -253,6 +259,7 @@ public sealed class ProjectService(
             ProjectId = project.Id,
             Code = code,
             Name = name,
+            Category = request.Category,
             BudgetAmount = request.BudgetAmount
         };
         db.ProjectCostCodes.Add(costCode);
@@ -261,7 +268,61 @@ public sealed class ProjectService(
             CostCodeId = costCode.Id,
             costCode.Code,
             costCode.Name,
+            Category = costCode.Category.ToString(),
             costCode.BudgetAmount
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        return costCode;
+    }
+
+    public async Task<ProjectCostCode> SetCostCodeCategoryAsync(
+        string userId,
+        Guid organisationId,
+        Guid costCodeId,
+        ProjectCostCategory category,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireMaintainerAsync(userId, organisationId);
+        if (!Enum.IsDefined(category))
+        {
+            throw new InvalidOperationException(
+                "Select a valid project cost category.");
+        }
+
+        var costCode = await db.ProjectCostCodes
+            .Include(x => x.Project)
+            .SingleOrDefaultAsync(x =>
+                x.Id == costCodeId && x.Project.OrganisationId == organisationId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Project cost code not found.");
+        if (costCode.Project.Status is ProjectStatus.Completed or ProjectStatus.Cancelled)
+        {
+            throw new InvalidOperationException(
+                "Cost codes on a closed project cannot be reclassified.");
+        }
+        if (!await access.CanAccessDimensionAsync(
+                userId,
+                organisationId,
+                costCode.Project.BranchId,
+                costCode.Project.DivisionId,
+                cancellationToken))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot maintain this project's cost codes.");
+        }
+        if (costCode.Category == category)
+        {
+            return costCode;
+        }
+
+        var previousCategory = costCode.Category;
+        costCode.Category = category;
+        AddAudit(organisationId, userId, "ProjectCostCodeCategoryChanged", costCode.Project, new
+        {
+            CostCodeId = costCode.Id,
+            costCode.Code,
+            PreviousCategory = previousCategory.ToString(),
+            Category = costCode.Category.ToString()
         });
         await db.SaveChangesAsync(cancellationToken);
         return costCode;

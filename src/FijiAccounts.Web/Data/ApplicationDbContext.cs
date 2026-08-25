@@ -884,6 +884,8 @@ builder.Entity<FixedAsset>()
         foreach (var property in new[] { nameof(Project.OriginalContractValue), nameof(Project.OpeningApprovedVariationValue), nameof(Project.ForecastCost) }) builder.Entity<Project>().Property(property).HasPrecision(18, 2);
         builder.Entity<Project>().Property(x => x.RetentionPercent).HasPrecision(8, 4);
         builder.Entity<ProjectCostCode>().HasIndex(x => new { x.ProjectId, x.Code }).IsUnique();
+        builder.Entity<ProjectCostCode>().Property(x => x.Category)
+            .HasDefaultValue(ProjectCostCategory.Other);
         builder.Entity<ProjectCostCode>().Property(x => x.BudgetAmount).HasPrecision(18, 2);
         builder.Entity<ProjectVariation>()
             .HasOne(x => x.Project).WithMany(x => x.Variations).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);

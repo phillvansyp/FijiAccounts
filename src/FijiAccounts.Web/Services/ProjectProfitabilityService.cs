@@ -8,6 +8,14 @@ public sealed record ProjectCostCodePerformance(
     Guid CostCodeId,
     string Code,
     string Name,
+    ProjectCostCategory Category,
+    decimal Budget,
+    decimal ActualCost,
+    decimal CommittedCost,
+    decimal RemainingBudgetAfterCommitment);
+
+public sealed record ProjectCostCategoryPerformance(
+    ProjectCostCategory Category,
     decimal Budget,
     decimal ActualCost,
     decimal CommittedCost,
@@ -23,12 +31,23 @@ public sealed record ProjectProfitability(
     decimal UncommittedForecastCost,
     decimal? CostProgressPercent,
     decimal UncodedActualCost,
+    decimal UncodedCommittedCost,
+    IReadOnlyList<ProjectCostCategoryPerformance> Categories,
     IReadOnlyList<ProjectCostCodePerformance> CostCodes);
 
 public sealed class ProjectProfitabilityService(
     ApplicationDbContext db,
     ProjectService projects)
 {
+    private static readonly ProjectCostCategory[] CategoryOrder =
+    [
+        ProjectCostCategory.Labour,
+        ProjectCostCategory.Materials,
+        ProjectCostCategory.Equipment,
+        ProjectCostCategory.Subcontractors,
+        ProjectCostCategory.Other
+    ];
+
     public async Task<IReadOnlyList<ProjectProfitability>> GetAsync(
         string userId,
         Guid organisationId,
@@ -69,6 +88,8 @@ public sealed class ProjectProfitabilityService(
             var cost = projectActuals.Where(x => x.Type == AccountType.Expense).Sum(x => x.Amount);
             var projectCommitments = commitments.Where(x => x.ProjectId == project.Id).ToList();
             var committed = projectCommitments.Sum(x => x.Amount);
+            var categoryByCostCode = project.CostCodes.ToDictionary(
+                x => x.Id, x => x.Category);
             var costCodes = project.CostCodes.Where(x => x.IsActive).Select(code =>
             {
                 var actual = projectActuals
@@ -77,10 +98,28 @@ public sealed class ProjectProfitabilityService(
                 var codeCommitted = projectCommitments
                     .Where(x => x.ProjectCostCodeId == code.Id).Sum(x => x.Amount);
                 return new ProjectCostCodePerformance(
-                    code.Id, code.Code, code.Name, code.BudgetAmount,
+                    code.Id, code.Code, code.Name, code.Category, code.BudgetAmount,
                     actual, codeCommitted, code.BudgetAmount - actual - codeCommitted);
             }).ToList();
-            var codedCost = costCodes.Sum(x => x.ActualCost);
+            var categories = CategoryOrder.Select(category =>
+            {
+                var budget = project.CostCodes
+                    .Where(x => x.IsActive && x.Category == category)
+                    .Sum(x => x.BudgetAmount);
+                var categoryActual = projectActuals
+                    .Where(x => x.Type == AccountType.Expense &&
+                        CategoryFor(x.ProjectCostCodeId, categoryByCostCode) == category)
+                    .Sum(x => x.Amount);
+                var categoryCommitted = projectCommitments
+                    .Where(x => CategoryFor(x.ProjectCostCodeId, categoryByCostCode) == category)
+                    .Sum(x => x.Amount);
+                return new ProjectCostCategoryPerformance(
+                    category,
+                    budget,
+                    categoryActual,
+                    categoryCommitted,
+                    budget - categoryActual - categoryCommitted);
+            }).ToList();
             return new ProjectProfitability(
                 project.Id,
                 revenue,
@@ -90,10 +129,20 @@ public sealed class ProjectProfitabilityService(
                 Math.Max(0m, project.ForecastCost - cost),
                 Math.Max(0m, project.ForecastCost - cost - committed),
                 project.ForecastCost == 0 ? null : cost / project.ForecastCost * 100m,
-                cost - codedCost,
+                projectActuals.Where(x => x.Type == AccountType.Expense &&
+                    x.ProjectCostCodeId is null).Sum(x => x.Amount),
+                projectCommitments.Where(x => x.ProjectCostCodeId is null).Sum(x => x.Amount),
+                categories,
                 costCodes);
         }).ToList();
     }
+
+    private static ProjectCostCategory CategoryFor(
+        Guid? costCodeId,
+        IReadOnlyDictionary<Guid, ProjectCostCategory> categoryByCostCode) =>
+        costCodeId is Guid id && categoryByCostCode.TryGetValue(id, out var category)
+            ? category
+            : ProjectCostCategory.Other;
 
     private sealed record ActualAmount(
         Guid ProjectId,

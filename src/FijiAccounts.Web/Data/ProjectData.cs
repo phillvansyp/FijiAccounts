@@ -38,6 +38,15 @@ public enum ProjectRevenueRecognitionMethod
     CertifiedClaims
 }
 
+public enum ProjectCostCategory
+{
+    Other,
+    Labour,
+    Materials,
+    Equipment,
+    Subcontractors
+}
+
 public sealed class Project
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -143,6 +152,7 @@ public sealed class ProjectCostCode
     public Project Project { get; set; } = null!;
     [MaxLength(30)] public required string Code { get; set; }
     [MaxLength(120)] public required string Name { get; set; }
+    public ProjectCostCategory Category { get; set; } = ProjectCostCategory.Other;
     public decimal BudgetAmount { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

@@ -136,7 +136,8 @@ public sealed class ProjectProfitabilityTests
         var projects = new ProjectService(test.Db, test.Access);
         var project = await CreateActiveProject(test, projects, division.Id, "JOB-PO", 1_000m);
         var costCode = await projects.AddCostCodeAsync(test.UserId,
-            new(test.Organisation.Id, project.Id, "SUB", "Subcontract", 700m));
+            new(test.Organisation.Id, project.Id, "SUB", "Subcontract", 700m,
+                ProjectCostCategory.Subcontractors));
         var order = await test.PurchaseOrders.CreateDraftAsync(test.UserId, new(
             test.Organisation.Id, test.Supplier.Id, new(2026, 8, 20), new(2026, 9, 20),
             "PROJECT-PO", "Project commitment",
@@ -154,6 +155,10 @@ public sealed class ProjectProfitabilityTests
         Assert.Equal(700m, approved.UncommittedForecastCost);
         Assert.Equal(300m, Assert.Single(approved.CostCodes).CommittedCost);
         Assert.Equal(400m, Assert.Single(approved.CostCodes).RemainingBudgetAfterCommitment);
+        var subcontractors = approved.Categories.Single(
+            x => x.Category == ProjectCostCategory.Subcontractors);
+        Assert.Equal(300m, subcontractors.CommittedCost);
+        Assert.Equal(700m, subcontractors.Budget);
 
         await test.PurchaseOrders.CancelAsync(test.UserId, test.Organisation.Id, order.Id);
         Assert.Equal(0m, Assert.Single(await service.GetAsync(
@@ -192,7 +197,8 @@ public sealed class ProjectProfitabilityTests
         var projects = new ProjectService(test.Db, test.Access);
         var project = await CreateActiveProject(test, projects, division.Id, "JOB-A", 800m);
         var costCode = await projects.AddCostCodeAsync(test.UserId,
-            new(test.Organisation.Id, project.Id, "LAB", "Labour", 800m));
+            new(test.Organisation.Id, project.Id, "LAB", "Labour", 800m,
+                ProjectCostCategory.Labour));
 
         await test.Posting.PostAsync(test.UserId, new(
             test.Organisation.Id, new(2026, 8, 20), "PROJECT-REVENUE", "Project revenue",
@@ -206,7 +212,9 @@ public sealed class ProjectProfitabilityTests
             [
                 new(test.Account("6000").Id, "Project labour", 600m, 0m,
                     ProjectId: project.Id, ProjectCostCodeId: costCode.Id),
-                new(test.Account("1000").Id, "Cash", 0m, 600m)
+                new(test.Account("6000").Id, "Uncoded project consumables", 50m, 0m,
+                    ProjectId: project.Id),
+                new(test.Account("1000").Id, "Cash", 0m, 650m)
             ], branch.Id, division.Id));
 
         var result = Assert.Single(await new ProjectProfitabilityService(test.Db, projects)
@@ -214,14 +222,31 @@ public sealed class ProjectProfitabilityTests
         var labour = Assert.Single(result.CostCodes);
 
         Assert.Equal(1_000m, result.ActualRevenue);
-        Assert.Equal(600m, result.ActualCost);
-        Assert.Equal(400m, result.ActualMargin);
-        Assert.Equal(200m, result.ForecastCostToComplete);
-        Assert.Equal(75m, result.CostProgressPercent);
-        Assert.Equal(0m, result.UncodedActualCost);
+        Assert.Equal(650m, result.ActualCost);
+        Assert.Equal(350m, result.ActualMargin);
+        Assert.Equal(150m, result.ForecastCostToComplete);
+        Assert.Equal(81.25m, result.CostProgressPercent);
+        Assert.Equal(50m, result.UncodedActualCost);
         Assert.Equal(600m, labour.ActualCost);
+        Assert.Equal(ProjectCostCategory.Labour, labour.Category);
         Assert.Equal(200m, labour.RemainingBudgetAfterCommitment);
-        Assert.Equal(2, await test.Db.PostedJournalLines.CountAsync(x => x.ProjectId == project.Id));
+        Assert.Equal(600m, result.Categories.Single(
+            x => x.Category == ProjectCostCategory.Labour).ActualCost);
+        Assert.Equal(50m, result.Categories.Single(
+            x => x.Category == ProjectCostCategory.Other).ActualCost);
+        Assert.Equal(3, await test.Db.PostedJournalLines.CountAsync(x => x.ProjectId == project.Id));
+
+        await projects.SetCostCodeCategoryAsync(test.UserId, test.Organisation.Id,
+            costCode.Id, ProjectCostCategory.Materials);
+        result = Assert.Single(await new ProjectProfitabilityService(test.Db, projects)
+            .GetAsync(test.UserId, test.Organisation.Id));
+
+        Assert.Equal(0m, result.Categories.Single(
+            x => x.Category == ProjectCostCategory.Labour).ActualCost);
+        Assert.Equal(600m, result.Categories.Single(
+            x => x.Category == ProjectCostCategory.Materials).ActualCost);
+        Assert.Single(await test.Db.AuditEvents.Where(
+            x => x.EventType == "ProjectCostCodeCategoryChanged").ToListAsync());
     }
 
     [Fact]
