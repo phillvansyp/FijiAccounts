@@ -3,10 +3,18 @@ using FijiAccounts.Web.Components.Account;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+}
 
 // Static web assets are required when the app is launched directly as well as
 // through the Development launch profile.
@@ -155,7 +163,16 @@ app.MapSupplierBillAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
 app.MapBankStatementDocumentEndpoints();
 
-if (app.Environment.IsDevelopment())
+app.MapGet(
+        "/health",
+        async (ApplicationDbContext database, CancellationToken cancellationToken) =>
+            await database.Database.CanConnectAsync(cancellationToken)
+                ? Results.Ok(new { status = "healthy" })
+                : Results.StatusCode(StatusCodes.Status503ServiceUnavailable))
+    .AllowAnonymous();
+
+if (app.Environment.IsDevelopment() ||
+    builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
 {
     await using var migrationScope = app.Services.CreateAsyncScope();
     var database = migrationScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

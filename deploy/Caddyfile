@@ -1,0 +1,12 @@
+app.accountisland.com {
+    encode zstd gzip
+
+    reverse_proxy 192.168.1.217:8188
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

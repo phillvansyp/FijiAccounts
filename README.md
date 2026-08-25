@@ -20,6 +20,12 @@ dotnet run --project src/FijiAccounts.Web
 
 Open the HTTPS address shown in the terminal. Development uses SQLite; production is intended to use PostgreSQL with row-level tenant isolation.
 
+## Production deployment
+
+Production deployment is performed by a GitHub Actions self-hosted runner after
+each push to `main`. See [docs/deployment.md](docs/deployment.md) for server,
+Docker, HTTPS, runner, backup, and first-data-migration setup.
+
 ## Platform administration
 
 The operator dashboard is available at `/platform`. Access requires the

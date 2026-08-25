@@ -1,0 +1,24 @@
+name: account-island
+
+services:
+  app:
+    image: ${APP_IMAGE:-account-island:latest}
+    container_name: account-island-app
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      ConnectionStrings__DefaultConnection: Data Source=/app/data/account-island.db;Cache=Shared
+      Database__MigrateOnStartup: "true"
+      DataProtection__KeysPath: /app/keys
+      TZ: Pacific/Fiji
+    env_file:
+      - /home/serv5/account-island/config/app.env
+    volumes:
+      - /home/serv5/account-island/data:/app/data
+      - /home/serv5/account-island/keys:/app/keys
+    ports:
+      - "192.168.1.217:8188:8080"
+    security_opt:
+      - no-new-privileges:true
