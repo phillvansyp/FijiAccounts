@@ -22,3 +22,19 @@ services:
       - "192.168.1.125:8188:8080"
     security_opt:
       - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: account-island-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    volumes:
+      - /mnt/data/account-island/stack/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /mnt/data/account-island/caddy/data:/data
+      - /mnt/data/account-island/caddy/config:/config
+    ports:
+      - "192.168.1.125:8280:80"
+      - "192.168.1.125:8443:443"
+    security_opt:
+      - no-new-privileges:true

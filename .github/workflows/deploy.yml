@@ -54,9 +54,11 @@ jobs:
         run: |
           set -euo pipefail
           install -d -m 0750 "$DEPLOY_DIR" "$DEPLOY_DIR/stack" \
-            "$DEPLOY_DIR/config" "$DEPLOY_DIR/backups"
+            "$DEPLOY_DIR/config" "$DEPLOY_DIR/backups" \
+            "$DEPLOY_DIR/caddy/data" "$DEPLOY_DIR/caddy/config"
           mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/keys"
           install -m 0644 deploy/compose.yml "$DEPLOY_DIR/stack/compose.yml"
+          install -m 0644 deploy/Caddyfile "$DEPLOY_DIR/stack/Caddyfile"
           touch "$DEPLOY_DIR/config/app.env"
           chmod 0600 "$DEPLOY_DIR/config/app.env"
 

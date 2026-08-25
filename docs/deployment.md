@@ -1,11 +1,11 @@
 # Production deployment
 
-The production application runs on the existing `rigpilot-apps` Linux Docker
-host and is published at `https://app.accountisland.com` through the separate
-LAN Caddy gateway:
+The production application and its dedicated Caddy proxy run on the `hercules`
+Linux Docker host and are published at `https://app.accountisland.com`:
 
 - Docker host: `192.168.1.125` (`hercules`), application port `8188`.
-- Caddy gateway: `192.168.1.129`, which receives public ports 80 and 443.
+- App-owned Caddy: internal ports `8280` (HTTP) and `8443` (HTTPS).
+- Public address: `222.154.228.115`.
 
 Every push to `main` runs the test suite, builds an immutable image, backs up the
 SQLite data directory, and deploys it. If the public health check fails, the
@@ -73,10 +73,16 @@ migrations.
 
 ## Caddy gateway
 
-The application deployment does not access or modify the gateway. Through the
-gateway's existing authorized administration path, install the route in
-`deploy/Caddyfile` and reload Caddy. It terminates TLS and proxies to the
-Hercules LAN endpoint `192.168.1.125:8188`.
+The application owns the Caddy service declared in `deploy/compose.yml`, its
+configuration, and its certificate storage. Other application deployments do
+not modify it. Configure the router with these translations on the Hercules
+public connection:
+
+- WAN port `80` to `192.168.1.125:8280`.
+- WAN port `443` to `192.168.1.125:8443`.
+
+Set the `app.accountisland.com` A record to `222.154.228.115`. Caddy then obtains
+and renews the public TLS certificate automatically.
 
 ## Operations
 

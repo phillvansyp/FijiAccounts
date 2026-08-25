@@ -1,12 +1,12 @@
 app.accountisland.com {
-    encode zstd gzip
+	encode zstd gzip
 
-    reverse_proxy 192.168.1.125:8188
+	reverse_proxy app:8080
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
 }
