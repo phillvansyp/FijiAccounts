@@ -22,10 +22,10 @@ jobs:
       name: production
       url: https://app.accountisland.com
     env:
-      DEPLOY_DIR: /home/serv5/account-island
-      DOTNET_ROOT: /home/serv5/.dotnet
-      DOTNET_CLI_HOME: /home/serv5/.dotnet-cli
-      NUGET_PACKAGES: /home/serv5/.nuget/packages
+      DEPLOY_DIR: /mnt/data/account-island
+      DOTNET_ROOT: /mnt/data/account-island/dotnet
+      DOTNET_CLI_HOME: /mnt/data/account-island/dotnet-cli
+      NUGET_PACKAGES: /mnt/data/account-island/nuget/packages
 
     steps:
       - name: Check out source
@@ -33,12 +33,12 @@ jobs:
 
       - name: Run test suite
         shell: bash
-        run: /home/serv5/.dotnet/dotnet test FijiAccounts.slnx --configuration Release
+        run: /mnt/data/account-island/dotnet/dotnet test FijiAccounts.slnx --configuration Release
 
       - name: Publish production application
         shell: bash
         run: |
-          /home/serv5/.dotnet/dotnet publish src/FijiAccounts.Web/FijiAccounts.Web.csproj \
+          /mnt/data/account-island/dotnet/dotnet publish src/FijiAccounts.Web/FijiAccounts.Web.csproj \
             --configuration Release \
             --runtime linux-musl-x64 \
             --self-contained true \
@@ -100,7 +100,7 @@ jobs:
             --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
             --header 'Host: app.accountisland.com' \
             --header 'X-Forwarded-Proto: https' \
-            http://192.168.1.217:8188/health >/dev/null
+            http://192.168.1.125:8188/health >/dev/null
 
           trap - ERR
           find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
