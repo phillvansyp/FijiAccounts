@@ -144,6 +144,38 @@ public sealed class SupplierPaymentApprovalTests
         Assert.Empty(await test.Db.SupplierPayments.ToListAsync());
     }
 
+    [Fact]
+    public async Task ApprovedRequestCannotPostASecondPayment()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.RequireSupplierPaymentApproval = true;
+        var approver = await AddMemberAsync(
+            test,
+            OrganisationRole.Administrator,
+            "payment-idempotency@example.com");
+        await test.Db.SaveChangesAsync();
+        var bill = await PostBillAsync(test, "PAY-APPROVAL-006");
+        var approval = await test.Purchasing.RequestPaymentApprovalAsync(
+            test.UserId,
+            PaymentRequest(test, bill) with { Amount = 40m });
+
+        await test.Purchasing.ApprovePaymentAsync(
+            approver.Id,
+            test.Organisation.Id,
+            approval.Id);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Purchasing.ApprovePaymentAsync(
+                approver.Id,
+                test.Organisation.Id,
+                approval.Id));
+
+        Assert.Contains("pending", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(await test.Db.SupplierPayments.ToListAsync());
+        Assert.Equal(
+            40m,
+            await test.Db.SupplierPayments.SumAsync(x => x.Amount));
+    }
+
     private static async Task<SupplierBill> PostBillAsync(AccountingTestDatabase test, string reference) =>
         await test.Purchasing.PostBillAsync(test.UserId, new SupplierBillRequest(
             test.Organisation.Id,

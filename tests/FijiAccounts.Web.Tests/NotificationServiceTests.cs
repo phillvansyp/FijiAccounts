@@ -8,6 +8,37 @@ namespace FijiAccounts.Web.Tests;
 public sealed class NotificationServiceTests
 {
     [Fact]
+    public async Task MarkRead_IsAuditedAndIdempotentWithoutResolvingNotification()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var notification = await CreateNotificationAsync(test.Notifications, test);
+
+        Assert.True(await test.Notifications.MarkReadAsync(
+            test.UserId,
+            test.Organisation.Id,
+            notification.Id));
+        Assert.True(await test.Notifications.MarkReadAsync(
+            test.UserId,
+            test.Organisation.Id,
+            notification.Id));
+
+        var saved = await test.Db.Notifications
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == notification.Id);
+        Assert.True(saved.IsRead);
+        Assert.NotNull(saved.ReadAt);
+        Assert.Equal(NotificationStatus.Open, saved.Status);
+
+        var audit = Assert.Single(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
+        Assert.Equal("NotificationRead", audit.EventType);
+        using var evidence = JsonDocument.Parse(audit.JsonData);
+        Assert.Equal("Open", evidence.RootElement.GetProperty("OldStatus").GetString());
+        Assert.Equal("Open", evidence.RootElement.GetProperty("NewStatus").GetString());
+        Assert.False(evidence.RootElement.GetProperty("WasRead").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("IsRead").GetBoolean());
+    }
+
+    [Fact]
     public async Task Acknowledge_RecordsUserAndKeepsNotificationUnread()
     {
         await using var test =

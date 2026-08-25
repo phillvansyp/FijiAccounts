@@ -42,6 +42,20 @@ public sealed class FijiTaxDocumentComplianceTests
     }
 
     [Fact]
+    public void MixedStandardAndZeroRatedSupply_AtOneHundredOrLess_IsSimplified()
+    {
+        var result = FijiTaxDocumentCompliance.ClassifyAndValidate(
+            Organisation(),
+            Recipient(address: null),
+            new DateOnly(2026, 8, 26),
+            100m,
+            [Line(VatTreatment.Standard), Line(VatTreatment.ZeroRated)]);
+
+        Assert.True(result.IsTaxInvoice);
+        Assert.True(result.IsSimplified);
+    }
+
+    [Fact]
     public void FullTaxInvoice_RequiresRecipientAddress()
     {
         var exception = Assert.Throws<InvalidOperationException>(() =>

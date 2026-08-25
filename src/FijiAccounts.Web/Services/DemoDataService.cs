@@ -13,7 +13,7 @@ public sealed record DemoDataSummary(
     DateOnly StartDate,
     int CompanyCount,
     int BranchCount,
-    int DepartmentCount,
+    int DivisionCount,
     int CustomerCount,
     int SupplierCount,
     int SalesInvoiceCount,
@@ -351,9 +351,6 @@ public sealed class DemoDataService(
         await db.AccountantEngagements
             .Where(x => organisationIds.Contains(x.PracticeOrganisationId) || organisationIds.Contains(x.ClientOrganisationId))
             .ExecuteDeleteAsync(ct);
-        await db.OrganisationUnits
-            .Where(x => organisationIds.Contains(x.OrganisationId))
-            .ExecuteDeleteAsync(ct);
         await db.Divisions
             .Where(x => organisationIds.Contains(x.Branch.OrganisationId))
             .ExecuteDeleteAsync(ct);
@@ -515,17 +512,12 @@ public sealed class DemoDataService(
             CreateBranch("b-suva", companies[1], "SUVA", "Suva Office", true, generatedAt),
             CreateBranch("b-lautoka", companies[1], "LAUTOKA", "Lautoka Office", false, generatedAt)
         };
+        AddDivision(branches[0], "SALES", "Sales", generatedAt);
+        AddDivision(branches[0], "PURCH", "Purchasing", generatedAt);
+        AddDivision(branches[1], "OPS", "Operations", generatedAt);
+        AddDivision(branches[2], "FIN", "Finance", generatedAt);
+        AddDivision(branches[2], "ADMIN", "Administration", generatedAt);
         db.Branches.AddRange(branches);
-
-        var departments = new[]
-        {
-            CreateDepartment("a-sales", companies[0], "SALES", "Sales", generatedAt),
-            CreateDepartment("a-purchasing", companies[0], "PURCH", "Purchasing", generatedAt),
-            CreateDepartment("a-operations", companies[0], "OPS", "Operations", generatedAt),
-            CreateDepartment("b-finance", companies[1], "FIN", "Finance", generatedAt),
-            CreateDepartment("b-admin", companies[1], "ADMIN", "Administration", generatedAt)
-        };
-        db.OrganisationUnits.AddRange(departments);
 
         var accountsByCompany = new Dictionary<Guid, Dictionary<string, LedgerAccount>>();
         foreach (var company in companies)
@@ -621,7 +613,7 @@ public sealed class DemoDataService(
                     Id = StableGuid($"{company.Id}:invoice:{i}"),
                     OrganisationId = company.Id,
                     BranchId = branch.Id,
-                    DivisionId = branch.Divisions.Single().Id,
+                    DivisionId = branch.Divisions.Single(x => x.IsDefault).Id,
                     CustomerId = customers[WeightedIndex(random, customers.Count)].Id,
                     SequenceNumber = i + 1,
                     InvoiceNumber = $"INV-{i + 1:D6}",
@@ -671,7 +663,7 @@ public sealed class DemoDataService(
                     Id = StableGuid($"{company.Id}:bill:{i}"),
                     OrganisationId = company.Id,
                     BranchId = branch.Id,
-                    DivisionId = branch.Divisions.Single().Id,
+                    DivisionId = branch.Divisions.Single(x => x.IsDefault).Id,
                     SupplierId = suppliers[i % suppliers.Count].Id,
                     SequenceNumber = i + 1,
                     BillNumber = $"BILL-{i + 1:D6}",
@@ -866,7 +858,7 @@ public sealed class DemoDataService(
             asOf, start,
             organisationIds.Length,
             await db.Branches.CountAsync(x => organisationIds.Contains(x.OrganisationId), ct),
-            await db.OrganisationUnits.CountAsync(x => organisationIds.Contains(x.OrganisationId) && x.Type == OrganisationUnitType.Department, ct),
+            await db.Divisions.CountAsync(x => organisationIds.Contains(x.Branch.OrganisationId), ct),
             await db.BusinessParties.CountAsync(x => organisationIds.Contains(x.OrganisationId) && (x.Type & PartyType.Customer) != 0, ct),
             await db.BusinessParties.CountAsync(x => organisationIds.Contains(x.OrganisationId) && (x.Type & PartyType.Supplier) != 0, ct),
             invoiceDates.Count,
@@ -943,8 +935,8 @@ public sealed class DemoDataService(
         return branch;
     }
 
-    private static OrganisationUnit CreateDepartment(string key, Organisation company, string code, string name, DateTimeOffset createdAt) =>
-        new() { Id = StableGuid($"{company.Id}:department:{key}"), OrganisationId = company.Id, Type = OrganisationUnitType.Department, Code = code, Name = name, CreatedAt = createdAt };
+    private static void AddDivision(Branch branch, string code, string name, DateTimeOffset createdAt) =>
+        branch.Divisions.Add(new Division { Id = StableGuid($"{branch.Id}:division:{code}"), Code = code, Name = name, CreatedAt = createdAt });
 
     private static PostedJournal SalesJournal(Organisation company, Branch branch, SalesInvoice invoice, IReadOnlyDictionary<string, LedgerAccount> accounts, long sequence, string userId) =>
         Journal(company, branch, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", sequence, userId,
@@ -967,7 +959,7 @@ public sealed class DemoDataService(
             (invoice.Lines.Single().RevenueAccountId, net, 0), (accounts["2100"].Id, vat, 0), (accounts["1100"].Id, 0, net + vat), invoice.DivisionId);
 
     private static PostedJournal Journal(Organisation company, Branch branch, DateOnly date, string reference, string description, long sequence, string userId, params (Guid AccountId, decimal Debit, decimal Credit)[] values) =>
-        Journal(company, branch, date, reference, description, sequence, userId, values, branch.Divisions.SingleOrDefault()?.Id);
+        Journal(company, branch, date, reference, description, sequence, userId, values, branch.Divisions.SingleOrDefault(x => x.IsDefault)?.Id);
 
     private static PostedJournal Journal(Organisation company, Branch branch, DateOnly date, string reference, string description, long sequence, string userId, (Guid AccountId, decimal Debit, decimal Credit) first, (Guid AccountId, decimal Debit, decimal Credit) second, Guid? divisionId) =>
         Journal(company, branch, date, reference, description, sequence, userId, new[] { first, second }, divisionId);

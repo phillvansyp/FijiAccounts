@@ -79,6 +79,10 @@ public sealed class BankTransfer
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
+    public Guid BranchId { get; set; }
+    public Branch Branch { get; set; } = null!;
+    public Guid DivisionId { get; set; }
+    public Division Division { get; set; } = null!;
     public Guid FromBankAccountId { get; set; }
     public LedgerAccount FromBankAccount { get; set; } = null!;
     public Guid ToBankAccountId { get; set; }

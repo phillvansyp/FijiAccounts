@@ -69,7 +69,37 @@
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
     protected override async Task OnInitializedAsync() { updateSubscription = Updates.Subscribe(OrganisationUpdated); await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
     private async void LocationChanged(object? sender, LocationChangedEventArgs e) { await UpdateContext(); await InvokeAsync(StateHasChanged); }
-    private async Task UpdateContext() { currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri); activeOrganisationId = ExtractOrganisationId(currentUrl); activeOrganisationName = null; var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); activeUserId = UserManager.GetUserId(state.User); accessibleOrganisations = activeUserId is null ? [] : await TenantAccess.ListAsync(activeUserId); if (activeOrganisationId is not null) activeOrganisationName = accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation.LegalName; if (activeOrganisationName is null && accessibleOrganisations.Count > 0) { activeOrganisationId = accessibleOrganisations[0].Organisation.Id; activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName; } unreadNotificationCount = activeOrganisationId is null || activeUserId is null ? 0 : await NotificationService.GetUnreadCountAsync(activeUserId, activeOrganisationId.Value); }
+    private async Task UpdateContext()
+    {
+        currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var requestedOrganisationId = ExtractOrganisationId(currentUrl);
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        activeUserId = UserManager.GetUserId(state.User);
+        accessibleOrganisations = activeUserId is null ? [] : await TenantAccess.ListAsync(activeUserId);
+
+        var requestedOrganisation = requestedOrganisationId is null
+            ? null
+            : accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == requestedOrganisationId);
+        if (requestedOrganisation is not null)
+        {
+            activeOrganisationId = requestedOrganisation.Organisation.Id;
+            activeOrganisationName = requestedOrganisation.Organisation.LegalName;
+        }
+        else if (requestedOrganisationId is null && accessibleOrganisations.Count > 0)
+        {
+            activeOrganisationId = accessibleOrganisations[0].Organisation.Id;
+            activeOrganisationName = accessibleOrganisations[0].Organisation.LegalName;
+        }
+        else
+        {
+            activeOrganisationId = null;
+            activeOrganisationName = null;
+        }
+
+        unreadNotificationCount = activeOrganisationId is null || activeUserId is null
+            ? 0
+            : await NotificationService.GetUnreadCountAsync(activeUserId, activeOrganisationId.Value);
+    }
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
     private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
     private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();

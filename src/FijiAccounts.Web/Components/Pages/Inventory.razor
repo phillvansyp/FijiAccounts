@@ -13,55 +13,164 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Inventory · Account Island</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+<PageTitle>Inventory - Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Products &amp; services</p><h1>Inventory</h1><p class="page-intro">Know what is on hand, what it is worth, and which items need attention.</p></div><div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="@($"o/{OrganisationId}/products")">Manage items</a><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print valuation</button></div></div>
+    <div class="page-heading">
+        <div><p class="eyebrow">Products &amp; services</p><h1>Inventory</h1><p class="page-intro">Know what is on hand, what it is worth, and which items need attention.</p></div>
+        <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="@($"o/{OrganisationId}/products")">Manage items</a><button class="btn btn-outline-secondary no-print" onclick="window.print()">Print valuation</button></div>
+    </div>
+
     @if (message is not null) { <div class="alert @messageClass">@message</div> }
-    <div class="row g-3 mb-4"><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Stock value</span><h2>$@TotalValue.ToString("N2")</h2><span class="text-muted">Weighted-average valuation</span></div></div><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Tracked items</span><h2>@items.Count</h2><span class="text-muted">@items.Count(x => x.IsActive) active</span></div></div><div class="col-md-4"><div class="detail-card h-100"><span class="eyebrow">Needs attention</span><h2>@LowStock.Count</h2><span class="text-muted">At or below reorder level</span></div></div></div>
+
     @if (canManage && items.Count > 0)
     {
-        <details class="setup-card mb-4"><summary><strong>+ Adjust stock</strong></summary><EditForm Model="model" OnValidSubmit="Adjust" FormName="inventory-adjustment" class="mt-3"><DataAnnotationsValidator /><ValidationSummary /><div class="row"><div class="col-md-4 mb-3"><label class="form-label">Tracked item</label><InputSelect class="form-select" @bind-Value="model.ProductItemId">@foreach (var item in items.Where(x => x.IsActive)) { <option value="@item.Id">@item.Code — @item.Name (@item.QuantityOnHand.ToString("N2") on hand)</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><InputNumber class="form-control" @bind-Value="model.QuantityChange" /><small class="text-muted">Use a minus to reduce stock.</small></div><div class="col-md-2 mb-3"><label class="form-label">Unit cost</label><InputNumber class="form-control" @bind-Value="model.UnitCost" /><small class="text-muted">Used for increases.</small></div><div class="col-md-2 mb-3"><label class="form-label">Reorder level</label><InputNumber class="form-control" @bind-Value="model.ReorderLevel" /></div></div><div class="row"><div class="col-md-3 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div><div class="col-md-3 mb-3"><label class="form-label">Inventory asset account</label><InputSelect class="form-select" @bind-Value="model.InventoryAccountId">@foreach (var account in assetAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Adjustment expense account</label><InputSelect class="form-select" @bind-Value="model.AdjustmentAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Reason / note</label><InputText class="form-control" @bind-Value="model.Note" /></div></div><button class="btn btn-primary">Post stock adjustment</button></EditForm></details>
+        <details class="setup-card mb-4">
+            <summary><strong>+ Adjust stock</strong></summary>
+            <EditForm Model="model" OnValidSubmit="Adjust" FormName="inventory-adjustment" class="mt-3">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Tracked item</label><InputSelect class="form-select" @bind-Value="model.ProductItemId">@foreach (var item in items.Where(x => x.IsActive)) { <option value="@item.Id">@item.Code - @item.Name (@item.QuantityOnHand.ToString("N2") on hand)</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><InputNumber class="form-control" @bind-Value="model.QuantityChange" /><small class="text-muted">Use a minus to reduce stock.</small></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Unit cost</label><InputNumber class="form-control" @bind-Value="model.UnitCost" /><small class="text-muted">Used for increases.</small></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Reorder level</label><InputNumber class="form-control" @bind-Value="model.ReorderLevel" /></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Branch and division</label>
+                        <InputSelect class="form-select" @bind-Value="model.DivisionId">
+                            @foreach (var branch in branches)
+                            {
+                                <optgroup label="@($"{branch.Code} - {branch.Name}")">@foreach (var division in branch.Divisions) { <option value="@division.Id">@branch.Code - @branch.Name / @division.Code - @division.Name</option> }</optgroup>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Inventory asset account</label><InputSelect class="form-select" @bind-Value="model.InventoryAccountId">@foreach (var account in assetAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Adjustment expense account</label><InputSelect class="form-select" @bind-Value="model.AdjustmentAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
+                    <div class="col-12 mb-3"><label class="form-label">Reason / note</label><InputText class="form-control" @bind-Value="model.Note" /></div>
+                </div>
+                <button class="btn btn-primary">Post stock adjustment</button>
+            </EditForm>
+        </details>
     }
-    @if (items.Count == 0) { <div class="empty-state"><strong>No tracked items yet</strong><span>Create a product with type “Tracked item”, then return here to enter opening stock.</span><a class="btn btn-primary mt-3" href="@($"o/{OrganisationId}/products")">Create tracked item</a></div> }
+
+    @if (items.Count == 0)
+    {
+        <div class="empty-state"><strong>No tracked items yet</strong><span>Create a product with type "Tracked item", then return here to enter opening stock.</span><a class="btn btn-primary mt-3" href="@($"o/{OrganisationId}/products")">Create tracked item</a></div>
+    }
     else
     {
         @if (LowStock.Count > 0) { <div class="alert alert-warning"><strong>Low stock:</strong> @string.Join(", ", LowStock.Select(x => $"{x.Code} ({x.QuantityOnHand:N2})"))</div> }
-        <section class="detail-card mb-4"><div class="card-heading"><div><span class="eyebrow">Inventory valuation</span><h2>Stock on hand</h2></div><InputText class="form-control no-print" style="max-width:18rem" @bind-Value="search" placeholder="Search code or item" /></div><div class="table-responsive"><table class="table"><thead><tr><th>Item</th><th class="text-end">On hand</th><th class="text-end">Average cost</th><th class="text-end">Stock value</th><th class="text-end">Reorder level</th><th>Status</th></tr></thead><tbody>@foreach (var item in FilteredItems) { <tr><td><strong>@item.Code · @item.Name</strong></td><td class="text-end">@item.QuantityOnHand.ToString("N4")</td><td class="text-end">$@item.AverageCost.ToString("N4")</td><td class="text-end"><strong>$@((item.QuantityOnHand * item.AverageCost).ToString("N2"))</strong></td><td class="text-end">@item.ReorderLevel.ToString("N2")</td><td><span class="status-pill">@(item.QuantityOnHand <= item.ReorderLevel ? "Reorder" : "In stock")</span></td></tr> }</tbody><tfoot><tr><th colspan="3">Total inventory value</th><th class="text-end">$@TotalValue.ToString("N2")</th><th colspan="2"></th></tr></tfoot></table></div></section>
-        <section class="detail-card"><div class="card-heading"><div><span class="eyebrow">Audit evidence</span><h2>Movement history</h2></div><span>@movements.Count entries</span></div>@if (movements.Count == 0) { <div class="empty-state"><strong>No movements posted</strong><span>Opening balances and adjustments appear here.</span></div> } else { <div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Item</th><th>Type</th><th>Reference</th><th class="text-end">Quantity</th><th class="text-end">Unit cost</th><th class="text-end">Value</th><th>Note</th></tr></thead><tbody>@foreach (var movement in movements) { <tr><td>@movement.MovementDate.ToString("dd MMM yyyy")</td><td>@movement.ProductItem.Code</td><td>@Friendly(movement.Type)</td><td>@movement.Reference</td><td class="text-end">@movement.QuantityChange.ToString("+0.####;-0.####;0")</td><td class="text-end">$@movement.UnitCost.ToString("N4")</td><td class="text-end">@movement.ValueChange.ToString("+$0.00;-$0.00;$0.00")</td><td>@movement.Note</td></tr> }</tbody></table></div> }</section>
+        <section class="detail-card mb-4">
+            <div class="card-heading"><div><span class="eyebrow">Inventory valuation</span><h2>Stock on hand</h2></div><InputText class="form-control no-print" style="max-width:18rem" @bind-Value="search" placeholder="Search code or item" /></div>
+            <div class="table-responsive"><table class="table"><thead><tr><th>Item</th><th class="text-end">On hand</th><th class="text-end">Average cost</th><th class="text-end">Stock value</th><th class="text-end">Reorder level</th><th>Status</th></tr></thead><tbody>
+                @foreach (var item in FilteredItems) { <tr><td><strong>@item.Code - @item.Name</strong></td><td class="text-end">@item.QuantityOnHand.ToString("N4")</td><td class="text-end">$@item.AverageCost.ToString("N4")</td><td class="text-end"><strong>$@((item.QuantityOnHand * item.AverageCost).ToString("N2"))</strong></td><td class="text-end">@item.ReorderLevel.ToString("N2")</td><td><span class="status-pill">@(item.QuantityOnHand <= item.ReorderLevel ? "Reorder" : "In stock")</span></td></tr> }
+            </tbody><tfoot><tr><th colspan="3">Total inventory value</th><th class="text-end">$@TotalValue.ToString("N2")</th><th colspan="2"></th></tr></tfoot></table></div>
+        </section>
+        <section class="detail-card">
+            <div class="card-heading"><div><span class="eyebrow">Audit evidence</span><h2>Movement history</h2></div><span>@movements.Count entries</span></div>
+            @if (movements.Count == 0) { <div class="empty-state"><strong>No movements posted</strong><span>Opening balances and adjustments appear here.</span></div> }
+            else
+            {
+                <div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Item</th><th>Branch / division</th><th>Type</th><th>Reference</th><th class="text-end">Quantity</th><th class="text-end">Unit cost</th><th class="text-end">Value</th><th>Note</th></tr></thead><tbody>
+                    @foreach (var movement in movements) { <tr><td>@movement.MovementDate.ToString("dd MMM yyyy")</td><td>@movement.ProductItem.Code</td><td>@movement.Branch.Code / @movement.Division.Code</td><td>@Friendly(movement.Type)</td><td>@movement.Reference</td><td class="text-end">@movement.QuantityChange.ToString("+0.####;-0.####;0")</td><td class="text-end">$@movement.UnitCost.ToString("N4")</td><td class="text-end">@movement.ValueChange.ToString("+$0.00;-$0.00;$0.00")</td><td>@movement.Note</td></tr> }
+                </tbody></table></div>
+            }
+        </section>
     }
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage; private List<ProductItem> items = []; private List<InventoryMovement> movements = []; private List<LedgerAccount> assetAccounts = [], expenseAccounts = []; private AdjustmentModel model = new(); private string search = ""; private string? message; private string messageClass = "alert-success";
+    private AccessibleOrganisation? access;
+    private string userId = "";
+    private bool canManage;
+    private List<Branch> branches = [];
+    private List<ProductItem> items = [];
+    private List<InventoryMovement> movements = [];
+    private List<LedgerAccount> assetAccounts = [], expenseAccounts = [];
+    private AdjustmentModel model = new();
+    private string search = "";
+    private string? message;
+    private string messageClass = "alert-success";
     private decimal TotalValue => items.Sum(x => Math.Round(x.QuantityOnHand * x.AverageCost, 2));
     private List<ProductItem> LowStock => items.Where(x => x.IsActive && x.ReorderLevel > 0 && x.QuantityOnHand <= x.ReorderLevel).ToList();
     private IEnumerable<ProductItem> FilteredItems => items.Where(x => string.IsNullOrWhiteSpace(search) || x.Code.Contains(search, StringComparison.OrdinalIgnoreCase) || x.Name.Contains(search, StringComparison.OrdinalIgnoreCase));
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); assetAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Asset).OrderBy(x => x.Code).ToListAsync(); expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Expense).OrderBy(x => x.Code).ToListAsync(); await Reload(); Reset(); }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        assetAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Asset).OrderBy(x => x.Code).ToListAsync();
+        expenseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Expense).OrderBy(x => x.Code).ToListAsync();
+        await Reload();
+        Reset();
+    }
+
     private async Task Reload()
     {
-        items = await Db.ProductItems.AsNoTracking()
-            .Where(x => x.OrganisationId == OrganisationId && x.Kind == ProductKind.TrackedItem)
-            .OrderBy(x => x.Code)
-            .ToListAsync();
-
-        // Use SQL ordering that SQLite can execute safely.
-        var recent = await Db.InventoryMovements.AsNoTracking()
-            .Include(x => x.ProductItem)
-            .Where(x => x.OrganisationId == OrganisationId)
-            .OrderByDescending(x => x.MovementDate)
-            .ThenByDescending(x => x.Id)
-            .Take(500)
-            .ToListAsync();
-
-        movements = recent
-            .Take(200)
-            .ToList();
+        var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray();
+        items = await Db.ProductItems.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.Kind == ProductKind.TrackedItem).OrderBy(x => x.Code).ToListAsync();
+        movements = await Db.InventoryMovements.AsNoTracking().Include(x => x.ProductItem).Include(x => x.Branch).Include(x => x.Division)
+            .Where(x => x.OrganisationId == OrganisationId && accessibleDivisionIds.Contains(x.DivisionId))
+            .OrderByDescending(x => x.MovementDate).ThenByDescending(x => x.Id).Take(200).ToListAsync();
     }
-    private void Reset() { var item = items.FirstOrDefault(x => x.IsActive); model = new AdjustmentModel { ProductItemId = item?.Id ?? Guid.Empty, UnitCost = item?.AverageCost > 0 ? item.AverageCost : item?.PurchasePrice ?? 0, ReorderLevel = item?.ReorderLevel ?? 0, InventoryAccountId = item?.InventoryAccountId ?? assetAccounts.FirstOrDefault(x => x.Code == "1200")?.Id ?? assetAccounts.FirstOrDefault()?.Id ?? Guid.Empty, AdjustmentAccountId = item?.CostAdjustmentAccountId ?? expenseAccounts.FirstOrDefault(x => x.Code == "5000")?.Id ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, Reference = $"STK-{DateTime.Today:yyyyMMdd}" }; }
-    private async Task Adjust() { try { var movement = await InventoryService.AdjustAsync(userId, new(OrganisationId, model.ProductItemId, model.Date, model.QuantityChange, model.UnitCost, model.ReorderLevel, model.InventoryAccountId, model.AdjustmentAccountId, model.Reference, model.Note)); messageClass = "alert-success"; message = $"Stock movement posted: {movement.QuantityChange:+0.####;-0.####} units."; await Reload(); Reset(); } catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; } }
+
+    private void Reset()
+    {
+        var item = items.FirstOrDefault(x => x.IsActive);
+        var divisions = branches.SelectMany(x => x.Divisions).ToList();
+        model = new AdjustmentModel
+        {
+            ProductItemId = item?.Id ?? Guid.Empty,
+            DivisionId = (divisions.FirstOrDefault(x => x.IsDefault) ?? divisions.FirstOrDefault())?.Id ?? Guid.Empty,
+            UnitCost = item?.AverageCost > 0 ? item.AverageCost : item?.PurchasePrice ?? 0,
+            ReorderLevel = item?.ReorderLevel ?? 0,
+            InventoryAccountId = item?.InventoryAccountId ?? assetAccounts.FirstOrDefault(x => x.Code == "1200")?.Id ?? assetAccounts.FirstOrDefault()?.Id ?? Guid.Empty,
+            AdjustmentAccountId = item?.CostAdjustmentAccountId ?? expenseAccounts.FirstOrDefault(x => x.Code == "5000")?.Id ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty,
+            Reference = $"STK-{DateTime.Today:yyyyMMdd}"
+        };
+    }
+
+    private async Task Adjust()
+    {
+        try
+        {
+            if (model.DivisionId == Guid.Empty) throw new InvalidOperationException("Choose an accessible branch and division.");
+            var movement = await InventoryService.AdjustAsync(userId, new(OrganisationId, model.ProductItemId, model.Date, model.QuantityChange, model.UnitCost, model.ReorderLevel, model.InventoryAccountId, model.AdjustmentAccountId, model.Reference, model.Note, DivisionId: model.DivisionId));
+            messageClass = "alert-success";
+            message = $"Stock movement posted: {movement.QuantityChange:+0.####;-0.####} units.";
+            await Reload();
+            Reset();
+        }
+        catch (Exception ex) { messageClass = "alert-danger"; message = ex.Message; }
+    }
+
     private static string Friendly(InventoryMovementType type) => type switch { InventoryMovementType.OpeningBalance => "Opening balance", InventoryMovementType.AdjustmentIncrease => "Increase", InventoryMovementType.SalesReturn => "Sales return", InventoryMovementType.PurchaseReturn => "Purchase return", _ => "Decrease" };
-    private sealed class AdjustmentModel { public Guid ProductItemId { get; set; } public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Range(-999999999d, 999999999d)] public decimal QuantityChange { get; set; } [Range(0, 999999999d)] public decimal UnitCost { get; set; } [Range(0, 999999999d)] public decimal ReorderLevel { get; set; } public Guid InventoryAccountId { get; set; } public Guid AdjustmentAccountId { get; set; } [Required, StringLength(80)] public string Reference { get; set; } = ""; [StringLength(500)] public string? Note { get; set; } }
+
+    private sealed class AdjustmentModel
+    {
+        public Guid ProductItemId { get; set; }
+        public Guid DivisionId { get; set; }
+        public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        [Range(-999999999d, 999999999d)] public decimal QuantityChange { get; set; }
+        [Range(0, 999999999d)] public decimal UnitCost { get; set; }
+        [Range(0, 999999999d)] public decimal ReorderLevel { get; set; }
+        public Guid InventoryAccountId { get; set; }
+        public Guid AdjustmentAccountId { get; set; }
+        [Required, StringLength(80)] public string Reference { get; set; } = "";
+        [StringLength(500)] public string? Note { get; set; }
+    }
 }

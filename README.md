@@ -50,6 +50,11 @@ Software tests support compliance but do not constitute legal or FRCS approval. 
 Development is deliberately gated so regulatory and workforce products are not
 built on an unfinished accounting foundation.
 
+The iOS and Android applications are planned as full accounting clients with
+permission parity, not limited companion apps. Their API, authentication,
+offline, receipt-capture, approval, and store-release architecture is defined in
+[docs/MOBILE-APPLICATION-ARCHITECTURE.md](docs/MOBILE-APPLICATION-ARCHITECTURE.md).
+
 ### Phase 1 — Fiji accounting core
 
 1. Tenant context, invitations, permissions and accountant client switching

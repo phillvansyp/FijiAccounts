@@ -199,7 +199,7 @@ public sealed class DemoDataServiceTests
         Assert.Equal(asOf.AddMonths(-3).AddDays(1), first.StartDate);
         Assert.Equal(2, first.CompanyCount);
         Assert.Equal(4, first.BranchCount);
-        Assert.Equal(5, first.DepartmentCount);
+        Assert.Equal(9, first.DivisionCount);
         Assert.Equal(40, first.CustomerCount);
         Assert.Equal(24, first.SupplierCount);
         Assert.Equal(180, first.SalesInvoiceCount);

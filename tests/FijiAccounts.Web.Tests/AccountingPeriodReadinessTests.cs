@@ -88,6 +88,8 @@ public async Task Inventory_NegativeHistoricalQuantity_IsReported()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = journal.Lines.First().BranchId!.Value,
+            DivisionId = journal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 7, 15),
             Type = InventoryMovementType.AdjustmentDecrease,
@@ -167,6 +169,8 @@ public async Task Inventory_NegativeHistoricalValue_IsReported()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = journal.Lines.First().BranchId!.Value,
+            DivisionId = journal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 7, 15),
             Type = InventoryMovementType.AdjustmentIncrease,
@@ -246,6 +250,8 @@ public async Task Inventory_ZeroQuantityWithResidualValue_IsReported()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = journal.Lines.First().BranchId!.Value,
+            DivisionId = journal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 7, 10),
             Type = InventoryMovementType.AdjustmentIncrease,
@@ -259,6 +265,8 @@ public async Task Inventory_ZeroQuantityWithResidualValue_IsReported()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = journal.Lines.First().BranchId!.Value,
+            DivisionId = journal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 7, 20),
             Type = InventoryMovementType.AdjustmentDecrease,
@@ -359,6 +367,8 @@ public async Task Inventory_MovementAfterPeriodEnd_DoesNotAffectReadiness()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = julyJournal.Lines.First().BranchId!.Value,
+            DivisionId = julyJournal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 7, 15),
             Type = InventoryMovementType.AdjustmentIncrease,
@@ -372,6 +382,8 @@ public async Task Inventory_MovementAfterPeriodEnd_DoesNotAffectReadiness()
         new InventoryMovement
         {
             OrganisationId = test.Organisation.Id,
+            BranchId = augustJournal.Lines.First().BranchId!.Value,
+            DivisionId = augustJournal.Lines.First().DivisionId!.Value,
             ProductItemId = item.Id,
             MovementDate = new DateOnly(2026, 8, 1),
             Type = InventoryMovementType.AdjustmentDecrease,

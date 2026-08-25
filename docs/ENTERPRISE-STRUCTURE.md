@@ -42,9 +42,9 @@ organisation. Existing flat branches become `Branch` records, and existing
 departments become divisions of the default branch. Where no branch or division
 exists, the migration creates `Main Branch` and `General` defaults.
 
-The legacy `OrganisationUnit` records remain in place during the transition so
-existing settings screens continue to work. They can be retired after the new
-branch/division management UI and financial-document dimensions are complete.
+The legacy flat `OrganisationUnit` compatibility table has been retired. Branch
+and division records are now the only enterprise hierarchy used by settings,
+transactions, reporting, demo data, and platform administration.
 
 ## Transaction dimensions
 
@@ -66,10 +66,9 @@ templates retain their selected dimension when generating documents.
 
 1. ~~Replace flat organisation-unit settings with hierarchy management.~~
 2. ~~Add group administration and multi-company creation.~~
-3. Add branch and division selectors to each financial document workflow. The
-   shared journal dimension, manual journals, sales invoices, supplier bills,
-   receipts, payments, recurring templates and related credits/reversals are
-   complete. The remaining banking/inventory workflows are still pending.
+3. ~~Add branch and division selectors to each financial document workflow.~~
+   Manual journals, sales, purchasing, banking, inventory, recurring templates,
+   settlements, credits, reversals, and their audit records are complete.
 4. ~~Add explicit branch/division access grants.~~
 5. Add scoped and consolidated reporting. Branch/division financial statements,
    multi-company Profit & Loss and Balance Sheet consolidation, and dated

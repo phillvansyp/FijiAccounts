@@ -37,7 +37,7 @@ public sealed record PlatformCompanyRow(
     string CountryCode,
     string BaseCurrency,
     int BranchCount,
-    int DepartmentCount,
+    int DivisionCount,
     int MemberCount,
     int CustomerCount,
     int SupplierCount,
@@ -145,7 +145,7 @@ public sealed class PlatformAdministrationService(
             rows.Add(new PlatformCompanyRow(
                 company.Id, company.LegalName, company.TradingName, company.CountryCode, company.BaseCurrency,
                 await db.Branches.CountAsync(x => x.OrganisationId == company.Id, ct),
-                await db.OrganisationUnits.CountAsync(x => x.OrganisationId == company.Id && x.Type == OrganisationUnitType.Department, ct),
+                await db.Divisions.CountAsync(x => x.Branch.OrganisationId == company.Id, ct),
                 await db.OrganisationMemberships.CountAsync(x => x.OrganisationId == company.Id, ct),
                 partyCounts?.Customers ?? 0, partyCounts?.Suppliers ?? 0,
                 await db.SalesInvoices.CountAsync(x => x.OrganisationId == company.Id, ct),

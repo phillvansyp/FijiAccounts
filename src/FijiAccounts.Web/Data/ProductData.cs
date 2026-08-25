@@ -24,6 +24,10 @@ public sealed class InventoryMovement
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
+    public Guid BranchId { get; set; }
+    public Branch Branch { get; set; } = null!;
+    public Guid DivisionId { get; set; }
+    public Division Division { get; set; } = null!;
     public Guid ProductItemId { get; set; }
     public ProductItem ProductItem { get; set; } = null!;
     public DateOnly MovementDate { get; set; }

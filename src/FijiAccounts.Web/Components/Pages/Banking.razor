@@ -606,6 +606,20 @@ else
                                     @if (codingSuggestion is not null) { <small>Suggested from the last matching transaction.</small> }
                                 </div>
                             }
+                            <div>
+                                <label class="form-label">Branch and division</label>
+                                <InputSelect class="form-select" @bind-Value="codingModel.DivisionId">
+                                    @foreach (var branch in branches)
+                                    {
+                                        <optgroup label="@($"{branch.Code} - {branch.Name}")">
+                                            @foreach (var division in branch.Divisions)
+                                            {
+                                                <option value="@division.Id">@branch.Code - @branch.Name / @division.Code - @division.Name</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                </InputSelect>
+                            </div>
                             <div><label class="form-label">Description</label><InputText class="form-control" @bind-Value="codingModel.Description" /></div>
                             @if (!codingModel.IsTransfer)
                             {
@@ -754,7 +768,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private const long MaxStatementBytes = 5 * 1024 * 1024;
     private const int ReconciliationPageSize = 25;
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private Guid[] accessibleDivisionIds = []; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<Branch> branches = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
     private List<BankReconciliationSession> reconciliationSessions = [];
     private string reconciliationSearch = string.Empty;
     private DateOnly? reconciliationDateFrom;
@@ -773,7 +787,7 @@ private bool savingReconciliationSession;
 private Guid? editingReconciliationSessionId;
 private string? reconciliationStatus;
 private string reconciliationStatusClass = "alert-success";
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); await Reload(); }
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
     private async Task Reload()
     {
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
@@ -782,13 +796,14 @@ private string reconciliationStatusClass = "alert-success";
                   accounts.Any(x => x.Id == selectedId)
             ? new[] { selectedId }
             : accounts.Select(x => x.Id).ToArray();
-        transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
+        transactions = await Db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Include(x => x.LedgerAccount).Where(x => ids.Contains(x.LedgerAccountId) && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).OrderByDescending(x => x.PostedJournal.EntryDate).ThenByDescending(x => x.PostedJournal.SequenceNumber).Take(100).ToListAsync();
         await LoadReconciliationPage(ids);
         outstandingSupplierBills = await Db.SupplierBills
             .AsNoTracking()
             .Include(x => x.Supplier)
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
+                x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) &&
                 (x.Status == BillStatus.Posted || x.Status == BillStatus.PartPaid) &&
                 x.Total > x.AmountPaid + x.AmountCredited)
             .ToListAsync();
@@ -797,6 +812,7 @@ private string reconciliationStatusClass = "alert-success";
             .Include(x => x.Customer)
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
+                x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) &&
                 (x.Status == InvoiceStatus.Posted || x.Status == InvoiceStatus.PartPaid) &&
                 x.Total > x.AmountPaid + x.AmountCredited)
             .ToListAsync();
@@ -830,7 +846,11 @@ reconciliationSessions =
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
-                bankAccountIds.Contains(x.BankAccountId));
+                bankAccountIds.Contains(x.BankAccountId) &&
+                (x.ReconciledAt == null ||
+                 (x.MatchedPostedJournalLine != null &&
+                  x.MatchedPostedJournalLine.DivisionId != null &&
+                  accessibleDivisionIds.Contains(x.MatchedPostedJournalLine.DivisionId.Value))));
 
         if (reconciliationDateFrom is DateOnly dateFrom)
         {
@@ -906,6 +926,7 @@ reconciliationSessions =
             .Include(x => x.LedgerAccount)
             .Where(x =>
                 pageBankAccountIds.Contains(x.LedgerAccountId) &&
+                x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) &&
                 x.PostedJournal.EntryDate >= firstDate &&
                 x.PostedJournal.EntryDate <= lastDate &&
                 !Db.BankStatementLines.Any(statement =>
@@ -1281,7 +1302,9 @@ reconciliationSessions =
         codingStatementId = item.Id;
         codingMode = "ledger";
         var suggested = SuggestedCodingAccount(item);
-        codingModel = new CodingModel { TargetAccountCode = suggested, Description = item.Description };
+        var defaultDivision = branches.SelectMany(x => x.Divisions).FirstOrDefault(x => x.IsDefault)
+            ?? branches.SelectMany(x => x.Divisions).FirstOrDefault();
+        codingModel = new CodingModel { TargetAccountCode = suggested, Description = item.Description, DivisionId = defaultDivision?.Id ?? Guid.Empty };
 
         // SQLite cannot order DateTimeOffset values. There will only be a small
         // history for one description, so load the tenant-scoped matches and choose
@@ -1402,6 +1425,7 @@ reconciliationSessions =
     return;
 }
         if (!codingModel.IsTransfer && string.IsNullOrWhiteSpace(codingModel.TargetAccountCode)) { codingError = "Choose an account before posting."; return; }
+        if (codingModel.DivisionId == Guid.Empty) { codingError = "Choose an accessible branch and division before posting."; return; }
         if (string.IsNullOrWhiteSpace(codingModel.Description)) { codingError = "Enter a description before posting."; return; }
         postingCoding = true;
         codingError = null;
@@ -1415,7 +1439,8 @@ reconciliationSessions =
                     codingModel.IsTransfer ? "" : codingModel.TargetAccountCode,
                     codingModel.Description,
                     codingModel.VatTreatment,
-                    codingModel.TransferToAccountId));
+                    codingModel.TransferToAccountId,
+                    DivisionId: codingModel.DivisionId));
             statusClass = "alert-success";
 status =
     $"Transaction posted as journal {journal.SequenceNumber} " +
@@ -1711,6 +1736,7 @@ await Reload();
         public bool IsTransfer { get; set; }
         [Required] public string TargetAccountCode { get; set; } = "";
         public Guid? TransferToAccountId { get; set; }
+        public Guid DivisionId { get; set; }
         [Required, StringLength(300)] public string Description { get; set; } = "";
         public VatTreatment VatTreatment { get; set; } = VatTreatment.OutOfScope;
     }

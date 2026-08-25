@@ -345,7 +345,7 @@ public sealed class PurchasingService(
                 0,
                 bill.Total));
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", journalLines, dimension.BranchId, dimension.DivisionId), ct); bill.PostedJournalId = journal.Id;
-        foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; item.AverageCost = InventoryValuation.WeightedAverage(item.QuantityOnHand, item.AverageCost, line.Quantity, line.UnitPrice); item.QuantityOnHand += line.Quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.BillDate, Type = InventoryMovementType.AdjustmentIncrease, QuantityChange = line.Quantity, UnitCost = line.UnitPrice, ValueChange = InventoryValuation.MovementValue(line.Quantity, line.UnitPrice), Reference = bill.BillNumber, Note = "Automatic stock receipt from supplier bill", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        foreach (var line in lines.Where(x => x.ProductItemId != null && tracked.ContainsKey(x.ProductItemId.Value))) { var item = tracked[line.ProductItemId!.Value]; item.AverageCost = InventoryValuation.WeightedAverage(item.QuantityOnHand, item.AverageCost, line.Quantity, line.UnitPrice); item.QuantityOnHand += line.Quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, ProductItemId = item.Id, MovementDate = request.BillDate, Type = InventoryMovementType.AdjustmentIncrease, QuantityChange = line.Quantity, UnitCost = line.UnitPrice, ValueChange = InventoryValuation.MovementValue(line.Quantity, line.UnitPrice), Reference = bill.BillNumber, Note = "Automatic stock receipt from supplier bill", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         db.SupplierBills.Add(bill);
 
         db.AuditEvents.Add(
@@ -455,6 +455,9 @@ public sealed class PurchasingService(
             throw new InvalidOperationException("Enter a payment reference of 80 characters or fewer.");
         }
 
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
         var bill = await db.SupplierBills.AsNoTracking().SingleOrDefaultAsync(
             x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct)
             ?? throw new InvalidOperationException("Supplier bill not found.");
@@ -525,6 +528,7 @@ public sealed class PurchasingService(
         db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentApprovalRequested",
             nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         notifications.PublishOrganisationUpdate(request.OrganisationId);
         return approval;
     }
@@ -535,6 +539,9 @@ public sealed class PurchasingService(
         Guid approvalId,
         CancellationToken ct = default)
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
         var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
             x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Supplier payment request not found.");
@@ -556,9 +563,12 @@ public sealed class PurchasingService(
             throw new UnauthorizedAccessException("You cannot approve a payment for this branch and division.");
         }
 
-        return await PostPaymentAsync(userId, new SupplierPaymentRequest(
+        var payment = await PostPaymentAsync(userId, new SupplierPaymentRequest(
             organisationId, approval.SupplierBillId, approval.PaymentDate, approval.Reference,
             approval.Amount, approval.BankAccountId, approval.StatementLineId), approval, ct);
+        await transaction.CommitAsync(ct);
+        notifications.PublishOrganisationUpdate(organisationId);
+        return payment;
     }
 
     public async Task RejectPaymentAsync(
@@ -568,6 +578,9 @@ public sealed class PurchasingService(
         string reason,
         CancellationToken ct = default)
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
         var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
             x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Supplier payment request not found.");
@@ -600,6 +613,7 @@ public sealed class PurchasingService(
         db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentApprovalRejected",
             nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         notifications.PublishOrganisationUpdate(organisationId);
     }
 
@@ -609,6 +623,9 @@ public sealed class PurchasingService(
         Guid approvalId,
         CancellationToken ct = default)
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            ct);
         var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
             x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Supplier payment request not found.");
@@ -627,6 +644,7 @@ public sealed class PurchasingService(
         db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentApprovalWithdrawn",
             nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         notifications.PublishOrganisationUpdate(organisationId);
     }
 
@@ -637,6 +655,9 @@ public sealed class PurchasingService(
         CancellationToken ct)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
         if (request.StatementLineId is null)
         {
             var matchingCodedStatement = await db.BankStatementLines
@@ -705,7 +726,6 @@ public sealed class PurchasingService(
             throw new InvalidOperationException(
                 "Accounts Payable (2000) must be an active Liability account.");
         }
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)], bill.BranchId, bill.DivisionId), ct);
         var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
         bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
@@ -738,7 +758,14 @@ public sealed class PurchasingService(
                 bankJournalLine.Id,
                 ct);
         }
-        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(request.OrganisationId); return payment;
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+            notifications.PublishOrganisationUpdate(request.OrganisationId);
+        }
+
+        return payment;
     }
 
     public async Task<SupplierBill> VoidBillAsync(string userId, Guid organisationId, Guid billId, DateOnly voidDate, string reason, CancellationToken ct = default)
@@ -778,7 +805,7 @@ public sealed class PurchasingService(
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == bill.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reversalLines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {bill.BillNumber}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{bill.BillNumber}", $"Void supplier bill {bill.SupplierReference}: {reason.Trim()}", reversalLines), ct);
-        foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; var oldValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost); item.QuantityOnHand -= receipt.QuantityChange; item.AverageCost = item.QuantityOnHand == 0 ? 0 : decimal.Round((oldValue - receipt.ValueChange) / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero); db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -receipt.QuantityChange, UnitCost = receipt.UnitCost, ValueChange = -receipt.ValueChange, Reference = $"VOID-{bill.BillNumber}", Note = $"Stock removed by supplier bill void: {reason.Trim()}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; var oldValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost); item.QuantityOnHand -= receipt.QuantityChange; item.AverageCost = item.QuantityOnHand == 0 ? 0 : decimal.Round((oldValue - receipt.ValueChange) / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero); db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, BranchId = receipt.BranchId, DivisionId = receipt.DivisionId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -receipt.QuantityChange, UnitCost = receipt.UnitCost, ValueChange = -receipt.ValueChange, Reference = $"VOID-{bill.BillNumber}", Note = $"Stock removed by supplier bill void: {reason.Trim()}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         var billVoid = new SupplierBillVoid
         {
             OrganisationId = organisationId,

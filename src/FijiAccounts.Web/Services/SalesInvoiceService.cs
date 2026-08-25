@@ -146,7 +146,7 @@ if (invoice.Status != InvoiceStatus.Posted ||
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == invoice.PostedJournalId && x.OrganisationId == organisationId, cancellationToken);
         var reversal = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList(); var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{invoice.InvoiceNumber}", $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
         var issues = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(cancellationToken);
-        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = -issue.QuantityChange; item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = -issue.ValueChange, Reference = $"VOID-{invoice.InvoiceNumber}", Note = "Stock restored by invoice void", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = -issue.QuantityChange; item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, BranchId = issue.BranchId, DivisionId = issue.DivisionId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = -issue.ValueChange, Reference = $"VOID-{invoice.InvoiceNumber}", Note = "Stock restored by invoice void", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         var invoiceVoid = new SalesInvoiceVoid
 {
     OrganisationId = organisationId,
@@ -436,7 +436,7 @@ if (!controlAccounts.TryGetValue(
         foreach (var group in invoice.Lines.Where(x => x.ProductItem?.Kind == ProductKind.TrackedItem).GroupBy(x => x.ProductItem!))
         {
             var item = group.Key; var quantity = group.Sum(x => x.Quantity); var value = InventoryValuation.MovementValue(quantity, item.AverageCost); item.QuantityOnHand -= quantity;
-            db.InventoryMovements.Add(new InventoryMovement { OrganisationId = invoice.OrganisationId, ProductItemId = item.Id, MovementDate = invoice.IssueDate, Type = InventoryMovementType.AdjustmentDecrease, QuantityChange = -quantity, UnitCost = item.AverageCost, ValueChange = -value, Reference = invoice.InvoiceNumber, Note = "Automatic stock issue from sales invoice", PostedJournalId = journalId, PostedByUserId = userId });
+            db.InventoryMovements.Add(new InventoryMovement { OrganisationId = invoice.OrganisationId, BranchId = invoice.BranchId!.Value, DivisionId = invoice.DivisionId!.Value, ProductItemId = item.Id, MovementDate = invoice.IssueDate, Type = InventoryMovementType.AdjustmentDecrease, QuantityChange = -quantity, UnitCost = item.AverageCost, ValueChange = -value, Reference = invoice.InvoiceNumber, Note = "Automatic stock issue from sales invoice", PostedJournalId = journalId, PostedByUserId = userId });
         }
     }
 }

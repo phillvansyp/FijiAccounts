@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825212743_AddMobileApiIdempotency")]
+    partial class AddMobileApiIdempotency
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -1434,57 +1437,6 @@ namespace FijiAccounts.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("LedgerAccounts");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.MobileDeviceSession", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AppVersion")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DisplayName")
-                        .HasMaxLength(120)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("InstallationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("LastSeenAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Platform")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset?>("RevokedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RevokedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId", "InstallationId")
-                        .IsUnique();
-
-                    b.HasIndex("UserId", "RevokedAt");
-
-                    b.ToTable("MobileDeviceSessions");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.MobileIdempotencyRecord", b =>
@@ -5235,15 +5187,6 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Organisation");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.MobileDeviceSession", b =>
-                {
-                    b.HasOne("FijiAccounts.Web.Data.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.Organisation", b =>

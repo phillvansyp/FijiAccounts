@@ -12,7 +12,9 @@ public sealed record BankTransactionCodingRequest(
     string TargetAccountCode,
     string Description,
     VatTreatment VatTreatment,
-    Guid? TransferToBankAccountId = null);
+    Guid? TransferToBankAccountId = null,
+    Guid? BranchId = null,
+    Guid? DivisionId = null);
 
 public sealed class BankTransactionCodingService(
     ApplicationDbContext db,
@@ -481,7 +483,9 @@ else
                 statement.Reference ??
                 $"BANK-{statement.Id.ToString()[..8]}",
                 $"Coded from bank statement ({request.VatTreatment})",
-                lines),
+                lines,
+                request.BranchId,
+                request.DivisionId),
             ct);
 
         var bankLine = journal.Lines.Single(
@@ -659,6 +663,17 @@ else
         {
             var match = availableMatches[0];
 
+            if (!await access.CanAccessDimensionAsync(
+                    userId,
+                    request.OrganisationId,
+                    match.Transfer.BranchId,
+                    match.Transfer.DivisionId,
+                    ct))
+            {
+                throw new UnauthorizedAccessException(
+                    "You cannot reconcile this transfer because it belongs to a restricted branch or division.");
+            }
+
             await using var matchTransaction =
                 await db.Database.BeginTransactionAsync(ct);
 
@@ -724,12 +739,18 @@ else
                 statement.Reference ??
                 $"BANK-{statement.Id.ToString()[..8]}",
                 "Coded from bank statement (Internal transfer)",
-                lines),
+                lines,
+                request.BranchId,
+                request.DivisionId),
             ct);
+
+        var dimension = journalCreated.Lines.First();
 
         var transferCreated = new BankTransfer
         {
             OrganisationId = request.OrganisationId,
+            BranchId = dimension.BranchId!.Value,
+            DivisionId = dimension.DivisionId!.Value,
             FromBankAccountId = fromBankAccountId,
             ToBankAccountId = toBankAccountId,
             TransferDate = statement.TransactionDate,
@@ -764,6 +785,8 @@ else
             {
                 BankTransferId = transferCreated.Id,
                 JournalId = journalCreated.Id,
+                transferCreated.BranchId,
+                transferCreated.DivisionId,
                 statement.Amount,
                 FromBankAccountId = fromBankAccountId,
                 ToBankAccountId = toBankAccountId

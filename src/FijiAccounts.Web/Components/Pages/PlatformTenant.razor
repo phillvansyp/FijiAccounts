@@ -6,6 +6,7 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject PlatformAdministrationService Platform
+@inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -36,11 +37,20 @@ else
                     {
                         <tr>
                             <td><strong>@company.LegalName</strong><div><small>@company.CountryCode · @company.BaseCurrency</small></div></td>
-                            <td>@company.BranchCount branches · @company.DepartmentCount departments</td><td>@company.MemberCount</td>
+                            <td>@company.BranchCount branches · @company.DivisionCount divisions</td><td>@company.MemberCount</td>
                             <td>@company.CustomerCount customers · @company.SupplierCount suppliers</td>
                             <td>@company.SalesInvoiceCount invoices · @company.SupplierBillCount bills · @company.JournalCount journals</td>
                             <td>@(company.LastActivity?.ToString("dd MMM yyyy") ?? "—")</td>
-                            <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="o/@company.Id">Open company</a></td>
+                            <td class="text-end">
+                                @if (accessibleCompanyIds.Contains(company.Id))
+                                {
+                                    <a class="btn btn-sm btn-outline-secondary" href="o/@company.Id">Open company</a>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary"><small>Membership required</small></span>
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -84,6 +94,7 @@ else
 @code {
     [Parameter] public Guid TenantId { get; set; }
     private PlatformTenantDetails? tenant;
+    private HashSet<Guid> accessibleCompanyIds = [];
     private readonly StatusModel statusModel = new();
     private string userId = string.Empty;
     private string? message;
@@ -93,6 +104,9 @@ else
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User)!;
+        accessibleCompanyIds = (await TenantAccess.ListAsync(userId))
+            .Select(x => x.Organisation.Id)
+            .ToHashSet();
         tenant = await Platform.GetTenantAsync(userId, TenantId);
     }
 

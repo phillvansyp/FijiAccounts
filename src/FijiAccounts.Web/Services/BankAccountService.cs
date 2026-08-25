@@ -30,12 +30,20 @@ public sealed class BankAccountService(
                 "You do not have access to these bank balances.");
         }
 
-        var lines = await db.PostedJournalLines
+        var divisionScope = await access.GetReportDivisionScopeAsync(userId, organisationId, ct);
+        var query = db.PostedJournalLines
             .AsNoTracking()
             .Where(x =>
                 x.LedgerAccount.OrganisationId == organisationId &&
                 x.LedgerAccount.IsActive &&
-                x.LedgerAccount.IsBankAccount)
+                x.LedgerAccount.IsBankAccount);
+        if (divisionScope is not null)
+        {
+            query = query.Where(x =>
+                x.DivisionId != null && divisionScope.Contains(x.DivisionId.Value));
+        }
+
+        var lines = await query
             .Select(x => new
             {
                 x.LedgerAccountId,

@@ -9,7 +9,6 @@ public enum OrganisationGroupRole { Owner, Administrator, Viewer }
 public enum TenantStatus { Active, Suspended, Archived }
 public enum GroupExchangeRateType { PeriodAverage, Closing }
 public enum EngagementAccess { ReadOnly, Bookkeeping, Accountant, Full }
-public enum OrganisationUnitType { Department, Branch }
 
 public sealed class OrganisationGroup
 {
@@ -182,18 +181,6 @@ public sealed class Division
     public required string Name { get; set; }
 
     public bool IsDefault { get; set; }
-    public bool IsActive { get; set; } = true;
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-}
-
-public sealed class OrganisationUnit
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public Guid OrganisationId { get; set; }
-    public Organisation Organisation { get; set; } = null!;
-    public OrganisationUnitType Type { get; set; }
-    [MaxLength(20)] public required string Code { get; set; }
-    [MaxLength(120)] public required string Name { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

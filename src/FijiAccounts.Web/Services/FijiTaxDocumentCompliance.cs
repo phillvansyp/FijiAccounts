@@ -46,8 +46,7 @@ public static class FijiTaxDocumentCompliance
         Require(organisation.BusinessAddress,
             "Set the organisation business address before issuing a Fiji tax invoice.");
 
-        var hasNonStandardSupply = lines.Any(x => x.VatTreatment != VatTreatment.Standard);
-        var simplified = total <= SimplifiedInvoiceThreshold && !hasNonStandardSupply;
+        var simplified = total <= SimplifiedInvoiceThreshold;
         if (!simplified)
         {
             Require(recipient.Address,

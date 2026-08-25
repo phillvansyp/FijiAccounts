@@ -71,4 +71,7 @@ public sealed class Notification
 
     public DateTimeOffset CreatedAt { get; set; } =
         DateTimeOffset.UtcNow;
+
+    public long CreatedAtTicks { get; set; } =
+        DateTimeOffset.UtcNow.UtcTicks;
 }

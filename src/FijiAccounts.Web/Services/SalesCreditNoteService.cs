@@ -2,11 +2,19 @@ using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Domain.Accounting;
+using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record SalesCreditNoteRequest(Guid OrganisationId, Guid SalesInvoiceId, DateOnly Date, string Reason, decimal Amount, bool RestockTrackedItems);
+public sealed record SalesCreditNoteRequest(
+    Guid OrganisationId,
+    Guid SalesInvoiceId,
+    DateOnly Date,
+    string Reason,
+    decimal Amount,
+    bool RestockTrackedItems,
+    decimal? VatAmount = null);
 
 public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccessService access, JournalPostingService posting)
 {
@@ -17,12 +25,41 @@ public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccess
         if (invoice.Status is InvoiceStatus.Draft or InvoiceStatus.Voided or InvoiceStatus.Credited) throw new InvalidOperationException("This invoice cannot be credited.");
         var available = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; if (request.Amount <= 0 || request.Amount > available) throw new InvalidOperationException($"Credit must be between $0.01 and ${available:N2}.");
         if (string.IsNullOrWhiteSpace(request.Reason)) throw new InvalidOperationException("Enter a reason for the credit note.");
-        var ratio = request.Amount / invoice.Total; var net = decimal.Round(invoice.Subtotal * ratio, 2, MidpointRounding.AwayFromZero); var vat = request.Amount - net;
         var previouslyCreditedVat = await db.SalesCreditNotes
             .Where(x =>
                 x.SalesInvoiceId == invoice.Id &&
                 !db.SalesCreditNoteReversals.Any(r => r.SalesCreditNoteId == x.Id))
             .SumAsync(x => (decimal?)x.VatTotal, ct) ?? 0m;
+        var remainingVat = Math.Max(0m, invoice.VatTotal - previouslyCreditedVat);
+        var hasMixedVatRates = invoice.Lines
+            .Where(x => x.GrossAmount > 0m)
+            .Select(x => x.VatRate)
+            .Distinct()
+            .Skip(1)
+            .Any();
+        var isFullRemainingCredit = request.Amount == available;
+        if (hasMixedVatRates && !isFullRemainingCredit && request.VatAmount is null)
+        {
+            throw new InvalidOperationException(
+                "Enter the VAT adjustment for a partial credit against an invoice with mixed VAT rates.");
+        }
+
+        var ratio = request.Amount / invoice.Total;
+        var vat = request.VatAmount is decimal requestedVat
+            ? decimal.Round(requestedVat, 2, MidpointRounding.AwayFromZero)
+            : isFullRemainingCredit
+                ? remainingVat
+                : request.Amount - decimal.Round(
+                    invoice.Subtotal * ratio,
+                    2,
+                    MidpointRounding.AwayFromZero);
+        if (vat < 0m || vat > request.Amount || vat > remainingVat)
+        {
+            throw new InvalidOperationException(
+                $"The VAT adjustment must be between $0.00 and ${Math.Min(request.Amount, remainingVat):N2}.");
+        }
+
+        var net = request.Amount - vat;
         var controls = await db.LedgerAccounts
     .Where(x =>
         x.OrganisationId == request.OrganisationId &&
@@ -136,7 +173,7 @@ journalLines.Add(
 }
         var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, number, $"Credit note for {invoice.InvoiceNumber}: {request.Reason.Trim()}", journalLines, invoice.BranchId, invoice.DivisionId), ct);
         var credit = new SalesCreditNote { OrganisationId = request.OrganisationId, SalesInvoiceId = invoice.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = invoice.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, OriginalInvoiceVatAmount = invoice.VatTotal, AdjustedInvoiceVatAmount = Math.Max(0m, invoice.VatTotal - previouslyCreditedVat - vat), PostedJournalId = journal.Id, CreatedByUserId = userId };
-        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
+        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = decimal.Round(-issue.QuantityChange * ratio, 4, MidpointRounding.AwayFromZero); var value = decimal.Round(-issue.ValueChange * ratio, 2, MidpointRounding.AwayFromZero); item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, BranchId = invoice.BranchId!.Value, DivisionId = invoice.DivisionId!.Value, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = value, Reference = number, Note = $"Stock returned by credit of {invoice.InvoiceNumber}", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         invoice.AmountCredited += request.Amount;
 
 var remaining =
@@ -265,6 +302,8 @@ invoice.Status =
             new InventoryMovement
             {
                 OrganisationId = organisationId,
+                BranchId = movement.BranchId,
+                DivisionId = movement.DivisionId,
                 ProductItemId = item.Id,
                 MovementDate = reversalDate,
                 Type = InventoryMovementType.AdjustmentDecrease,

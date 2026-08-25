@@ -78,7 +78,7 @@ if (!controls.TryGetValue(
             var oldValue = decimal.Round(item.QuantityOnHand * item.AverageCost, 2, MidpointRounding.AwayFromZero);
             item.QuantityOnHand -= quantity;
             item.AverageCost = item.QuantityOnHand == 0 ? 0 : decimal.Round((oldValue - value) / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero);
-            db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -quantity, UnitCost = receipt.UnitCost, ValueChange = -value, Reference = number, Note = $"Return to supplier against {bill.BillNumber}", PostedJournalId = journal.Id, PostedByUserId = userId });
+            db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, BranchId = bill.BranchId!.Value, DivisionId = bill.DivisionId!.Value, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -quantity, UnitCost = receipt.UnitCost, ValueChange = -value, Reference = number, Note = $"Return to supplier against {bill.BillNumber}", PostedJournalId = journal.Id, PostedByUserId = userId });
         }
 
         var credit = new SupplierCreditNote { OrganisationId = request.OrganisationId, SupplierBillId = bill.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = bill.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, ReturnedTrackedItems = receipts.Count > 0, PostedJournalId = journal.Id, CreatedByUserId = userId };
@@ -206,6 +206,8 @@ if (!controls.TryGetValue(
             new InventoryMovement
             {
                 OrganisationId = organisationId,
+                BranchId = movement.BranchId,
+                DivisionId = movement.DivisionId,
                 ProductItemId = item.Id,
                 MovementDate = reversalDate,
                 Type = InventoryMovementType.AdjustmentIncrease,

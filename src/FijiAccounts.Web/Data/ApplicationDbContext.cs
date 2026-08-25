@@ -20,7 +20,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PlatformAuditEvent> PlatformAuditEvents => Set<PlatformAuditEvent>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
-    public DbSet<OrganisationUnit> OrganisationUnits => Set<OrganisationUnit>();
     public DbSet<OrganisationMembership> OrganisationMemberships => Set<OrganisationMembership>();
     public DbSet<OrganisationDimensionAccessGrant> OrganisationDimensionAccessGrants =>
         Set<OrganisationDimensionAccessGrant>();
@@ -32,6 +31,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<MobileIdempotencyRecord> MobileIdempotencyRecords =>
+        Set<MobileIdempotencyRecord>();
+    public DbSet<MobileDeviceSession> MobileDeviceSessions =>
+        Set<MobileDeviceSession>();
     public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
     public DbSet<SupplierAccountProfile> SupplierAccountProfiles => Set<SupplierAccountProfile>();
     public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
@@ -230,9 +233,6 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasForeignKey(x => x.BranchId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationMembership>().HasKey(x => new { x.OrganisationId, x.UserId });
-        builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Code }).IsUnique();
-        builder.Entity<OrganisationUnit>().HasIndex(x => new { x.OrganisationId, x.Type, x.Name }).IsUnique();
-        builder.Entity<OrganisationUnit>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<OrganisationMembership>().HasIndex(x => x.UserId);
         builder.Entity<OrganisationDimensionAccessGrant>()
             .HasIndex(x => new { x.OrganisationId, x.UserId, x.BranchId, x.DivisionId })
@@ -278,6 +278,23 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<PostedJournalLine>()
             .HasIndex(x => new { x.BranchId, x.DivisionId });
         builder.Entity<AuditEvent>().HasIndex(x => new { x.OrganisationId, x.OccurredAt });
+        builder.Entity<Notification>()
+            .HasIndex(x => new { x.OrganisationId, x.IsRead, x.CreatedAtTicks, x.Id });
+        builder.Entity<MobileIdempotencyRecord>()
+            .HasIndex(x => new { x.OrganisationId, x.UserId, x.Key })
+            .IsUnique();
+        builder.Entity<MobileIdempotencyRecord>()
+            .HasIndex(x => x.ExpiresAt);
+        builder.Entity<MobileDeviceSession>()
+            .HasIndex(x => new { x.UserId, x.InstallationId })
+            .IsUnique();
+        builder.Entity<MobileDeviceSession>()
+            .HasIndex(x => new { x.UserId, x.RevokedAt });
+        builder.Entity<MobileDeviceSession>()
+            .HasOne<ApplicationUser>()
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<BusinessParty>().HasIndex(x => new { x.OrganisationId, x.Name });
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultSalesAccount).WithMany().HasForeignKey(x => x.DefaultSalesAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BusinessParty>().HasOne(x => x.DefaultPurchaseAccount).WithMany().HasForeignKey(x => x.DefaultPurchaseAccountId).OnDelete(DeleteBehavior.Restrict);
@@ -857,7 +874,7 @@ builder.Entity<BankReconciliationSession>()
     .WithMany()
     .HasForeignKey(x => x.BankAccountId)
     .OnDelete(DeleteBehavior.Restrict);
-        builder.Entity<BankTransfer>().HasIndex(x => new { x.OrganisationId, x.Reference }).IsUnique(); builder.Entity<BankTransfer>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<BankTransfer>().HasOne(x => x.FromBankAccount).WithMany().HasForeignKey(x => x.FromBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.ToBankAccount).WithMany().HasForeignKey(x => x.ToBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankTransfer>().HasIndex(x => new { x.OrganisationId, x.Reference }).IsUnique(); builder.Entity<BankTransfer>().HasIndex(x => new { x.BranchId, x.DivisionId }); builder.Entity<BankTransfer>().Property(x => x.Amount).HasPrecision(18, 2); builder.Entity<BankTransfer>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.FromBankAccount).WithMany().HasForeignKey(x => x.FromBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.ToBankAccount).WithMany().HasForeignKey(x => x.ToBankAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<BankTransfer>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankTransferReversal>()
             .HasIndex(x => x.BankTransferId)
             .IsUnique();
@@ -954,7 +971,7 @@ builder.Entity<FixedAsset>()
     .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankRule>().HasIndex(x => new { x.OrganisationId, x.Name }).IsUnique(); builder.Entity<BankRule>().HasOne(x => x.TargetAccount).WithMany().HasForeignKey(x => x.TargetAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<ProductItem>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique(); builder.Entity<ProductItem>().Property(x => x.SalePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.PurchasePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.QuantityOnHand).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.AverageCost).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.ReorderLevel).HasPrecision(18, 4); builder.Entity<ProductItem>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.InventoryAccount).WithMany().HasForeignKey(x => x.InventoryAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.CostAdjustmentAccount).WithMany().HasForeignKey(x => x.CostAdjustmentAccountId).OnDelete(DeleteBehavior.Restrict);
-        builder.Entity<InventoryMovement>().HasIndex(x => new { x.OrganisationId, x.ProductItemId, x.MovementDate }); builder.Entity<InventoryMovement>().Property(x => x.QuantityChange).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.UnitCost).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.ValueChange).HasPrecision(18, 2); builder.Entity<InventoryMovement>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<InventoryMovement>().HasIndex(x => new { x.OrganisationId, x.ProductItemId, x.MovementDate }); builder.Entity<InventoryMovement>().HasIndex(x => new { x.BranchId, x.DivisionId }); builder.Entity<InventoryMovement>().Property(x => x.QuantityChange).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.UnitCost).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.ValueChange).HasPrecision(18, 2); builder.Entity<InventoryMovement>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Project>().HasIndex(x => new { x.OrganisationId, x.ProjectNumber }).IsUnique();
         builder.Entity<Project>().HasIndex(x => new { x.BranchId, x.DivisionId, x.Status });
         builder.Entity<Project>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);

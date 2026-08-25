@@ -1,11 +1,15 @@
 using FijiAccounts.Web.Components;
 using FijiAccounts.Web.Components.Account;
+using FijiAccounts.Web.Api.Mobile.V1;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +27,47 @@ builder.WebHost.UseStaticWebAssets();
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddOpenApi(options =>
+    options.AddOperationTransformer<MobileClientOpenApiTransformer>());
+builder.Services.AddOptions<MobileApiOptions>()
+    .Bind(builder.Configuration.GetSection(MobileApiOptions.SectionName))
+    .Validate(options => Version.TryParse(options.MinimumIosVersion, out _),
+        "MobileApi:MinimumIosVersion must be a valid version.")
+    .Validate(options => Version.TryParse(options.MinimumAndroidVersion, out _),
+        "MobileApi:MinimumAndroidVersion must be a valid version.")
+    .Validate(options => options.RateLimitPermitLimit > 0,
+        "MobileApi:RateLimitPermitLimit must be positive.")
+    .Validate(options => options.RateLimitWindowSeconds > 0,
+        "MobileApi:RateLimitWindowSeconds must be positive.")
+    .ValidateOnStart();
+var mobileApiConfiguration = builder.Configuration
+    .GetSection(MobileApiOptions.SectionName)
+    .Get<MobileApiOptions>() ?? new MobileApiOptions();
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy(MobileApiV1Endpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+            httpContext.Connection.RemoteIpAddress?.ToString() ??
+            "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = mobileApiConfiguration.RateLimitPermitLimit,
+                Window = TimeSpan.FromSeconds(
+                    mobileApiConfiguration.RateLimitWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+        await Results.Problem(
+            statusCode: StatusCodes.Status429TooManyRequests,
+            title: "Mobile API rate limit exceeded",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "rate_limit_exceeded"
+            }).ExecuteAsync(context.HttpContext);
+});
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityRedirectManager>();
@@ -71,6 +116,28 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
     options.SlidingExpiration = true;
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.Events.OnRedirectToLogin = context =>
+    {
+        if (context.Request.Path.StartsWithSegments(MobileApiV1Endpoints.RoutePrefix))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        }
+
+        context.Response.Redirect(context.RedirectUri);
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        if (context.Request.Path.StartsWithSegments(MobileApiV1Endpoints.RoutePrefix))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        }
+
+        context.Response.Redirect(context.RedirectUri);
+        return Task.CompletedTask;
+    };
 });
 
 builder.Services.AddScoped<TenantAccessService>();
@@ -139,6 +206,10 @@ builder.Services.AddScoped<BankAccountService>();
 builder.Services.AddScoped<DemoDataService>();
 builder.Services.AddScoped<PlatformAdminAccessService>();
 builder.Services.AddScoped<PlatformAdministrationService>();
+builder.Services.AddScoped<MobileApiV1Service>();
+builder.Services.AddScoped<MobileIdempotencyService>();
+builder.Services.AddScoped<MobileDeviceSessionService>();
+builder.Services.AddScoped<MobileClientEndpointFilter>();
 
 var app = builder.Build();
 
@@ -156,10 +227,18 @@ else
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
 app.UseAntiforgery();
+app.UseRateLimiter();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.MapMobileApiV1();
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();

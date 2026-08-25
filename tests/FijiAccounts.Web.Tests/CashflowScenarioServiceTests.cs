@@ -84,6 +84,37 @@ public sealed class CashflowScenarioServiceTests
     }
 
     [Fact]
+    public async Task OverdueOutstandingInvoiceRemainsAvailableForReceiptDelay()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var invoice = new SalesInvoice
+        {
+            OrganisationId = test.Organisation.Id,
+            CustomerId = test.Customer.Id,
+            SequenceNumber = 1,
+            InvoiceNumber = "INV-OVERDUE-001",
+            IssueDate = today.AddDays(-60),
+            DueDate = today.AddDays(-30),
+            Status = InvoiceStatus.Posted,
+            Subtotal = 500m,
+            Total = 500m,
+            AmountPaid = 100m,
+            CreatedByUserId = test.UserId
+        };
+        test.Db.SalesInvoices.Add(invoice);
+        await test.Db.SaveChangesAsync();
+
+        var configuration = await Service(test).GetAsync(
+            test.UserId,
+            test.Organisation.Id);
+
+        var option = Assert.Single(configuration.OutstandingInvoices);
+        Assert.Equal(invoice.Id, option.Id);
+        Assert.Equal(400m, option.OutstandingAmount);
+    }
+
+    [Fact]
     public async Task ReadOnlyUserCanCompareButCannotManageScenarios()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

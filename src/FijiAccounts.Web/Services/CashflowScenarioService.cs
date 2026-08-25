@@ -62,12 +62,10 @@ public sealed class CashflowScenarioService(
             .OrderByDescending(x => x.UpdatedAt)
             .ThenBy(x => x.Name)
             .ToList();
-        var today = DateOnly.FromDateTime(DateTime.Today);
         var invoices = await db.SalesInvoices
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == organisationId &&
-                x.DueDate >= today &&
                 x.AmountPaid + x.AmountCredited < x.Total &&
                 x.Status != InvoiceStatus.Draft &&
                 x.Status != InvoiceStatus.Voided)

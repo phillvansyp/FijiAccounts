@@ -9,6 +9,7 @@ public partial class SalesInvoiceDetail
     private DateOnly creditDate = DateOnly.FromDateTime(DateTime.Today);
     private string creditReason = string.Empty;
     private decimal creditAmount;
+    private decimal? creditVatAmount;
     private bool restockTrackedItems;
     private decimal AvailableCredit => invoice is null ? 0 : invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
     private bool IsTaxDocument => invoice?.IsTaxInvoice
@@ -22,6 +23,12 @@ public partial class SalesInvoiceDetail
     private string RecipientName => invoice?.RecipientNameSnapshot ?? invoice?.Customer.Name ?? string.Empty;
     private string? RecipientAddress => invoice?.RecipientAddressSnapshot ?? invoice?.Customer.Address;
     private string? RecipientTin => invoice?.RecipientTinSnapshot ?? invoice?.Customer.Tin;
+    private bool HasMixedVatRates => invoice?.Lines
+        .Where(x => x.GrossAmount > 0m)
+        .Select(x => x.VatRate)
+        .Distinct()
+        .Skip(1)
+        .Any() == true;
     private IEnumerable<(string Label, decimal Amount)> SupplyTotals => invoice?.Lines
         .Where(x => x.VatTreatment != VatTreatment.Standard)
         .GroupBy(x => x.VatTreatment)
@@ -33,13 +40,21 @@ public partial class SalesInvoiceDetail
         showCredit = true;
         showVoid = false;
         creditAmount = AvailableCredit;
+        creditVatAmount = null;
     }
 
     private async Task CreateCredit()
     {
         try
         {
-            await CreditNoteService.CreateAsync(userId, new(OrganisationId, InvoiceId, creditDate, creditReason, creditAmount, restockTrackedItems));
+            await CreditNoteService.CreateAsync(userId, new(
+                OrganisationId,
+                InvoiceId,
+                creditDate,
+                creditReason,
+                creditAmount,
+                restockTrackedItems,
+                creditVatAmount));
             showCredit = false;
             await Reload();
         }

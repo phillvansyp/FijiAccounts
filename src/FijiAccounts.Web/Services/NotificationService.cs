@@ -28,6 +28,7 @@ public sealed class NotificationService(
         CreateNotificationRequest request,
         CancellationToken ct = default)
     {
+        var createdAt = DateTimeOffset.UtcNow;
         var notification =
             new Notification
             {
@@ -39,7 +40,9 @@ public sealed class NotificationService(
                 RelatedEntityType = request.RelatedEntityType,
                 RelatedEntityId = request.RelatedEntityId,
                 Amount = request.Amount,
-                Currency = request.Currency
+                Currency = request.Currency,
+                CreatedAt = createdAt,
+                CreatedAtTicks = createdAt.UtcTicks
             };
 
         db.Notifications.Add(notification);
@@ -71,6 +74,30 @@ public sealed class NotificationService(
             .OrderByDescending(
                 x => x.CreatedAt)
             .ToList();
+    }
+
+    public async Task<List<Notification>> GetUnreadPageAsync(
+        string userId,
+        Guid organisationId,
+        long? beforeCreatedAtTicks,
+        Guid beforeId,
+        int take,
+        CancellationToken ct = default)
+    {
+        await RequireAccessAsync(userId, organisationId);
+        return await db.Notifications
+            .AsNoTracking()
+            .Where(notification =>
+                notification.OrganisationId == organisationId &&
+                !notification.IsRead &&
+                (beforeCreatedAtTicks == null ||
+                 notification.CreatedAtTicks < beforeCreatedAtTicks ||
+                 notification.CreatedAtTicks == beforeCreatedAtTicks &&
+                 notification.Id.CompareTo(beforeId) < 0))
+            .OrderByDescending(notification => notification.CreatedAtTicks)
+            .ThenByDescending(notification => notification.Id)
+            .Take(take)
+            .ToListAsync(ct);
     }
 
 
@@ -222,6 +249,41 @@ public sealed class NotificationService(
                     x.OrganisationId == organisationId &&
                     !x.IsRead,
                 ct);
+    }
+
+    public async Task<bool> MarkReadAsync(
+        string userId,
+        Guid organisationId,
+        Guid notificationId,
+        CancellationToken ct = default)
+    {
+        await RequireAccessAsync(userId, organisationId);
+        var notification = await db.Notifications.SingleOrDefaultAsync(
+            x => x.Id == notificationId && x.OrganisationId == organisationId,
+            ct);
+        if (notification is null)
+        {
+            return false;
+        }
+
+        if (notification.IsRead)
+        {
+            return true;
+        }
+
+        notification.IsRead = true;
+        notification.ReadAt = DateTimeOffset.UtcNow;
+        db.AuditEvents.Add(NotificationAudit(
+            notification,
+            userId,
+            "NotificationRead",
+            notification.Status,
+            notification.Status,
+            false,
+            true));
+        await db.SaveChangesAsync(ct);
+        updates.Publish(notification.OrganisationId);
+        return true;
     }
 
     public async Task AcknowledgeAsync(
