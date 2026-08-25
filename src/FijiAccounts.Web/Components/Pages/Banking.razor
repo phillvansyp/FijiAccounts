@@ -530,7 +530,11 @@ else
                             class="btn btn-primary"
                             disabled="@settlingSuggestedDocument"
                             @onclick="() => PayAndReconcileSupplierBill(item, suggestedBill)">
-                        @(settlingSuggestedDocument ? "Processing..." : "Pay bill & reconcile")
+                        @(settlingSuggestedDocument
+                            ? "Processing..."
+                            : access?.Organisation.RequireSupplierPaymentApproval == true
+                                ? "Request payment approval"
+                                : "Pay bill & reconcile")
                     </button>
                 </div>
             }
@@ -1208,18 +1212,26 @@ reconciliationSessions =
             var reference = string.IsNullOrWhiteSpace(statement.Reference)
                 ? bill.SupplierReference
                 : statement.Reference;
-            await Purchasing.PayBillAsync(
-                userId,
-                new SupplierPaymentRequest(
+            var request = new SupplierPaymentRequest(
                     OrganisationId,
                     bill.Id,
                     statement.TransactionDate,
                     reference,
                     Math.Abs(statement.Amount),
                     statement.BankAccountId,
-                    statement.Id));
+                    statement.Id);
+            if (access?.Organisation.RequireSupplierPaymentApproval == true)
+            {
+                await Purchasing.RequestPaymentApprovalAsync(userId, request);
+            }
+            else
+            {
+                await Purchasing.PayBillAsync(userId, request);
+            }
             statusClass = "alert-success";
-            status = $"{bill.Supplier.Name} bill {bill.SupplierReference} paid and reconciled.";
+            status = access?.Organisation.RequireSupplierPaymentApproval == true
+                ? $"{bill.Supplier.Name} bill {bill.SupplierReference} submitted for payment approval. The statement line will reconcile when approved."
+                : $"{bill.Supplier.Name} bill {bill.SupplierReference} paid and reconciled.";
             await Reload();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)

@@ -72,6 +72,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<ProjectProgressClaim> ProjectProgressClaims => Set<ProjectProgressClaim>();
     public DbSet<PurchaseApprovalPolicy> PurchaseApprovalPolicies => Set<PurchaseApprovalPolicy>();
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+    public DbSet<SupplierPaymentApproval> SupplierPaymentApprovals => Set<SupplierPaymentApproval>();
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
     public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
     public DbSet<SupplierCreditNoteReversal> SupplierCreditNoteReversals =>
@@ -718,6 +719,17 @@ builder.Entity<RecurringSupplierBillGeneration>()
         builder.Entity<SupplierPayment>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasIndex(x => new { x.BranchId, x.DivisionId });
+        builder.Entity<SupplierPaymentApproval>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<SupplierPaymentApproval>().HasIndex(x => new { x.OrganisationId, x.Status, x.RequestedAt });
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.BankAccount).WithMany().HasForeignKey(x => x.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.StatementLine).WithMany().HasForeignKey(x => x.StatementLineId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.PurchaseApprovalPolicy).WithMany().HasForeignKey(x => x.PurchaseApprovalPolicyId).OnDelete(DeleteBehavior.SetNull);
+        builder.Entity<SupplierPaymentApproval>().HasOne(x => x.SupplierPayment).WithMany().HasForeignKey(x => x.SupplierPaymentId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
         builder.Entity<SupplierCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);

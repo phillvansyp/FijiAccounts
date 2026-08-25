@@ -137,6 +137,8 @@ public sealed class Organisation
     [Range(0, 1000000)]
     public decimal PurchaseTotalToleranceAmount { get; set; } = 5m;
 
+    public bool RequireSupplierPaymentApproval { get; set; }
+
     [MaxLength(32)] public string TaxLabel { get; set; } = "VAT";
     public int FinancialYearEndMonth { get; set; } = 12;
     public int FinancialYearEndDay { get; set; } = 31;

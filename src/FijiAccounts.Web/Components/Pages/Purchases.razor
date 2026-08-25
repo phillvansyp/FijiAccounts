@@ -35,6 +35,37 @@ else
         <article><span>Outstanding</span><strong>$@bills.Where(x => x.Status != BillStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Still to pay</small></article>
         <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>$@OverdueTotal.ToString("N2")</strong><small>@OverdueCount bill@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
+    @if (pendingPaymentApprovals.Count > 0)
+    {
+        <section class="setup-card mb-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <p class="eyebrow mb-1">Payment controls</p>
+                    <h2 class="h5 mb-1">Pending payment approvals</h2>
+                    <p class="text-muted mb-0">Open a bill to review, approve or reject its requested payment.</p>
+                </div>
+                <span class="badge text-bg-warning">@pendingPaymentApprovals.Count pending</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>Supplier</th><th>Bill</th><th>Payment date</th><th>Reference</th><th class="text-end">Amount</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var approval in pendingPaymentApprovals)
+                        {
+                            <tr>
+                                <td><strong>@approval.Supplier.Name</strong></td>
+                                <td>@approval.SupplierBill.BillNumber</td>
+                                <td>@approval.PaymentDate.ToString("dd MMM yyyy")</td>
+                                <td>@approval.Reference</td>
+                                <td class="text-end"><strong>$@approval.Amount.ToString("N2")</strong></td>
+                                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="o/@OrganisationId/purchases/@approval.SupplierBillId">Review</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
         RenderFragment supplierBillEditor = @<text>
         <div class="setup-card mb-5"
      id="draft-editor"
@@ -598,7 +629,7 @@ else
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice);
 protected override async Task OnParametersSetAsync()
 {
     var state =
@@ -683,7 +714,7 @@ protected override async Task OnParametersSetAsync()
     }
 }
 }
-    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
+    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).Take(100).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); pendingPaymentApprovals = (await Db.SupplierPaymentApprovals.AsNoTracking().Include(x => x.Supplier).Include(x => x.SupplierBill).Where(x => x.OrganisationId == OrganisationId && x.Status == SupplierPaymentApprovalStatus.Pending && (x.DivisionId == null || accessibleDivisionIds.Contains(x.DivisionId.Value))).ToListAsync()).OrderByDescending(x => x.RequestedAt).ToList(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
 
     private static decimal Outstanding(SupplierBill item) => Math.Max(0m, item.Total - item.AmountPaid - item.AmountCredited);
     private string BillRegisterStatus(SupplierBill item) => IsOverdue(item) ? "Overdue" : item.Status switch { BillStatus.Posted => "Awaiting payment", BillStatus.PartPaid => "Part paid", BillStatus.Paid => "Paid", BillStatus.Credited => "Credited", BillStatus.Voided => "Voided", _ => item.Status.ToString() };
@@ -1626,7 +1657,7 @@ private void ToggleRecurringBill()
                 ex.Message;
         }
     }
-    private async Task PayBill() { try { var result = await Purchasing.PayBillAsync(userId, new(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId)); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
+    private async Task PayBill() { try { var request = new SupplierPaymentRequest(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId); if (access?.Organisation.RequireSupplierPaymentApproval == true) { var result = await Purchasing.RequestPaymentApprovalAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} submitted for approval for ${result.Amount:N2}."; } else { var result = await Purchasing.PayBillAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; } await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
     private int OverdueCount => bills.Count(IsOverdue);
     private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);

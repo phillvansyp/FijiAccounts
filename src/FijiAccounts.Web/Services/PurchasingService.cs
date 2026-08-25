@@ -25,7 +25,8 @@ public sealed class PurchasingService(
     JournalPostingService posting,
     BankReconciliationService reconciliation,
     NotificationService notifications,
-    EnterpriseStructureService structures)
+    EnterpriseStructureService structures,
+    PurchaseApprovalPolicyService approvalPolicies)
 {
     public Task<SupplierBill> PostBillAsync(
         string userId,
@@ -421,6 +422,220 @@ public sealed class PurchasingService(
 
     public async Task<SupplierPayment> PayBillAsync(string userId, SupplierPaymentRequest request, CancellationToken ct = default)
     {
+        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        }
+        if (await db.Organisations.AnyAsync(
+                x => x.Id == request.OrganisationId && x.RequireSupplierPaymentApproval, ct))
+        {
+            throw new InvalidOperationException(
+                "Supplier payment approval is enabled. Submit this payment for independent approval.");
+        }
+
+        return await PostPaymentAsync(userId, request, null, ct);
+    }
+
+    public async Task<SupplierPaymentApproval> RequestPaymentApprovalAsync(
+        string userId,
+        SupplierPaymentRequest request,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot request supplier payments for this organisation.");
+        }
+        if (!await db.Organisations.AnyAsync(
+                x => x.Id == request.OrganisationId && x.RequireSupplierPaymentApproval, ct))
+        {
+            throw new InvalidOperationException("Supplier payment approval is not enabled for this organisation.");
+        }
+        if (string.IsNullOrWhiteSpace(request.Reference) || request.Reference.Trim().Length > 80)
+        {
+            throw new InvalidOperationException("Enter a payment reference of 80 characters or fewer.");
+        }
+
+        var bill = await db.SupplierBills.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct)
+            ?? throw new InvalidOperationException("Supplier bill not found.");
+        if (bill.BranchId is Guid branchId && bill.DivisionId is Guid divisionId &&
+            !await access.CanAccessDimensionAsync(
+                userId, request.OrganisationId, branchId, divisionId, ct))
+        {
+            throw new UnauthorizedAccessException("You cannot request a payment for this branch and division.");
+        }
+        if (bill.Status is BillStatus.Voided or BillStatus.Credited or BillStatus.Paid)
+        {
+            throw new InvalidOperationException("Only outstanding posted supplier bills can be paid.");
+        }
+        var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited;
+        var pending = await db.SupplierPaymentApprovals.AsNoTracking()
+            .Where(x => x.SupplierBillId == bill.Id && x.Status == SupplierPaymentApprovalStatus.Pending)
+            .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+        if (request.Amount <= 0 || request.Amount > outstanding - pending)
+        {
+            throw new InvalidOperationException(
+                $"The requested payment must be between $0.01 and ${Math.Max(0, outstanding - pending):N2} after pending requests.");
+        }
+        if (!await db.LedgerAccounts.AnyAsync(x => x.Id == request.BankAccountId &&
+                x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, ct))
+        {
+            throw new InvalidOperationException("Select an active bank account.");
+        }
+        if (request.StatementLineId is Guid statementLineId)
+        {
+            var statement = await db.BankStatementLines.AsNoTracking().SingleOrDefaultAsync(
+                x => x.Id == statementLineId && x.OrganisationId == request.OrganisationId, ct)
+                ?? throw new InvalidOperationException("Bank statement line not found.");
+            var statementAmount = Math.Abs(Math.Round(statement.Amount, 2, MidpointRounding.AwayFromZero));
+            if (statement.ReconciledAt is not null || statement.BankAccountId != request.BankAccountId ||
+                statement.TransactionDate != request.Date || statement.Amount >= 0 ||
+                Math.Abs(statementAmount - request.Amount) > 0.01m)
+            {
+                throw new InvalidOperationException("The unreconciled outgoing statement line must exactly match the payment account, date and amount.");
+            }
+            if (await db.SupplierPaymentApprovals.AnyAsync(x =>
+                    x.StatementLineId == statementLineId && x.Status == SupplierPaymentApprovalStatus.Pending, ct))
+            {
+                throw new InvalidOperationException("This bank statement line already has a pending payment request.");
+            }
+        }
+
+        var policy = bill.BranchId.HasValue && bill.DivisionId.HasValue
+            ? await approvalPolicies.ResolveAsync(request.OrganisationId, bill.BranchId.Value,
+                bill.DivisionId.Value, request.Amount, ct)
+            : null;
+        var approval = new SupplierPaymentApproval
+        {
+            OrganisationId = request.OrganisationId,
+            BranchId = bill.BranchId,
+            DivisionId = bill.DivisionId,
+            SupplierId = bill.SupplierId,
+            SupplierBillId = bill.Id,
+            PaymentDate = request.Date,
+            Reference = request.Reference.Trim(),
+            Amount = request.Amount,
+            BankAccountId = request.BankAccountId,
+            StatementLineId = request.StatementLineId,
+            PurchaseApprovalPolicyId = policy?.Id,
+            RequiredApproval = policy?.Requirement ?? PurchaseApprovalRequirement.OwnerOrAdministrator,
+            RequestedByUserId = userId
+        };
+        db.SupplierPaymentApprovals.Add(approval);
+        db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentApprovalRequested",
+            nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
+        await db.SaveChangesAsync(ct);
+        notifications.PublishOrganisationUpdate(request.OrganisationId);
+        return approval;
+    }
+
+    public async Task<SupplierPayment> ApprovePaymentAsync(
+        string userId,
+        Guid organisationId,
+        Guid approvalId,
+        CancellationToken ct = default)
+    {
+        var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
+            x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Supplier payment request not found.");
+        if (!await approvalPolicies.CanApproveAsync(userId, organisationId, approval.RequiredApproval, ct))
+        {
+            throw new UnauthorizedAccessException("You do not have the required role to approve this payment.");
+        }
+        if (approval.RequestedByUserId == userId)
+        {
+            throw new InvalidOperationException("A payment requester cannot approve their own payment.");
+        }
+        if (approval.Status != SupplierPaymentApprovalStatus.Pending)
+        {
+            throw new InvalidOperationException("Only pending supplier payments can be approved.");
+        }
+        if (approval.BranchId is Guid branchId && approval.DivisionId is Guid divisionId &&
+            !await access.CanAccessDimensionAsync(userId, organisationId, branchId, divisionId, ct))
+        {
+            throw new UnauthorizedAccessException("You cannot approve a payment for this branch and division.");
+        }
+
+        return await PostPaymentAsync(userId, new SupplierPaymentRequest(
+            organisationId, approval.SupplierBillId, approval.PaymentDate, approval.Reference,
+            approval.Amount, approval.BankAccountId, approval.StatementLineId), approval, ct);
+    }
+
+    public async Task RejectPaymentAsync(
+        string userId,
+        Guid organisationId,
+        Guid approvalId,
+        string reason,
+        CancellationToken ct = default)
+    {
+        var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
+            x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Supplier payment request not found.");
+        if (!await approvalPolicies.CanApproveAsync(userId, organisationId, approval.RequiredApproval, ct))
+        {
+            throw new UnauthorizedAccessException("You do not have the required role to reject this payment.");
+        }
+        if (approval.RequestedByUserId == userId)
+        {
+            throw new InvalidOperationException("A payment requester cannot reject their own payment.");
+        }
+        if (approval.Status != SupplierPaymentApprovalStatus.Pending)
+        {
+            throw new InvalidOperationException("Only pending supplier payments can be rejected.");
+        }
+        if (approval.BranchId is Guid branchId && approval.DivisionId is Guid divisionId &&
+            !await access.CanAccessDimensionAsync(userId, organisationId, branchId, divisionId, ct))
+        {
+            throw new UnauthorizedAccessException("You cannot reject a payment for this branch and division.");
+        }
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > 500)
+        {
+            throw new InvalidOperationException("Enter a rejection reason of 500 characters or fewer.");
+        }
+
+        approval.Status = SupplierPaymentApprovalStatus.Rejected;
+        approval.DecidedAt = DateTimeOffset.UtcNow;
+        approval.DecidedByUserId = userId;
+        approval.RejectionReason = reason.Trim();
+        db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentApprovalRejected",
+            nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
+        await db.SaveChangesAsync(ct);
+        notifications.PublishOrganisationUpdate(organisationId);
+    }
+
+    public async Task WithdrawPaymentApprovalAsync(
+        string userId,
+        Guid organisationId,
+        Guid approvalId,
+        CancellationToken ct = default)
+    {
+        var approval = await db.SupplierPaymentApprovals.SingleOrDefaultAsync(
+            x => x.Id == approvalId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Supplier payment request not found.");
+        if (approval.RequestedByUserId != userId)
+        {
+            throw new UnauthorizedAccessException("Only the requester can withdraw this payment request.");
+        }
+        if (approval.Status != SupplierPaymentApprovalStatus.Pending)
+        {
+            throw new InvalidOperationException("Only pending supplier payments can be withdrawn.");
+        }
+
+        approval.Status = SupplierPaymentApprovalStatus.Withdrawn;
+        approval.DecidedAt = DateTimeOffset.UtcNow;
+        approval.DecidedByUserId = userId;
+        db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentApprovalWithdrawn",
+            nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
+        await db.SaveChangesAsync(ct);
+        notifications.PublishOrganisationUpdate(organisationId);
+    }
+
+    private async Task<SupplierPayment> PostPaymentAsync(
+        string userId,
+        SupplierPaymentRequest request,
+        SupplierPaymentApproval? approval,
+        CancellationToken ct)
+    {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
         if (request.StatementLineId is null)
         {
@@ -503,7 +718,16 @@ public sealed class PurchasingService(
                 publishUpdate: false,
                 ct: ct);
         }
-        db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount }));
+        db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount, SupplierPaymentApprovalId = approval?.Id }));
+        if (approval is not null)
+        {
+            approval.Status = SupplierPaymentApprovalStatus.Approved;
+            approval.DecidedAt = DateTimeOffset.UtcNow;
+            approval.DecidedByUserId = userId;
+            approval.SupplierPaymentId = payment.Id;
+            db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentApprovalApproved",
+                nameof(SupplierPaymentApproval), approval.Id, ApprovalEvidence(approval)));
+        }
         if (statement is not null)
         {
             var bankJournalLine = journal.Lines.Single(x => x.LedgerAccountId == bank.Id);
@@ -598,4 +822,24 @@ public sealed class PurchasingService(
     }
 
     private static AuditEvent Audit(Guid organisationId, string userId, string eventType, string entityType, Guid entityId, object data) => new() { OrganisationId = organisationId, UserId = userId, EventType = eventType, EntityType = entityType, EntityId = entityId.ToString(), JsonData = JsonSerializer.Serialize(data) };
+
+    private static object ApprovalEvidence(SupplierPaymentApproval approval) => new
+    {
+        approval.SupplierBillId,
+        approval.SupplierId,
+        approval.BranchId,
+        approval.DivisionId,
+        approval.PaymentDate,
+        approval.Reference,
+        approval.Amount,
+        approval.BankAccountId,
+        approval.StatementLineId,
+        approval.PurchaseApprovalPolicyId,
+        RequiredApproval = approval.RequiredApproval.ToString(),
+        Status = approval.Status.ToString(),
+        approval.RequestedByUserId,
+        approval.DecidedByUserId,
+        approval.RejectionReason,
+        approval.SupplierPaymentId
+    };
 }

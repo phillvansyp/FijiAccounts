@@ -200,6 +200,18 @@ else
                     </div>
                 </div>
 
+                <div class="border rounded p-3 mb-3">
+                    <div class="form-check form-switch">
+                        <InputCheckbox class="form-check-input"
+                                       @bind-Value="model.RequireSupplierPaymentApproval"
+                                       disabled="@(!canManage)" />
+                        <label class="form-check-label"><strong>Require independent supplier payment approval</strong></label>
+                    </div>
+                    <div class="form-text">
+                        Payments remain pending until an eligible owner or administrator approves them. The requester cannot approve or reject their own payment.
+                    </div>
+                </div>
+
                 @if (canManage) { <button class="btn btn-primary">Save business details</button> }
             </EditForm>
         </section>
@@ -387,7 +399,7 @@ else
     private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, ConversionDate = access.Organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadWipSettings(); await LoadHierarchy(); }
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, ConversionDate = access.Organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = access.Organisation.RequireSupplierPaymentApproval }; await LoadWipSettings(); await LoadHierarchy(); }
     private async Task Save()
     {
         if (!canManage || access is null) return;
@@ -404,8 +416,9 @@ else
                     model.DefaultSalesInvoicePaymentTermType,
                     model.DefaultSalesInvoiceDueDays,
                     model.DefaultSupplierBillPaymentTermType,
-                    model.DefaultSupplierBillDueDays));
-            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, ConversionDate = stored.ConversionDate, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays };
+                    model.DefaultSupplierBillDueDays,
+                    model.RequireSupplierPaymentApproval));
+            model = new() { LegalName = stored.LegalName, TradingName = stored.TradingName, Tin = stored.Tin, ConversionDate = stored.ConversionDate, DefaultSalesInvoicePaymentTermType = stored.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = stored.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = stored.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = stored.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = stored.RequireSupplierPaymentApproval };
             access = access with { Organisation = stored };
             statusClass = "alert-success";
             status = "Business details saved and verified.";
@@ -631,7 +644,7 @@ else
         }
     }
 
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } }
     private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }

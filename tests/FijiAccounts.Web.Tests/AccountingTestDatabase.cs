@@ -51,6 +51,9 @@ Posting =
 var structures =
     new EnterpriseStructureService(Db);
 
+var approvalPolicies =
+    new PurchaseApprovalPolicyService(Db, Access);
+
 
 PurchaseOrders =
     new PurchaseOrderService(
@@ -78,7 +81,8 @@ Purchasing =
         Posting,
         Reconciliation,
         Notifications,
-        structures);
+        structures,
+        approvalPolicies);
 
 CustomerReceipts =
     new CustomerReceiptService(

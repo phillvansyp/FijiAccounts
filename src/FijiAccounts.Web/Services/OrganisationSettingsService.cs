@@ -14,7 +14,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     PaymentTermType DefaultSalesInvoicePaymentTermType,
     int DefaultSalesInvoiceDueDays,
     PaymentTermType DefaultSupplierBillPaymentTermType,
-    int DefaultSupplierBillDueDays);
+    int DefaultSupplierBillDueDays,
+    bool RequireSupplierPaymentApproval = false);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -67,7 +68,8 @@ public sealed class OrganisationSettingsService(
             organisation.DefaultSalesInvoiceDueDays,
             DefaultSupplierBillPaymentTermType =
                 organisation.DefaultSupplierBillPaymentTermType.ToString(),
-            organisation.DefaultSupplierBillDueDays
+            organisation.DefaultSupplierBillDueDays,
+            organisation.RequireSupplierPaymentApproval
         };
         var updated = new
         {
@@ -80,7 +82,8 @@ public sealed class OrganisationSettingsService(
             request.DefaultSalesInvoiceDueDays,
             DefaultSupplierBillPaymentTermType =
                 request.DefaultSupplierBillPaymentTermType.ToString(),
-            request.DefaultSupplierBillDueDays
+            request.DefaultSupplierBillDueDays,
+            request.RequireSupplierPaymentApproval
         };
         if (previous.Equals(updated))
         {
@@ -99,6 +102,8 @@ public sealed class OrganisationSettingsService(
             request.DefaultSupplierBillPaymentTermType;
         organisation.DefaultSupplierBillDueDays =
             request.DefaultSupplierBillDueDays;
+        organisation.RequireSupplierPaymentApproval =
+            request.RequireSupplierPaymentApproval;
 
         db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,

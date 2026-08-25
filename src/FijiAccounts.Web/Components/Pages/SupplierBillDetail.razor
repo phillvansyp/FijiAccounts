@@ -12,6 +12,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
+@inject PurchaseApprovalPolicyService ApprovalPolicies
 @inject SupplierBillAttachmentService BillAttachments
 @inject SupplierCreditNoteService SupplierCredits
 @inject UserManager<ApplicationUser> UserManager
@@ -135,7 +136,7 @@ else
 {
     <button class="btn btn-primary"
             @onclick="OpenPayment">
-        Record payment
+        @(RequiresPaymentApproval ? "Request payment" : "Record payment")
     </button>
 }
 
@@ -168,9 +169,11 @@ else
 
         <div class="action-card-heading">
             <span class="eyebrow">Supplier payment</span>
-            <h2>Record payment</h2>
+            <h2>@(RequiresPaymentApproval ? "Request payment approval" : "Record payment")</h2>
             <p>
-                Record a payment against this supplier bill.
+                @(RequiresPaymentApproval
+                    ? "Submit this payment for independent approval. Nothing is posted until it is approved."
+                    : "Record a payment against this supplier bill.")
             </p>
         </div>
 
@@ -206,22 +209,26 @@ else
             <div class="col-md-3">
                 <label class="form-label">Reference</label>
 
-                <InputText class="form-control"
-                           @bind-Value="paymentReference" />
+                <input class="form-control"
+                       @bind="paymentReference"
+                       @bind:event="oninput" />
             </div>
 
             <div class="col-md-2">
                 <label class="form-label">Amount</label>
 
-                <InputNumber class="form-control"
-                             @bind-Value="paymentAmount" />
+                <input type="number"
+                       step="0.01"
+                       class="form-control"
+                       @bind="paymentAmount"
+                       @bind:event="oninput" />
             </div>
 
             <div class="col-md-2 d-flex align-items-end gap-2">
 
                 <button class="btn btn-primary"
                         @onclick="RecordPayment">
-                    Record payment
+                    @(RequiresPaymentApproval ? "Submit request" : "Record payment")
                 </button>
 
                 <button class="btn btn-outline-secondary"
@@ -615,6 +622,60 @@ else
     }
 }
 
+        @if (paymentApprovals.Count > 0)
+        {
+            <section class="history-card no-print">
+                <div class="history-heading">
+                    <span class="eyebrow">Payment controls</span>
+                    <h2>Approval history</h2>
+                </div>
+                <div class="table-responsive">
+                    <table class="table history-table">
+                        <thead><tr><th>Requested</th><th>Date</th><th>Reference</th><th>Bank account</th><th class="text-end">Amount</th><th>Status</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var approval in paymentApprovals)
+                            {
+                                <tr>
+                                    <td>@approval.RequestedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</td>
+                                    <td>@approval.PaymentDate.ToString("dd MMM yyyy")</td>
+                                    <td>@approval.Reference</td>
+                                    <td>@approval.BankAccount.Code &mdash; @approval.BankAccount.Name</td>
+                                    <td class="text-end"><strong>$@approval.Amount.ToString("N2")</strong></td>
+                                    <td><span class="payment-status approval-@approval.Status.ToString().ToLowerInvariant()">@approval.Status</span></td>
+                                    <td class="text-end">
+                                        @if (approval.Status == SupplierPaymentApprovalStatus.Pending &&
+                                             approval.RequestedByUserId != userId &&
+                                             approvalEligibility.GetValueOrDefault(approval.Id))
+                                        {
+                                            <button class="btn btn-sm btn-primary me-1" @onclick="() => ApprovePayment(approval.Id)">Approve</button>
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => BeginRejectPayment(approval.Id)">Reject</button>
+                                        }
+                                        else if (approval.Status == SupplierPaymentApprovalStatus.Pending &&
+                                                 approval.RequestedByUserId == userId)
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => WithdrawPayment(approval.Id)">Withdraw</button>
+                                        }
+                                    </td>
+                                </tr>
+                                @if (rejectingApprovalId == approval.Id)
+                                {
+                                    <tr>
+                                        <td colspan="7">
+                                            <div class="d-flex gap-2 align-items-center">
+                                                <InputText class="form-control" @bind-Value="paymentRejectionReason" placeholder="Reason for rejection" />
+                                                <button class="btn btn-danger text-nowrap" @onclick="RejectPayment">Confirm rejection</button>
+                                                <button class="btn btn-outline-secondary" @onclick="() => rejectingApprovalId = null">Cancel</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+
         @if (payments.Count > 0)
         {
             <section class="history-card no-print">
@@ -943,6 +1004,10 @@ else
 .payment-status { display: inline-flex; padding: .25rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 700; }
 .payment-posted { background: #e8f5ef; color: #087f5b; }
 .payment-reversed { background: #fdeaea; color: #b42318; }
+.approval-pending { background: #fff3cd; color: #7a5200; }
+.approval-approved { background: #e8f5ef; color: #087f5b; }
+.approval-rejected { background: #fdeaea; color: #b42318; }
+.approval-withdrawn { background: #eef2f4; color: #526b78; }
 .payment-reversal { padding: 1.25rem; border-top: 1px solid #e3ebef; background: #f8fafb; }
 .payment-reversal h3 { margin: 0 0 1rem; color: #17324d; font-size: 1rem; }
 
@@ -978,6 +1043,8 @@ else
     private AccessibleOrganisation? access;
     private SupplierBill? bill;
     private List<SupplierPayment> payments = [];
+    private List<SupplierPaymentApproval> paymentApprovals = [];
+    private Dictionary<Guid, bool> approvalEligibility = [];
     private List<SupplierCreditNote> credits = [];
     private Dictionary<Guid, SupplierCreditNoteReversal> creditReversals = [];
     private HashSet<Guid> reversedPaymentIds = [];
@@ -1030,6 +1097,11 @@ private DateOnly paymentDate =
 private string paymentReference = "";
 private decimal paymentAmount;
 private Guid paymentBankAccountId;
+private Guid? rejectingApprovalId;
+private string paymentRejectionReason = "";
+
+    private bool RequiresPaymentApproval =>
+        access?.Organisation.RequireSupplierPaymentApproval == true;
 
     private decimal AmountDue =>
         bill is null
@@ -1097,21 +1169,29 @@ private async Task RecordPayment()
 {
     try
     {
-        await Purchasing.PayBillAsync(
-            userId,
-            new SupplierPaymentRequest(
+        var request = new SupplierPaymentRequest(
                 OrganisationId,
                 BillId,
                 paymentDate,
                 paymentReference,
                 paymentAmount,
-                paymentBankAccountId));
+                paymentBankAccountId);
+
+        if (RequiresPaymentApproval)
+        {
+            await Purchasing.RequestPaymentApprovalAsync(userId, request);
+        }
+        else
+        {
+            await Purchasing.PayBillAsync(userId, request);
+        }
 
         showPayment = false;
 
         statusClass = "alert-success";
-        status =
-            $"Supplier payment of ${paymentAmount:N2} recorded.";
+        status = RequiresPaymentApproval
+            ? $"Supplier payment of ${paymentAmount:N2} submitted for independent approval."
+            : $"Supplier payment of ${paymentAmount:N2} recorded.";
 
         await Reload();
     }
@@ -1165,6 +1245,20 @@ private async Task RecordPayment()
                      x.OrganisationId == OrganisationId)
             .OrderByDescending(x => x.PaymentDate)
             .ToListAsync();
+
+        paymentApprovals = (await Db.SupplierPaymentApprovals
+            .AsNoTracking()
+            .Include(x => x.BankAccount)
+            .Where(x => x.SupplierBillId == BillId && x.OrganisationId == OrganisationId)
+            .ToListAsync())
+            .OrderByDescending(x => x.RequestedAt)
+            .ToList();
+        approvalEligibility = [];
+        foreach (var approval in paymentApprovals.Where(x => x.Status == SupplierPaymentApprovalStatus.Pending))
+        {
+            approvalEligibility[approval.Id] = await ApprovalPolicies.CanApproveAsync(
+                userId, OrganisationId, approval.RequiredApproval);
+        }
 
         credits = await Db.SupplierCreditNotes
             .AsNoTracking()
@@ -1455,6 +1549,63 @@ creditReversals =
         paymentReversalDate = DateOnly.FromDateTime(DateTime.Today);
         showVoid = false;
         showCredit = false;
+    }
+
+    private async Task ApprovePayment(Guid approvalId)
+    {
+        try
+        {
+            await Purchasing.ApprovePaymentAsync(userId, OrganisationId, approvalId);
+            statusClass = "alert-success";
+            status = "Supplier payment approved and posted.";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private void BeginRejectPayment(Guid approvalId)
+    {
+        rejectingApprovalId = approvalId;
+        paymentRejectionReason = "";
+    }
+
+    private async Task RejectPayment()
+    {
+        if (rejectingApprovalId is null) return;
+        try
+        {
+            await Purchasing.RejectPaymentAsync(
+                userId, OrganisationId, rejectingApprovalId.Value, paymentRejectionReason);
+            rejectingApprovalId = null;
+            statusClass = "alert-success";
+            status = "Supplier payment request rejected.";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private async Task WithdrawPayment(Guid approvalId)
+    {
+        try
+        {
+            await Purchasing.WithdrawPaymentApprovalAsync(userId, OrganisationId, approvalId);
+            statusClass = "alert-success";
+            status = "Supplier payment request withdrawn.";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
     }
 
     private async Task ReversePayment()

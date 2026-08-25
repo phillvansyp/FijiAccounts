@@ -197,6 +197,49 @@ public sealed class SupplierPayment
     public required string CreatedByUserId { get; set; }
 }
 
+public enum SupplierPaymentApprovalStatus
+{
+    Pending,
+    Approved,
+    Rejected,
+    Withdrawn
+}
+
+public sealed class SupplierPaymentApproval
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid? BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public Guid? DivisionId { get; set; }
+    public Division? Division { get; set; }
+    public Guid SupplierId { get; set; }
+    public BusinessParty Supplier { get; set; } = null!;
+    public Guid SupplierBillId { get; set; }
+    public SupplierBill SupplierBill { get; set; } = null!;
+    public DateOnly PaymentDate { get; set; }
+    [MaxLength(80)] public required string Reference { get; set; }
+    public decimal Amount { get; set; }
+    public Guid BankAccountId { get; set; }
+    public LedgerAccount BankAccount { get; set; } = null!;
+    public Guid? StatementLineId { get; set; }
+    public BankStatementLine? StatementLine { get; set; }
+    public Guid? PurchaseApprovalPolicyId { get; set; }
+    public PurchaseApprovalPolicy? PurchaseApprovalPolicy { get; set; }
+    public PurchaseApprovalRequirement RequiredApproval { get; set; } =
+        PurchaseApprovalRequirement.OwnerOrAdministrator;
+    public SupplierPaymentApprovalStatus Status { get; set; } =
+        SupplierPaymentApprovalStatus.Pending;
+    public Guid? SupplierPaymentId { get; set; }
+    public SupplierPayment? SupplierPayment { get; set; }
+    public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string RequestedByUserId { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
+    [MaxLength(450)] public string? DecidedByUserId { get; set; }
+    [MaxLength(500)] public string? RejectionReason { get; set; }
+}
+
 public sealed class SupplierPaymentReversal
 {
     public Guid Id { get; set; } = Guid.NewGuid();
