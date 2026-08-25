@@ -157,3 +157,20 @@ public sealed class ProjectCostCode
     public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+public sealed class ProjectWipPosting
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid ProjectId { get; set; }
+    public Project Project { get; set; } = null!;
+    public DateOnly AsAt { get; set; }
+    public decimal PreviousWipAmount { get; set; }
+    public decimal RequiredWipAmount { get; set; }
+    public decimal MovementAmount { get; set; }
+    public Guid PostedJournalId { get; set; }
+    public PostedJournal PostedJournal { get; set; } = null!;
+    [MaxLength(450)] public required string PostedByUserId { get; set; }
+    public DateTimeOffset PostedAt { get; set; } = DateTimeOffset.UtcNow;
+}

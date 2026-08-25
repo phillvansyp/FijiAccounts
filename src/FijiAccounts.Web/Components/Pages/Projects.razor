@@ -14,6 +14,7 @@
 @inject ProjectProfitabilityService ProjectProfitabilityService
 @inject ProjectProgressClaimService ProjectProgressClaimService
 @inject ProjectRevenueRecognitionService ProjectRevenueRecognitionService
+@inject ProjectWipPostingService ProjectWipPostingService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -143,7 +144,7 @@ else
             <div><span class="eyebrow">Revenue recognition</span><h2>Work in progress</h2></div>
             <div class="d-flex gap-2 align-items-center no-print"><label class="small text-muted" for="recognition-as-at">As at</label><InputDate id="recognition-as-at" class="form-control form-control-sm" @bind-Value="recognitionAsAt" /><button class="btn btn-sm btn-outline-primary" @onclick="RefreshRecognition">Refresh</button></div>
         </div>
-        <p class="text-muted">Management workpaper only. It calculates the adjustment required between earned and posted revenue; it does not post a journal.</p>
+        <p class="text-muted">Review earned revenue against billed revenue, then manually post the required WIP true-up when the organisation's WIP accounts are configured.</p>
         @if (projects.Count == 0)
         {
             <div class="empty-state"><strong>No projects</strong><span>Create a project to calculate revenue recognition.</span></div>
@@ -151,7 +152,7 @@ else
         else
         {
             <div class="table-responsive"><table class="table align-middle">
-                <thead><tr><th>Project</th><th>Basis</th><th class="text-end">Complete</th><th class="text-end">Revised contract</th><th class="text-end">Earned revenue</th><th class="text-end">Posted revenue</th><th>WIP position</th><th class="text-end">Margin</th></tr></thead>
+                <thead><tr><th>Project</th><th>Basis</th><th class="text-end">Complete</th><th class="text-end">Revised contract</th><th class="text-end">Earned revenue</th><th class="text-end">Billed revenue</th><th>WIP position</th><th class="text-end">Margin</th></tr></thead>
                 <tbody>
                 @foreach (var project in projects)
                 {
@@ -179,6 +180,26 @@ else
                             else
                             {
                                 <span class="badge text-bg-success">Aligned</span>
+                            }
+                            @if (recognition is not null)
+                            {
+                                <small class="d-block text-muted">$@recognition.PostedWipAmount.ToString("N2") WIP currently posted</small>
+                                @if (recognition.IsPostedForAsAt)
+                                {
+                                    <span class="badge text-bg-success mt-1">Posted for this date</span>
+                                }
+                                else if (!recognition.WipAccountsConfigured)
+                                {
+                                    <a class="d-block small mt-1" href="@($"/o/{OrganisationId}/settings")">Configure WIP accounts</a>
+                                }
+                                else if (canManage && recognition.WipMovementRequired is decimal movement && movement != 0m)
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-primary mt-1" @onclick="() => PostWip(project)">Post $@Math.Abs(movement).ToString("N2") true-up</button>
+                                }
+                                else if (recognition.WipMovementRequired == 0m)
+                                {
+                                    <small class="d-block text-success">No journal movement required</small>
+                                }
                             }
                         </td>
                         <td class="text-end">@(recognition?.ExpectedGrossProfitToDate is decimal margin ? $"${margin:N2} to date" : "—")<small class="d-block text-muted">$@(recognition?.ForecastMargin.ToString("N2") ?? "0.00") forecast</small></td>
@@ -498,6 +519,18 @@ else
                 userId, OrganisationId, recognitionAsAt)).ToList();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task PostWip(Project project)
+    {
+        try
+        {
+            await ProjectWipPostingService.PostAsync(
+                userId, OrganisationId, project.Id, recognitionAsAt);
+            Success($"WIP true-up posted for {project.ProjectNumber} at {recognitionAsAt:dd MMM yyyy}.");
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or FijiAccounts.Domain.Accounting.DomainException) { Error(ex.Message); }
     }
 
     private async Task ChangeStatus(Project project, ProjectStatus status)

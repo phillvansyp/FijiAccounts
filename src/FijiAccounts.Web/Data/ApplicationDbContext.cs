@@ -95,6 +95,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         Set<FixedAssetDisposal>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectCostCode> ProjectCostCodes => Set<ProjectCostCode>();
+    public DbSet<ProjectWipPosting> ProjectWipPostings => Set<ProjectWipPosting>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -115,6 +116,15 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<Organisation>()
             .Property(x => x.PurchaseTotalToleranceAmount)
             .HasPrecision(18, 2);
+        builder.Entity<Organisation>().HasOne(x => x.ProjectContractAssetAccount)
+            .WithMany().HasForeignKey(x => x.ProjectContractAssetAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Organisation>().HasOne(x => x.ProjectContractLiabilityAccount)
+            .WithMany().HasForeignKey(x => x.ProjectContractLiabilityAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<Organisation>().HasOne(x => x.ProjectRevenueRecognitionAccount)
+            .WithMany().HasForeignKey(x => x.ProjectRevenueRecognitionAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationGroupMembership>()
             .HasKey(x => new { x.OrganisationGroupId, x.UserId });
         builder.Entity<OrganisationGroupMembership>()
@@ -909,6 +919,17 @@ builder.Entity<FixedAsset>()
         }) builder.Entity<ProjectProgressClaim>().Property(property).HasPrecision(18, 2);
         builder.Entity<ProjectProgressClaim>().Property(x => x.RetentionRate).HasPrecision(8, 4);
         builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProjectWipPosting>().HasIndex(x => new { x.ProjectId, x.AsAt }).IsUnique();
+        builder.Entity<ProjectWipPosting>().HasIndex(x => x.PostedJournalId).IsUnique();
+        foreach (var property in new[]
+        {
+            nameof(ProjectWipPosting.PreviousWipAmount),
+            nameof(ProjectWipPosting.RequiredWipAmount),
+            nameof(ProjectWipPosting.MovementAmount)
+        }) builder.Entity<ProjectWipPosting>().Property(property).HasPrecision(18, 2);
+        builder.Entity<ProjectWipPosting>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProjectWipPosting>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProjectWipPosting>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasIndex(x => new { x.ProjectId, x.ProjectCostCodeId });
@@ -923,6 +944,8 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<PostedJournal>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<PostedJournalLine>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<ProjectWipPosting>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<AuditEvent>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||

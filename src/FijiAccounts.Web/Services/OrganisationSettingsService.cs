@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,6 +15,12 @@ public sealed record UpdateOrganisationSettingsRequest(
     int DefaultSalesInvoiceDueDays,
     PaymentTermType DefaultSupplierBillPaymentTermType,
     int DefaultSupplierBillDueDays);
+
+public sealed record UpdateProjectWipAccountsRequest(
+    Guid OrganisationId,
+    Guid ContractAssetAccountId,
+    Guid ContractLiabilityAccountId,
+    Guid RevenueRecognitionAccountId);
 
 public sealed class OrganisationSettingsService(
     ApplicationDbContext db)
@@ -171,6 +178,93 @@ public sealed class OrganisationSettingsService(
         return organisation;
     }
 
+    public async Task<Organisation> UpdateProjectWipAccountsAsync(
+        string userId,
+        UpdateProjectWipAccountsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireManagerAsync(
+            userId,
+            request.OrganisationId,
+            cancellationToken);
+
+        var accountIds = new[]
+        {
+            request.ContractAssetAccountId,
+            request.ContractLiabilityAccountId,
+            request.RevenueRecognitionAccountId
+        };
+        var accounts = await db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == request.OrganisationId &&
+                x.IsActive && accountIds.Contains(x.Id))
+            .ToListAsync(cancellationToken);
+        var contractAsset = Account(
+            accounts,
+            request.ContractAssetAccountId,
+            AccountType.Asset,
+            "contract asset");
+        if (contractAsset.IsBankAccount)
+        {
+            throw new InvalidOperationException(
+                "The contract asset account cannot be a bank account.");
+        }
+        var contractLiability = Account(
+            accounts,
+            request.ContractLiabilityAccountId,
+            AccountType.Liability,
+            "contract liability");
+        var revenueRecognition = Account(
+            accounts,
+            request.RevenueRecognitionAccountId,
+            AccountType.Revenue,
+            "revenue recognition");
+
+        var organisation = await db.Organisations.SingleOrDefaultAsync(
+            x => x.Id == request.OrganisationId,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                "The organisation could not be updated.");
+        if (organisation.ProjectContractAssetAccountId == contractAsset.Id &&
+            organisation.ProjectContractLiabilityAccountId == contractLiability.Id &&
+            organisation.ProjectRevenueRecognitionAccountId == revenueRecognition.Id)
+        {
+            return organisation;
+        }
+        if (await db.ProjectWipPostings.AnyAsync(
+                x => x.OrganisationId == request.OrganisationId,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "Project WIP accounts cannot be changed after a WIP journal has been posted.");
+        }
+
+        var previous = new
+        {
+            organisation.ProjectContractAssetAccountId,
+            organisation.ProjectContractLiabilityAccountId,
+            organisation.ProjectRevenueRecognitionAccountId
+        };
+        organisation.ProjectContractAssetAccountId = contractAsset.Id;
+        organisation.ProjectContractLiabilityAccountId = contractLiability.Id;
+        organisation.ProjectRevenueRecognitionAccountId = revenueRecognition.Id;
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "ProjectWipAccountsUpdated",
+            new
+            {
+                Old = previous,
+                New = new
+                {
+                    ContractAsset = new { contractAsset.Id, contractAsset.Code },
+                    ContractLiability = new { contractLiability.Id, contractLiability.Code },
+                    RevenueRecognition = new { revenueRecognition.Id, revenueRecognition.Code }
+                }
+            }));
+        await db.SaveChangesAsync(cancellationToken);
+        return organisation;
+    }
+
     private async Task RequireManagerAsync(
         string userId,
         Guid organisationId,
@@ -253,5 +347,21 @@ public sealed class OrganisationSettingsService(
             throw new InvalidOperationException(
                 $"Enter a valid {fieldName} payment term.");
         }
+    }
+
+    private static LedgerAccount Account(
+        IReadOnlyList<LedgerAccount> accounts,
+        Guid accountId,
+        AccountType expectedType,
+        string name)
+    {
+        var account = accounts.SingleOrDefault(x => x.Id == accountId);
+        if (account is null || account.Type != expectedType)
+        {
+            throw new InvalidOperationException(
+                $"Select an active {expectedType.ToString().ToLowerInvariant()} account for {name}.");
+        }
+
+        return account;
     }
 }

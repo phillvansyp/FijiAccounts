@@ -86,6 +86,12 @@ public sealed class Organisation
     [MaxLength(2)] public string CountryCode { get; set; } = "FJ";
     [MaxLength(3)] public string BaseCurrency { get; set; } = "FJD";
     [MaxLength(64)] public string TimeZoneId { get; set; } = "Pacific/Fiji";
+    public Guid? ProjectContractAssetAccountId { get; set; }
+    public LedgerAccount? ProjectContractAssetAccount { get; set; }
+    public Guid? ProjectContractLiabilityAccountId { get; set; }
+    public LedgerAccount? ProjectContractLiabilityAccount { get; set; }
+    public Guid? ProjectRevenueRecognitionAccountId { get; set; }
+    public LedgerAccount? ProjectRevenueRecognitionAccount { get; set; }
 
     [MaxLength(20)] public string SalesInvoicePrefix { get; set; } = "INV-";
     public long NextSalesInvoiceNumber { get; set; } = 1;

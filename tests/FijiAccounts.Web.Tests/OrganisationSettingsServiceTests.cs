@@ -87,6 +87,14 @@ public sealed class OrganisationSettingsServiceTests
                 otherUserId,
                 test.Organisation.Id,
                 "WS"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.UpdateProjectWipAccountsAsync(
+                otherUserId,
+                new UpdateProjectWipAccountsRequest(
+                    test.Organisation.Id,
+                    test.Account("1100").Id,
+                    test.Account("2000").Id,
+                    test.Account("4000").Id)));
 
         Assert.Equal(
             "Accounting Test Limited",
@@ -176,6 +184,36 @@ public sealed class OrganisationSettingsServiceTests
             .AsNoTracking()
             .SingleAsync(x => x.Id == test.Organisation.Id);
         Assert.Equal("Accounting Test Limited", organisation.LegalName);
+        Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WipAccounts_MustBeActiveAccountsOfTheRequiredTypes()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationSettingsService(test.Db);
+
+        var wrongType = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateProjectWipAccountsAsync(
+                test.UserId,
+                new UpdateProjectWipAccountsRequest(
+                    test.Organisation.Id,
+                    test.Account("6000").Id,
+                    test.Account("2000").Id,
+                    test.Account("4000").Id)));
+        Assert.Contains("asset account", wrongType.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        var bankAccount = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateProjectWipAccountsAsync(
+                test.UserId,
+                new UpdateProjectWipAccountsRequest(
+                    test.Organisation.Id,
+                    test.Account("1000").Id,
+                    test.Account("2000").Id,
+                    test.Account("4000").Id)));
+        Assert.Contains("cannot be a bank", bankAccount.Message,
+            StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await test.Db.AuditEvents.AsNoTracking().ToListAsync());
     }
 

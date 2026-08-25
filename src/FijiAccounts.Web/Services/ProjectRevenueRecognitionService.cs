@@ -21,7 +21,11 @@ public sealed record ProjectRevenueRecognition(
     decimal ForecastMargin,
     decimal? RemainingRevenue,
     decimal CertifiedWorkValue,
-    decimal OutstandingRetention);
+    decimal OutstandingRetention,
+    decimal PostedWipAmount,
+    decimal? WipMovementRequired,
+    bool IsPostedForAsAt,
+    bool WipAccountsConfigured);
 
 public sealed class ProjectRevenueRecognitionService(
     ApplicationDbContext db,
@@ -41,12 +45,20 @@ public sealed class ProjectRevenueRecognitionService(
         }
 
         var projectIds = accessibleProjects.Select(x => x.Id).ToArray();
+        var wipPostings = (await db.ProjectWipPostings.AsNoTracking()
+            .Where(x => projectIds.Contains(x.ProjectId) && x.AsAt <= asAt)
+            .ToListAsync(cancellationToken))
+            .OrderBy(x => x.AsAt)
+            .ThenBy(x => x.PostedAt)
+            .ToList();
+        var wipJournalIds = wipPostings.Select(x => x.PostedJournalId).ToArray();
         var actuals = await db.PostedJournalLines.AsNoTracking()
             .Where(x =>
                 x.ProjectId != null &&
                 projectIds.Contains(x.ProjectId.Value) &&
                 x.PostedJournal.EntryDate <= asAt &&
-                (x.LedgerAccount.Type == AccountType.Revenue ||
+                ((x.LedgerAccount.Type == AccountType.Revenue &&
+                  !wipJournalIds.Contains(x.PostedJournalId)) ||
                  x.LedgerAccount.Type == AccountType.Expense))
             .GroupBy(x => new { ProjectId = x.ProjectId!.Value, x.LedgerAccount.Type })
             .Select(x => new ActualAmount(
@@ -108,6 +120,12 @@ public sealed class ProjectRevenueRecognitionService(
             var revenueAdjustment = recognizedRevenue is decimal recognized
                 ? Currency(recognized - postedRevenue)
                 : (decimal?)null;
+            var projectWipPostings = wipPostings
+                .Where(x => x.ProjectId == project.Id).ToList();
+            var postedWipAmount = projectWipPostings.LastOrDefault()?.RequiredWipAmount ?? 0m;
+            var wipMovementRequired = revenueAdjustment is decimal requiredWip
+                ? Currency(requiredWip - postedWipAmount)
+                : (decimal?)null;
 
             return new ProjectRevenueRecognition(
                 project.Id,
@@ -128,7 +146,13 @@ public sealed class ProjectRevenueRecognitionService(
                     ? Currency(revisedContract - earnedRevenue)
                     : null,
                 Currency(certifiedWork),
-                Currency(outstandingRetention));
+                Currency(outstandingRetention),
+                Currency(postedWipAmount),
+                wipMovementRequired,
+                projectWipPostings.Any(x => x.AsAt == asAt),
+                organisation.ProjectContractAssetAccountId is not null &&
+                    organisation.ProjectContractLiabilityAccountId is not null &&
+                    organisation.ProjectRevenueRecognitionAccountId is not null);
         }).ToList();
     }
 

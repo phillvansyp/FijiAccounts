@@ -4,6 +4,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
@@ -202,6 +203,18 @@ else
                 @if (canManage) { <button class="btn btn-primary">Save business details</button> }
             </EditForm>
         </section>
+        <section class="settings-card">
+            <h2>Project WIP posting</h2>
+            <p>Accounts used when a reviewed project revenue-recognition workpaper is manually posted.</p>
+            <EditForm Model="wipModel" OnValidSubmit="SaveWipAccounts" FormName="project-wip-account-settings">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="mb-3"><label class="form-label">Contract asset</label><InputSelect class="form-select" @bind-Value="wipModel.ContractAssetAccountId" disabled="@(!canManage || wipAccountsLocked)"><option value="@Guid.Empty">Select an asset account</option>@foreach (var account in assetAccounts) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect><div class="form-text">Debited when earned revenue is ahead of billing.</div></div>
+                <div class="mb-3"><label class="form-label">Contract liability</label><InputSelect class="form-select" @bind-Value="wipModel.ContractLiabilityAccountId" disabled="@(!canManage || wipAccountsLocked)"><option value="@Guid.Empty">Select a liability account</option>@foreach (var account in liabilityAccounts) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect><div class="form-text">Credited when billing is ahead of earned revenue.</div></div>
+                <div class="mb-3"><label class="form-label">Revenue recognition</label><InputSelect class="form-select" @bind-Value="wipModel.RevenueRecognitionAccountId" disabled="@(!canManage || wipAccountsLocked)"><option value="@Guid.Empty">Select a revenue account</option>@foreach (var account in recognitionRevenueAccounts) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect><div class="form-text">Receives the revenue side of each WIP true-up.</div></div>
+                @if (wipAccountsLocked) { <div class="compliance-note"><strong>Posting accounts locked</strong><span>These accounts cannot change after the first WIP journal.</span></div> }
+                else if (canManage) { <button class="btn btn-primary">Save WIP accounts</button> }
+            </EditForm>
+        </section>
         <section class="settings-card"><h2>Island jurisdiction</h2><p>Controls currency, local dates, tax terminology and compliance rules.</p>
             <dl class="jurisdiction-list"><div><dt>Country</dt><dd>@jurisdiction.CountryName</dd></div><div><dt>Base currency</dt><dd>@access.Organisation.BaseCurrency</dd></div><div><dt>Time zone</dt><dd>@access.Organisation.TimeZoneId</dd></div><div><dt>Indirect tax</dt><dd>@access.Organisation.TaxLabel</dd></div><div><dt>Financial year end</dt><dd>@FinancialYearEnd</dd></div></dl>
             @if (!jurisdiction.TaxPackEnabled) { <div class="compliance-note"><strong>Posting protection is active</strong><span>Transactions remain locked until this country’s tax rules have been independently verified and activated.</span></div> }
@@ -371,10 +384,10 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction; private SettingsModel model = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, ConversionDate = access.Organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadHierarchy(); }
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = new() { LegalName = access.Organisation.LegalName, TradingName = access.Organisation.TradingName, Tin = access.Organisation.Tin, ConversionDate = access.Organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = access.Organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = access.Organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = access.Organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = access.Organisation.DefaultSupplierBillDueDays }; await LoadWipSettings(); await LoadHierarchy(); }
     private async Task Save()
     {
         if (!canManage || access is null) return;
@@ -405,6 +418,53 @@ else
     }
     private static string CountryName(string countryCode) =>
         IslandJurisdictions.Get(countryCode).CountryName;
+
+    private async Task LoadWipSettings()
+    {
+        var accounts = await Db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive)
+            .OrderBy(x => x.Code).ToListAsync();
+        assetAccounts = accounts.Where(x => x.Type == AccountType.Asset && !x.IsBankAccount).ToList();
+        liabilityAccounts = accounts.Where(x => x.Type == AccountType.Liability).ToList();
+        recognitionRevenueAccounts = accounts.Where(x => x.Type == AccountType.Revenue).ToList();
+        wipAccountsLocked = await Db.ProjectWipPostings.AsNoTracking()
+            .AnyAsync(x => x.OrganisationId == OrganisationId);
+        wipModel = new WipAccountsModel
+        {
+            ContractAssetAccountId = access!.Organisation.ProjectContractAssetAccountId ?? Guid.Empty,
+            ContractLiabilityAccountId = access.Organisation.ProjectContractLiabilityAccountId ?? Guid.Empty,
+            RevenueRecognitionAccountId = access.Organisation.ProjectRevenueRecognitionAccountId ?? Guid.Empty
+        };
+    }
+
+    private async Task SaveWipAccounts()
+    {
+        if (!canManage || access is null) return;
+        try
+        {
+            if (wipModel.ContractAssetAccountId == Guid.Empty ||
+                wipModel.ContractLiabilityAccountId == Guid.Empty ||
+                wipModel.RevenueRecognitionAccountId == Guid.Empty)
+            {
+                throw new InvalidOperationException("Select all three project WIP accounts.");
+            }
+            var organisation = await SettingsService.UpdateProjectWipAccountsAsync(
+                userId,
+                new UpdateProjectWipAccountsRequest(
+                    OrganisationId,
+                    wipModel.ContractAssetAccountId,
+                    wipModel.ContractLiabilityAccountId,
+                    wipModel.RevenueRecognitionAccountId));
+            access = access with { Organisation = organisation };
+            statusClass = "alert-success";
+            status = "Project WIP posting accounts saved.";
+        }
+        catch (Exception ex)
+        {
+            statusClass = "alert-danger";
+            status = $"Project WIP accounts were not saved: {ex.Message}";
+        }
+    }
     private async Task ChangeJurisdiction() { if (!canChangeJurisdiction || access is null) return; var organisation = await SettingsService.ChangeJurisdictionAsync(userId, OrganisationId, selectedCountry); access = access with { Organisation = organisation }; jurisdiction = IslandJurisdictions.Get(organisation.CountryCode); status = $"Jurisdiction changed to {jurisdiction.CountryName}."; }
     private async Task LoadHierarchy()
     {
@@ -572,6 +632,7 @@ else
     }
 
     private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
     private sealed class BranchModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
