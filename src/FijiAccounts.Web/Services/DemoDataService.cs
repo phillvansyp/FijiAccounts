@@ -189,6 +189,12 @@ public sealed class DemoDataService(
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .Select(x => x.Id).ToArrayAsync(ct);
 
+        await db.CashflowScenarioEvents
+            .Where(x => organisationIds.Contains(x.CashflowScenario.OrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.CashflowScenarios
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
         await db.SalesInvoiceVoids
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);

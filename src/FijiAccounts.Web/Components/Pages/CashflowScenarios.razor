@@ -1,0 +1,240 @@
+@page "/o/{OrganisationId:guid}/scenarios"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject CashflowScenarioService ScenarioService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Scenario planning &middot; Account Island</PageTitle>
+
+@if (loading)
+{
+    <div class="dashboard-loading">Preparing scenario planning...</div>
+}
+else if (configuration is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div><p class="eyebrow">Planning</p><h1>Cashflow scenarios</h1><p class="page-intro">Test delayed customer payments, planned receipts, and planned costs against the live 12-month forecast. Scenarios never post to the ledger.</p></div>
+        <a class="btn btn-outline-secondary" href="o/@OrganisationId">Back to overview</a>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass" role="alert">@message</div>
+    }
+
+    @if (configuration.CanManage)
+    {
+        <details class="setup-card mb-4" open="@(configuration.Scenarios.Count == 0)">
+            <summary><strong>+ Create a scenario</strong></summary>
+            <EditForm Model="createModel" OnValidSubmit="CreateScenario" FormName="create-cashflow-scenario" class="mt-3">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="row g-3">
+                    <div class="col-md-4"><label class="form-label">Scenario name</label><InputText class="form-control" @bind-Value="createModel.Name" @bind-Value:event="oninput" placeholder="Slower customer payments" /></div>
+                    <div class="col-md-6"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="createModel.Description" @bind-Value:event="oninput" placeholder="What decision or risk are you testing?" /></div>
+                    <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" disabled="@saving">Create</button></div>
+                </div>
+            </EditForm>
+        </details>
+    }
+
+    @if (configuration.Scenarios.Count == 0)
+    {
+        <div class="empty-state"><strong>No active scenarios</strong><span>@(configuration.CanManage ? "Create one to compare possible cash outcomes with the live forecast." : "A manager can create a scenario for this organisation.")</span></div>
+    }
+    else
+    {
+        <section class="report-controls no-print mb-4">
+            <div><label class="form-label" for="scenario-select">Active scenario</label><select id="scenario-select" class="form-select" value="@selectedScenarioId" @onchange="SelectScenario">@foreach (var scenario in configuration.Scenarios) { <option value="@scenario.Id">@scenario.Name</option> }</select></div>
+            <div class="d-flex align-items-end"><span class="text-muted">As at @asAt.ToString("dd MMM yyyy") &middot; @configuration.Currency</span></div>
+        </section>
+
+        @if (comparison is not null)
+        {
+            <section class="detail-card mb-4">
+                <div class="card-heading">
+                    <div><span class="eyebrow">Selected scenario</span><h2>@comparison.Scenario.Name</h2><small>@(comparison.Scenario.Description ?? "No description")</small></div>
+                    @if (configuration.CanManage) { <button class="btn btn-sm btn-outline-danger" @onclick="ArchiveScenario" disabled="@saving">Archive scenario</button> }
+                </div>
+                <div class="table-responsive mt-3"><table class="table">
+                    <thead><tr><th>Horizon</th><th class="text-end">Live balance</th><th class="text-end">Scenario balance</th><th class="text-end">Difference</th></tr></thead>
+                    <tbody>@foreach (var period in ComparisonPeriods()) { <tr><th scope="row">@period.Label</th><td class="text-end">@Money(comparison.OpeningCash + period.Baseline.NetMovement)</td><td class="text-end">@Money(comparison.OpeningCash + period.Adjusted.NetMovement)</td><td class="text-end @VarianceClass(period.Adjusted.NetMovement - period.Baseline.NetMovement)">@SignedMoney(period.Adjusted.NetMovement - period.Baseline.NetMovement)</td></tr> }</tbody>
+                </table></div>
+            </section>
+
+            @if (configuration.CanManage)
+            {
+                <details class="setup-card mb-4" open="@(comparison.Scenario.Events.Count == 0)">
+                    <summary><strong>+ Add an assumption</strong></summary>
+                    <EditForm Model="eventModel" OnValidSubmit="AddEvent" FormName="add-cashflow-scenario-event" class="mt-3">
+                        <DataAnnotationsValidator /><ValidationSummary />
+                        <div class="row g-3">
+                            <div class="col-md-3"><label class="form-label">Assumption type</label><InputSelect class="form-select" @bind-Value="eventModel.Kind">@foreach (var kind in Enum.GetValues<CashflowScenarioEventKind>()) { <option value="@kind">@KindLabel(kind)</option> }</InputSelect></div>
+                            @if (eventModel.Kind == CashflowScenarioEventKind.CustomerReceiptDelay)
+                            {
+                                <div class="col-md-6"><label class="form-label">Outstanding invoice</label><InputSelect class="form-select" @bind-Value="eventModel.SalesInvoiceId"><option value="">Select an invoice</option>@foreach (var invoice in configuration.OutstandingInvoices) { <option value="@invoice.Id">@invoice.InvoiceNumber &mdash; @invoice.CustomerName &mdash; @Money(invoice.OutstandingAmount) due @invoice.DueDate.ToString("dd MMM")</option> }</InputSelect></div>
+                                <div class="col-md-3"><label class="form-label">Revised receipt date</label><InputDate class="form-control" @bind-Value="eventModel.EventDate" /></div>
+                            }
+                            else
+                            {
+                                <div class="col-md-3"><label class="form-label">Title</label><InputText class="form-control" @bind-Value="eventModel.Title" @bind-Value:event="oninput" /></div>
+                                <div class="col-md-2"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="eventModel.Amount" /></div>
+                                <div class="col-md-2"><label class="form-label">First date</label><InputDate class="form-control" @bind-Value="eventModel.EventDate" /></div>
+                                <div class="col-md-2"><label class="form-label">Frequency</label><InputSelect class="form-select" @bind-Value="eventModel.Frequency"><option value="@CashflowScenarioFrequency.OneOff">One-off</option><option value="@CashflowScenarioFrequency.Monthly">Monthly</option></InputSelect></div>
+                                @if (eventModel.Frequency == CashflowScenarioFrequency.Monthly) { <div class="col-md-2"><label class="form-label">End date</label><InputDate class="form-control" @bind-Value="eventModel.EndDate" /></div> }
+                            }
+                            <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" disabled="@saving">Add</button></div>
+                        </div>
+                    </EditForm>
+                </details>
+            }
+
+            <section class="detail-card mb-4">
+                <div class="card-heading"><div><span class="eyebrow">Assumptions</span><h2>Scenario events</h2></div><span>@comparison.Scenario.Events.Count event@(comparison.Scenario.Events.Count == 1 ? "" : "s")</span></div>
+                @if (comparison.Scenario.Events.Count == 0) { <div class="empty-state"><strong>No assumptions yet</strong><span>Add a receipt, payment, or customer delay to see its effect.</span></div> }
+                else
+                {
+                    <div class="table-responsive"><table class="table"><thead><tr><th>Assumption</th><th>Timing</th><th class="text-end">Amount</th>@if (configuration.CanManage) { <th></th> }</tr></thead><tbody>
+                    @foreach (var item in comparison.Scenario.Events.OrderBy(x => x.EventDate).ThenBy(x => x.Title))
+                    {
+                        <tr><td><strong>@item.Title</strong><small class="d-block text-muted">@KindLabel(item.Kind)@(item.SourceReference is null ? "" : $" · {item.SourceReference}")</small></td><td>@EventTiming(item)</td><td class="text-end">@Money(item.Amount)</td>@if (configuration.CanManage) { <td class="text-end"><button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveEvent(item.Id)" disabled="@saving">Remove</button></td> }</tr>
+                    }
+                    </tbody></table></div>
+                }
+            </section>
+
+            <section class="detail-card">
+                <div class="card-heading"><div><span class="eyebrow">12-month outlook</span><h2>Monthly scenario impact</h2></div><span>Live forecast compared with assumptions</span></div>
+                <div class="table-responsive"><table class="table"><thead><tr><th>Month</th><th class="text-end">Live movement</th><th class="text-end">Scenario receipts</th><th class="text-end">Scenario payments</th><th class="text-end">Adjusted movement</th><th class="text-end">Difference</th></tr></thead><tbody>
+                @for (var i = 0; i < comparison.Baseline.Monthly.Count; i++) { var live = comparison.Baseline.Monthly[i]; var adjusted = comparison.Adjusted.Monthly[i]; var variance = adjusted.Summary.NetMovement - live.Summary.NetMovement; <tr><th scope="row">@live.MonthStart.ToString("MMM yyyy")</th><td class="text-end">@Money(live.Summary.NetMovement)</td><td class="text-end">@Money(adjusted.Sources.ScenarioReceipts)</td><td class="text-end">@Money(adjusted.Sources.ScenarioPayments)</td><td class="text-end">@Money(adjusted.Summary.NetMovement)</td><td class="text-end @VarianceClass(variance)">@SignedMoney(variance)</td></tr> }
+                </tbody></table></div>
+            </section>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private readonly DateOnly asAt = DateOnly.FromDateTime(DateTime.Today);
+    private CashflowScenarioConfiguration? configuration;
+    private CashflowScenarioComparison? comparison;
+    private CreateModel createModel = new();
+    private EventModel eventModel = NewEventModel();
+    private string userId = "";
+    private Guid selectedScenarioId;
+    private bool loading = true;
+    private bool saving;
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? "";
+        try { await Reload(); }
+        catch (UnauthorizedAccessException) { configuration = null; comparison = null; }
+        finally { loading = false; }
+    }
+
+    private async Task Reload(Guid? preferred = null)
+    {
+        configuration = await ScenarioService.GetAsync(userId, OrganisationId);
+        selectedScenarioId = preferred is Guid id && configuration.Scenarios.Any(x => x.Id == id)
+            ? id
+            : configuration.Scenarios.Any(x => x.Id == selectedScenarioId)
+                ? selectedScenarioId
+                : configuration.Scenarios.FirstOrDefault()?.Id ?? Guid.Empty;
+        comparison = selectedScenarioId == Guid.Empty ? null : await ScenarioService.CompareAsync(userId, OrganisationId, selectedScenarioId, asAt);
+    }
+
+    private async Task SelectScenario(ChangeEventArgs args)
+    {
+        if (Guid.TryParse(args.Value?.ToString(), out var id)) { selectedScenarioId = id; await Run(async () => await Reload(id)); }
+    }
+
+    private async Task CreateScenario() => await Run(async () =>
+    {
+        var created = await ScenarioService.CreateAsync(userId, new(OrganisationId, createModel.Name, createModel.Description));
+        createModel = new();
+        await Reload(created.Id);
+        Success("Scenario created. Add assumptions to compare it with the live forecast.");
+    });
+
+    private async Task AddEvent() => await Run(async () =>
+    {
+        var selectedInvoice = configuration!.OutstandingInvoices.FirstOrDefault(x => x.Id == eventModel.SalesInvoiceId);
+        var title = eventModel.Kind == CashflowScenarioEventKind.CustomerReceiptDelay
+            ? $"Delay {selectedInvoice?.InvoiceNumber ?? "customer invoice"}"
+            : eventModel.Title;
+        await ScenarioService.AddEventAsync(userId, new(
+            OrganisationId, selectedScenarioId, eventModel.Kind, eventModel.Frequency,
+            title, eventModel.Amount, eventModel.EventDate, eventModel.EndDate, eventModel.SalesInvoiceId));
+        eventModel = NewEventModel();
+        await Reload(selectedScenarioId);
+        Success("Assumption added and the comparison recalculated.");
+    });
+
+    private async Task RemoveEvent(Guid eventId) => await Run(async () =>
+    {
+        await ScenarioService.RemoveEventAsync(userId, OrganisationId, eventId);
+        await Reload(selectedScenarioId);
+        Success("Assumption removed.");
+    });
+
+    private async Task ArchiveScenario() => await Run(async () =>
+    {
+        await ScenarioService.ArchiveAsync(userId, OrganisationId, selectedScenarioId);
+        await Reload();
+        Success("Scenario archived.");
+    });
+
+    private async Task Run(Func<Task> action)
+    {
+        saving = true; message = null;
+        try { await action(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { messageClass = "alert-danger"; message = ex.Message; }
+        finally { saving = false; }
+    }
+
+    private void Success(string text) { messageClass = "alert-success"; message = text; }
+    private IEnumerable<(string Label, CashflowPeriodSummary Baseline, CashflowPeriodSummary Adjusted)> ComparisonPeriods()
+    {
+        yield return ("Today", comparison!.Baseline.Today, comparison.Adjusted.Today);
+        yield return ("Next 7 days", comparison.Baseline.Next7Days, comparison.Adjusted.Next7Days);
+        yield return ("Next 30 days", comparison.Baseline.Next30Days, comparison.Adjusted.Next30Days);
+        yield return ("Next 60 days", comparison.Baseline.Next60Days, comparison.Adjusted.Next60Days);
+        yield return ("Next 90 days", comparison.Baseline.Next90Days, comparison.Adjusted.Next90Days);
+        yield return ("Next 12 months", comparison.Baseline.Next12Months, comparison.Adjusted.Next12Months);
+    }
+    private string Money(decimal amount) => $"{configuration!.Currency} {amount:N2}";
+    private string SignedMoney(decimal amount) => $"{configuration!.Currency} {amount:+#,##0.00;-#,##0.00;0.00}";
+    private static string VarianceClass(decimal amount) => amount > 0 ? "text-success" : amount < 0 ? "text-danger" : "";
+    private static string KindLabel(CashflowScenarioEventKind kind) => kind switch { CashflowScenarioEventKind.PlannedReceipt => "Planned receipt", CashflowScenarioEventKind.PlannedPayment => "Planned payment", _ => "Customer receipt delay" };
+    private static string EventTiming(CashflowScenarioEvent item) => item.Kind == CashflowScenarioEventKind.CustomerReceiptDelay && item.OriginalDate is DateOnly original
+        ? $"Moved from {original:dd MMM yyyy} to {item.EventDate:dd MMM yyyy}"
+        : item.Frequency == CashflowScenarioFrequency.Monthly
+            ? $"Monthly from {item.EventDate:dd MMM yyyy} to {item.EndDate:dd MMM yyyy}"
+            : item.EventDate.ToString("dd MMM yyyy");
+    private static EventModel NewEventModel() => new() { EventDate = DateOnly.FromDateTime(DateTime.Today).AddDays(30), EndDate = DateOnly.FromDateTime(DateTime.Today).AddMonths(6) };
+
+    private sealed class CreateModel { [Required, StringLength(120)] public string Name { get; set; } = ""; [StringLength(500)] public string? Description { get; set; } }
+    private sealed class EventModel
+    {
+        public CashflowScenarioEventKind Kind { get; set; }
+        public CashflowScenarioFrequency Frequency { get; set; }
+        [StringLength(160)] public string Title { get; set; } = "";
+        [Range(typeof(decimal), "0", "999999999999")] public decimal Amount { get; set; }
+        public DateOnly EventDate { get; set; }
+        public DateOnly? EndDate { get; set; }
+        public Guid? SalesInvoiceId { get; set; }
+    }
+}

@@ -14,6 +14,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         Set<GroupEliminationJournal>();
     public DbSet<GroupEliminationJournalLine> GroupEliminationJournalLines =>
         Set<GroupEliminationJournalLine>();
+    public DbSet<CashflowScenario> CashflowScenarios => Set<CashflowScenario>();
+    public DbSet<CashflowScenarioEvent> CashflowScenarioEvents =>
+        Set<CashflowScenarioEvent>();
     public DbSet<PlatformAuditEvent> PlatformAuditEvents => Set<PlatformAuditEvent>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
@@ -179,6 +182,27 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .WithMany(x => x.Lines)
             .HasForeignKey(x => x.GroupEliminationJournalId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<CashflowScenario>()
+            .HasIndex(x => new { x.OrganisationId, x.Name })
+            .IsUnique();
+        builder.Entity<CashflowScenario>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<CashflowScenarioEvent>()
+            .Property(x => x.Amount)
+            .HasPrecision(18, 2);
+        builder.Entity<CashflowScenarioEvent>()
+            .HasOne(x => x.CashflowScenario)
+            .WithMany(x => x.Events)
+            .HasForeignKey(x => x.CashflowScenarioId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<CashflowScenarioEvent>()
+            .HasOne(x => x.SalesInvoice)
+            .WithMany()
+            .HasForeignKey(x => x.SalesInvoiceId)
+            .OnDelete(DeleteBehavior.SetNull);
         builder.Entity<PlatformAuditEvent>()
             .HasIndex(x => new { x.OrganisationGroupId, x.OccurredAt });
         builder.Entity<PlatformAuditEvent>()

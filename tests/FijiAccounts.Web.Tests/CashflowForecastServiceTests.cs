@@ -190,6 +190,93 @@ public sealed class CashflowForecastServiceTests
         Assert.Equal(0m, forecast.Monthly[0].Sources.PlannedPurchasePayments);
     }
 
+    [Fact]
+    public async Task GetForScenarioAsync_AddsOneOffAndMonthlyAssumptionsWithoutChangingBaseline()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var asAt = new DateOnly(2026, 8, 26);
+        var scenario = new CashflowScenario
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "Growth case",
+            CreatedByUserId = test.UserId,
+            Events =
+            [
+                new CashflowScenarioEvent
+                {
+                    Kind = CashflowScenarioEventKind.PlannedReceipt,
+                    Frequency = CashflowScenarioFrequency.OneOff,
+                    Title = "Grant receipt",
+                    Amount = 1_000m,
+                    EventDate = asAt.AddDays(10),
+                    CreatedByUserId = test.UserId
+                },
+                new CashflowScenarioEvent
+                {
+                    Kind = CashflowScenarioEventKind.PlannedPayment,
+                    Frequency = CashflowScenarioFrequency.Monthly,
+                    Title = "New lease",
+                    Amount = 100m,
+                    EventDate = asAt.AddDays(5),
+                    EndDate = asAt.AddMonths(3),
+                    CreatedByUserId = test.UserId
+                }
+            ]
+        };
+        test.Db.CashflowScenarios.Add(scenario);
+        await test.Db.SaveChangesAsync();
+        var service = new CashflowForecastService(test.Db);
+
+        var baseline = await service.GetAsync(test.Organisation.Id, asAt);
+        var adjusted = await service.GetForScenarioAsync(test.Organisation.Id, asAt, scenario.Id);
+
+        AssertPeriod(baseline.Next30Days, 0m, 0m);
+        AssertPeriod(adjusted.Next30Days, 1_000m, 100m);
+        AssertPeriod(adjusted.Next90Days, 1_000m, 300m);
+        Assert.Equal(1_000m, adjusted.Monthly.Sum(x => x.Sources.ScenarioReceipts));
+        Assert.Equal(300m, adjusted.Monthly.Sum(x => x.Sources.ScenarioPayments));
+    }
+
+    [Fact]
+    public async Task GetForScenarioAsync_MovesSelectedInvoiceReceiptToRevisedDate()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var asAt = new DateOnly(2026, 8, 26);
+        var invoice = Invoice(test, 1, asAt.AddDays(5), 750m);
+        var scenario = new CashflowScenario
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "Slow collections",
+            CreatedByUserId = test.UserId,
+            Events =
+            [
+                new CashflowScenarioEvent
+                {
+                    Kind = CashflowScenarioEventKind.CustomerReceiptDelay,
+                    Frequency = CashflowScenarioFrequency.OneOff,
+                    Title = "Delay invoice",
+                    Amount = 750m,
+                    EventDate = asAt.AddDays(45),
+                    OriginalDate = invoice.DueDate,
+                    SalesInvoiceId = invoice.Id,
+                    CreatedByUserId = test.UserId
+                }
+            ]
+        };
+        test.Db.SalesInvoices.Add(invoice);
+        test.Db.CashflowScenarios.Add(scenario);
+        await test.Db.SaveChangesAsync();
+        var service = new CashflowForecastService(test.Db);
+
+        var baseline = await service.GetAsync(test.Organisation.Id, asAt);
+        var adjusted = await service.GetForScenarioAsync(test.Organisation.Id, asAt, scenario.Id);
+
+        AssertPeriod(baseline.Next7Days, 750m, 0m);
+        AssertPeriod(adjusted.Next7Days, 0m, 0m);
+        AssertPeriod(adjusted.Next60Days, 750m, 0m);
+        Assert.Equal(750m, adjusted.Monthly.Sum(x => x.Sources.ScenarioReceipts));
+    }
+
     private static SalesInvoice Invoice(
         AccountingTestDatabase test,
         long sequenceNumber,

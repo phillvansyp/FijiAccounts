@@ -15,7 +15,9 @@ public sealed record CashflowSourceBreakdown(
     decimal PostedPayments,
     decimal RecurringReceipts,
     decimal RecurringPayments,
-    decimal PlannedPurchasePayments);
+    decimal PlannedPurchasePayments,
+    decimal ScenarioReceipts = 0m,
+    decimal ScenarioPayments = 0m);
 
 public sealed record CashflowMonthlyProjection(
     DateOnly MonthStart,
@@ -35,12 +37,26 @@ public sealed record CashflowForecast(
 public sealed class CashflowForecastService(ApplicationDbContext db)
 {
     public Task<CashflowForecast> GetAsync(Guid organisationId, CancellationToken ct = default) =>
-        GetAsync(organisationId, DateOnly.FromDateTime(DateTime.Today), ct);
+        BuildAsync(organisationId, DateOnly.FromDateTime(DateTime.Today), null, ct);
 
     public async Task<CashflowForecast> GetAsync(
         Guid organisationId,
         DateOnly asAt,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        await BuildAsync(organisationId, asAt, null, ct);
+
+    public async Task<CashflowForecast> GetForScenarioAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        Guid scenarioId,
+        CancellationToken ct = default) =>
+        await BuildAsync(organisationId, asAt, scenarioId, ct);
+
+    private async Task<CashflowForecast> BuildAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        Guid? scenarioId,
+        CancellationToken ct)
     {
         var firstMonth = new DateOnly(asAt.Year, asAt.Month, 1);
         var horizon = firstMonth.AddMonths(12).AddDays(-1);
@@ -54,7 +70,7 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
                 x.Status != InvoiceStatus.Draft && x.Status != InvoiceStatus.Voided)
             .Select(x => new CashflowEvent(x.DueDate,
                 x.Total - x.AmountPaid - x.AmountCredited,
-                CashflowDirection.Receipt, CashflowSource.PostedDocument))
+                CashflowDirection.Receipt, CashflowSource.PostedDocument, x.Id))
             .ToListAsync(ct));
 
         events.AddRange(await db.SupplierBills.AsNoTracking()
@@ -115,6 +131,20 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
                 x.Total, CashflowDirection.Payment, CashflowSource.PlannedPurchase))
             .ToListAsync(ct));
 
+        if (scenarioId is Guid selectedScenarioId)
+        {
+            var scenario = await db.CashflowScenarios
+                .AsNoTracking()
+                .Include(x => x.Events)
+                .SingleOrDefaultAsync(x =>
+                    x.Id == selectedScenarioId &&
+                    x.OrganisationId == organisationId &&
+                    !x.IsArchived,
+                    ct)
+                ?? throw new InvalidOperationException("The selected cashflow scenario is not active in this organisation.");
+            ApplyScenario(events, scenario.Events, asAt, horizon);
+        }
+
         var months = Enumerable.Range(0, 12).Select(offset =>
         {
             var monthStart = firstMonth.AddMonths(offset);
@@ -133,6 +163,72 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
             Cumulative(events, asAt.AddDays(90)),
             Cumulative(events, horizon),
             months);
+    }
+
+    private static void ApplyScenario(
+        List<CashflowEvent> events,
+        IReadOnlyList<CashflowScenarioEvent> adjustments,
+        DateOnly asAt,
+        DateOnly horizon)
+    {
+        foreach (var adjustment in adjustments)
+        {
+            if (adjustment.Kind == CashflowScenarioEventKind.CustomerReceiptDelay)
+            {
+                var original = events.FirstOrDefault(x =>
+                    x.Direction == CashflowDirection.Receipt &&
+                    x.Source == CashflowSource.PostedDocument &&
+                    x.SourceEntityId == adjustment.SalesInvoiceId);
+                if (original is null) continue;
+                events.Remove(original);
+                if (adjustment.EventDate <= horizon)
+                {
+                    events.Add(original with
+                    {
+                        Date = adjustment.EventDate < asAt ? asAt : adjustment.EventDate,
+                        Source = CashflowSource.Scenario
+                    });
+                }
+
+                continue;
+            }
+
+            var direction = adjustment.Kind == CashflowScenarioEventKind.PlannedReceipt
+                ? CashflowDirection.Receipt
+                : CashflowDirection.Payment;
+            foreach (var date in ScenarioDates(adjustment, asAt, horizon))
+            {
+                events.Add(new(
+                    date,
+                    adjustment.Amount,
+                    direction,
+                    CashflowSource.Scenario));
+            }
+        }
+    }
+
+    private static IEnumerable<DateOnly> ScenarioDates(
+        CashflowScenarioEvent adjustment,
+        DateOnly asAt,
+        DateOnly horizon)
+    {
+        if (adjustment.Frequency == CashflowScenarioFrequency.OneOff)
+        {
+            if (adjustment.EventDate <= horizon)
+            {
+                yield return adjustment.EventDate < asAt ? asAt : adjustment.EventDate;
+            }
+
+            yield break;
+        }
+
+        var limit = adjustment.EndDate is DateOnly endDate && endDate < horizon
+            ? endDate
+            : horizon;
+        for (var date = adjustment.EventDate; date <= limit; date = date.AddMonths(1))
+        {
+            if (date >= asAt) yield return date;
+        }
     }
 
     private static decimal GrossTotal<TLine>(IEnumerable<TLine> lines, DateOnly date, string currency)
@@ -173,11 +269,17 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
             Total(CashflowDirection.Payment, CashflowSource.PostedDocument),
             Total(CashflowDirection.Receipt, CashflowSource.RecurringTemplate),
             Total(CashflowDirection.Payment, CashflowSource.RecurringTemplate),
-            Total(CashflowDirection.Payment, CashflowSource.PlannedPurchase));
+            Total(CashflowDirection.Payment, CashflowSource.PlannedPurchase),
+            Total(CashflowDirection.Receipt, CashflowSource.Scenario),
+            Total(CashflowDirection.Payment, CashflowSource.Scenario));
     }
 
     private enum CashflowDirection { Receipt, Payment }
-    private enum CashflowSource { PostedDocument, RecurringTemplate, PlannedPurchase }
+    private enum CashflowSource { PostedDocument, RecurringTemplate, PlannedPurchase, Scenario }
     private sealed record CashflowEvent(
-        DateOnly Date, decimal Amount, CashflowDirection Direction, CashflowSource Source);
+        DateOnly Date,
+        decimal Amount,
+        CashflowDirection Direction,
+        CashflowSource Source,
+        Guid? SourceEntityId = null);
 }
