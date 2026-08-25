@@ -23,18 +23,31 @@ jobs:
       url: https://app.accountisland.com
     env:
       DEPLOY_DIR: /home/serv5/account-island
+      DOTNET_ROOT: /home/serv5/.dotnet
+      DOTNET_CLI_HOME: /home/serv5/.dotnet-cli
+      NUGET_PACKAGES: /home/serv5/.nuget/packages
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Run test suite in Docker
+      - name: Run test suite
         shell: bash
-        run: docker build --target test --tag account-island-test:${GITHUB_SHA} .
+        run: /home/serv5/.dotnet/dotnet test FijiAccounts.slnx --configuration Release
+
+      - name: Publish production application
+        shell: bash
+        run: |
+          /home/serv5/.dotnet/dotnet publish src/FijiAccounts.Web/FijiAccounts.Web.csproj \
+            --configuration Release \
+            --runtime linux-musl-x64 \
+            --self-contained true \
+            --output artifacts/publish \
+            /p:UseAppHost=true
 
       - name: Build production image
         shell: bash
-        run: docker build --target runtime --tag account-island:${GITHUB_SHA} .
+        run: docker build --tag account-island:${GITHUB_SHA} .
 
       - name: Stage deployment files
         shell: bash
