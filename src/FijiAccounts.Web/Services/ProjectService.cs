@@ -26,6 +26,15 @@ public sealed record ProjectCostCodeRequest(
     string Name,
     decimal BudgetAmount);
 
+public sealed record ProjectVariationRequest(
+    Guid OrganisationId,
+    Guid ProjectId,
+    string VariationNumber,
+    string Title,
+    string? Description,
+    decimal Amount,
+    DateOnly RequestedDate);
+
 public sealed class ProjectService(
     ApplicationDbContext db,
     TenantAccessService access)
@@ -48,6 +57,8 @@ public sealed class ProjectService(
             .Include(x => x.Division)
             .Include(x => x.Customer)
             .Include(x => x.CostCodes.OrderBy(code => code.Code))
+            .Include(x => x.Variations.OrderByDescending(variation => variation.RequestedDate)
+                .ThenBy(variation => variation.VariationNumber))
             .Where(x => x.OrganisationId == organisationId);
         if (divisionScope is not null)
         {
@@ -119,7 +130,7 @@ public sealed class ProjectService(
         string eventType;
         if (request.ProjectId is Guid projectId)
         {
-            project = await db.Projects.SingleOrDefaultAsync(
+            project = await db.Projects.Include(x => x.Variations).SingleOrDefaultAsync(
                 x => x.Id == projectId && x.OrganisationId == request.OrganisationId,
                 cancellationToken)
                 ?? throw new InvalidOperationException("Project not found.");
@@ -127,6 +138,12 @@ public sealed class ProjectService(
             {
                 throw new InvalidOperationException(
                     "Completed or cancelled projects cannot be edited.");
+            }
+            if (project.Status != ProjectStatus.Draft &&
+                request.ApprovedVariationValue != project.OpeningApprovedVariationValue)
+            {
+                throw new InvalidOperationException(
+                    "Opening approved variations cannot be changed after a project is activated.");
             }
             eventType = "ProjectUpdated";
         }
@@ -155,7 +172,7 @@ public sealed class ProjectService(
         project.StartDate = request.StartDate;
         project.ExpectedCompletionDate = request.ExpectedCompletionDate;
         project.OriginalContractValue = request.OriginalContractValue;
-        project.ApprovedVariationValue = request.ApprovedVariationValue;
+        project.OpeningApprovedVariationValue = request.ApprovedVariationValue;
         project.ForecastCost = request.ForecastCost;
         project.RetentionPercent = request.RetentionPercent;
         project.UpdatedAt = DateTimeOffset.UtcNow;
@@ -167,6 +184,7 @@ public sealed class ProjectService(
             project.DivisionId,
             project.CustomerId,
             project.OriginalContractValue,
+            project.OpeningApprovedVariationValue,
             project.ApprovedVariationValue,
             project.ForecastCost,
             project.RetentionPercent
@@ -275,6 +293,184 @@ public sealed class ProjectService(
         return project;
     }
 
+    public async Task<ProjectVariation> CreateVariationAsync(
+        string userId,
+        ProjectVariationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireMaintainerAsync(userId, request.OrganisationId);
+        var project = await LoadProjectForMaintenanceAsync(
+            userId, request.OrganisationId, request.ProjectId, cancellationToken);
+        if (project.Status is not (ProjectStatus.Active or ProjectStatus.OnHold))
+        {
+            throw new InvalidOperationException(
+                "Variations can only be created for active or on-hold projects.");
+        }
+
+        var number = Required(request.VariationNumber, "Variation number", 40);
+        var title = Required(request.Title, "Variation title", 160);
+        var description = Optional(request.Description, 1000);
+        if (request.Amount == 0)
+        {
+            throw new InvalidOperationException("Variation amount cannot be zero.");
+        }
+        if (await db.ProjectVariations.AnyAsync(
+                x => x.ProjectId == project.Id && x.VariationNumber == number,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "Variation number is already in use for this project.");
+        }
+
+        var variation = new ProjectVariation
+        {
+            ProjectId = project.Id,
+            VariationNumber = number,
+            Title = title,
+            Description = description,
+            Amount = request.Amount,
+            RequestedDate = request.RequestedDate,
+            CreatedByUserId = userId
+        };
+        db.ProjectVariations.Add(variation);
+        AddVariationAudit(request.OrganisationId, userId, "ProjectVariationCreated", variation);
+        await db.SaveChangesAsync(cancellationToken);
+        return variation;
+    }
+
+    public async Task SubmitVariationAsync(
+        string userId,
+        Guid organisationId,
+        Guid variationId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireMaintainerAsync(userId, organisationId);
+        var variation = await LoadVariationForMaintenanceAsync(
+            userId, organisationId, variationId, cancellationToken);
+        if (variation.Status != ProjectVariationStatus.Draft)
+        {
+            throw new InvalidOperationException("Only draft variations can be submitted.");
+        }
+
+        variation.Status = ProjectVariationStatus.Submitted;
+        variation.SubmittedAt = DateTimeOffset.UtcNow;
+        AddVariationAudit(organisationId, userId, "ProjectVariationSubmitted", variation);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DecideVariationAsync(
+        string userId,
+        Guid organisationId,
+        Guid variationId,
+        bool approve,
+        string? reason,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "Only an organisation owner or administrator can decide project variations.");
+        }
+        var variation = await LoadVariationForMaintenanceAsync(
+            userId, organisationId, variationId, cancellationToken);
+        if (variation.Status != ProjectVariationStatus.Submitted)
+        {
+            throw new InvalidOperationException("Only submitted variations can be decided.");
+        }
+
+        var cleanedReason = Optional(reason, 500);
+        if (!approve && cleanedReason is null)
+        {
+            throw new InvalidOperationException("Enter a rejection reason.");
+        }
+        if (approve && variation.Project.RevisedContractValue + variation.Amount < 0)
+        {
+            throw new InvalidOperationException(
+                "Approving this variation would make the revised contract value negative.");
+        }
+
+        variation.Status = approve
+            ? ProjectVariationStatus.Approved
+            : ProjectVariationStatus.Rejected;
+        variation.DecidedByUserId = userId;
+        variation.DecisionReason = cleanedReason;
+        variation.DecidedAt = DateTimeOffset.UtcNow;
+        variation.Project.UpdatedAt = variation.DecidedAt.Value;
+        AddVariationAudit(
+            organisationId,
+            userId,
+            approve ? "ProjectVariationApproved" : "ProjectVariationRejected",
+            variation);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task CancelVariationAsync(
+        string userId,
+        Guid organisationId,
+        Guid variationId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireMaintainerAsync(userId, organisationId);
+        var variation = await LoadVariationForMaintenanceAsync(
+            userId, organisationId, variationId, cancellationToken);
+        if (variation.Status is not (ProjectVariationStatus.Draft or ProjectVariationStatus.Submitted))
+        {
+            throw new InvalidOperationException(
+                "Only draft or submitted variations can be cancelled.");
+        }
+
+        variation.Status = ProjectVariationStatus.Cancelled;
+        variation.DecidedByUserId = userId;
+        variation.DecidedAt = DateTimeOffset.UtcNow;
+        AddVariationAudit(organisationId, userId, "ProjectVariationCancelled", variation);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<Project> LoadProjectForMaintenanceAsync(
+        string userId,
+        Guid organisationId,
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        var project = await db.Projects
+            .Include(x => x.Variations)
+            .SingleOrDefaultAsync(
+                x => x.Id == projectId && x.OrganisationId == organisationId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Project not found.");
+        if (!await access.CanAccessDimensionAsync(
+                userId, organisationId, project.BranchId, project.DivisionId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You cannot maintain this project.");
+        }
+        return project;
+    }
+
+    private async Task<ProjectVariation> LoadVariationForMaintenanceAsync(
+        string userId,
+        Guid organisationId,
+        Guid variationId,
+        CancellationToken cancellationToken)
+    {
+        var variation = await db.ProjectVariations
+            .Include(x => x.Project)
+                .ThenInclude(x => x.Variations)
+            .SingleOrDefaultAsync(
+                x => x.Id == variationId && x.Project.OrganisationId == organisationId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Project variation not found.");
+        if (!await access.CanAccessDimensionAsync(
+                userId,
+                organisationId,
+                variation.Project.BranchId,
+                variation.Project.DivisionId,
+                cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You cannot maintain this project variation.");
+        }
+        return variation;
+    }
+
     private async Task RequireMaintainerAsync(string userId, Guid organisationId)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId))
@@ -347,5 +543,33 @@ public sealed class ProjectService(
             EntityType = nameof(Project),
             EntityId = project.Id.ToString(),
             JsonData = JsonSerializer.Serialize(evidence)
+        });
+
+    private void AddVariationAudit(
+        Guid organisationId,
+        string userId,
+        string eventType,
+        ProjectVariation variation) =>
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = eventType,
+            EntityType = nameof(ProjectVariation),
+            EntityId = variation.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                variation.ProjectId,
+                variation.VariationNumber,
+                variation.Title,
+                variation.Amount,
+                variation.RequestedDate,
+                Status = variation.Status.ToString(),
+                variation.CreatedByUserId,
+                variation.DecidedByUserId,
+                variation.DecisionReason,
+                variation.SubmittedAt,
+                variation.DecidedAt
+            })
         });
 }

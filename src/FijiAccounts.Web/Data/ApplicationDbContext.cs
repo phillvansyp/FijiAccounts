@@ -67,6 +67,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<PurchaseOrderLine> PurchaseOrderLines => Set<PurchaseOrderLine>();
     public DbSet<PurchaseRequisition> PurchaseRequisitions => Set<PurchaseRequisition>();
     public DbSet<PurchaseRequisitionLine> PurchaseRequisitionLines => Set<PurchaseRequisitionLine>();
+    public DbSet<ProjectVariation> ProjectVariations => Set<ProjectVariation>();
     public DbSet<PurchaseApprovalPolicy> PurchaseApprovalPolicies => Set<PurchaseApprovalPolicy>();
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
@@ -879,10 +880,15 @@ builder.Entity<FixedAsset>()
         builder.Entity<Project>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Project>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Project>().HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
-        foreach (var property in new[] { nameof(Project.OriginalContractValue), nameof(Project.ApprovedVariationValue), nameof(Project.ForecastCost) }) builder.Entity<Project>().Property(property).HasPrecision(18, 2);
+        foreach (var property in new[] { nameof(Project.OriginalContractValue), nameof(Project.OpeningApprovedVariationValue), nameof(Project.ForecastCost) }) builder.Entity<Project>().Property(property).HasPrecision(18, 2);
         builder.Entity<Project>().Property(x => x.RetentionPercent).HasPrecision(8, 4);
         builder.Entity<ProjectCostCode>().HasIndex(x => new { x.ProjectId, x.Code }).IsUnique();
         builder.Entity<ProjectCostCode>().Property(x => x.BudgetAmount).HasPrecision(18, 2);
+        builder.Entity<ProjectVariation>()
+            .HasOne(x => x.Project).WithMany(x => x.Variations).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<ProjectVariation>()
+            .HasIndex(x => new { x.ProjectId, x.VariationNumber }).IsUnique();
+        builder.Entity<ProjectVariation>().Property(x => x.Amount).HasPrecision(18, 2);
         builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);

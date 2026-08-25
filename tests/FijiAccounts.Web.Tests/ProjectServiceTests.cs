@@ -28,6 +28,112 @@ public sealed class ProjectServiceTests
     }
 
     [Fact]
+    public async Task VariationApproval_DrivesRevisedContractValueAndAuditHistory()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (_, division) = await DefaultDimension(test);
+        var service = new ProjectService(test.Db, test.Access);
+        var project = await service.SaveAsync(test.UserId, Request(
+            test, division.Id, "JOB-VAR", original: 100_000m, variations: 10_000m));
+        await service.ChangeStatusAsync(
+            test.UserId, test.Organisation.Id, project.Id, ProjectStatus.Active);
+
+        var variation = await service.CreateVariationAsync(test.UserId, new(
+            test.Organisation.Id, project.Id, "VO-001", "Additional drainage",
+            "Client-requested drainage works", 25_000m, new DateOnly(2026, 9, 1)));
+        await service.SubmitVariationAsync(
+            test.UserId, test.Organisation.Id, variation.Id);
+        await service.DecideVariationAsync(
+            test.UserId, test.Organisation.Id, variation.Id, true, "Client approved");
+
+        var reloaded = Assert.Single(await service.ListAsync(
+            test.UserId, test.Organisation.Id));
+        var approved = Assert.Single(reloaded.Variations);
+        Assert.Equal(ProjectVariationStatus.Approved, approved.Status);
+        Assert.Equal(10_000m, reloaded.OpeningApprovedVariationValue);
+        Assert.Equal(35_000m, reloaded.ApprovedVariationValue);
+        Assert.Equal(135_000m, reloaded.RevisedContractValue);
+        Assert.Equal(test.UserId, approved.DecidedByUserId);
+        Assert.Equal(
+            ["ProjectVariationCreated", "ProjectVariationSubmitted", "ProjectVariationApproved"],
+            await test.Db.AuditEvents.AsNoTracking()
+                .Where(x => x.EntityType == nameof(ProjectVariation) && x.EntityId == variation.Id.ToString())
+                .OrderBy(x => x.Id)
+                .Select(x => x.EventType)
+                .ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task VariationDecision_RejectsInvalidContractReductionAndRequiresRejectionReason()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (_, division) = await DefaultDimension(test);
+        var service = new ProjectService(test.Db, test.Access);
+        var project = await service.SaveAsync(test.UserId,
+            Request(test, division.Id, "JOB-NEG", original: 100_000m));
+        await service.ChangeStatusAsync(
+            test.UserId, test.Organisation.Id, project.Id, ProjectStatus.Active);
+        var variation = await service.CreateVariationAsync(test.UserId, new(
+            test.Organisation.Id, project.Id, "VO-NEG", "Scope deletion", null,
+            -150_000m, new DateOnly(2026, 9, 2)));
+        await service.SubmitVariationAsync(test.UserId, test.Organisation.Id, variation.Id);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DecideVariationAsync(
+                test.UserId, test.Organisation.Id, variation.Id, true, null));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DecideVariationAsync(
+                test.UserId, test.Organisation.Id, variation.Id, false, " "));
+        await service.DecideVariationAsync(
+            test.UserId, test.Organisation.Id, variation.Id, false, "Not accepted by client");
+
+        var reloaded = Assert.Single(await service.ListAsync(
+            test.UserId, test.Organisation.Id));
+        Assert.Equal(0m, reloaded.ApprovedVariationValue);
+        Assert.Equal(ProjectVariationStatus.Rejected, Assert.Single(reloaded.Variations).Status);
+    }
+
+    [Fact]
+    public async Task VariationDecision_RequiresOwnerOrAdministrator()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (_, division) = await DefaultDimension(test);
+        var service = new ProjectService(test.Db, test.Access);
+        var project = await service.SaveAsync(test.UserId,
+            Request(test, division.Id, "JOB-AUTH"));
+        await service.ChangeStatusAsync(
+            test.UserId, test.Organisation.Id, project.Id, ProjectStatus.Active);
+        var bookkeeper = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "variation-bookkeeper@example.com",
+            NormalizedUserName = "VARIATION-BOOKKEEPER@EXAMPLE.COM",
+            Email = "variation-bookkeeper@example.com",
+            NormalizedEmail = "VARIATION-BOOKKEEPER@EXAMPLE.COM",
+            EmailConfirmed = true
+        };
+        test.Db.Users.Add(bookkeeper);
+        test.Db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            OrganisationId = test.Organisation.Id,
+            UserId = bookkeeper.Id,
+            User = bookkeeper,
+            Role = OrganisationRole.Bookkeeper
+        });
+        await test.Db.SaveChangesAsync();
+
+        var variation = await service.CreateVariationAsync(bookkeeper.Id, new(
+            test.Organisation.Id, project.Id, "VO-AUTH", "Approved authority test",
+            null, 5_000m, new DateOnly(2026, 9, 3)));
+        await service.SubmitVariationAsync(
+            bookkeeper.Id, test.Organisation.Id, variation.Id);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.DecideVariationAsync(
+                bookkeeper.Id, test.Organisation.Id, variation.Id, true, null));
+    }
+
+    [Fact]
     public async Task AddCostCodeAsync_RejectsDuplicateWithinProject()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

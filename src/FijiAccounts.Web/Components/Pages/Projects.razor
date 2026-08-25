@@ -49,7 +49,7 @@ else
                 </div>
                 <div class="row">
                     <div class="col-md-3 mb-3"><label class="form-label">Original contract</label><InputNumber class="form-control" @bind-Value="model.OriginalContractValue" /></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Approved variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Opening approved variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /><div class="form-text">Existing approvals brought into Account Island.</div></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Forecast cost</label><InputNumber class="form-control" @bind-Value="model.ForecastCost" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Retention %</label><InputNumber class="form-control" @bind-Value="model.RetentionPercent" /></div>
                 </div>
@@ -71,6 +71,27 @@ else
                     <div class="col-md-2 mb-3"><label class="form-label">Budget</label><InputNumber class="form-control" @bind-Value="costCodeModel.BudgetAmount" /></div>
                 </div>
                 <button class="btn btn-primary">Add cost code</button>
+            </EditForm>
+        </details>
+    }
+
+    @if (canManage && projects.Any(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold))
+    {
+        <details class="setup-card mb-4">
+            <summary><strong>+ Add contract variation</strong></summary>
+            <EditForm Model="variationModel" OnValidSubmit="CreateVariation" FormName="project-variation" class="mt-3">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="variationModel.ProjectId">@foreach (var project in projects.Where(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Variation number</label><InputText class="form-control" @bind-Value="variationModel.VariationNumber" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Title</label><InputText class="form-control" @bind-Value="variationModel.Title" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="variationModel.Amount" /></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-3 mb-3"><label class="form-label">Requested date</label><InputDate class="form-control" @bind-Value="variationModel.RequestedDate" /></div>
+                    <div class="col-md-9 mb-3"><label class="form-label">Description</label><InputTextArea class="form-control" @bind-Value="variationModel.Description" /></div>
+                </div>
+                <button class="btn btn-primary">Save draft variation</button>
             </EditForm>
         </details>
     }
@@ -118,6 +139,58 @@ else
             </table></div>
         }
     </section>
+
+    <section class="detail-card mt-4">
+        <div class="card-heading"><div><span class="eyebrow">Contract control</span><h2>Variation register</h2></div><span>@projects.Sum(x => x.Variations.Count) variations</span></div>
+        @if (projects.All(x => x.Variations.Count == 0))
+        {
+            <div class="empty-state"><strong>No contract variations</strong><span>Add variations as scope and contract value change.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table align-middle">
+                <thead><tr><th>Project</th><th>Variation</th><th>Requested</th><th class="text-end">Amount</th><th>Status</th><th>Decision</th><th class="no-print">Actions</th></tr></thead>
+                <tbody>
+                @foreach (var project in projects)
+                {
+                    @foreach (var variation in project.Variations)
+                    {
+                        <tr>
+                            <td><strong>@project.ProjectNumber</strong><small class="d-block text-muted">@project.Name</small></td>
+                            <td><strong>@variation.VariationNumber &mdash; @variation.Title</strong>@if (!string.IsNullOrWhiteSpace(variation.Description)) { <small class="d-block text-muted">@variation.Description</small> }</td>
+                            <td>@variation.RequestedDate.ToString("dd MMM yyyy")</td>
+                            <td class="text-end @(variation.Amount < 0 ? "text-danger" : null)">$@variation.Amount.ToString("N2")</td>
+                            <td><span class="badge @VariationStatusClass(variation.Status)">@variation.Status</span></td>
+                            <td>@(variation.DecisionReason ?? "—")</td>
+                            <td class="no-print">
+                                <div class="d-flex flex-wrap gap-1">
+                                    @if (canManage && variation.Status == ProjectVariationStatus.Draft)
+                                    {
+                                        <button class="btn btn-sm btn-primary" @onclick="() => SubmitVariation(variation)">Submit</button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => CancelVariation(variation)">Cancel</button>
+                                    }
+                                    @if (variation.Status == ProjectVariationStatus.Submitted)
+                                    {
+                                        @if (canApproveVariations)
+                                        {
+                                            <button class="btn btn-sm btn-success" @onclick="() => DecideVariation(variation, true)">Approve</button>
+                                            <InputText class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind-Value="variationDecisionReasons[variation.Id]" />
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DecideVariation(variation, false)">Reject</button>
+                                        }
+                                        @if (canManage)
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => CancelVariation(variation)">Cancel</button>
+                                        }
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table></div>
+        }
+    </section>
 }
 
 @code {
@@ -125,12 +198,15 @@ else
     private AccessibleOrganisation? access;
     private string userId = "";
     private bool canManage;
+    private bool canApproveVariations;
     private List<Project> projects = [];
     private List<ProjectProfitability> profitability = [];
     private List<DivisionOption> divisions = [];
     private List<BusinessParty> customers = [];
     private ProjectModel model = new();
     private CostCodeModel costCodeModel = new();
+    private VariationModel variationModel = new();
+    private readonly Dictionary<Guid, string> variationDecisionReasons = [];
     private string? message;
     private string messageClass = "alert-success";
 
@@ -141,6 +217,7 @@ else
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is null) return;
         canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        canApproveVariations = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
         var branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
         divisions = branches.SelectMany(branch => branch.Divisions.Select(division =>
             new DivisionOption(division.Id, $"{branch.Code} — {branch.Name} / {division.Code} — {division.Name}"))).ToList();
@@ -157,6 +234,10 @@ else
         profitability = (await ProjectProfitabilityService.GetAsync(userId, OrganisationId)).ToList();
         if (costCodeModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == costCodeModel.ProjectId && IsOpen(x)))
             costCodeModel.ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty;
+        if (variationModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == variationModel.ProjectId && x.Status is ProjectStatus.Active or ProjectStatus.OnHold))
+            variationModel.ProjectId = projects.FirstOrDefault(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)?.Id ?? Guid.Empty;
+        foreach (var variation in projects.SelectMany(x => x.Variations).Where(x => x.Status == ProjectVariationStatus.Submitted))
+            variationDecisionReasons.TryAdd(variation.Id, string.Empty);
     }
 
     private async Task SaveProject()
@@ -200,6 +281,45 @@ else
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
     }
 
+    private async Task CreateVariation()
+    {
+        try
+        {
+            var variation = await ProjectService.CreateVariationAsync(userId, new(
+                OrganisationId, variationModel.ProjectId, variationModel.VariationNumber,
+                variationModel.Title, variationModel.Description, variationModel.Amount,
+                variationModel.RequestedDate));
+            Success($"Variation {variation.VariationNumber} saved as a draft.");
+            variationModel = new VariationModel { ProjectId = variationModel.ProjectId, RequestedDate = DateOnly.FromDateTime(DateTime.Today) };
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task SubmitVariation(ProjectVariation variation)
+    {
+        try { await ProjectService.SubmitVariationAsync(userId, OrganisationId, variation.Id); Success($"Variation {variation.VariationNumber} submitted."); await Reload(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task DecideVariation(ProjectVariation variation, bool approve)
+    {
+        try
+        {
+            variationDecisionReasons.TryGetValue(variation.Id, out var reason);
+            await ProjectService.DecideVariationAsync(userId, OrganisationId, variation.Id, approve, reason);
+            Success($"Variation {variation.VariationNumber} {(approve ? "approved" : "rejected")}.");
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task CancelVariation(ProjectVariation variation)
+    {
+        try { await ProjectService.CancelVariationAsync(userId, OrganisationId, variation.Id); Success($"Variation {variation.VariationNumber} cancelled."); await Reload(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
     private void ResetModels()
     {
         model = new ProjectModel
@@ -208,6 +328,11 @@ else
             StartDate = DateOnly.FromDateTime(DateTime.Today)
         };
         costCodeModel = new CostCodeModel { ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty };
+        variationModel = new VariationModel
+        {
+            ProjectId = projects.FirstOrDefault(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)?.Id ?? Guid.Empty,
+            RequestedDate = DateOnly.FromDateTime(DateTime.Today)
+        };
     }
     private void Success(string value) { messageClass = "alert-success"; message = value; }
     private void Error(string value) { messageClass = "alert-danger"; message = value; }
@@ -216,6 +341,7 @@ else
     private ProjectProfitability Profitability(Guid projectId) => profitability.Single(x => x.ProjectId == projectId);
     private static string StatusLabel(ProjectStatus status) => status == ProjectStatus.OnHold ? "On hold" : status.ToString();
     private static string StatusClass(ProjectStatus status) => status switch { ProjectStatus.Active => "text-bg-success", ProjectStatus.OnHold => "text-bg-warning", ProjectStatus.Completed => "text-bg-primary", ProjectStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
+    private static string VariationStatusClass(ProjectVariationStatus status) => status switch { ProjectVariationStatus.Approved => "text-bg-success", ProjectVariationStatus.Submitted => "text-bg-primary", ProjectVariationStatus.Rejected => "text-bg-danger", ProjectVariationStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
 
     private sealed record DivisionOption(Guid DivisionId, string Label);
     private sealed class ProjectModel
@@ -238,5 +364,14 @@ else
         [Required, StringLength(30)] public string Code { get; set; } = "";
         [Required, StringLength(120)] public string Name { get; set; } = "";
         [Range(0, 999999999999)] public decimal BudgetAmount { get; set; }
+    }
+    private sealed class VariationModel
+    {
+        [Required] public Guid ProjectId { get; set; }
+        [Required, StringLength(40)] public string VariationNumber { get; set; } = "";
+        [Required, StringLength(160)] public string Title { get; set; } = "";
+        [StringLength(1000)] public string? Description { get; set; }
+        public decimal Amount { get; set; }
+        public DateOnly RequestedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
     }
 }
