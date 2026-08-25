@@ -81,8 +81,10 @@ public connection:
 - WAN port `80` to `192.168.1.125:8280`.
 - WAN port `443` to `192.168.1.125:8443`.
 
-Set the `app.accountisland.com` A record to `222.154.228.115`. Caddy then obtains
-and renews the public TLS certificate automatically.
+Set the `app.accountisland.com` A record to `222.154.228.115`. Because the
+router exposes nonstandard public ports, the TLS certificate uses a manual DNS
+challenge and must be renewed before its expiry date. Caddy serves the issued
+certificate from `/etc/letsencrypt`.
 
 ## Operations
 
