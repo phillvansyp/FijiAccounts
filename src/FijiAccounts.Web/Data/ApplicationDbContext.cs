@@ -27,6 +27,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<BusinessParty> BusinessParties => Set<BusinessParty>();
     public DbSet<SupplierAccountProfile> SupplierAccountProfiles => Set<SupplierAccountProfile>();
+    public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
     public DbSet<BusinessPartyDocument> BusinessPartyDocuments =>
         Set<BusinessPartyDocument>();
     public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
@@ -236,6 +237,14 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasForeignKey(x => x.SupplierId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<SupplierAccountProfile>()
+            .HasIndex(x => new { x.OrganisationId, x.SupplierId, x.AccountNumber })
+            .IsUnique();
+        builder.Entity<SupplierBankAccount>()
+            .HasOne(x => x.Supplier)
+            .WithMany(x => x.SupplierBankAccounts)
+            .HasForeignKey(x => x.SupplierId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<SupplierBankAccount>()
             .HasIndex(x => new { x.OrganisationId, x.SupplierId, x.AccountNumber })
             .IsUnique();
         builder.Entity<SalesInvoice>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();

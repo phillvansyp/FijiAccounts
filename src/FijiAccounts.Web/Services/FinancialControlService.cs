@@ -6,7 +6,9 @@ namespace FijiAccounts.Web.Services;
 public enum FinancialControlAlertType
 {
     DuplicateSupplierBill,
-    DuplicateSupplierPayment
+    DuplicateSupplierPayment,
+    UnverifiedSupplierBankAccount,
+    RecentSupplierBankAccountChange
 }
 
 public enum FinancialControlSeverity
@@ -77,7 +79,26 @@ public sealed class FinancialControlService(
                 x.Supplier.Name,
                 x.SupplierReference,
                 x.BillDate,
-                x.Total))
+                x.Total,
+                x.Total - x.AmountPaid - x.AmountCredited))
+            .ToListAsync(cancellationToken);
+
+        var suppliersWithOutstandingBills = bills
+            .Where(x => x.OutstandingAmount > 0)
+            .Select(x => x.SupplierId)
+            .Distinct()
+            .ToList();
+        var supplierBankAccounts = await db.SupplierBankAccounts
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.IsActive &&
+                        suppliersWithOutstandingBills.Contains(x.SupplierId))
+            .Select(x => new SupplierBankAccountCandidate(
+                x.SupplierId,
+                x.Supplier.Name,
+                x.IsDefault,
+                x.SubmittedAt,
+                x.VerifiedAt))
             .ToListAsync(cancellationToken);
 
         var reversedPaymentIds = await db.SupplierPaymentReversals
@@ -99,6 +120,7 @@ public sealed class FinancialControlService(
 
         var alerts = FindBillAlerts(bills)
             .Concat(FindPaymentAlerts(payments))
+            .Concat(FindSupplierBankAccountAlerts(bills, supplierBankAccounts))
             .OrderByDescending(x => x.Severity)
             .ThenByDescending(x => x.TransactionDate)
             .ThenByDescending(x => x.Amount)
@@ -183,6 +205,61 @@ public sealed class FinancialControlService(
         }
     }
 
+    private static IEnumerable<FinancialControlAlert> FindSupplierBankAccountAlerts(
+        IReadOnlyCollection<BillCandidate> bills,
+        IReadOnlyCollection<SupplierBankAccountCandidate> bankAccounts)
+    {
+        var recentFrom = DateTimeOffset.UtcNow.AddDays(-7);
+        foreach (var supplier in bankAccounts.GroupBy(x => new
+                 {
+                     x.SupplierId,
+                     x.SupplierName
+                 }))
+        {
+            var outstandingBills = bills
+                .Where(x => x.SupplierId == supplier.Key.SupplierId &&
+                            x.OutstandingAmount > 0)
+                .ToList();
+            if (outstandingBills.Count == 0)
+            {
+                continue;
+            }
+
+            var outstandingAmount = outstandingBills.Sum(x => x.OutstandingAmount);
+            var pendingAccounts = supplier.Where(x => x.VerifiedAt is null).ToList();
+            if (pendingAccounts.Count > 0)
+            {
+                var changeLabel = pendingAccounts.Count == 1
+                    ? "payment destination change has"
+                    : "payment destination changes have";
+                yield return new FinancialControlAlert(
+                    FinancialControlAlertType.UnverifiedSupplierBankAccount,
+                    FinancialControlSeverity.High,
+                    $"Bank details awaiting verification · {supplier.Key.SupplierName}",
+                    $"{pendingAccounts.Count} {changeLabel} not been independently verified while {outstandingBills.Count} supplier bill(s) remain outstanding.",
+                    DateOnly.FromDateTime(pendingAccounts.Max(x => x.SubmittedAt).LocalDateTime),
+                    outstandingAmount,
+                    outstandingBills.Count);
+            }
+
+            var recentDefault = supplier
+                .Where(x => x.IsDefault && x.VerifiedAt >= recentFrom)
+                .OrderByDescending(x => x.VerifiedAt)
+                .FirstOrDefault();
+            if (recentDefault is not null)
+            {
+                yield return new FinancialControlAlert(
+                    FinancialControlAlertType.RecentSupplierBankAccountChange,
+                    FinancialControlSeverity.Watch,
+                    $"Recently verified bank details · {supplier.Key.SupplierName}",
+                    $"The default payment destination changed within the last 7 days while {outstandingBills.Count} supplier bill(s) remain outstanding.",
+                    DateOnly.FromDateTime(recentDefault.VerifiedAt!.Value.LocalDateTime),
+                    outstandingAmount,
+                    outstandingBills.Count);
+            }
+        }
+    }
+
     private static string NormaliseReference(string? value) =>
         string.Concat((value ?? string.Empty)
             .Where(char.IsLetterOrDigit))
@@ -194,7 +271,8 @@ public sealed class FinancialControlService(
         string SupplierName,
         string Reference,
         DateOnly Date,
-        decimal Amount);
+        decimal Amount,
+        decimal OutstandingAmount);
 
     private sealed record PaymentCandidate(
         Guid Id,
@@ -204,4 +282,11 @@ public sealed class FinancialControlService(
         string Reference,
         DateOnly Date,
         decimal Amount);
+
+    private sealed record SupplierBankAccountCandidate(
+        Guid SupplierId,
+        string SupplierName,
+        bool IsDefault,
+        DateTimeOffset SubmittedAt,
+        DateTimeOffset? VerifiedAt);
 }

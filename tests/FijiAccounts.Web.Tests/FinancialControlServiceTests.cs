@@ -119,6 +119,59 @@ public sealed class FinancialControlServiceTests
             service.GetAsync(Guid.NewGuid().ToString(), test.Organisation.Id));
     }
 
+    [Fact]
+    public async Task GetAsync_FlagsUnverifiedAndRecentlyChangedSupplierBankDetails()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var (branchId, divisionId) = await DefaultScopeAsync(test);
+        var date = DateOnly.FromDateTime(DateTime.Today);
+        var journal = Journal(test, date);
+        test.Db.PostedJournals.Add(journal);
+        test.Db.SupplierBills.Add(
+            Bill(test, journal.Id, branchId, divisionId, 1, "BANK-RISK", date, 2500m));
+        test.Db.SupplierBankAccounts.AddRange(
+            new SupplierBankAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                SupplierId = test.Supplier.Id,
+                AccountName = "Pending destination",
+                AccountNumber = "12345678",
+                SubmittedByUserId = test.UserId,
+                SubmittedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            },
+            new SupplierBankAccount
+            {
+                OrganisationId = test.Organisation.Id,
+                SupplierId = test.Supplier.Id,
+                AccountName = "Verified destination",
+                AccountNumber = "87654321",
+                SubmittedByUserId = "submitter",
+                SubmittedAt = DateTimeOffset.UtcNow.AddDays(-2),
+                VerifiedByUserId = test.UserId,
+                VerifiedAt = DateTimeOffset.UtcNow.AddHours(-2),
+                IsDefault = true
+            });
+        await test.Db.SaveChangesAsync();
+
+        var result = await new FinancialControlService(test.Db, test.Access)
+            .GetAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Collection(
+            result.Alerts,
+            alert =>
+            {
+                Assert.Equal(FinancialControlAlertType.UnverifiedSupplierBankAccount, alert.Type);
+                Assert.Equal(FinancialControlSeverity.High, alert.Severity);
+                Assert.Equal(2500m, alert.Amount);
+            },
+            alert =>
+            {
+                Assert.Equal(FinancialControlAlertType.RecentSupplierBankAccountChange, alert.Type);
+                Assert.Equal(FinancialControlSeverity.Watch, alert.Severity);
+                Assert.Equal(1, alert.MatchingTransactions);
+            });
+    }
+
     private static async Task<(Guid BranchId, Guid DivisionId)> DefaultScopeAsync(
         AccountingTestDatabase test)
     {

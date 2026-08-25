@@ -133,6 +133,127 @@ public sealed class BusinessPartyServiceTests
     }
 
     [Fact]
+    public async Task SupplierBankDetails_RequireIndependentVerificationAndMaskAuditEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var submitted = await service.SubmitSupplierBankAccountAsync(
+            test.UserId,
+            new SupplierBankAccountRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "Test Supplier Limited",
+                "Bank of Fiji",
+                "01-2345-6789012-00"));
+
+        Assert.False(submitted.IsVerified);
+        Assert.False(submitted.IsDefault);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.VerifySupplierBankAccountAsync(
+                test.UserId,
+                test.Organisation.Id,
+                test.Supplier.Id,
+                submitted.Id));
+
+        var verifier = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "bank-verifier@example.com",
+            NormalizedUserName = "BANK-VERIFIER@EXAMPLE.COM",
+            Email = "bank-verifier@example.com",
+            NormalizedEmail = "BANK-VERIFIER@EXAMPLE.COM"
+        };
+        test.Db.Users.Add(verifier);
+        test.Db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            OrganisationId = test.Organisation.Id,
+            UserId = verifier.Id,
+            Role = OrganisationRole.Administrator
+        });
+        await test.Db.SaveChangesAsync();
+
+        await service.VerifySupplierBankAccountAsync(
+            verifier.Id,
+            test.Organisation.Id,
+            test.Supplier.Id,
+            submitted.Id);
+
+        var stored = await test.Db.SupplierBankAccounts
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == submitted.Id);
+        Assert.True(stored.IsVerified);
+        Assert.True(stored.IsDefault);
+        Assert.Equal(verifier.Id, stored.VerifiedByUserId);
+
+        var audit = await test.Db.AuditEvents
+            .AsNoTracking()
+            .Where(x => x.EntityId == test.Supplier.Id.ToString() &&
+                        x.EventType.StartsWith("SupplierBankAccount"))
+            .OrderBy(x => x.Id)
+            .ToListAsync();
+        Assert.Equal(
+            ["SupplierBankAccountSubmitted", "SupplierBankAccountVerified"],
+            audit.Select(x => x.EventType));
+        Assert.All(audit, x =>
+        {
+            using var evidence = JsonDocument.Parse(x.JsonData);
+            Assert.Equal(
+                "•••• 1200",
+                evidence.RootElement.GetProperty("AccountNumber").GetString());
+            Assert.DoesNotContain("01-2345-6789012-00", x.JsonData);
+        });
+    }
+
+    [Fact]
+    public async Task SupplierBankDetails_RejectDuplicateAndUnauthorisedVerification()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var account = await service.SubmitSupplierBankAccountAsync(
+            test.UserId,
+            new SupplierBankAccountRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "Test Supplier",
+                null,
+                "1234 5678"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SubmitSupplierBankAccountAsync(
+                test.UserId,
+                new SupplierBankAccountRequest(
+                    test.Organisation.Id,
+                    test.Supplier.Id,
+                    "Test Supplier",
+                    null,
+                    "1234-5678")));
+
+        var bookkeeper = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "bank-bookkeeper@example.com",
+            NormalizedUserName = "BANK-BOOKKEEPER@EXAMPLE.COM",
+            Email = "bank-bookkeeper@example.com",
+            NormalizedEmail = "BANK-BOOKKEEPER@EXAMPLE.COM"
+        };
+        test.Db.Users.Add(bookkeeper);
+        test.Db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            OrganisationId = test.Organisation.Id,
+            UserId = bookkeeper.Id,
+            Role = OrganisationRole.Bookkeeper
+        });
+        await test.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.VerifySupplierBankAccountAsync(
+                bookkeeper.Id,
+                test.Organisation.Id,
+                test.Supplier.Id,
+                account.Id));
+    }
+
+    [Fact]
     public async Task ReadOnlyMember_CannotMutateContactsThroughService()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -171,6 +292,15 @@ public sealed class BusinessPartyServiceTests
                     PaymentTermType.DaysAfterDocumentDate,
                     7,
                     null)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.SubmitSupplierBankAccountAsync(
+                test.UserId,
+                new SupplierBankAccountRequest(
+                    test.Organisation.Id,
+                    test.Supplier.Id,
+                    "Blocked account",
+                    null,
+                    "12345678")));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.LearnCustomerSalesDefaultsAsync(
                 test.UserId,

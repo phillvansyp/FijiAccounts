@@ -20,6 +20,7 @@ public sealed class BusinessParty
     public PartyType Type { get; set; }
     public List<BusinessPartyDocument> Documents { get; set; } = [];
     public List<SupplierAccountProfile> SupplierAccounts { get; set; } = [];
+    public List<SupplierBankAccount> SupplierBankAccounts { get; set; } = [];
     public Guid? DefaultSalesAccountId { get; set; }
     public LedgerAccount? DefaultSalesAccount { get; set; }
     public VatTreatment? DefaultSalesVatTreatment { get; set; }
@@ -53,6 +54,25 @@ public sealed class SupplierAccountProfile
     [MaxLength(80)] public required string AccountNumber { get; set; }
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; } = true;
+}
+
+public sealed class SupplierBankAccount
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    public Guid SupplierId { get; set; }
+    public BusinessParty Supplier { get; set; } = null!;
+    [MaxLength(120)] public required string AccountName { get; set; }
+    [MaxLength(120)] public string? BankName { get; set; }
+    [MaxLength(80)] public required string AccountNumber { get; set; }
+    public bool IsDefault { get; set; }
+    public bool IsActive { get; set; } = true;
+    [MaxLength(450)] public required string SubmittedByUserId { get; set; }
+    public DateTimeOffset SubmittedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public string? VerifiedByUserId { get; set; }
+    public DateTimeOffset? VerifiedAt { get; set; }
+    public bool IsVerified => VerifiedAt is not null;
 }
 
 public enum BusinessPartyDocumentType

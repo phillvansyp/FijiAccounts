@@ -371,6 +371,75 @@ else
                                         </div>
                                     </div>
 
+                                    <div class="border rounded p-3 mb-3">
+                                        <h4>Payment bank accounts</h4>
+                                        <p class="text-muted">New bank details stay pending until a different owner or administrator verifies them. Account numbers remain masked after entry.</p>
+                                        @if (editingSupplierBankAccounts.Count == 0)
+                                        {
+                                            <p class="text-muted">No payment bank accounts have been added.</p>
+                                        }
+                                        else
+                                        {
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm align-middle">
+                                                    <thead><tr><th>Account</th><th>Bank</th><th>Number</th><th>Status</th><th></th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var bankAccount in editingSupplierBankAccounts)
+                                                        {
+                                                            <tr>
+                                                                <td>@bankAccount.AccountName</td>
+                                                                <td>@(bankAccount.BankName ?? "—")</td>
+                                                                <td>@BusinessPartyService.MaskBankAccountNumber(bankAccount.AccountNumber)</td>
+                                                                <td>
+                                                                    @if (bankAccount.IsVerified)
+                                                                    {
+                                                                        <span class="badge text-bg-success">Verified</span>
+                                                                        @if (bankAccount.IsDefault)
+                                                                        {
+                                                                            <span class="badge text-bg-primary ms-1">Default</span>
+                                                                        }
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="badge text-bg-warning">Pending</span>
+                                                                    }
+                                                                </td>
+                                                                <td class="text-end">
+                                                                    @if (!bankAccount.IsVerified && canVerifyBankAccounts && bankAccount.SubmittedByUserId != userId)
+                                                                    {
+                                                                        <button type="button" class="btn btn-sm btn-outline-primary me-2" @onclick="() => VerifySupplierBankAccount(bankAccount.Id)">Verify</button>
+                                                                    }
+                                                                    @if (canVerifyBankAccounts)
+                                                                    {
+                                                                        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateSupplierBankAccount(bankAccount.Id)">Remove</button>
+                                                                    }
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        <div class="row align-items-end">
+                                            <div class="col-md-3 mb-2">
+                                                <label class="form-label">Account name</label>
+                                                <input class="form-control" @bind="newSupplierBankAccount.AccountName" @bind:event="oninput" />
+                                            </div>
+                                            <div class="col-md-3 mb-2">
+                                                <label class="form-label">Bank</label>
+                                                <input class="form-control" @bind="newSupplierBankAccount.BankName" @bind:event="oninput" />
+                                            </div>
+                                            <div class="col-md-4 mb-2">
+                                                <label class="form-label">Bank account number</label>
+                                                <input class="form-control" autocomplete="off" @bind="newSupplierBankAccount.AccountNumber" @bind:event="oninput" />
+                                            </div>
+                                            <div class="col-md-2 mb-2">
+                                                <button type="button" class="btn btn-outline-primary w-100" @onclick="SubmitSupplierBankAccount">Submit</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div class="row">
                                         <div class="col-md-8">
                                             <label class="form-label">
@@ -469,6 +538,7 @@ else
     private AccessibleOrganisation? access;
     private string userId = string.Empty;
     private bool canEdit;
+    private bool canVerifyBankAccounts;
     private bool showAddContact;
     private List<BusinessParty> parties = [];
     private List<LedgerAccount> salesAccounts = [];
@@ -483,6 +553,8 @@ else
     private PurchaseDefaultsModel editDefaults = new();
     private List<SupplierAccountProfile> editingSupplierAccounts = [];
     private NewSupplierAccountModel newSupplierAccount = new();
+    private List<SupplierBankAccount> editingSupplierBankAccounts = [];
+    private NewSupplierBankAccountModel newSupplierBankAccount = new();
     private string searchTerm = string.Empty;
     private string? status;
     private string statusClass = "alert-success";
@@ -555,6 +627,7 @@ else
         if (access is not null)
         {
             canEdit = await TenantAccess.CanManageContactsAsync(userId, OrganisationId);
+            canVerifyBankAccounts = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             searchTerm = Query?.Trim() ?? string.Empty;
             model = new ContactModel
         {
@@ -601,6 +674,7 @@ else
             .Include(x => x.DefaultSalesAccount)
             .Include(x => x.DefaultPurchaseAccount)
             .Include(x => x.SupplierAccounts)
+            .Include(x => x.SupplierBankAccounts.Where(a => a.IsActive))
             .OrderBy(x => x.Name)
             .ToListAsync();
     }
@@ -713,8 +787,8 @@ else
         }
     }
 
-    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { VatRegistrationNumber = party.VatRegistrationNumber, DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; editingSupplierAccounts = party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList(); newSupplierAccount = new(); }
-    private void CancelDefaults() { editingPartyId = null; editDefaults = new(); editingSupplierAccounts = []; newSupplierAccount = new(); }
+    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { VatRegistrationNumber = party.VatRegistrationNumber, DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; editingSupplierAccounts = party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList(); editingSupplierBankAccounts = party.SupplierBankAccounts.OrderByDescending(x => x.IsDefault).ThenByDescending(x => x.SubmittedAt).ToList(); newSupplierAccount = new(); newSupplierBankAccount = new(); }
+    private void CancelDefaults() { editingPartyId = null; editDefaults = new(); editingSupplierAccounts = []; editingSupplierBankAccounts = []; newSupplierAccount = new(); newSupplierBankAccount = new(); }
     private async Task SaveDefaults()
     {
         if (editingPartyId is not Guid id || !canEdit) return;
@@ -799,6 +873,71 @@ else
         }
     }
 
+    private async Task SubmitSupplierBankAccount()
+    {
+        if (editingPartyId is not Guid supplierId || !canEdit) return;
+        try
+        {
+            await BusinessParties.SubmitSupplierBankAccountAsync(
+                userId,
+                new SupplierBankAccountRequest(
+                    OrganisationId,
+                    supplierId,
+                    newSupplierBankAccount.AccountName,
+                    newSupplierBankAccount.BankName,
+                    newSupplierBankAccount.AccountNumber));
+            newSupplierBankAccount = new();
+            ShowStatus("Bank details submitted for independent verification.", "alert-success");
+            await Reload();
+            RefreshEditingSupplierBankAccounts(supplierId);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Bank details were not submitted: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task VerifySupplierBankAccount(Guid bankAccountId)
+    {
+        if (editingPartyId is not Guid supplierId || !canVerifyBankAccounts) return;
+        try
+        {
+            await BusinessParties.VerifySupplierBankAccountAsync(
+                userId, OrganisationId, supplierId, bankAccountId);
+            ShowStatus("Bank details verified and set as the default payment destination.", "alert-success");
+            await Reload();
+            RefreshEditingSupplierBankAccounts(supplierId);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Bank details were not verified: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task DeactivateSupplierBankAccount(Guid bankAccountId)
+    {
+        if (editingPartyId is not Guid supplierId || !canVerifyBankAccounts) return;
+        try
+        {
+            await BusinessParties.DeactivateSupplierBankAccountAsync(
+                userId, OrganisationId, supplierId, bankAccountId);
+            ShowStatus("Bank details removed from active payment destinations.", "alert-success");
+            await Reload();
+            RefreshEditingSupplierBankAccounts(supplierId);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Bank details were not removed: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void RefreshEditingSupplierBankAccounts(Guid supplierId) =>
+        editingSupplierBankAccounts = parties.Single(x => x.Id == supplierId)
+            .SupplierBankAccounts
+            .OrderByDescending(x => x.IsDefault)
+            .ThenByDescending(x => x.SubmittedAt)
+            .ToList();
+
     private class PurchaseDefaultsModel { [StringLength(80)] public string? VatRegistrationNumber { get; set; } public Guid? DefaultSalesAccountId { get; set; } public VatTreatment? DefaultSalesVatTreatment { get; set; } public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
     private static string FormatPaymentTerms(
         PaymentTermType type,
@@ -835,5 +974,11 @@ else
         [Required, StringLength(80)] public string Label { get; set; } = string.Empty;
         [Required, StringLength(80)] public string AccountNumber { get; set; } = string.Empty;
         public bool MakeDefault { get; set; }
+    }
+    private sealed class NewSupplierBankAccountModel
+    {
+        [Required, StringLength(120)] public string AccountName { get; set; } = string.Empty;
+        [StringLength(120)] public string? BankName { get; set; }
+        [Required, StringLength(80)] public string AccountNumber { get; set; } = string.Empty;
     }
 }

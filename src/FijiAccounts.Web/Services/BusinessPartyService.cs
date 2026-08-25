@@ -47,6 +47,13 @@ public sealed record SupplierAccountProfileRequest(
     string AccountNumber,
     bool MakeDefault);
 
+public sealed record SupplierBankAccountRequest(
+    Guid OrganisationId,
+    Guid SupplierId,
+    string AccountName,
+    string? BankName,
+    string AccountNumber);
+
 public sealed record LearnCustomerSalesDefaultsRequest(
     Guid OrganisationId,
     Guid BusinessPartyId,
@@ -443,6 +450,183 @@ public sealed class BusinessPartyService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<SupplierBankAccount> SubmitSupplierBankAccountAsync(
+        string userId,
+        SupplierBankAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, request.OrganisationId, cancellationToken);
+        var supplier = await GetPartyAsync(
+            request.OrganisationId,
+            request.SupplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var accountName = RequiredText(request.AccountName, 120, "bank account name");
+        var bankName = OptionalText(request.BankName, 120, "bank name");
+        var accountNumber = RequiredText(request.AccountNumber, 80, "bank account number");
+        var normalisedAccountNumber = NormaliseBankAccountNumber(accountNumber);
+        if (normalisedAccountNumber.Length < 4)
+        {
+            throw new InvalidOperationException("Enter a valid bank account number.");
+        }
+
+        var existingNumbers = await db.SupplierBankAccounts
+            .Where(x => x.OrganisationId == request.OrganisationId &&
+                        x.SupplierId == request.SupplierId)
+            .Select(x => x.AccountNumber)
+            .ToListAsync(cancellationToken);
+        if (existingNumbers.Any(x =>
+                NormaliseBankAccountNumber(x) == normalisedAccountNumber))
+        {
+            throw new InvalidOperationException(
+                "This supplier bank account already exists.");
+        }
+
+        var account = new SupplierBankAccount
+        {
+            OrganisationId = request.OrganisationId,
+            SupplierId = request.SupplierId,
+            AccountName = accountName,
+            BankName = bankName,
+            AccountNumber = accountNumber,
+            SubmittedByUserId = userId
+        };
+        db.SupplierBankAccounts.Add(account);
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "SupplierBankAccountSubmitted",
+            supplier.Id,
+            new
+            {
+                supplier.Name,
+                account.Id,
+                account.AccountName,
+                account.BankName,
+                AccountNumber = MaskBankAccountNumber(account.AccountNumber),
+                Status = "Pending verification"
+            }));
+        await db.SaveChangesAsync(cancellationToken);
+        return account;
+    }
+
+    public async Task VerifySupplierBankAccountAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierId,
+        Guid supplierBankAccountId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "Only an organisation owner or administrator can verify supplier bank details.");
+        }
+
+        var supplier = await GetPartyAsync(
+            organisationId,
+            supplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var accounts = await db.SupplierBankAccounts
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.SupplierId == supplierId &&
+                        x.IsActive)
+            .ToListAsync(cancellationToken);
+        var account = accounts.SingleOrDefault(x => x.Id == supplierBankAccountId)
+            ?? throw new InvalidOperationException("Supplier bank account was not found.");
+        if (account.IsVerified)
+        {
+            return;
+        }
+        if (account.SubmittedByUserId == userId)
+        {
+            throw new InvalidOperationException(
+                "A different owner or administrator must verify this bank account change.");
+        }
+
+        var replacedDefaultAccountId = accounts
+            .SingleOrDefault(x => x.Id != account.Id && x.IsDefault)?.Id;
+        foreach (var item in accounts)
+        {
+            item.IsDefault = false;
+        }
+        account.VerifiedByUserId = userId;
+        account.VerifiedAt = DateTimeOffset.UtcNow;
+        account.IsDefault = true;
+        db.AuditEvents.Add(CreateAuditEvent(
+            organisationId,
+            userId,
+            "SupplierBankAccountVerified",
+            supplier.Id,
+            new
+            {
+                supplier.Name,
+                account.Id,
+                account.AccountName,
+                account.BankName,
+                AccountNumber = MaskBankAccountNumber(account.AccountNumber),
+                ReplacedDefaultAccountId = replacedDefaultAccountId
+            }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeactivateSupplierBankAccountAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierId,
+        Guid supplierBankAccountId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "Only an organisation owner or administrator can remove supplier bank details.");
+        }
+
+        var supplier = await GetPartyAsync(
+            organisationId,
+            supplierId,
+            PartyType.Supplier,
+            cancellationToken);
+        var accounts = await db.SupplierBankAccounts
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.SupplierId == supplierId &&
+                        x.IsActive)
+            .ToListAsync(cancellationToken);
+        var account = accounts.SingleOrDefault(x => x.Id == supplierBankAccountId)
+            ?? throw new InvalidOperationException("Supplier bank account was not found.");
+        var wasDefault = account.IsDefault;
+        account.IsActive = false;
+        account.IsDefault = false;
+        var replacement = wasDefault
+            ? accounts
+                .Where(x => x.Id != account.Id && x.IsVerified)
+                .OrderByDescending(x => x.VerifiedAt)
+                .FirstOrDefault()
+            : null;
+        if (replacement is not null)
+        {
+            replacement.IsDefault = true;
+        }
+        db.AuditEvents.Add(CreateAuditEvent(
+            organisationId,
+            userId,
+            "SupplierBankAccountDeactivated",
+            supplier.Id,
+            new
+            {
+                supplier.Name,
+                account.Id,
+                account.AccountName,
+                account.BankName,
+                AccountNumber = MaskBankAccountNumber(account.AccountNumber),
+                WasVerified = account.IsVerified,
+                ReplacementDefaultAccountId = replacement?.Id
+            }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task LearnCustomerSalesDefaultsAsync(
         string userId,
         LearnCustomerSalesDefaultsRequest request,
@@ -562,6 +746,17 @@ public sealed class BusinessPartyService(
             EntityId = businessPartyId.ToString(),
             JsonData = JsonSerializer.Serialize(evidence)
         };
+
+    public static string MaskBankAccountNumber(string value)
+    {
+        var normalised = NormaliseBankAccountNumber(value);
+        return normalised.Length <= 4
+            ? $"•••• {normalised}"
+            : $"•••• {normalised[^4..]}";
+    }
+
+    private static string NormaliseBankAccountNumber(string value) =>
+        string.Concat(value.Where(char.IsLetterOrDigit)).ToUpperInvariant();
 
     private async Task RequireAccessAsync(
         string userId,

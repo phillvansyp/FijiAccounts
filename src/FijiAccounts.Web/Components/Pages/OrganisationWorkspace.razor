@@ -245,20 +245,20 @@ else
             <div class="card-heading">
                 <div>
                     <span class="eyebrow">Audit &amp; fraud controls</span>
-                    <h2>Duplicate transaction review</h2>
+                    <h2>Financial control review</h2>
                 </div>
                 <span>@financialControls.Alerts.Count alert@(financialControls.Alerts.Count == 1 ? "" : "s") · last 12 months</span>
             </div>
             @if (financialControls.Alerts.Count == 0)
             {
-                <p class="health-clear">No duplicate supplier bill or payment patterns were detected.</p>
+                <p class="health-clear">No duplicate transaction or supplier payment-destination risks were detected.</p>
             }
             else
             {
                 <div class="health-signals">
                     @foreach (var alert in financialControls.Alerts)
                     {
-                        <a class="health-signal" href="o/@OrganisationId/purchases">
+                        <a class="health-signal" href="@FinancialControlLink(alert.Type)">
                             <span class="risk-badge @(alert.Severity == FinancialControlSeverity.High ? "high" : "watch")">@alert.Severity</span>
                             <span>
                                 <strong>@alert.Title</strong>
@@ -310,6 +310,11 @@ else
     private FinancialControlSummary? financialControls;
     private FinancialIntelligenceSummary? financialIntelligence;
     private CashRunwayForecast? cashRunway;
+    private string FinancialControlLink(FinancialControlAlertType type) =>
+        type is FinancialControlAlertType.UnverifiedSupplierBankAccount or
+            FinancialControlAlertType.RecentSupplierBankAccountChange
+            ? $"o/{OrganisationId}/contacts/suppliers"
+            : $"o/{OrganisationId}/purchases";
     private IDisposable? updateSubscription;
     private bool liveRefreshInProgress;
     private bool liveRefreshRequested;
