@@ -4,14 +4,18 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject ProjectService ProjectService
 @inject ProjectProfitabilityService ProjectProfitabilityService
+@inject ProjectProgressClaimService ProjectProgressClaimService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
 
 <PageTitle>Projects &amp; jobs &middot; Account Island</PageTitle>
 
@@ -25,7 +29,7 @@ else
         <div>
             <p class="eyebrow">Operations</p>
             <h1>Projects &amp; jobs</h1>
-            <p class="page-intro">Control contract value, variations, forecast cost, retention exposure and cost-code budgets by branch and division.</p>
+            <p class="page-intro">Control contract value, variations, progress claims, retentions, forecast cost and cost-code budgets by branch and division.</p>
         </div>
         <button class="btn btn-outline-secondary no-print" onclick="window.print()">Print register</button>
     </div>
@@ -96,6 +100,29 @@ else
         </details>
     }
 
+    @if (canManage && EligibleClaimProjects.Any() && revenueAccounts.Count > 0)
+    {
+        <details class="setup-card mb-4">
+            <summary><strong>+ Add progress claim</strong></summary>
+            <EditForm Model="claimModel" OnValidSubmit="CreateClaim" FormName="project-progress-claim" class="mt-3">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="claimModel.ProjectId" @bind-Value:after="ApplyClaimProjectDefaults">@foreach (var project in EligibleClaimProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Claim number</label><InputText class="form-control" @bind-Value="claimModel.ClaimNumber" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Period end</label><InputDate class="form-control" @bind-Value="claimModel.ClaimPeriodEnd" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Work completed excl. VAT</label><InputNumber class="form-control" @bind-Value="claimModel.WorkCompletedAmount" /><div class="form-text">Retention held: $@ClaimRetentionHeld.ToString("N2")</div></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-5 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="claimModel.Description" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Retention released</label><InputNumber class="form-control" @bind-Value="claimModel.RetentionReleasedAmount" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Revenue account</label><InputSelect class="form-select" @bind-Value="claimModel.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="claimModel.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@VatLabel(treatment)</option> }</InputSelect></div>
+                </div>
+                <button class="btn btn-primary">Save draft claim</button>
+            </EditForm>
+        </details>
+    }
+
     @if (message is not null)
     {
         <div class="alert @messageClass">@message</div>
@@ -126,7 +153,7 @@ else
                         <td><strong>@project.ProjectNumber &mdash; @project.Name</strong><small class="d-block text-muted">@(project.Customer?.Name ?? "No customer") &middot; @project.StartDate.ToString("dd MMM yyyy")</small></td>
                         <td>@project.Branch.Code &mdash; @project.Division.Code</td>
                         <td><span class="badge @StatusClass(project.Status)">@StatusLabel(project.Status)</span></td>
-                        <td class="text-end">$@project.RevisedContractValue.ToString("N2")</td>
+                        <td class="text-end">$@project.RevisedContractValue.ToString("N2")<small class="d-block text-muted">$@project.CertifiedWorkValue.ToString("N2") certified &middot; $@project.OutstandingRetention.ToString("N2") retained</small></td>
                         <td class="text-end">$@performance.ActualRevenue.ToString("N2")</td>
                         <td class="text-end">$@performance.ActualCost.ToString("N2")</td>
                         <td class="text-end @(performance.ActualMargin < 0 ? "text-danger" : "text-success")">$@performance.ActualMargin.ToString("N2")</td>
@@ -134,6 +161,74 @@ else
                         <td>@if (performance.CostCodes.Count == 0) { <span>&mdash;</span> } else { @foreach (var costCode in performance.CostCodes) { <small class="d-block"><strong>@costCode.Code</strong> @costCode.Name &middot; $@costCode.ActualCost.ToString("N2") actual + $@costCode.CommittedCost.ToString("N2") committed / $@costCode.Budget.ToString("N2") budget</small> } } @if (performance.UncodedActualCost != 0) { <small class="d-block text-warning"><strong>Uncoded</strong> &middot; $@performance.UncodedActualCost.ToString("N2")</small> }</td>
                         <td class="no-print"><div class="d-flex flex-wrap gap-1">@if (canManage) { @if (project.Status is ProjectStatus.Draft or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Active)">Activate</button> } @if (project.Status == ProjectStatus.Active) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => ChangeStatus(project, ProjectStatus.OnHold)">Hold</button><button class="btn btn-sm btn-outline-success" @onclick="() => ChangeStatus(project, ProjectStatus.Completed)">Complete</button> } @if (project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold) { <button class="btn btn-sm btn-outline-danger" @onclick="() => ChangeStatus(project, ProjectStatus.Cancelled)">Cancel</button> } }</div></td>
                     </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+    </section>
+
+    <section class="detail-card mt-4">
+        <div class="card-heading"><div><span class="eyebrow">Contract billing</span><h2>Progress claims &amp; retentions</h2></div><span>@projects.Sum(x => x.ProgressClaims.Count) claims</span></div>
+        @if (projects.All(x => x.ProgressClaims.Count == 0))
+        {
+            <div class="empty-state"><strong>No progress claims</strong><span>Create claims against approved contract value and track retention held and released.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table align-middle">
+                <thead><tr><th>Project</th><th>Claim</th><th class="text-end">Work</th><th class="text-end">Retention</th><th class="text-end">Certified</th><th>Status</th><th>Invoice / decision</th><th class="no-print">Actions</th></tr></thead>
+                <tbody>
+                @foreach (var project in projects)
+                {
+                    @foreach (var claim in project.ProgressClaims)
+                    {
+                        <tr>
+                            <td><strong>@project.ProjectNumber</strong><small class="d-block text-muted">@project.Name</small></td>
+                            <td><strong>@claim.ClaimNumber</strong><small class="d-block text-muted">@claim.ClaimPeriodEnd.ToString("dd MMM yyyy") &middot; @claim.Description</small></td>
+                            <td class="text-end">$@claim.WorkCompletedAmount.ToString("N2")</td>
+                            <td class="text-end">$@claim.RetentionHeldAmount.ToString("N2") held@if (claim.RetentionReleasedAmount > 0) { <small class="d-block text-success">$@claim.RetentionReleasedAmount.ToString("N2") released</small> }</td>
+                            <td class="text-end">$@claim.CertifiedAmount.ToString("N2")</td>
+                            <td><span class="badge @ClaimStatusClass(claim.Status)">@claim.Status</span></td>
+                            <td>
+                                @if (claim.SalesInvoiceId is Guid invoiceId)
+                                {
+                                    <a href="@($"/o/{OrganisationId}/sales/{invoiceId}")">@(claim.SalesInvoice?.InvoiceNumber ?? "View invoice")</a>
+                                }
+                                else
+                                {
+                                    <span>@(claim.DecisionReason ?? "—")</span>
+                                }
+                            </td>
+                            <td class="no-print">
+                                <div class="d-flex flex-wrap gap-1 align-items-center">
+                                    @if (canManage && claim.Status == ProjectProgressClaimStatus.Draft)
+                                    {
+                                        <button class="btn btn-sm btn-primary" @onclick="() => SubmitClaim(claim)">Submit</button>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => CancelClaim(claim)">Cancel</button>
+                                    }
+                                    @if (claim.Status == ProjectProgressClaimStatus.Submitted)
+                                    {
+                                        @if (canApproveVariations)
+                                        {
+                                            <button class="btn btn-sm btn-success" @onclick="() => DecideClaim(claim, true)">Approve</button>
+                                            <InputText class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind-Value="claimDecisionReasons[claim.Id]" />
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DecideClaim(claim, false)">Reject</button>
+                                        }
+                                        @if (canManage)
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => CancelClaim(claim)">Cancel</button>
+                                        }
+                                    }
+                                    @if (canManage && claim.Status == ProjectProgressClaimStatus.Approved)
+                                    {
+                                        <InputDate class="form-control form-control-sm" style="width: 9rem" title="Invoice date" @bind-Value="claimInvoiceModels[claim.Id].IssueDate" />
+                                        <InputDate class="form-control form-control-sm" style="width: 9rem" title="Due date" @bind-Value="claimInvoiceModels[claim.Id].DueDate" />
+                                        <button class="btn btn-sm btn-primary" @onclick="() => GenerateClaimInvoice(claim)">Create invoice</button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
                 }
                 </tbody>
             </table></div>
@@ -203,10 +298,14 @@ else
     private List<ProjectProfitability> profitability = [];
     private List<DivisionOption> divisions = [];
     private List<BusinessParty> customers = [];
+    private List<LedgerAccount> revenueAccounts = [];
     private ProjectModel model = new();
     private CostCodeModel costCodeModel = new();
     private VariationModel variationModel = new();
+    private ClaimModel claimModel = new();
     private readonly Dictionary<Guid, string> variationDecisionReasons = [];
+    private readonly Dictionary<Guid, string> claimDecisionReasons = [];
+    private readonly Dictionary<Guid, ClaimInvoiceModel> claimInvoiceModels = [];
     private string? message;
     private string messageClass = "alert-success";
 
@@ -224,6 +323,9 @@ else
         customers = await Db.BusinessParties.AsNoTracking()
             .Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0)
             .OrderBy(x => x.Name).ToListAsync();
+        revenueAccounts = await Db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Revenue)
+            .OrderBy(x => x.Code).ToListAsync();
         ResetModels();
         await Reload();
     }
@@ -238,6 +340,16 @@ else
             variationModel.ProjectId = projects.FirstOrDefault(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)?.Id ?? Guid.Empty;
         foreach (var variation in projects.SelectMany(x => x.Variations).Where(x => x.Status == ProjectVariationStatus.Submitted))
             variationDecisionReasons.TryAdd(variation.Id, string.Empty);
+        if (claimModel.ProjectId == Guid.Empty || !EligibleClaimProjects.Any(x => x.Id == claimModel.ProjectId))
+            claimModel.ProjectId = EligibleClaimProjects.FirstOrDefault()?.Id ?? Guid.Empty;
+        ApplyClaimProjectDefaults();
+        foreach (var claim in projects.SelectMany(x => x.ProgressClaims))
+        {
+            if (claim.Status == ProjectProgressClaimStatus.Submitted)
+                claimDecisionReasons.TryAdd(claim.Id, string.Empty);
+            if (claim.Status == ProjectProgressClaimStatus.Approved)
+                claimInvoiceModels.TryAdd(claim.Id, NewClaimInvoiceModel(claim.Project));
+        }
     }
 
     private async Task SaveProject()
@@ -320,6 +432,68 @@ else
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
     }
 
+    private async Task CreateClaim()
+    {
+        try
+        {
+            var claim = await ProjectProgressClaimService.CreateAsync(userId, new(
+                OrganisationId, claimModel.ProjectId, claimModel.ClaimNumber,
+                claimModel.Description, claimModel.ClaimPeriodEnd,
+                claimModel.WorkCompletedAmount, claimModel.RetentionReleasedAmount,
+                claimModel.RevenueAccountId, claimModel.VatTreatment));
+            Success($"Progress claim {claim.ClaimNumber} saved as a draft.");
+            var projectId = claimModel.ProjectId;
+            claimModel = NewClaimModel(projectId);
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task SubmitClaim(ProjectProgressClaim claim)
+    {
+        try { await ProjectProgressClaimService.SubmitAsync(userId, OrganisationId, claim.Id); Success($"Progress claim {claim.ClaimNumber} submitted."); await Reload(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task DecideClaim(ProjectProgressClaim claim, bool approve)
+    {
+        try
+        {
+            claimDecisionReasons.TryGetValue(claim.Id, out var reason);
+            await ProjectProgressClaimService.DecideAsync(userId, OrganisationId, claim.Id, approve, reason);
+            Success($"Progress claim {claim.ClaimNumber} {(approve ? "approved" : "rejected")}.");
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task GenerateClaimInvoice(ProjectProgressClaim claim)
+    {
+        try
+        {
+            var dates = claimInvoiceModels[claim.Id];
+            var invoice = await ProjectProgressClaimService.GenerateDraftInvoiceAsync(
+                userId, OrganisationId, claim.Id, dates.IssueDate, dates.DueDate);
+            Navigation.NavigateTo($"/o/{OrganisationId}/sales/{invoice.Id}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task CancelClaim(ProjectProgressClaim claim)
+    {
+        try { await ProjectProgressClaimService.CancelAsync(userId, OrganisationId, claim.Id); Success($"Progress claim {claim.ClaimNumber} cancelled."); await Reload(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private void ApplyClaimProjectDefaults()
+    {
+        var project = projects.FirstOrDefault(x => x.Id == claimModel.ProjectId);
+        var customerDefault = project?.Customer?.DefaultSalesAccountId;
+        if (claimModel.RevenueAccountId == Guid.Empty || !revenueAccounts.Any(x => x.Id == claimModel.RevenueAccountId))
+            claimModel.RevenueAccountId = revenueAccounts.FirstOrDefault(x => x.Id == customerDefault)?.Id ?? revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty;
+        claimModel.VatTreatment = project?.Customer?.DefaultSalesVatTreatment ?? claimModel.VatTreatment;
+    }
+
     private void ResetModels()
     {
         model = new ProjectModel
@@ -333,6 +507,36 @@ else
             ProjectId = projects.FirstOrDefault(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)?.Id ?? Guid.Empty,
             RequestedDate = DateOnly.FromDateTime(DateTime.Today)
         };
+        claimModel = NewClaimModel(EligibleClaimProjects.FirstOrDefault()?.Id ?? Guid.Empty);
+    }
+    private ClaimModel NewClaimModel(Guid projectId)
+    {
+        var result = new ClaimModel
+        {
+            ProjectId = projectId,
+            ClaimPeriodEnd = DateOnly.FromDateTime(DateTime.Today),
+            RevenueAccountId = revenueAccounts.FirstOrDefault()?.Id ?? Guid.Empty
+        };
+        var customer = projects.FirstOrDefault(x => x.Id == projectId)?.Customer;
+        if (customer?.DefaultSalesAccountId is Guid accountId && revenueAccounts.Any(x => x.Id == accountId))
+            result.RevenueAccountId = accountId;
+        result.VatTreatment = customer?.DefaultSalesVatTreatment ?? VatTreatment.Standard;
+        return result;
+    }
+    private ClaimInvoiceModel NewClaimInvoiceModel(Project project)
+    {
+        var issueDate = DateOnly.FromDateTime(DateTime.Today);
+        var termType = project.Customer?.DefaultSalesInvoicePaymentTermType
+            ?? access?.Organisation.DefaultSalesInvoicePaymentTermType
+            ?? PaymentTermType.DaysAfterDocumentDate;
+        var termValue = project.Customer?.DefaultSalesInvoiceDueDays
+            ?? access?.Organisation.DefaultSalesInvoiceDueDays
+            ?? 30;
+        return new ClaimInvoiceModel
+        {
+            IssueDate = issueDate,
+            DueDate = PaymentTermCalculator.CalculateDueDate(issueDate, termType, termValue)
+        };
     }
     private void Success(string value) { messageClass = "alert-success"; message = value; }
     private void Error(string value) { messageClass = "alert-danger"; message = value; }
@@ -342,6 +546,10 @@ else
     private static string StatusLabel(ProjectStatus status) => status == ProjectStatus.OnHold ? "On hold" : status.ToString();
     private static string StatusClass(ProjectStatus status) => status switch { ProjectStatus.Active => "text-bg-success", ProjectStatus.OnHold => "text-bg-warning", ProjectStatus.Completed => "text-bg-primary", ProjectStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
     private static string VariationStatusClass(ProjectVariationStatus status) => status switch { ProjectVariationStatus.Approved => "text-bg-success", ProjectVariationStatus.Submitted => "text-bg-primary", ProjectVariationStatus.Rejected => "text-bg-danger", ProjectVariationStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
+    private static string ClaimStatusClass(ProjectProgressClaimStatus status) => status switch { ProjectProgressClaimStatus.Approved => "text-bg-success", ProjectProgressClaimStatus.Invoiced => "text-bg-info", ProjectProgressClaimStatus.Submitted => "text-bg-primary", ProjectProgressClaimStatus.Rejected => "text-bg-danger", ProjectProgressClaimStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
+    private static string VatLabel(VatTreatment treatment) => treatment switch { VatTreatment.ZeroRated => "Zero-rated", VatTreatment.OutOfScope => "Out of scope", _ => treatment.ToString() };
+    private IEnumerable<Project> EligibleClaimProjects => projects.Where(x => x.CustomerId is not null && x.Status is ProjectStatus.Active or ProjectStatus.OnHold);
+    private decimal ClaimRetentionHeld => Math.Round(claimModel.WorkCompletedAmount * (projects.FirstOrDefault(x => x.Id == claimModel.ProjectId)?.RetentionPercent ?? 0m) / 100m, 2, MidpointRounding.AwayFromZero);
 
     private sealed record DivisionOption(Guid DivisionId, string Label);
     private sealed class ProjectModel
@@ -373,5 +581,21 @@ else
         [StringLength(1000)] public string? Description { get; set; }
         public decimal Amount { get; set; }
         public DateOnly RequestedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    }
+    private sealed class ClaimModel
+    {
+        [Required] public Guid ProjectId { get; set; }
+        [Required, StringLength(40)] public string ClaimNumber { get; set; } = "";
+        [Required, StringLength(500)] public string Description { get; set; } = "";
+        public DateOnly ClaimPeriodEnd { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        [Range(0, 999999999999)] public decimal WorkCompletedAmount { get; set; }
+        [Range(0, 999999999999)] public decimal RetentionReleasedAmount { get; set; }
+        [Required] public Guid RevenueAccountId { get; set; }
+        public VatTreatment VatTreatment { get; set; } = VatTreatment.Standard;
+    }
+    private sealed class ClaimInvoiceModel
+    {
+        public DateOnly IssueDate { get; set; }
+        public DateOnly DueDate { get; set; }
     }
 }

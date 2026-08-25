@@ -53,12 +53,16 @@ public sealed class ProjectService(
         var divisionScope = await access.GetReportDivisionScopeAsync(
             userId, organisationId, cancellationToken);
         var query = db.Projects.AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.Branch)
             .Include(x => x.Division)
             .Include(x => x.Customer)
             .Include(x => x.CostCodes.OrderBy(code => code.Code))
             .Include(x => x.Variations.OrderByDescending(variation => variation.RequestedDate)
                 .ThenBy(variation => variation.VariationNumber))
+            .Include(x => x.ProgressClaims.OrderByDescending(claim => claim.ClaimPeriodEnd)
+                .ThenBy(claim => claim.ClaimNumber))
+                .ThenInclude(claim => claim.SalesInvoice)
             .Where(x => x.OrganisationId == organisationId);
         if (divisionScope is not null)
         {

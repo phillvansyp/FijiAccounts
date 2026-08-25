@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using FijiAccounts.Domain.Tax;
 
 namespace FijiAccounts.Web.Data;
 
@@ -18,6 +19,16 @@ public enum ProjectVariationStatus
     Submitted,
     Approved,
     Rejected,
+    Cancelled
+}
+
+public enum ProjectProgressClaimStatus
+{
+    Draft,
+    Submitted,
+    Approved,
+    Rejected,
+    Invoiced,
     Cancelled
 }
 
@@ -48,6 +59,7 @@ public sealed class Project
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public List<ProjectCostCode> CostCodes { get; set; } = [];
     public List<ProjectVariation> Variations { get; set; } = [];
+    public List<ProjectProgressClaim> ProgressClaims { get; set; } = [];
 
     [NotMapped] public decimal ApprovedVariationValue =>
         OpeningApprovedVariationValue +
@@ -58,6 +70,13 @@ public sealed class Project
         RevisedContractValue - ForecastCost;
     [NotMapped] public decimal RetentionExposure =>
         RevisedContractValue * RetentionPercent / 100m;
+    [NotMapped] public decimal CertifiedWorkValue =>
+        ProgressClaims.Where(x => x.Status is ProjectProgressClaimStatus.Approved or
+            ProjectProgressClaimStatus.Invoiced).Sum(x => x.WorkCompletedAmount);
+    [NotMapped] public decimal OutstandingRetention =>
+        ProgressClaims.Where(x => x.Status is ProjectProgressClaimStatus.Approved or
+            ProjectProgressClaimStatus.Invoiced)
+            .Sum(x => x.RetentionHeldAmount - x.RetentionReleasedAmount);
 }
 
 public sealed class ProjectVariation
@@ -77,6 +96,36 @@ public sealed class ProjectVariation
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SubmittedAt { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
+}
+
+public sealed class ProjectProgressClaim
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ProjectId { get; set; }
+    public Project Project { get; set; } = null!;
+    [MaxLength(40)] public required string ClaimNumber { get; set; }
+    [MaxLength(500)] public required string Description { get; set; }
+    public DateOnly ClaimPeriodEnd { get; set; }
+    public decimal WorkCompletedAmount { get; set; }
+    public decimal RetentionRate { get; set; }
+    public decimal RetentionHeldAmount { get; set; }
+    public decimal RetentionReleasedAmount { get; set; }
+    public Guid RevenueAccountId { get; set; }
+    public LedgerAccount RevenueAccount { get; set; } = null!;
+    public VatTreatment VatTreatment { get; set; }
+    public ProjectProgressClaimStatus Status { get; set; } = ProjectProgressClaimStatus.Draft;
+    public Guid? SalesInvoiceId { get; set; }
+    public SalesInvoice? SalesInvoice { get; set; }
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+    [MaxLength(450)] public string? DecidedByUserId { get; set; }
+    [MaxLength(500)] public string? DecisionReason { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? SubmittedAt { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
+    public DateTimeOffset? InvoicedAt { get; set; }
+
+    [NotMapped] public decimal CertifiedAmount =>
+        WorkCompletedAmount - RetentionHeldAmount + RetentionReleasedAmount;
 }
 
 public sealed class ProjectCostCode

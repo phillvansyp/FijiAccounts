@@ -68,6 +68,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<PurchaseRequisition> PurchaseRequisitions => Set<PurchaseRequisition>();
     public DbSet<PurchaseRequisitionLine> PurchaseRequisitionLines => Set<PurchaseRequisitionLine>();
     public DbSet<ProjectVariation> ProjectVariations => Set<ProjectVariation>();
+    public DbSet<ProjectProgressClaim> ProjectProgressClaims => Set<ProjectProgressClaim>();
     public DbSet<PurchaseApprovalPolicy> PurchaseApprovalPolicies => Set<PurchaseApprovalPolicy>();
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
     public DbSet<SupplierPaymentReversal> SupplierPaymentReversals => Set<SupplierPaymentReversal>();
@@ -889,6 +890,22 @@ builder.Entity<FixedAsset>()
         builder.Entity<ProjectVariation>()
             .HasIndex(x => new { x.ProjectId, x.VariationNumber }).IsUnique();
         builder.Entity<ProjectVariation>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<ProjectProgressClaim>()
+            .HasOne(x => x.Project).WithMany(x => x.ProgressClaims).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<ProjectProgressClaim>()
+            .HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProjectProgressClaim>()
+            .HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ProjectProgressClaim>()
+            .HasIndex(x => new { x.ProjectId, x.ClaimNumber }).IsUnique();
+        builder.Entity<ProjectProgressClaim>().HasIndex(x => x.SalesInvoiceId).IsUnique();
+        foreach (var property in new[]
+        {
+            nameof(ProjectProgressClaim.WorkCompletedAmount),
+            nameof(ProjectProgressClaim.RetentionHeldAmount),
+            nameof(ProjectProgressClaim.RetentionReleasedAmount)
+        }) builder.Entity<ProjectProgressClaim>().Property(property).HasPrecision(18, 2);
+        builder.Entity<ProjectProgressClaim>().Property(x => x.RetentionRate).HasPrecision(8, 4);
         builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
