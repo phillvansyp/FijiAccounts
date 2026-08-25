@@ -94,6 +94,7 @@ builder.Services.AddSingleton<OrganisationUpdateBroker>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<CashflowForecastService>();
 builder.Services.AddScoped<FinancialRiskService>();
+builder.Services.AddScoped<FinancialControlService>();
 builder.Services.AddScoped<FinancialIntelligenceService>();
 builder.Services.AddScoped<CashRunwayService>();
 builder.Services.AddScoped<VatWorkpaperService>();

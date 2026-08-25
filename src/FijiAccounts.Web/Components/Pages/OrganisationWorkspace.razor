@@ -16,6 +16,7 @@
 @inject NotificationService NotificationService
 @inject CashflowForecastService CashflowForecastService
 @inject FinancialRiskService FinancialRiskService
+@inject FinancialControlService FinancialControlService
 @inject FinancialIntelligenceService FinancialIntelligenceService
 @inject CashRunwayService CashRunwayService
 @inject OrganisationUpdateBroker Updates
@@ -238,6 +239,38 @@ else
         </section>
     }
 
+    @if (financialControls is not null)
+    {
+        <section class="detail-card">
+            <div class="card-heading">
+                <div>
+                    <span class="eyebrow">Audit &amp; fraud controls</span>
+                    <h2>Duplicate transaction review</h2>
+                </div>
+                <span>@financialControls.Alerts.Count alert@(financialControls.Alerts.Count == 1 ? "" : "s") · last 12 months</span>
+            </div>
+            @if (financialControls.Alerts.Count == 0)
+            {
+                <p class="health-clear">No duplicate supplier bill or payment patterns were detected.</p>
+            }
+            else
+            {
+                <div class="health-signals">
+                    @foreach (var alert in financialControls.Alerts)
+                    {
+                        <a class="health-signal" href="o/@OrganisationId/purchases">
+                            <span class="risk-badge @(alert.Severity == FinancialControlSeverity.High ? "high" : "watch")">@alert.Severity</span>
+                            <span>
+                                <strong>@alert.Title</strong>
+                                <small>@alert.Explanation · @alert.TransactionDate.ToString("dd MMM yyyy") · $@alert.Amount.ToString("N2")</small>
+                            </span>
+                        </a>
+                    }
+                </div>
+            }
+        </section>
+    }
+
     <section id="chart-of-accounts" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Accounting</span><h2>Chart of accounts</h2></div><span>@accounts.Count accounts</span></div><div class="table-responsive"><table class="table"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Status</th></tr></thead><tbody>@foreach (var account in accounts) { <tr><td><code>@account.Code</code></td><td>@account.Name</td><td>@account.Type</td><td><span class="status-pill">@(account.IsActive ? "Active" : "Archived")</span></td></tr> }</tbody></table></div></section>
     <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Role</th><th>Branch / division access</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@member.Role</td><td>@DimensionAccessLabel(member)</td></tr> }</tbody></table></div>
     @if (canManageTeam && RestrictableMembers.Count > 0)
@@ -274,6 +307,7 @@ else
     private List<OrganisationDimensionAccessGrant> SelectedMemberGrants => dimensionGrants.Where(x => x.UserId == selectedMemberUserId).OrderBy(x => x.Branch.Code).ThenBy(x => x.Division == null ? "" : x.Division.Code).ToList();
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
+    private FinancialControlSummary? financialControls;
     private FinancialIntelligenceSummary? financialIntelligence;
     private CashRunwayForecast? cashRunway;
     private IDisposable? updateSubscription;
@@ -288,6 +322,7 @@ await LoadFinancialInsightsAsync(
     NotificationService,
     CashflowForecastService,
     FinancialRiskService,
+    FinancialControlService,
     FinancialIntelligenceService,
     CashRunwayService);
 var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId && x.Status!=InvoiceStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SalesCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); var inputVat=(await Db.SupplierBills.Where(x=>x.OrganisationId==OrganisationId && x.Status!=BillStatus.Voided).SumAsync(x=>(decimal?)x.VatTotal)??0)-(await Db.SupplierCreditNotes.Where(x=>x.OrganisationId==OrganisationId).SumAsync(x=>(decimal?)x.VatTotal)??0); vatPosition=outputVat-inputVat; } loading=false; }
@@ -297,6 +332,7 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         NotificationService notifications,
         CashflowForecastService cashflow,
         FinancialRiskService risk,
+        FinancialControlService controls,
         FinancialIntelligenceService intelligence,
         CashRunwayService runway)
     {
@@ -347,6 +383,8 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
             await cashflow.GetAsync(OrganisationId);
         financialRisk =
             await risk.GetAsync(OrganisationId);
+        financialControls =
+            await controls.GetAsync(userId, OrganisationId);
         financialIntelligence =
             await intelligence.GetAsync(userId, OrganisationId);
         cashRunway =
@@ -389,6 +427,7 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
                     scope.ServiceProvider.GetRequiredService<NotificationService>(),
                     scope.ServiceProvider.GetRequiredService<CashflowForecastService>(),
                     scope.ServiceProvider.GetRequiredService<FinancialRiskService>(),
+                    scope.ServiceProvider.GetRequiredService<FinancialControlService>(),
                     scope.ServiceProvider.GetRequiredService<FinancialIntelligenceService>(),
                     scope.ServiceProvider.GetRequiredService<CashRunwayService>());
 
