@@ -193,9 +193,16 @@ else
         filter.From = new DateOnly(today.Year, 1, 1);
         rateModel.EffectiveDate = today;
         eliminationModel.EntryDate = today;
-        await LoadRateConfiguration();
-        await LoadEliminations();
-        await Load();
+        try
+        {
+            await LoadRateConfiguration();
+            await LoadEliminations();
+            await Load();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException)
+        {
+            error = ex.Message;
+        }
     }
 
     private async Task LoadRateConfiguration()

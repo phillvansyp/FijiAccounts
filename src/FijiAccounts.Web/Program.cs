@@ -13,6 +13,15 @@ using System.Security.Claims;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Console logging works for local development and is collected by the
+// production container. The Windows Event Log provider can terminate requests
+// when the current user does not have permission to write to the event log.
+builder.Logging.ClearProviders();
+builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
 var mobileAuthenticationEnabled = builder.Configuration.GetValue<bool>(
     $"{MobileAuthenticationOptions.SectionName}:Enabled");
 
