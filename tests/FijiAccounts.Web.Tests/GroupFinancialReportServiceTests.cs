@@ -92,6 +92,105 @@ public sealed class GroupFinancialReportServiceTests
         Assert.Equal(375m, translated.Assets);
     }
 
+    [Fact]
+    public async Task GetAsync_AppliesEliminationsOnlyToConsolidatedFigures()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var structures = new EnterpriseStructureService(test.Db);
+        var second = await structures.AddCompanyAsync(
+            test.UserId,
+            new CreateGroupCompanyRequest(
+                test.Organisation.Id,
+                "Second Trading Limited",
+                null,
+                null,
+                "FJ",
+                OrganisationKind.Business));
+        await PostRevenue(test, test.Organisation.Id, 100m);
+        await PostRevenue(test, second.Id, 250m);
+        var sales = test.Account("4000");
+        var costOfSales = test.Account("5000");
+        var eliminations = new GroupEliminationService(test.Db);
+        await eliminations.PostAsync(
+            test.UserId,
+            new(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 25),
+                "ELIM-001",
+                "Eliminate internal trading",
+                [
+                    new(sales.Code, sales.Name, sales.Type, "Internal sale", 100m, 0m),
+                    new(costOfSales.Code, costOfSales.Name, costOfSales.Type, "Internal cost", 0m, 100m)
+                ]));
+        var service = new GroupFinancialReportService(
+            test.Db,
+            new FinancialReportService(test.Db),
+            test.Access);
+
+        var result = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 31));
+
+        Assert.Equal(250m, result.Consolidated.Balances.Single(x => x.Type == AccountType.Revenue).DisplayAmount);
+        Assert.Equal(-100m, result.Consolidated.Balances.Single(x => x.Type == AccountType.Expense).DisplayAmount);
+        Assert.Equal(-100m, result.Eliminations.Balances.Single(x => x.Type == AccountType.Revenue).DisplayAmount);
+        Assert.Equal(-100m, result.Eliminations.Balances.Single(x => x.Type == AccountType.Expense).DisplayAmount);
+        Assert.Equal(350m, result.Companies.Sum(x => x.Revenue));
+        Assert.All(result.Companies, x => Assert.Equal(0m, x.Expenses));
+    }
+
+    [Fact]
+    public async Task GetAsync_AppliesBalanceSheetEliminationsFromTheirEntryDate()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var receivable = test.Account("1100");
+        var payable = test.Account("2000");
+        await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 20),
+                "INTERCO-BALANCE",
+                "Intercompany balance",
+                [
+                    new JournalLineInput(receivable.Id, "Intercompany receivable", 300m, 0m),
+                    new JournalLineInput(payable.Id, "Intercompany payable", 0m, 300m)
+                ]));
+        await new GroupEliminationService(test.Db).PostAsync(
+            test.UserId,
+            new(
+                test.Organisation.Id,
+                new DateOnly(2026, 8, 25),
+                "ELIM-BALANCE-001",
+                "Eliminate intercompany balances",
+                [
+                    new(payable.Code, payable.Name, payable.Type, "Remove payable", 300m, 0m),
+                    new(receivable.Code, receivable.Name, receivable.Type, "Remove receivable", 0m, 300m)
+                ]));
+        var service = new GroupFinancialReportService(
+            test.Db,
+            new FinancialReportService(test.Db),
+            test.Access);
+
+        var before = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 24));
+        var after = await service.GetAsync(
+            test.UserId,
+            test.Organisation.Id,
+            new DateOnly(2026, 8, 1),
+            new DateOnly(2026, 8, 31));
+
+        Assert.Equal(300m, before.Consolidated.Balances.Single(x => x.Code == "1100").DisplayAmount);
+        Assert.Equal(300m, before.Consolidated.Balances.Single(x => x.Code == "2000").DisplayAmount);
+        Assert.Equal(0m, after.Consolidated.Balances.Single(x => x.Code == "1100").DisplayAmount);
+        Assert.Equal(0m, after.Consolidated.Balances.Single(x => x.Code == "2000").DisplayAmount);
+    }
+
     private static async Task PostRevenue(AccountingTestDatabase test, Guid organisationId, decimal amount)
     {
         var accounts = await test.Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == organisationId).ToListAsync();

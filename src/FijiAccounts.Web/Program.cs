@@ -131,6 +131,7 @@ builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<FinancialReportService>();
 builder.Services.AddScoped<GroupFinancialReportService>();
 builder.Services.AddScoped<GroupExchangeRateService>();
+builder.Services.AddScoped<GroupEliminationService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankReconciliationSessionService>();
 builder.Services.AddScoped<BankAccountService>();

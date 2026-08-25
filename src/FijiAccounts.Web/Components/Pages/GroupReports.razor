@@ -8,6 +8,7 @@
 @using FijiAccounts.Web.Services
 @inject GroupFinancialReportService ConsolidatedReports
 @inject GroupExchangeRateService ExchangeRates
+@inject GroupEliminationService Eliminations
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -20,7 +21,7 @@
 }
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines company ledgers in the group presentation currency without changing their legal or tax boundaries. Figures are shown before intercompany eliminations.</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines company ledgers and consolidation-only eliminations in the group presentation currency without changing their legal or tax boundaries.</p></div></div>
     <section class="card p-4 mb-3 no-print">
         <EditForm Model="filter" OnValidSubmit="Load" FormName="group-report-filter">
             <div class="row align-items-end">
@@ -66,6 +67,60 @@ else
         </details>
     }
 
+    @if (eliminationConfiguration is not null)
+    {
+        <details class="card p-4 mb-3 no-print">
+            <summary><strong>Intercompany eliminations</strong></summary>
+            <p class="text-muted mt-3">Post balanced adjustments that appear only in group reports. Posted eliminations are immutable and do not change any company ledger.</p>
+            @if (eliminationConfiguration.CanManage)
+            {
+                <EditForm Model="eliminationModel" OnValidSubmit="PostElimination" FormName="group-elimination-journal">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+                    <div class="row">
+                        <div class="col-md-3 mb-3"><label class="form-label">Date</label><input type="date" class="form-control" @bind="eliminationModel.EntryDate" @bind:event="oninput" /></div>
+                        <div class="col-md-3 mb-3"><label class="form-label">Reference</label><input class="form-control" @bind="eliminationModel.Reference" @bind:event="oninput" placeholder="ELIM-2026-001" /></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Description</label><input class="form-control" @bind="eliminationModel.Description" @bind:event="oninput" placeholder="Eliminate intercompany trading" /></div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead><tr><th>Group account</th><th>Description</th><th class="text-end">Debit (@eliminationConfiguration.Currency)</th><th class="text-end">Credit (@eliminationConfiguration.Currency)</th><th></th></tr></thead>
+                            <tbody>
+                                @for (var index = 0; index < eliminationModel.Lines.Count; index++)
+                                {
+                                    var lineIndex = index;
+                                    var line = eliminationModel.Lines[lineIndex];
+                                    <tr>
+                                        <td><select class="form-select" @bind="line.AccountIndex" @bind:event="oninput">@for (var accountIndex = 0; accountIndex < eliminationConfiguration.Accounts.Count; accountIndex++) { var account = eliminationConfiguration.Accounts[accountIndex]; <option value="@accountIndex">@account.Code - @account.Name (@account.Type)</option> }</select></td>
+                                        <td><input class="form-control" @bind="line.Description" @bind:event="oninput" /></td>
+                                        <td><input type="number" class="form-control text-end" @bind="line.Debit" @bind:event="oninput" step="0.01" /></td>
+                                        <td><input type="number" class="form-control text-end" @bind="line.Credit" @bind:event="oninput" step="0.01" /></td>
+                                        <td><button type="button" class="btn btn-sm btn-outline-danger" disabled="@(eliminationModel.Lines.Count <= 2)" @onclick="() => RemoveEliminationLine(lineIndex)">Remove</button></td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot><tr><th colspan="2">Totals</th><th class="text-end">@MoneyValue(EliminationDebits)</th><th class="text-end">@MoneyValue(EliminationCredits)</th><th></th></tr></tfoot>
+                        </table>
+                    </div>
+                    <div class="d-flex gap-2 mb-4"><button type="button" class="btn btn-outline-secondary" @onclick="AddEliminationLine">Add line</button><button class="btn btn-primary" disabled="@(eliminationConfiguration.Accounts.Count == 0)">Post elimination</button></div>
+                </EditForm>
+            }
+            else
+            {
+                <div class="alert alert-info">You can review eliminations, but only a group owner or administrator can post them.</div>
+            }
+            <h3>Posted elimination journals</h3>
+            @if (eliminationConfiguration.Journals.Count == 0)
+            {
+                <p class="text-muted mb-0">No elimination journals have been posted.</p>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var journal in eliminationConfiguration.Journals) { <tr><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td><strong>@journal.Reference</strong></td><td>@journal.Description</td><td class="text-end">@journal.Currency @journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr> }</tbody></table></div>
+            }
+        </details>
+    }
+
     @if (error is not null)
     {
         <div class="alert alert-warning">@error</div>
@@ -89,7 +144,7 @@ else
         </section>
 
         <section class="card p-4">
-            <h2>Company breakdown</h2>
+            <h2>Company breakdown</h2><p class="text-muted">Company figures are shown before group eliminations.</p>
             <div class="table-responsive"><table class="table"><thead><tr><th>Legal company</th>@if (filter.ReportType == "profit-loss") { <th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net profit</th> } else { <th class="text-end">Assets</th><th class="text-end">Liabilities</th><th class="text-end">Equity</th> }</tr></thead><tbody>@foreach (var company in report.Companies) { <tr><td><strong>@company.LegalName</strong><br /><small class="text-muted">@company.SourceCurrency@if (company.SourceCurrency != report.Currency) { <span> &rarr; @report.Currency / average @company.PeriodAverageRate.ToString("N8") / closing @company.ClosingRate.ToString("N8")</span> }</small></td>@if (filter.ReportType == "profit-loss") { <td class="text-end">@Money(company.Revenue)</td><td class="text-end">@Money(company.Expenses)</td><td class="text-end"><strong>@Money(company.NetProfit)</strong></td> } else { <td class="text-end">@Money(company.Assets)</td><td class="text-end">@Money(company.Liabilities)</td><td class="text-end">@Money(company.Equity)</td> }</tr> }</tbody></table></div>
         </section>
     }
@@ -101,8 +156,10 @@ else
     private string userId = "";
     private GroupFinancialReportData? report;
     private GroupExchangeRateConfiguration? rateConfiguration;
+    private GroupEliminationConfiguration? eliminationConfiguration;
     private ReportFilter filter = new();
     private ExchangeRateModel rateModel = new();
+    private EliminationModel eliminationModel = new();
     private string presentationCurrency = "FJD";
     private string? error;
     private IEnumerable<FinancialAccountBalance> Rows(AccountType type) => report?.Consolidated.Balances.Where(x => x.Type == type) ?? [];
@@ -117,8 +174,11 @@ else
     private decimal AssetTotal => Total(AccountType.Asset);
     private decimal LiabilityTotal => Total(AccountType.Liability);
     private decimal EquityTotal => Total(AccountType.Equity);
+    private decimal EliminationDebits => eliminationModel.Lines.Sum(x => x.Debit);
+    private decimal EliminationCredits => eliminationModel.Lines.Sum(x => x.Credit);
     private string PeriodLabel => filter.ReportType == "profit-loss" ? $"{filter.From:dd MMM yyyy} to {filter.To:dd MMM yyyy}" : $"As at {filter.To:dd MMM yyyy}";
     private string Money(decimal amount) => $"{report?.Currency} {amount:N2}";
+    private string MoneyValue(decimal amount) => $"{eliminationConfiguration?.Currency} {amount:N2}";
     private IReadOnlyList<string> SupportedCurrencies => IslandJurisdictions.All.Select(x => x.CurrencyCode).Distinct().Order().ToList();
     private IReadOnlyList<string> ForeignCurrencies => rateConfiguration?.CompanyCurrencies.Where(x => x != rateConfiguration.PresentationCurrency).Order().ToList() ?? [];
 
@@ -132,7 +192,9 @@ else
         filter.To = today;
         filter.From = new DateOnly(today.Year, 1, 1);
         rateModel.EffectiveDate = today;
+        eliminationModel.EntryDate = today;
         await LoadRateConfiguration();
+        await LoadEliminations();
         await Load();
     }
 
@@ -173,6 +235,52 @@ else
         catch (Exception ex) { error = ex.Message; }
     }
 
+    private async Task LoadEliminations()
+    {
+        eliminationConfiguration = await Eliminations.GetAsync(userId, OrganisationId);
+    }
+
+    private void AddEliminationLine() => eliminationModel.Lines.Add(new());
+
+    private void RemoveEliminationLine(int index)
+    {
+        if (eliminationModel.Lines.Count > 2) eliminationModel.Lines.RemoveAt(index);
+    }
+
+    private async Task PostElimination()
+    {
+        if (eliminationConfiguration is null) return;
+        try
+        {
+            var lines = eliminationModel.Lines.Select(line =>
+            {
+                if (line.AccountIndex < 0 || line.AccountIndex >= eliminationConfiguration.Accounts.Count)
+                {
+                    throw new InvalidOperationException("Select a valid group account for every line.");
+                }
+
+                var account = eliminationConfiguration.Accounts[line.AccountIndex];
+                return new GroupEliminationLineInput(
+                    account.Code,
+                    account.Name,
+                    account.Type,
+                    line.Description,
+                    line.Debit,
+                    line.Credit);
+            }).ToList();
+            await Eliminations.PostAsync(userId, new(
+                OrganisationId,
+                eliminationModel.EntryDate,
+                eliminationModel.Reference,
+                eliminationModel.Description,
+                lines));
+            eliminationModel = new() { EntryDate = eliminationModel.EntryDate };
+            await LoadEliminations();
+            await Load();
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
     private static string RateTypeLabel(GroupExchangeRateType type) =>
         type == GroupExchangeRateType.PeriodAverage ? "Period average" : "Closing";
 
@@ -197,5 +305,21 @@ else
         public GroupExchangeRateType Type { get; set; }
         public DateOnly EffectiveDate { get; set; }
         [Range(typeof(decimal), "0.00000001", "999999999")] public decimal Rate { get; set; } = 1m;
+    }
+
+    private sealed class EliminationModel
+    {
+        public DateOnly EntryDate { get; set; }
+        [Required, StringLength(80)] public string Reference { get; set; } = "";
+        [StringLength(500)] public string? Description { get; set; }
+        public List<EliminationLineModel> Lines { get; set; } = [new(), new()];
+    }
+
+    private sealed class EliminationLineModel
+    {
+        public int AccountIndex { get; set; }
+        [Required, StringLength(300)] public string Description { get; set; } = "Intercompany elimination";
+        [Range(typeof(decimal), "0", "9999999999999999")] public decimal Debit { get; set; }
+        [Range(typeof(decimal), "0", "9999999999999999")] public decimal Credit { get; set; }
     }
 }

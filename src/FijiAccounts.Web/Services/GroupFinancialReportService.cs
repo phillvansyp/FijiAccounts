@@ -22,6 +22,7 @@ public sealed record GroupFinancialReportData(
     string GroupName,
     string Currency,
     IReadOnlyList<GroupCompanyFinancialSummary> Companies,
+    FinancialReportData Eliminations,
     FinancialReportData Consolidated);
 
 public sealed class GroupFinancialReportService(
@@ -120,12 +121,19 @@ public sealed class GroupFinancialReportService(
                 closingRate));
         }
 
+        var eliminations = await GetEliminationsAsync(
+            group.OrganisationGroupId,
+            from,
+            to,
+            cancellationToken);
         var balances = companyReports.SelectMany(x => x.Report.Balances)
+            .Concat(eliminations.Balances)
             .GroupBy(x => new { x.Code, x.Name, x.Type })
             .Select(x => new FinancialAccountBalance(x.Key.Code, x.Key.Name, x.Key.Type, x.Sum(y => y.DisplayAmount)))
             .OrderBy(x => x.Code)
             .ToList();
         var trial = companyReports.SelectMany(x => x.Report.TrialBalance)
+            .Concat(eliminations.TrialBalance)
             .GroupBy(x => new { x.Code, x.Name })
             .Select(x => new TrialBalanceRow(x.Key.Code, x.Key.Name, x.Sum(y => y.Debit), x.Sum(y => y.Credit)))
             .OrderBy(x => x.Code)
@@ -147,7 +155,88 @@ public sealed class GroupFinancialReportService(
             group.Name,
             group.PresentationCurrency,
             summaries,
+            eliminations,
             new(balances, trial));
+    }
+
+    private async Task<FinancialReportData> GetEliminationsAsync(
+        Guid groupId,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken)
+    {
+        var lines = await db.GroupEliminationJournalLines
+            .AsNoTracking()
+            .Where(x =>
+                x.GroupEliminationJournal.OrganisationGroupId == groupId &&
+                x.GroupEliminationJournal.EntryDate <= to)
+            .Select(x => new
+            {
+                x.AccountCode,
+                x.AccountName,
+                x.AccountType,
+                x.Debit,
+                x.Credit,
+                x.GroupEliminationJournal.EntryDate
+            })
+            .ToListAsync(cancellationToken);
+
+        var all = lines
+            .GroupBy(x => new { x.AccountCode, x.AccountName, x.AccountType })
+            .Select(x => new
+            {
+                Code = x.Key.AccountCode,
+                Name = x.Key.AccountName,
+                Type = x.Key.AccountType,
+                Debit = x.Sum(y => y.Debit),
+                Credit = x.Sum(y => y.Credit)
+            })
+            .ToList();
+        var trial = all
+            .Select(x =>
+            {
+                var net = x.Debit - x.Credit;
+                return new TrialBalanceRow(
+                    x.Code,
+                    x.Name,
+                    Math.Max(net, 0m),
+                    Math.Max(-net, 0m));
+            })
+            .Where(x => x.Debit != 0m || x.Credit != 0m)
+            .ToList();
+        var accumulatedProfit = all
+            .Where(x => x.Type is AccountType.Revenue or AccountType.Expense)
+            .Sum(x => x.Credit - x.Debit);
+        var currentProfit = lines
+            .Where(x =>
+                x.EntryDate >= from &&
+                x.AccountType is AccountType.Revenue or AccountType.Expense)
+            .GroupBy(x => new { x.AccountCode, x.AccountName, x.AccountType })
+            .Select(x => new FinancialAccountBalance(
+                x.Key.AccountCode,
+                x.Key.AccountName,
+                x.Key.AccountType,
+                x.Key.AccountType == AccountType.Revenue
+                    ? x.Sum(y => y.Credit - y.Debit)
+                    : x.Sum(y => y.Debit - y.Credit)))
+            .Where(x => x.DisplayAmount != 0m);
+        var balances = all
+            .Where(x => x.Type is AccountType.Asset or AccountType.Liability or AccountType.Equity)
+            .Select(x => new FinancialAccountBalance(
+                x.Code,
+                x.Name,
+                x.Type,
+                x.Type == AccountType.Asset ? x.Debit - x.Credit : x.Credit - x.Debit))
+            .Concat(
+                accumulatedProfit == 0m
+                    ? []
+                    : [new FinancialAccountBalance("", "Accumulated earnings", AccountType.Equity, accumulatedProfit)])
+            .Concat(currentProfit)
+            .Where(x => x.DisplayAmount != 0m)
+            .OrderBy(x => x.Code)
+            .ToList();
+
+        return new(balances, trial);
     }
 
     private static decimal ResolveRate(

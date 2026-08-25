@@ -10,6 +10,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<OrganisationGroupMembership> OrganisationGroupMemberships =>
         Set<OrganisationGroupMembership>();
     public DbSet<GroupExchangeRate> GroupExchangeRates => Set<GroupExchangeRate>();
+    public DbSet<GroupEliminationJournal> GroupEliminationJournals =>
+        Set<GroupEliminationJournal>();
+    public DbSet<GroupEliminationJournalLine> GroupEliminationJournalLines =>
+        Set<GroupEliminationJournalLine>();
     public DbSet<PlatformAuditEvent> PlatformAuditEvents => Set<PlatformAuditEvent>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
@@ -153,6 +157,27 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.ExchangeRates)
             .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<GroupEliminationJournal>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.Reference })
+            .IsUnique();
+        builder.Entity<GroupEliminationJournal>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.EntryDate });
+        builder.Entity<GroupEliminationJournal>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.EliminationJournals)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<GroupEliminationJournalLine>()
+            .Property(x => x.Debit)
+            .HasPrecision(18, 2);
+        builder.Entity<GroupEliminationJournalLine>()
+            .Property(x => x.Credit)
+            .HasPrecision(18, 2);
+        builder.Entity<GroupEliminationJournalLine>()
+            .HasOne(x => x.GroupEliminationJournal)
+            .WithMany(x => x.Lines)
+            .HasForeignKey(x => x.GroupEliminationJournalId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<PlatformAuditEvent>()
             .HasIndex(x => new { x.OrganisationGroupId, x.OccurredAt });

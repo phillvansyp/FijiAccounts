@@ -24,6 +24,7 @@ public sealed class OrganisationGroup
     public List<Organisation> Companies { get; set; } = [];
     public List<OrganisationGroupMembership> Memberships { get; set; } = [];
     public List<GroupExchangeRate> ExchangeRates { get; set; } = [];
+    public List<GroupEliminationJournal> EliminationJournals { get; set; } = [];
 
     public bool IsDemo { get; set; }
     public TenantStatus Status { get; set; } = TenantStatus.Active;

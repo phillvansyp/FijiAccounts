@@ -154,6 +154,12 @@ public sealed class DemoDataService(
         {
             if (!preserveTenant)
             {
+                await db.GroupEliminationJournalLines
+                    .Where(x => x.GroupEliminationJournal.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
+                await db.GroupEliminationJournals
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
                 await db.OrganisationGroupMemberships
                     .Where(x => x.OrganisationGroupId == demoGroupId)
                     .ExecuteDeleteAsync(ct);
@@ -364,6 +370,12 @@ public sealed class DemoDataService(
                 .ExecuteDeleteAsync(ct);
         }
         await db.GroupExchangeRates
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.GroupEliminationJournalLines
+            .Where(x => x.GroupEliminationJournal.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.GroupEliminationJournals
             .Where(x => x.OrganisationGroupId == demoGroupId)
             .ExecuteDeleteAsync(ct);
         if (!preserveTenant)

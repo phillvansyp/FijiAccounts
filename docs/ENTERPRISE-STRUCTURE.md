@@ -73,5 +73,6 @@ templates retain their selected dimension when generating documents.
 4. ~~Add explicit branch/division access grants.~~
 5. Add scoped and consolidated reporting. Branch/division financial statements,
    multi-company Profit & Loss and Balance Sheet consolidation, and dated
-   period-average/closing foreign-currency translation are complete.
-   Intercompany eliminations remain pending.
+   period-average/closing foreign-currency translation are complete. Immutable,
+   balanced consolidation-only journals now remove intercompany balances and
+   trading without changing any legal-company ledger.
