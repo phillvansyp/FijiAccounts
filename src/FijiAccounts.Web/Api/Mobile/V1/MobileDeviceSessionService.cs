@@ -1,5 +1,6 @@
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
+using OpenIddict.Abstractions;
 
 namespace FijiAccounts.Web.Api.Mobile.V1;
 
@@ -13,12 +14,15 @@ public sealed record MobileDeviceRegistrationResult(
     MobileDeviceRegistrationStatus Status,
     MobileDeviceSessionSummary Device);
 
-public sealed class MobileDeviceSessionService(ApplicationDbContext db)
+public sealed class MobileDeviceSessionService(
+    ApplicationDbContext db,
+    IOpenIddictTokenManager? tokens = null)
 {
     public async Task<MobileDeviceRegistrationResult> RegisterAsync(
         string userId,
         MobileClientRequest client,
         string? displayName,
+        string? openIddictAuthorizationId = null,
         CancellationToken cancellationToken = default)
     {
         var session = await db.MobileDeviceSessions.SingleOrDefaultAsync(device =>
@@ -39,6 +43,7 @@ public sealed class MobileDeviceSessionService(ApplicationDbContext db)
                 Platform = client.Platform,
                 AppVersion = client.Version.ToString(),
                 DisplayName = NormalizeDisplayName(displayName),
+                OpenIddictAuthorizationId = openIddictAuthorizationId,
                 CreatedAt = now,
                 LastSeenAt = now
             };
@@ -49,6 +54,8 @@ public sealed class MobileDeviceSessionService(ApplicationDbContext db)
             session.Platform = client.Platform;
             session.AppVersion = client.Version.ToString();
             session.DisplayName = NormalizeDisplayName(displayName) ?? session.DisplayName;
+            session.OpenIddictAuthorizationId =
+                openIddictAuthorizationId ?? session.OpenIddictAuthorizationId;
             session.LastSeenAt = now;
         }
 
@@ -88,6 +95,14 @@ public sealed class MobileDeviceSessionService(ApplicationDbContext db)
             session.RevokedAt = DateTimeOffset.UtcNow;
             session.RevokedByUserId = userId;
             await db.SaveChangesAsync(cancellationToken);
+
+            if (tokens is not null &&
+                !string.IsNullOrWhiteSpace(session.OpenIddictAuthorizationId))
+            {
+                await tokens.RevokeByAuthorizationIdAsync(
+                    session.OpenIddictAuthorizationId,
+                    cancellationToken);
+            }
         }
 
         return true;

@@ -364,8 +364,12 @@ Implementation status:
   device registration and revocation, client-version enforcement, partitioned
   API rate limits, OpenAPI generation, API-specific 401/403 behavior, and
   tenant/dimension permission tests;
-- next: the selected OAuth/OIDC bearer-token authority, provider refresh-token
-  revocation linkage, telemetry, and production document storage.
+- complete: self-hosted OpenIddict bearer-token authority using the existing
+  ASP.NET Identity users, authorization code with S256 PKCE, rolling refresh
+  tokens, device-bound access, and targeted authorization revocation;
+- next: production signing/encryption certificate provisioning, iOS universal
+  link and Android app link ownership, telemetry, and production document
+  storage.
 
 It must include authentication integration tests, tenant-crossing tests,
 suspended-tenant tests, role/capability tests, dimension-scope tests, OpenAPI

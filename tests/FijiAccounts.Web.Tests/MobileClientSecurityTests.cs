@@ -1,4 +1,5 @@
 using FijiAccounts.Web.Api.Mobile.V1;
+using FijiAccounts.Web.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -144,6 +145,34 @@ public sealed class MobileClientSecurityTests
         Assert.Contains(
             "device_session_revoked",
             await ReadResponseAsync(revoked.HttpContext));
+    }
+
+    [Fact]
+    public async Task EndpointFilterRejectsATokenBoundToAnotherDevice()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var requestedDevice = Guid.NewGuid();
+        var tokenDevice = Guid.NewGuid();
+        var context = CreateFilterContext(
+            test.UserId,
+            new MobileClientRequest("ios", new Version(2, 1, 0), requestedDevice),
+            allowUnregistered: true);
+        ((ClaimsIdentity)context.HttpContext.User.Identity!).AddClaim(new Claim(
+            MobileAuthenticationExtensions.DeviceIdClaim,
+            tokenDevice.ToString()));
+        var filter = new MobileClientEndpointFilter(
+            Microsoft.Extensions.Options.Options.Create(Options),
+            test.Db);
+
+        var result = Assert.IsAssignableFrom<IResult>(await filter.InvokeAsync(
+            context,
+            _ => ValueTask.FromResult<object?>("allowed")));
+        await result.ExecuteAsync(context.HttpContext);
+
+        Assert.Equal(401, context.HttpContext.Response.StatusCode);
+        Assert.Contains(
+            "device_token_mismatch",
+            await ReadResponseAsync(context.HttpContext));
     }
 
     private static TestEndpointFilterInvocationContext CreateFilterContext(

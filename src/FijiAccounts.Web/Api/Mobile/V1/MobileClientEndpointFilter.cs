@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FijiAccounts.Web.Authentication;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -43,6 +44,21 @@ public sealed class MobileClientEndpointFilter(
         }
 
         context.HttpContext.Items[ContextItemKey] = validation.Client;
+        var tokenDeviceId = context.HttpContext.User.FindFirstValue(
+            MobileAuthenticationExtensions.DeviceIdClaim);
+        if (tokenDeviceId is not null &&
+            (!Guid.TryParse(tokenDeviceId, out var boundDeviceId) ||
+             boundDeviceId != validation.Client.InstallationId))
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "The access token belongs to another device",
+                extensions: new Dictionary<string, object?>
+                {
+                    ["code"] = "device_token_mismatch"
+                });
+        }
+
         var allowsUnregistered = context.HttpContext.GetEndpoint()?.Metadata
             .GetMetadata<AllowUnregisteredMobileDevice>() is not null;
         if (!allowsUnregistered)

@@ -41,6 +41,45 @@ Email__Smtp__Username=example-user
 Email__Smtp__Password=replace-me
 ```
 
+## Mobile OAuth activation
+
+Mobile OAuth is disabled by default. Before enabling it, create separate RSA
+signing and encryption certificates in the existing protected keys directory.
+The private keys and their passwords must never be committed.
+
+```bash
+cd /mnt/data/account-island/keys
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 730 \
+  -subj "/CN=Account Island OAuth signing" \
+  -keyout oauth-signing.key -out oauth-signing.crt
+openssl pkcs12 -export -out oauth-signing.pfx \
+  -inkey oauth-signing.key -in oauth-signing.crt
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 730 \
+  -subj "/CN=Account Island OAuth encryption" \
+  -keyout oauth-encryption.key -out oauth-encryption.crt
+openssl pkcs12 -export -out oauth-encryption.pfx \
+  -inkey oauth-encryption.key -in oauth-encryption.crt
+chmod 0600 oauth-*.key oauth-*.pfx
+```
+
+Add the following production settings to `app.env` after the iOS universal
+link and Android app link callbacks are associated with the released apps:
+
+```dotenv
+MobileAuthentication__Enabled=true
+MobileAuthentication__ClientId=account-island-mobile
+MobileAuthentication__IosRedirectUri=https://app.accountisland.com/mobile/callback/ios
+MobileAuthentication__AndroidRedirectUri=https://app.accountisland.com/mobile/callback/android
+MobileAuthentication__SigningCertificatePath=/app/keys/oauth-signing.pfx
+MobileAuthentication__SigningCertificatePassword=replace-me
+MobileAuthentication__EncryptionCertificatePath=/app/keys/oauth-encryption.pfx
+MobileAuthentication__EncryptionCertificatePassword=replace-me
+```
+
+Back up the certificates and passwords separately from the application host.
+Certificate rotation must overlap old and new validation keys long enough for
+issued access tokens to expire.
+
 ## Register the self-hosted runner
 
 In the GitHub repository, open **Settings > Actions > Runners > New self-hosted

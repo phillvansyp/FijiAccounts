@@ -1,6 +1,8 @@
 using System.Security.Claims;
+using FijiAccounts.Web.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using OpenIddict.Abstractions;
 
 namespace FijiAccounts.Web.Api.Mobile.V1;
 
@@ -15,7 +17,7 @@ public static class MobileApiV1Endpoints
     {
         var group = endpoints
             .MapGroup(RoutePrefix)
-            .RequireAuthorization()
+            .RequireAuthorization(MobileAuthenticationExtensions.AuthorizationPolicy)
             .RequireRateLimiting(RateLimitPolicy)
             .AddEndpointFilter<MobileClientEndpointFilter>()
             .WithTags("Mobile API v1");
@@ -110,6 +112,7 @@ public static class MobileApiV1Endpoints
                 userId,
                 MobileClientEndpointFilter.GetClient(context),
                 registration?.DisplayName,
+                user.GetAuthorizationId(),
                 cancellationToken);
             return result.Status == MobileDeviceRegistrationStatus.Revoked
                 ? Results.Problem(

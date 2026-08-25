@@ -112,6 +112,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.UseOpenIddict();
         builder.Entity<Organisation>()
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.Companies)

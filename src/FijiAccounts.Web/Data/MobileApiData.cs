@@ -48,6 +48,9 @@ public sealed class MobileDeviceSession
     [MaxLength(120)]
     public string? DisplayName { get; set; }
 
+    [MaxLength(100)]
+    public string? OpenIddictAuthorizationId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset LastSeenAt { get; set; } = DateTimeOffset.UtcNow;

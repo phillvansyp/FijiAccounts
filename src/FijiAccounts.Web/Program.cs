@@ -1,6 +1,7 @@
 using FijiAccounts.Web.Components;
 using FijiAccounts.Web.Components.Account;
 using FijiAccounts.Web.Api.Mobile.V1;
+using FijiAccounts.Web.Authentication;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -12,6 +13,8 @@ using System.Security.Claims;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+var mobileAuthenticationEnabled = builder.Configuration.GetValue<bool>(
+    $"{MobileAuthenticationOptions.SectionName}:Enabled");
 
 var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
 if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
@@ -84,7 +87,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString));
+    options.UseSqlite(connectionString).UseOpenIddict());
 
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
@@ -100,6 +103,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
+
+builder.AddMobileAuthentication(mobileAuthenticationEnabled);
 
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(
@@ -226,6 +231,8 @@ else
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();
 
@@ -239,6 +246,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapMobileApiV1();
+
+if (mobileAuthenticationEnabled)
+{
+    app.MapMobileAuthenticationEndpoints();
+}
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();
@@ -266,6 +278,7 @@ if (app.Environment.IsDevelopment() ||
 
 await DevelopmentAccountSeeder.SeedAsync(app);
 await PlatformAdminSeeder.SeedAsync(app);
+await MobileAuthenticationSeeder.SeedAsync(app);
 
 if (builder.Configuration.GetValue<bool>("DevSeed:SeedOnly"))
 {
@@ -273,3 +286,5 @@ if (builder.Configuration.GetValue<bool>("DevSeed:SeedOnly"))
 }
 
 app.Run();
+
+public partial class Program;
