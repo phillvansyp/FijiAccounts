@@ -32,6 +32,12 @@ public enum ProjectProgressClaimStatus
     Cancelled
 }
 
+public enum ProjectRevenueRecognitionMethod
+{
+    CostToCost,
+    CertifiedClaims
+}
+
 public sealed class Project
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -54,6 +60,8 @@ public sealed class Project
     public decimal OpeningApprovedVariationValue { get; set; }
     public decimal ForecastCost { get; set; }
     public decimal RetentionPercent { get; set; }
+    public ProjectRevenueRecognitionMethod RevenueRecognitionMethod { get; set; } =
+        ProjectRevenueRecognitionMethod.CostToCost;
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;

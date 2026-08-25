@@ -17,7 +17,9 @@ public sealed record ProjectRequest(
     decimal OriginalContractValue,
     decimal ApprovedVariationValue,
     decimal ForecastCost,
-    decimal RetentionPercent);
+    decimal RetentionPercent,
+    ProjectRevenueRecognitionMethod RevenueRecognitionMethod =
+        ProjectRevenueRecognitionMethod.CostToCost);
 
 public sealed record ProjectCostCodeRequest(
     Guid OrganisationId,
@@ -149,6 +151,12 @@ public sealed class ProjectService(
                 throw new InvalidOperationException(
                     "Opening approved variations cannot be changed after a project is activated.");
             }
+            if (project.Status != ProjectStatus.Draft &&
+                request.RevenueRecognitionMethod != project.RevenueRecognitionMethod)
+            {
+                throw new InvalidOperationException(
+                    "Revenue recognition method cannot be changed after a project is activated.");
+            }
             eventType = "ProjectUpdated";
         }
         else
@@ -179,6 +187,7 @@ public sealed class ProjectService(
         project.OpeningApprovedVariationValue = request.ApprovedVariationValue;
         project.ForecastCost = request.ForecastCost;
         project.RetentionPercent = request.RetentionPercent;
+        project.RevenueRecognitionMethod = request.RevenueRecognitionMethod;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         AddAudit(request.OrganisationId, userId, eventType, project, new
         {
@@ -191,7 +200,8 @@ public sealed class ProjectService(
             project.OpeningApprovedVariationValue,
             project.ApprovedVariationValue,
             project.ForecastCost,
-            project.RetentionPercent
+            project.RetentionPercent,
+            RevenueRecognitionMethod = project.RevenueRecognitionMethod.ToString()
         });
         await db.SaveChangesAsync(cancellationToken);
         return project;
@@ -498,6 +508,11 @@ public sealed class ProjectService(
         {
             throw new InvalidOperationException(
                 "Project values must be non-negative and retention must be between 0 and 100 percent.");
+        }
+        if (!Enum.IsDefined(request.RevenueRecognitionMethod))
+        {
+            throw new InvalidOperationException(
+                "Select a valid revenue recognition method.");
         }
     }
 

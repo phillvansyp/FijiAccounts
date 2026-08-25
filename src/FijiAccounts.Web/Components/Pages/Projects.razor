@@ -13,6 +13,7 @@
 @inject ProjectService ProjectService
 @inject ProjectProfitabilityService ProjectProfitabilityService
 @inject ProjectProgressClaimService ProjectProgressClaimService
+@inject ProjectRevenueRecognitionService ProjectRevenueRecognitionService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -52,10 +53,11 @@ else
                     <div class="col-md-6 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
                 </div>
                 <div class="row">
-                    <div class="col-md-3 mb-3"><label class="form-label">Original contract</label><InputNumber class="form-control" @bind-Value="model.OriginalContractValue" /></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Opening approved variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /><div class="form-text">Existing approvals brought into Account Island.</div></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Forecast cost</label><InputNumber class="form-control" @bind-Value="model.ForecastCost" /></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Retention %</label><InputNumber class="form-control" @bind-Value="model.RetentionPercent" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Original contract</label><InputNumber class="form-control" @bind-Value="model.OriginalContractValue" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Opening variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /><div class="form-text">Existing approvals.</div></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Forecast cost</label><InputNumber class="form-control" @bind-Value="model.ForecastCost" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Retention %</label><InputNumber class="form-control" @bind-Value="model.RetentionPercent" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Revenue recognition</label><InputSelect class="form-select" @bind-Value="model.RevenueRecognitionMethod">@foreach (var method in Enum.GetValues<ProjectRevenueRecognitionMethod>()) { <option value="@method">@RecognitionMethodLabel(method)</option> }</InputSelect><div class="form-text">Cost-to-cost uses actual cost / forecast cost. Certified claims uses approved work.</div></div>
                 </div>
                 <button class="btn btn-primary">Create project</button>
             </EditForm>
@@ -134,6 +136,57 @@ else
         <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual cost</span><h2>$@OpenProfitability.Sum(x => x.ActualCost).ToString("N2")</h2></div></div>
         <div class="col-md-3"><div class="detail-card h-100"><span class="eyebrow">Actual margin</span><h2>$@OpenProfitability.Sum(x => x.ActualMargin).ToString("N2")</h2></div></div>
     </div>
+
+    <section class="detail-card mb-4">
+        <div class="card-heading">
+            <div><span class="eyebrow">Revenue recognition</span><h2>Work in progress</h2></div>
+            <div class="d-flex gap-2 align-items-center no-print"><label class="small text-muted" for="recognition-as-at">As at</label><InputDate id="recognition-as-at" class="form-control form-control-sm" @bind-Value="recognitionAsAt" /><button class="btn btn-sm btn-outline-primary" @onclick="RefreshRecognition">Refresh</button></div>
+        </div>
+        <p class="text-muted">Management workpaper only. It calculates the adjustment required between earned and posted revenue; it does not post a journal.</p>
+        @if (projects.Count == 0)
+        {
+            <div class="empty-state"><strong>No projects</strong><span>Create a project to calculate revenue recognition.</span></div>
+        }
+        else
+        {
+            <div class="table-responsive"><table class="table align-middle">
+                <thead><tr><th>Project</th><th>Basis</th><th class="text-end">Complete</th><th class="text-end">Revised contract</th><th class="text-end">Earned revenue</th><th class="text-end">Posted revenue</th><th>WIP position</th><th class="text-end">Margin</th></tr></thead>
+                <tbody>
+                @foreach (var project in projects)
+                {
+                    var recognition = Recognition(project.Id);
+                    <tr>
+                        <td><strong>@project.ProjectNumber &mdash; @project.Name</strong><small class="d-block text-muted">$@(recognition?.CertifiedWorkValue.ToString("N2") ?? "0.00") certified &middot; $@(recognition?.OutstandingRetention.ToString("N2") ?? "0.00") retained</small></td>
+                        <td>@RecognitionMethodLabel(project.RevenueRecognitionMethod)</td>
+                        <td class="text-end">@(recognition?.CompletionPercent is decimal completion ? $"{completion:N2}%" : "—")</td>
+                        <td class="text-end">$@(recognition?.RevisedContractValue.ToString("N2") ?? "0.00")</td>
+                        <td class="text-end">@(recognition?.RecognizedRevenue is decimal earned ? $"${earned:N2}" : "Needs basis data")</td>
+                        <td class="text-end">$@(recognition?.PostedRevenue.ToString("N2") ?? "0.00")</td>
+                        <td>
+                            @if (recognition?.RevenueAdjustment is null)
+                            {
+                                <span class="badge text-bg-warning">Not calculable</span>
+                            }
+                            else if (recognition.ContractAsset > 0)
+                            {
+                                <span class="badge text-bg-info">Contract asset</span><small class="d-block text-muted">$@recognition.ContractAsset.ToString("N2") earned not posted</small>
+                            }
+                            else if (recognition.ContractLiability > 0)
+                            {
+                                <span class="badge text-bg-warning">Contract liability</span><small class="d-block text-muted">$@recognition.ContractLiability.ToString("N2") posted ahead</small>
+                            }
+                            else
+                            {
+                                <span class="badge text-bg-success">Aligned</span>
+                            }
+                        </td>
+                        <td class="text-end">@(recognition?.ExpectedGrossProfitToDate is decimal margin ? $"${margin:N2} to date" : "—")<small class="d-block text-muted">$@(recognition?.ForecastMargin.ToString("N2") ?? "0.00") forecast</small></td>
+                    </tr>
+                }
+                </tbody>
+            </table></div>
+        }
+    </section>
 
     <section class="detail-card">
         <div class="card-heading"><div><span class="eyebrow">Project control</span><h2>Project register</h2></div><span>@projects.Count projects</span></div>
@@ -296,6 +349,8 @@ else
     private bool canApproveVariations;
     private List<Project> projects = [];
     private List<ProjectProfitability> profitability = [];
+    private List<ProjectRevenueRecognition> revenueRecognition = [];
+    private DateOnly recognitionAsAt = DateOnly.FromDateTime(DateTime.Today);
     private List<DivisionOption> divisions = [];
     private List<BusinessParty> customers = [];
     private List<LedgerAccount> revenueAccounts = [];
@@ -334,6 +389,8 @@ else
     {
         projects = await ProjectService.ListAsync(userId, OrganisationId);
         profitability = (await ProjectProfitabilityService.GetAsync(userId, OrganisationId)).ToList();
+        revenueRecognition = (await ProjectRevenueRecognitionService.GetAsync(
+            userId, OrganisationId, recognitionAsAt)).ToList();
         if (costCodeModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == costCodeModel.ProjectId && IsOpen(x)))
             costCodeModel.ProjectId = projects.FirstOrDefault(IsOpen)?.Id ?? Guid.Empty;
         if (variationModel.ProjectId == Guid.Empty || !projects.Any(x => x.Id == variationModel.ProjectId && x.Status is ProjectStatus.Active or ProjectStatus.OnHold))
@@ -360,7 +417,7 @@ else
                 OrganisationId, null, model.ProjectNumber, model.Name, model.Description,
                 model.DivisionId, model.CustomerId, model.StartDate, model.ExpectedCompletionDate,
                 model.OriginalContractValue, model.ApprovedVariationValue, model.ForecastCost,
-                model.RetentionPercent));
+                model.RetentionPercent, model.RevenueRecognitionMethod));
             Success($"Project {project.ProjectNumber} created.");
             ResetModels();
             await Reload();
@@ -378,6 +435,16 @@ else
             Success("Project cost code added.");
             costCodeModel = new CostCodeModel { ProjectId = costCodeModel.ProjectId };
             await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
+    }
+
+    private async Task RefreshRecognition()
+    {
+        try
+        {
+            revenueRecognition = (await ProjectRevenueRecognitionService.GetAsync(
+                userId, OrganisationId, recognitionAsAt)).ToList();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { Error(ex.Message); }
     }
@@ -543,10 +610,12 @@ else
     private static bool IsOpen(Project project) => project.Status is ProjectStatus.Draft or ProjectStatus.Active or ProjectStatus.OnHold;
     private IEnumerable<ProjectProfitability> OpenProfitability => profitability.Where(x => projects.Any(project => project.Id == x.ProjectId && IsOpen(project)));
     private ProjectProfitability Profitability(Guid projectId) => profitability.Single(x => x.ProjectId == projectId);
+    private ProjectRevenueRecognition? Recognition(Guid projectId) => revenueRecognition.SingleOrDefault(x => x.ProjectId == projectId);
     private static string StatusLabel(ProjectStatus status) => status == ProjectStatus.OnHold ? "On hold" : status.ToString();
     private static string StatusClass(ProjectStatus status) => status switch { ProjectStatus.Active => "text-bg-success", ProjectStatus.OnHold => "text-bg-warning", ProjectStatus.Completed => "text-bg-primary", ProjectStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
     private static string VariationStatusClass(ProjectVariationStatus status) => status switch { ProjectVariationStatus.Approved => "text-bg-success", ProjectVariationStatus.Submitted => "text-bg-primary", ProjectVariationStatus.Rejected => "text-bg-danger", ProjectVariationStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
     private static string ClaimStatusClass(ProjectProgressClaimStatus status) => status switch { ProjectProgressClaimStatus.Approved => "text-bg-success", ProjectProgressClaimStatus.Invoiced => "text-bg-info", ProjectProgressClaimStatus.Submitted => "text-bg-primary", ProjectProgressClaimStatus.Rejected => "text-bg-danger", ProjectProgressClaimStatus.Cancelled => "text-bg-secondary", _ => "text-bg-light" };
+    private static string RecognitionMethodLabel(ProjectRevenueRecognitionMethod method) => method switch { ProjectRevenueRecognitionMethod.CertifiedClaims => "Certified claims", _ => "Cost-to-cost" };
     private static string VatLabel(VatTreatment treatment) => treatment switch { VatTreatment.ZeroRated => "Zero-rated", VatTreatment.OutOfScope => "Out of scope", _ => treatment.ToString() };
     private IEnumerable<Project> EligibleClaimProjects => projects.Where(x => x.CustomerId is not null && x.Status is ProjectStatus.Active or ProjectStatus.OnHold);
     private decimal ClaimRetentionHeld => Math.Round(claimModel.WorkCompletedAmount * (projects.FirstOrDefault(x => x.Id == claimModel.ProjectId)?.RetentionPercent ?? 0m) / 100m, 2, MidpointRounding.AwayFromZero);
@@ -565,6 +634,7 @@ else
         [Range(0, 999999999999)] public decimal ApprovedVariationValue { get; set; }
         [Range(0, 999999999999)] public decimal ForecastCost { get; set; }
         [Range(0, 100)] public decimal RetentionPercent { get; set; }
+        public ProjectRevenueRecognitionMethod RevenueRecognitionMethod { get; set; } = ProjectRevenueRecognitionMethod.CostToCost;
     }
     private sealed class CostCodeModel
     {
