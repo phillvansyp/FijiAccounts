@@ -78,10 +78,10 @@ else
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Business purpose</label>
-                    <InputTextArea class="form-control" @bind-Value="model.Purpose" />
+                    <textarea class="form-control" @bind="model.Purpose" @bind:event="oninput"></textarea>
                 </div>
                 <div class="row">
-                    <div class="col-md-4 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Description</label><input class="form-control" @bind="model.Description" @bind:event="oninput" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="model.Quantity" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Estimated unit price</label><InputNumber class="form-control" @bind-Value="model.EstimatedUnitPrice" /></div>
                     <div class="col-md-4 mb-3">
