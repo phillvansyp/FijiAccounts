@@ -1,8 +1,29 @@
 ﻿@page "/Account/Lockout"
 
-<PageTitle>Locked out</PageTitle>
+<PageTitle>Account Island · Locked out</PageTitle>
 
 <header>
     <h1 class="text-danger">Locked out</h1>
-    <p class="text-danger" role="alert">This account has been locked out, please try again later.</p>
+    <p class="text-danger" role="alert">
+        Too many unsuccessful sign-in attempts. You can try again in
+        <strong id="lockout-countdown"
+                data-seconds="@CountdownSeconds"
+                data-login-url="@LoginUrl"
+                aria-live="polite">@InitialCountdown</strong>.
+    </p>
+    <p id="lockout-status" class="text-secondary">This page will return to sign-in automatically.</p>
+    <a class="btn btn-primary" href="Account/Login">Return to sign-in</a>
 </header>
+
+@code {
+    [SupplyParameterFromQuery]
+    private int? Seconds { get; set; }
+
+    private int CountdownSeconds => Math.Clamp(
+        Seconds ?? (int)AccountLockoutPolicy.Duration.TotalSeconds,
+        1,
+        (int)AccountLockoutPolicy.Duration.TotalSeconds);
+
+    private string InitialCountdown => $"{CountdownSeconds / 60:00}:{CountdownSeconds % 60:00}";
+    private const string LoginUrl = "/Account/Login";
+}

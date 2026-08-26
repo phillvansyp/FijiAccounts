@@ -110,10 +110,11 @@
         }
 
         SignInResult result;
-        if (!string.IsNullOrEmpty(Input.Passkey?.CredentialJson))
+        var isPasswordSignIn = string.IsNullOrEmpty(Input.Passkey?.CredentialJson);
+        if (!isPasswordSignIn)
         {
             // When performing passkey sign-in, don't perform form validation.
-            result = await SignInManager.PasskeySignInAsync(Input.Passkey.CredentialJson);
+            result = await SignInManager.PasskeySignInAsync(Input.Passkey!.CredentialJson!);
         }
         else
         {
@@ -160,11 +161,27 @@
         else if (result.IsLockedOut)
         {
             Logger.LogWarning("User account locked out.");
-            RedirectManager.RedirectTo("Account/Lockout");
+            var user = await UserManager.FindByEmailAsync(Input.Email);
+            var lockoutEnd = user is null ? null : await UserManager.GetLockoutEndDateAsync(user);
+            RedirectManager.RedirectTo(
+                "Account/Lockout",
+                new() { ["seconds"] = AccountLockoutPolicy.RemainingSeconds(lockoutEnd, DateTimeOffset.UtcNow) });
         }
         else
         {
             errorMessage = "Error: Invalid login attempt.";
+
+            if (isPasswordSignIn)
+            {
+                var user = await UserManager.FindByEmailAsync(Input.Email);
+                if (user is not null)
+                {
+                    var remainingAttempts = AccountLockoutPolicy.RemainingAttempts(
+                        await UserManager.GetAccessFailedCountAsync(user));
+                    var attemptLabel = remainingAttempts == 1 ? "attempt" : "attempts";
+                    errorMessage += $" {remainingAttempts} {attemptLabel} remaining before a one-minute lockout.";
+                }
+            }
         }
     }
 
