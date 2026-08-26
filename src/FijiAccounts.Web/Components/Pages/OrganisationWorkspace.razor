@@ -10,6 +10,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject OrganisationInvitationService Invitations
+@inject IOrganisationInvitationEmailSender InvitationEmailSender
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -21,6 +22,7 @@
 @inject CashRunwayService CashRunwayService
 @inject OrganisationUpdateBroker Updates
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<OrganisationWorkspace> Logger
 
 <PageTitle>@(access?.Organisation.LegalName ?? "Organisation") · Account Island</PageTitle>
 @if (loading) { <div class="dashboard-loading">Preparing your island...</div> }
@@ -660,6 +662,25 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
                 invite.Email,
                 invite.Role);
             invitationLink = Navigation.ToAbsoluteUri($"invite/{result.Token}").ToString();
+            if (InvitationEmailSender.IsConfigured)
+            {
+                try
+                {
+                    await InvitationEmailSender.SendAsync(
+                        invite.Email,
+                        access!.Organisation.LegalName,
+                        invite.Role,
+                        invitationLink);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(
+                        ex,
+                        "Failed to deliver organisation invitation {OrganisationId}",
+                        OrganisationId);
+                    invitationError = "The invitation was created, but its email could not be delivered. Use the invitation link below.";
+                }
+            }
             invite = new();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)

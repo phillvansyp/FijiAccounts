@@ -120,8 +120,18 @@ builder.Services.AddAuthorizationBuilder()
         PlatformAdminAccessService.PolicyName,
         policy => policy.RequireRole(PlatformAdminAccessService.RoleName));
 
-builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+builder.Services.AddSingleton<IEmailDeliveryService, SmtpEmailDeliveryService>();
+if (builder.Environment.IsDevelopment() &&
+    string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"]))
+{
+    builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+}
+else
+{
+    builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityEmailSender>();
+}
 builder.Services.AddScoped<ILoginCodeEmailSender, LoginCodeEmailSender>();
+builder.Services.AddScoped<IOrganisationInvitationEmailSender, OrganisationInvitationEmailSender>();
 
 builder.Services.ConfigureApplicationCookie(options =>
 {

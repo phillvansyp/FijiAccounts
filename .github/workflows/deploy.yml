@@ -67,6 +67,57 @@ jobs:
             --volume "$DEPLOY_DIR/keys:/keys" \
             alpine:3.22 sh -c 'chown -R 1654:1654 /data /keys'
 
+      - name: Provision production email settings
+        shell: bash
+        env:
+          EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
+          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          EMAIL_SMTP_USERNAME: ${{ secrets.EMAIL_SMTP_USERNAME }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          values=(
+            "$EMAIL_FROM_ADDRESS"
+            "$EMAIL_SMTP_HOST"
+            "$EMAIL_SMTP_PORT"
+            "$EMAIL_SMTP_USERNAME"
+            "$EMAIL_SMTP_PASSWORD"
+          )
+          configured=0
+          for value in "${values[@]}"; do
+            if [ -n "$value" ]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [ "$configured" -eq 0 ]; then
+            echo "Production email secrets are not configured; preserving existing server settings."
+            exit 0
+          fi
+          if [ "$configured" -ne "${#values[@]}" ]; then
+            echo "Production email secrets are incomplete." >&2
+            exit 1
+          fi
+
+          env_file="$DEPLOY_DIR/config/app.env"
+          update_setting() {
+            key="$1"
+            value="$2"
+            temp_file="$(mktemp)"
+            awk -F= -v key="$key" '$1 != key' "$env_file" > "$temp_file"
+            printf '%s=%s\n' "$key" "$value" >> "$temp_file"
+            install -m 0600 "$temp_file" "$env_file"
+            rm -f "$temp_file"
+          }
+
+          update_setting Email__FromAddress "$EMAIL_FROM_ADDRESS"
+          update_setting Email__Smtp__Host "$EMAIL_SMTP_HOST"
+          update_setting Email__Smtp__Port "$EMAIL_SMTP_PORT"
+          update_setting Email__Smtp__Username "$EMAIL_SMTP_USERNAME"
+          update_setting Email__Smtp__Password "$EMAIL_SMTP_PASSWORD"
+          echo "Production email settings provisioned."
+
       - name: Back up and deploy
         shell: bash
         env:

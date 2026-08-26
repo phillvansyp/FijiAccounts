@@ -31,12 +31,18 @@ Add production-only settings to `/mnt/data/account-island/config/app.env`. Use
 double underscores for nested ASP.NET Core configuration keys. Do not commit
 this file.
 
+The deployment workflow can provision these values from GitHub's `production`
+environment secrets. Use the names `EMAIL_FROM_ADDRESS`, `EMAIL_SMTP_HOST`,
+`EMAIL_SMTP_PORT`, `EMAIL_SMTP_USERNAME`, and `EMAIL_SMTP_PASSWORD`. All five
+must be present; a partial configuration stops the deployment.
+
 ```dotenv
 PlatformAdmin__Email=admin@example.com
 Email__FromAddress=accounts@example.com
 Email__Smtp__Host=smtp.example.com
 Email__Smtp__Port=587
 Email__Smtp__UseSsl=true
+Email__Smtp__TimeoutMilliseconds=15000
 Email__Smtp__Username=example-user
 Email__Smtp__Password=replace-me
 ```
