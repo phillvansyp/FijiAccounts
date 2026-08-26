@@ -121,6 +121,8 @@ builder.Services.AddAuthorizationBuilder()
         policy => policy.RequireRole(PlatformAdminAccessService.RoleName));
 
 builder.Services.AddSingleton<IEmailDeliveryService, SmtpEmailDeliveryService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<PasswordResetRequestThrottle>();
 if (builder.Environment.IsDevelopment() &&
     string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"]))
 {
