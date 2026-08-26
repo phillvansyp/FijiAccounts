@@ -654,7 +654,11 @@ public sealed class PurchasingService(
         SupplierPaymentApproval? approval,
         CancellationToken ct)
     {
-        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        if (approval is null &&
+            !await access.CanPostJournalsAsync(userId, request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot pay bills for this organisation.");
+        }
         await using var transaction = db.Database.CurrentTransaction is null
             ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
@@ -726,7 +730,20 @@ public sealed class PurchasingService(
             throw new InvalidOperationException(
                 "Accounts Payable (2000) must be an active Liability account.");
         }
-        var journal = await posting.PostAsync(userId, new(request.OrganisationId, request.Date, request.Reference, $"Payment for {bill.BillNumber}", [new(payable.Id, bill.BillNumber, request.Amount, 0), new(bank.Id, bill.BillNumber, 0, request.Amount)], bill.BranchId, bill.DivisionId), ct);
+        var journalRequest = new JournalPostRequest(
+            request.OrganisationId,
+            request.Date,
+            request.Reference,
+            $"Payment for {bill.BillNumber}",
+            [
+                new(payable.Id, bill.BillNumber, request.Amount, 0),
+                new(bank.Id, bill.BillNumber, 0, request.Amount)
+            ],
+            bill.BranchId,
+            bill.DivisionId);
+        var journal = approval is null
+            ? await posting.PostAsync(userId, journalRequest, ct)
+            : await posting.PostApprovedWorkflowAsync(userId, journalRequest, ct);
         var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
         bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
 

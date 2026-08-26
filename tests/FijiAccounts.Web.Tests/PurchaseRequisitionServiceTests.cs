@@ -12,7 +12,7 @@ public sealed class PurchaseRequisitionServiceTests
         await using var test = await AccountingTestDatabase.CreateAsync();
         var policies = new PurchaseApprovalPolicyService(test.Db, test.Access);
         var service = new PurchaseRequisitionService(test.Db, test.Access, test.PurchaseOrders, policies);
-        var approver = await AddAdministratorAsync(test);
+        var approver = await AddApproverAsync(test);
         var request = await RequestAsync(test);
         var projects = new ProjectService(test.Db, test.Access);
         var project = await projects.SaveAsync(test.UserId, new(
@@ -87,12 +87,12 @@ public sealed class PurchaseRequisitionServiceTests
     }
 
     [Fact]
-    public async Task IndependentAdministratorCanRejectSubmittedRequisitionWithReason()
+    public async Task IndependentApproverCanRejectSubmittedRequisitionWithReason()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var policies = new PurchaseApprovalPolicyService(test.Db, test.Access);
         var service = new PurchaseRequisitionService(test.Db, test.Access, test.PurchaseOrders, policies);
-        var approver = await AddAdministratorAsync(test);
+        var approver = await AddApproverAsync(test);
         var requisition = await service.CreateDraftAsync(test.UserId, await RequestAsync(test));
         await service.SubmitAsync(test.UserId, test.Organisation.Id, requisition.Id);
 
@@ -138,6 +138,7 @@ public sealed class PurchaseRequisitionServiceTests
         var policies = new PurchaseApprovalPolicyService(test.Db, test.Access);
         var service = new PurchaseRequisitionService(test.Db, test.Access, test.PurchaseOrders, policies);
         var administrator = await AddMemberAsync(test, OrganisationRole.Administrator, "administrator@example.com");
+        var approver = await AddMemberAsync(test, OrganisationRole.Approver, "approver-owner-only@example.com");
         var independentOwner = await AddMemberAsync(test, OrganisationRole.Owner, "owner@example.com");
         var policy = await policies.CreateAsync(test.UserId, new PurchaseApprovalPolicyRequest(
             test.Organisation.Id,
@@ -153,6 +154,8 @@ public sealed class PurchaseRequisitionServiceTests
         Assert.Equal(PurchaseApprovalRequirement.OwnerOnly, submitted.RequiredApproval);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.ApproveAsync(administrator.Id, test.Organisation.Id, requisition.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ApproveAsync(approver.Id, test.Organisation.Id, requisition.Id));
 
         await policies.DeleteAsync(test.UserId, test.Organisation.Id, policy.Id);
         await service.ApproveAsync(independentOwner.Id, test.Organisation.Id, requisition.Id);
@@ -218,8 +221,8 @@ public sealed class PurchaseRequisitionServiceTests
             [new PurchaseRequisitionLineRequest("Office supplies", 2m, 50m, test.Account("6500").Id)]);
     }
 
-    private static async Task<ApplicationUser> AddAdministratorAsync(AccountingTestDatabase test)
-        => await AddMemberAsync(test, OrganisationRole.Administrator, "approver@example.com");
+    private static async Task<ApplicationUser> AddApproverAsync(AccountingTestDatabase test)
+        => await AddMemberAsync(test, OrganisationRole.Approver, "approver@example.com");
 
     private static async Task<ApplicationUser> AddMemberAsync(
         AccountingTestDatabase test,

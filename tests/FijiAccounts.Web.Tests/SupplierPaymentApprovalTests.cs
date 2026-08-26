@@ -12,7 +12,7 @@ public sealed class SupplierPaymentApprovalTests
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         test.Organisation.RequireSupplierPaymentApproval = true;
-        var approver = await AddMemberAsync(test, OrganisationRole.Administrator, "payment-approver@example.com");
+        var approver = await AddMemberAsync(test, OrganisationRole.Approver, "payment-approver@example.com");
         await test.Db.SaveChangesAsync();
         var bill = await PostBillAsync(test, "PAY-APPROVAL-001");
         var request = PaymentRequest(test, bill);
@@ -53,7 +53,7 @@ public sealed class SupplierPaymentApprovalTests
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         test.Organisation.RequireSupplierPaymentApproval = true;
-        var approver = await AddMemberAsync(test, OrganisationRole.Administrator, "payment-rejector@example.com");
+        var approver = await AddMemberAsync(test, OrganisationRole.Approver, "payment-rejector@example.com");
         await test.Db.SaveChangesAsync();
         var bill = await PostBillAsync(test, "PAY-APPROVAL-002");
         var approval = await test.Purchasing.RequestPaymentApprovalAsync(
@@ -94,11 +94,12 @@ public sealed class SupplierPaymentApprovalTests
     }
 
     [Fact]
-    public async Task OwnerOnlyPolicySnapshotRejectsAdministratorApproval()
+    public async Task OwnerOnlyPolicySnapshotRejectsAdministratorAndApproverApproval()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         test.Organisation.RequireSupplierPaymentApproval = true;
         var administrator = await AddMemberAsync(test, OrganisationRole.Administrator, "payment-admin@example.com");
+        var approver = await AddMemberAsync(test, OrganisationRole.Approver, "payment-approver-owner-only@example.com");
         var owner = await AddMemberAsync(test, OrganisationRole.Owner, "payment-owner@example.com");
         await test.Db.SaveChangesAsync();
         var policies = new PurchaseApprovalPolicyService(test.Db, test.Access);
@@ -113,6 +114,8 @@ public sealed class SupplierPaymentApprovalTests
         Assert.Equal(PurchaseApprovalRequirement.OwnerOnly, approval.RequiredApproval);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             test.Purchasing.ApprovePaymentAsync(administrator.Id, test.Organisation.Id, approval.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            test.Purchasing.ApprovePaymentAsync(approver.Id, test.Organisation.Id, approval.Id));
 
         await policies.DeleteAsync(test.UserId, test.Organisation.Id, policy.Id);
         await test.Purchasing.ApprovePaymentAsync(owner.Id, test.Organisation.Id, approval.Id);
@@ -120,6 +123,23 @@ public sealed class SupplierPaymentApprovalTests
         Assert.Equal(SupplierPaymentApprovalStatus.Approved, saved.Status);
         Assert.Equal(PurchaseApprovalRequirement.OwnerOnly, saved.RequiredApproval);
         Assert.Null(saved.PurchaseApprovalPolicyId);
+    }
+
+    [Fact]
+    public async Task ApproverCannotPayBillWithoutAnApprovalRequest()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var approver = await AddMemberAsync(
+            test,
+            OrganisationRole.Approver,
+            "payment-direct-approver@example.com");
+        await test.Db.SaveChangesAsync();
+        var bill = await PostBillAsync(test, "PAY-APPROVAL-DIRECT");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            test.Purchasing.PayBillAsync(approver.Id, PaymentRequest(test, bill)));
+
+        Assert.Empty(await test.Db.SupplierPayments.ToListAsync());
     }
 
     [Fact]

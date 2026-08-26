@@ -38,8 +38,18 @@ public sealed class JournalPostingService(
             "system",
             request,
             cancellationToken,
-            skipPermissionCheck: true);
+            PostingAuthorization.System);
     }
+
+    internal Task<PostedJournal> PostApprovedWorkflowAsync(
+        string userId,
+        JournalPostRequest request,
+        CancellationToken cancellationToken = default) =>
+        PostCoreAsync(
+            userId,
+            request,
+            cancellationToken,
+            PostingAuthorization.ApprovedWorkflow);
 
     public Task<PostedJournal> PostAsync(
         string userId,
@@ -49,15 +59,15 @@ public sealed class JournalPostingService(
             userId,
             request,
             cancellationToken,
-            skipPermissionCheck: false);
+            PostingAuthorization.Standard);
 
     private async Task<PostedJournal> PostCoreAsync(
         string userId,
         JournalPostRequest request,
         CancellationToken cancellationToken,
-        bool skipPermissionCheck)
+        PostingAuthorization authorization)
     {
-        if (!skipPermissionCheck &&
+        if (authorization == PostingAuthorization.Standard &&
             !await tenantAccess.CanPostJournalsAsync(
                 userId,
                 request.OrganisationId))
@@ -140,7 +150,7 @@ public sealed class JournalPostingService(
                     "The project cost code must be active and belong to the selected project.");
             }
         }
-        if (!skipPermissionCheck)
+        if (authorization != PostingAuthorization.System)
         {
             foreach (var dimension in dimensions.Distinct())
             {
@@ -240,6 +250,13 @@ foreach (var bankAccountId in bankAccountIds)
                 "An active default division is required for the selected branch.");
 
         return new PostingDimension(branch.Id, division.Id);
+    }
+
+    private enum PostingAuthorization
+    {
+        Standard,
+        ApprovedWorkflow,
+        System
     }
 
     private sealed record PostingDimension(Guid BranchId, Guid DivisionId);

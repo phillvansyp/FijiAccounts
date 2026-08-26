@@ -32,7 +32,10 @@ else
             <h1>Purchase requisitions</h1>
             <p class="page-intro">Request, independently approve, and convert planned spending into purchase orders.</p>
         </div>
-        <button class="btn btn-primary" type="button" @onclick="() => showForm = !showForm">+ New requisition</button>
+        @if (canCreate)
+        {
+            <button class="btn btn-primary" type="button" @onclick="() => showForm = !showForm">+ New requisition</button>
+        }
     </div>
 
     @if (error is not null) { <div class="alert alert-danger">@error</div> }
@@ -110,7 +113,7 @@ else
         </section>
     }
 
-    @if (canApprove)
+    @if (canManagePolicies)
     {
         <section class="setup-card mb-4">
             <div class="card-heading"><div><h2>Approval policies</h2><p class="mb-0">More specific division or branch rules take precedence over organisation-wide rules.</p></div><span>@policies.Count</span></div>
@@ -120,7 +123,7 @@ else
                     <div class="col-md-3 mb-3"><label class="form-label">Policy name</label><InputText class="form-control" @bind-Value="policyModel.Name" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Minimum amount</label><InputNumber class="form-control" @bind-Value="policyModel.MinimumAmount" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Maximum amount</label><InputNumber class="form-control" @bind-Value="policyModel.MaximumAmount" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Required approver</label><InputSelect class="form-select" @bind-Value="policyModel.Requirement"><option value="@PurchaseApprovalRequirement.OwnerOrAdministrator">Owner or administrator</option><option value="@PurchaseApprovalRequirement.OwnerOnly">Owner only</option></InputSelect></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Required approver</label><InputSelect class="form-select" @bind-Value="policyModel.Requirement"><option value="@PurchaseApprovalRequirement.OwnerOrAdministrator">Owner, administrator or approver</option><option value="@PurchaseApprovalRequirement.OwnerOnly">Owner only</option></InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Branch scope</label><InputSelect class="form-select" @bind-Value="policyModel.BranchId"><option value="">All branches</option>@foreach (var branch in branches) { <option value="@branch.Id">@branch.Name</option> }</InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Division scope</label><InputSelect class="form-select" @bind-Value="policyModel.DivisionId"><option value="">All divisions</option>@foreach (var option in dimensions) { <option value="@option.DivisionId">@option.BranchName · @option.DivisionName</option> }</InputSelect></div>
                     <div class="col-md-auto mb-3"><button class="btn btn-outline-primary" type="submit" disabled="@busy">Add policy</button></div>
@@ -207,7 +210,8 @@ else
     private string? error;
     private string? message;
     private bool accessDenied;
-    private bool canApprove;
+    private bool canCreate;
+    private bool canManagePolicies;
     private OrganisationRole? currentRole;
     private bool showForm;
     private bool busy;
@@ -218,7 +222,8 @@ else
         userId = UserManager.GetUserId(state.User) ?? string.Empty;
         accessDenied = userId.Length == 0 || await TenantAccess.FindAsync(userId, OrganisationId) is null;
         if (accessDenied) return;
-        canApprove = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        canCreate = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        canManagePolicies = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
         currentRole = await Db.OrganisationMemberships.AsNoTracking().Where(x => x.UserId == userId && x.OrganisationId == OrganisationId).Select(x => (OrganisationRole?)x.Role).SingleOrDefaultAsync();
         suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
@@ -226,7 +231,7 @@ else
         projects = await ProjectService.ListAsync(userId, OrganisationId);
         dimensions = branches
             .SelectMany(branch => branch.Divisions.Select(division => new DimensionOption(branch.Id, branch.Name, division.Id, division.Name))).ToList();
-        policies = canApprove ? await ApprovalPolicies.ListAsync(userId, OrganisationId) : [];
+        policies = canManagePolicies ? await ApprovalPolicies.ListAsync(userId, OrganisationId) : [];
         await Reload();
     }
 
@@ -289,7 +294,7 @@ else
     private async Task Reload()
     {
         items = await Requisitions.ListAsync(userId, OrganisationId);
-        if (canApprove) policies = await ApprovalPolicies.ListAsync(userId, OrganisationId);
+        if (canManagePolicies) policies = await ApprovalPolicies.ListAsync(userId, OrganisationId);
         foreach (var item in items.Where(x => x.Status == PurchaseRequisitionStatus.Submitted))
         {
             rejectionReasons.TryAdd(item.Id, string.Empty);
@@ -322,8 +327,14 @@ else
     }
 
     private sealed record DimensionOption(Guid BranchId, string BranchName, Guid DivisionId, string DivisionName);
-    private bool CanActOn(PurchaseRequisition item) => currentRole == OrganisationRole.Owner || item.RequiredApproval == PurchaseApprovalRequirement.OwnerOrAdministrator && currentRole == OrganisationRole.Administrator;
-    private static string ApprovalLabel(PurchaseApprovalRequirement requirement) => requirement == PurchaseApprovalRequirement.OwnerOnly ? "owner approval" : "owner or administrator approval";
+    private bool CanActOn(PurchaseRequisition item) =>
+        currentRole == OrganisationRole.Owner ||
+        item.RequiredApproval == PurchaseApprovalRequirement.OwnerOrAdministrator &&
+        currentRole is OrganisationRole.Administrator or OrganisationRole.Approver;
+    private static string ApprovalLabel(PurchaseApprovalRequirement requirement) =>
+        requirement == PurchaseApprovalRequirement.OwnerOnly
+            ? "owner approval"
+            : "owner, administrator or approver approval";
     private static string PolicyScope(PurchaseApprovalPolicy policy) => policy.Division?.Name ?? policy.Branch?.Name ?? "All branches and divisions";
 
     private sealed class PolicyModel

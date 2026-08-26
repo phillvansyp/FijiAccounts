@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace FijiAccounts.Web.Data;
 
 public enum OrganisationKind { Business, AccountingPractice }
-public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Payroll, Sales, ReadOnly }
+public enum OrganisationRole { Owner, Administrator, Accountant, Bookkeeper, Payroll, Sales, ReadOnly, Approver }
 public enum DimensionAccessMode { All, Restricted }
 public enum OrganisationGroupRole { Owner, Administrator, Viewer }
 public enum TenantStatus { Active, Suspended, Archived }

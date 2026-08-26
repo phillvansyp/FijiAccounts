@@ -145,7 +145,7 @@ public sealed class PurchaseRequisitionService(
             throw new UnauthorizedAccessException(
                 requisition.RequiredApproval == PurchaseApprovalRequirement.OwnerOnly
                     ? "This requisition requires approval by an organisation owner."
-                    : "Only an owner or administrator can approve requisitions.");
+                    : "Only an owner, administrator or approver can approve requisitions.");
         }
         if (requisition.CreatedByUserId == userId)
         {
@@ -177,7 +177,7 @@ public sealed class PurchaseRequisitionService(
             throw new UnauthorizedAccessException(
                 requisition.RequiredApproval == PurchaseApprovalRequirement.OwnerOnly
                     ? "This requisition requires action by an organisation owner."
-                    : "Only an owner or administrator can reject requisitions.");
+                    : "Only an owner, administrator or approver can reject requisitions.");
         }
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > 500)
         {

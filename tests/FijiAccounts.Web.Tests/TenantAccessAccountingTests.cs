@@ -14,6 +14,7 @@ public sealed class TenantAccessAccountingTests
     [InlineData(OrganisationRole.Payroll, false)]
     [InlineData(OrganisationRole.Sales, false)]
     [InlineData(OrganisationRole.ReadOnly, false)]
+    [InlineData(OrganisationRole.Approver, false)]
     public async Task CanManageTeam_UsesExpectedDirectMembershipRoles(
         OrganisationRole role,
         bool expected)
@@ -47,6 +48,7 @@ public sealed class TenantAccessAccountingTests
     [InlineData(OrganisationRole.Payroll, false)]
     [InlineData(OrganisationRole.Sales, false)]
     [InlineData(OrganisationRole.ReadOnly, false)]
+    [InlineData(OrganisationRole.Approver, false)]
     public async Task CanPostJournals_UsesExpectedDirectMembershipRoles(
         OrganisationRole role,
         bool expected)
@@ -70,6 +72,69 @@ public sealed class TenantAccessAccountingTests
                 test.Organisation.Id);
 
         Assert.Equal(expected, allowed);
+    }
+
+    [Theory]
+    [InlineData(OrganisationRole.Owner, true)]
+    [InlineData(OrganisationRole.Administrator, true)]
+    [InlineData(OrganisationRole.Accountant, true)]
+    [InlineData(OrganisationRole.Bookkeeper, true)]
+    [InlineData(OrganisationRole.Payroll, false)]
+    [InlineData(OrganisationRole.Sales, false)]
+    [InlineData(OrganisationRole.ReadOnly, false)]
+    [InlineData(OrganisationRole.Approver, false)]
+    public async Task CanManageContacts_UsesExpectedDirectMembershipRoles(
+        OrganisationRole role,
+        bool expected)
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var membership = await test.Db.OrganisationMemberships.SingleAsync(x =>
+            x.UserId == test.UserId &&
+            x.OrganisationId == test.Organisation.Id);
+        membership.Role = role;
+        await test.Db.SaveChangesAsync();
+
+        var allowed = await test.Access.CanManageContactsAsync(
+            test.UserId,
+            test.Organisation.Id);
+
+        Assert.Equal(expected, allowed);
+    }
+
+    [Theory]
+    [InlineData(OrganisationRole.Owner, true, true)]
+    [InlineData(OrganisationRole.Administrator, true, false)]
+    [InlineData(OrganisationRole.Accountant, false, false)]
+    [InlineData(OrganisationRole.Bookkeeper, false, false)]
+    [InlineData(OrganisationRole.Payroll, false, false)]
+    [InlineData(OrganisationRole.Sales, false, false)]
+    [InlineData(OrganisationRole.ReadOnly, false, false)]
+    [InlineData(OrganisationRole.Approver, true, false)]
+    public async Task PurchaseApproval_UsesExpectedDirectMembershipRoles(
+        OrganisationRole role,
+        bool canApproveOwnerOrAdministrator,
+        bool canApproveOwnerOnly)
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var membership = await test.Db.OrganisationMemberships.SingleAsync(x =>
+            x.UserId == test.UserId &&
+            x.OrganisationId == test.Organisation.Id);
+        membership.Role = role;
+        await test.Db.SaveChangesAsync();
+        var approvals = new PurchaseApprovalPolicyService(test.Db, test.Access);
+
+        Assert.Equal(
+            canApproveOwnerOrAdministrator,
+            await approvals.CanApproveAsync(
+                test.UserId,
+                test.Organisation.Id,
+                PurchaseApprovalRequirement.OwnerOrAdministrator));
+        Assert.Equal(
+            canApproveOwnerOnly,
+            await approvals.CanApproveAsync(
+                test.UserId,
+                test.Organisation.Id,
+                PurchaseApprovalRequirement.OwnerOnly));
     }
 
     [Theory]
@@ -177,6 +242,7 @@ public sealed class TenantAccessAccountingTests
     [InlineData(OrganisationRole.Payroll)]
     [InlineData(OrganisationRole.Sales)]
     [InlineData(OrganisationRole.ReadOnly)]
+    [InlineData(OrganisationRole.Approver)]
     public async Task CanPostJournals_NonAccountingPracticeRole_DeniesClientAccess(
         OrganisationRole role)
     {
