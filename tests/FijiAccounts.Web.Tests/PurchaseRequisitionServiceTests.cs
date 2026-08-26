@@ -111,6 +111,27 @@ public sealed class PurchaseRequisitionServiceTests
     }
 
     [Fact]
+    public async Task ApproverCanListSubmittedRequisitions()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var policies = new PurchaseApprovalPolicyService(test.Db, test.Access);
+        var service = new PurchaseRequisitionService(test.Db, test.Access, test.PurchaseOrders, policies);
+        var approver = await AddApproverAsync(test);
+        var requisition = await service.CreateDraftAsync(test.UserId, await RequestAsync(test));
+        await service.SubmitAsync(test.UserId, test.Organisation.Id, requisition.Id);
+
+        var visible = await service.ListAsync(approver.Id, test.Organisation.Id);
+
+        var item = Assert.Single(visible);
+        Assert.Equal(requisition.Id, item.Id);
+        Assert.Equal(PurchaseRequisitionStatus.Submitted, item.Status);
+        Assert.NotNull(item.Supplier);
+        Assert.NotNull(item.Branch);
+        Assert.NotNull(item.Division);
+        Assert.Single(item.Lines);
+    }
+
+    [Fact]
     public async Task CreateRejectsCrossTenantDimensionAndReferencesWithoutAudit()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

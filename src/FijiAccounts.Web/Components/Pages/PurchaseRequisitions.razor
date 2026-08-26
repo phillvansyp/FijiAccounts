@@ -225,12 +225,23 @@ else
         canCreate = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         canManagePolicies = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
         currentRole = await Db.OrganisationMemberships.AsNoTracking().Where(x => x.UserId == userId && x.OrganisationId == OrganisationId).Select(x => (OrganisationRole?)x.Role).SingleOrDefaultAsync();
-        suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
-        accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
-        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
-        projects = await ProjectService.ListAsync(userId, OrganisationId);
-        dimensions = branches
-            .SelectMany(branch => branch.Divisions.Select(division => new DimensionOption(branch.Id, branch.Name, division.Id, division.Name))).ToList();
+
+        if (canCreate)
+        {
+            suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
+            accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
+            branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+            projects = await ProjectService.ListAsync(userId, OrganisationId);
+            dimensions = branches
+                .SelectMany(branch => branch.Divisions.Select(division => new DimensionOption(branch.Id, branch.Name, division.Id, division.Name))).ToList();
+        }
+        else if (canManagePolicies)
+        {
+            branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+            dimensions = branches
+                .SelectMany(branch => branch.Divisions.Select(division => new DimensionOption(branch.Id, branch.Name, division.Id, division.Name))).ToList();
+        }
+
         policies = canManagePolicies ? await ApprovalPolicies.ListAsync(userId, OrganisationId) : [];
         await Reload();
     }
