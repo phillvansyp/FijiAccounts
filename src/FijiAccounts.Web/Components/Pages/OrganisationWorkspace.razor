@@ -2,9 +2,11 @@
 @attribute [Authorize]
 @implements IDisposable
 @using System.ComponentModel.DataAnnotations
+@using System.Text.Json
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Web.Components.Account
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
@@ -350,15 +352,44 @@ else
             }
         </details>
     }
+    @if (canManageTeam && CredentialResettableMembers.Count > 0)
+    {
+        <details class="invite-panel">
+            <summary>Set temporary password</summary>
+            <p class="text-muted mt-3">Use only when the member cannot receive a password reset email. The action is recorded in the audit trail.</p>
+            @if (temporaryPasswordMessage is not null) { <div class="alert @temporaryPasswordMessageClass">@temporaryPasswordMessage</div> }
+            <EditForm Model="temporaryPassword" OnValidSubmit="SetTemporaryPassword" FormName="set-temporary-password">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="invite-fields">
+                    <div><label class="form-label">Team member</label><InputSelect class="form-select" @bind-Value="temporaryPassword.UserId">@foreach (var member in CredentialResettableMembers) { <option value="@member.UserId">@member.User.Email — @member.Role</option> }</InputSelect></div>
+                    <div><label class="form-label">Temporary password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="temporaryPassword.Password" /></div>
+                    <div><label class="form-label">Confirm password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="temporaryPassword.ConfirmPassword" /></div>
+                    <button class="btn btn-primary" disabled="@settingTemporaryPassword">@(settingTemporaryPassword ? "Setting…" : "Set password")</button>
+                </div>
+            </EditForm>
+        </details>
+    }
     @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label" for="invite-email">Email</label><input id="invite-email" name="invite.Email" type="email" class="form-control" @bind="invite.Email" @bind:event="oninput" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationError is not null) { <div class="alert alert-danger mt-3">@invitationError</div> }@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
     </section>
 }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private string? invitationLink; private string? invitationError; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private TemporaryPasswordModel temporaryPassword = new(); private string? temporaryPasswordMessage; private string temporaryPasswordMessageClass = "alert-success"; private bool settingTemporaryPassword; private string? invitationLink; private string? invitationError; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private List<OrganisationMembership> RestrictableMembers => members.Where(x => x.Role is not OrganisationRole.Owner and not OrganisationRole.Administrator).OrderBy(x => x.User.Email).ToList();
     private OrganisationMembership? SelectedMember => members.SingleOrDefault(x => x.UserId == selectedMemberUserId);
+    private List<OrganisationMembership> CredentialResettableMembers
+    {
+        get
+        {
+            var actor = members.SingleOrDefault(x => x.UserId == userId);
+            return actor is null ? [] : members
+                .Where(x => OrganisationCredentialPolicy.CanSetTemporaryPassword(userId, actor.Role, x.UserId, x.Role))
+                .OrderBy(x => x.User.Email)
+                .ToList();
+        }
+    }
     private List<OrganisationDimensionAccessGrant> SelectedMemberGrants => dimensionGrants.Where(x => x.UserId == selectedMemberUserId).OrderBy(x => x.Branch.Code).ThenBy(x => x.Division == null ? "" : x.Division.Code).ToList();
     private CashflowForecast? cashflowForecast;
     private FinancialRiskSummary? financialRisk;
@@ -641,7 +672,53 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         dimensionGrants = await Db.OrganisationDimensionAccessGrants.AsNoTracking().Include(x => x.Branch).Include(x => x.Division).Where(x => x.OrganisationId == OrganisationId).ToListAsync();
         await LoadPendingInvitations();
         if (!RestrictableMembers.Any(x => x.UserId == selectedMemberUserId)) selectedMemberUserId = RestrictableMembers.FirstOrDefault()?.UserId ?? "";
+        if (!CredentialResettableMembers.Any(x => x.UserId == temporaryPassword.UserId)) temporaryPassword.UserId = CredentialResettableMembers.FirstOrDefault()?.UserId ?? "";
         if (string.IsNullOrWhiteSpace(selectedDimensionGrant) && branches.FirstOrDefault() is Branch branch) selectedDimensionGrant = $"{branch.Id}|";
+    }
+
+    private async Task SetTemporaryPassword()
+    {
+        temporaryPasswordMessage = null;
+        settingTemporaryPassword = true;
+        try
+        {
+            var actor = await Db.OrganisationMemberships.AsNoTracking().SingleAsync(x => x.OrganisationId == OrganisationId && x.UserId == userId);
+            var target = await Db.OrganisationMemberships.AsNoTracking().Include(x => x.User).SingleOrDefaultAsync(x => x.OrganisationId == OrganisationId && x.UserId == temporaryPassword.UserId)
+                ?? throw new InvalidOperationException("Select a current team member.");
+            if (!OrganisationCredentialPolicy.CanSetTemporaryPassword(userId, actor.Role, target.UserId, target.Role))
+                throw new UnauthorizedAccessException("You cannot set a temporary password for this member.");
+
+            var targetUser = await UserManager.FindByIdAsync(target.UserId)
+                ?? throw new InvalidOperationException("The selected account was not found.");
+            AccountLockoutPolicy.ClearFailureState(targetUser);
+            var token = await UserManager.GeneratePasswordResetTokenAsync(targetUser);
+            var result = await UserManager.ResetPasswordAsync(targetUser, token, temporaryPassword.Password);
+            if (!result.Succeeded)
+                throw new InvalidOperationException(string.Join(" ", result.Errors.Select(x => x.Description)));
+
+            Db.AuditEvents.Add(new AuditEvent
+            {
+                OrganisationId = OrganisationId,
+                UserId = userId,
+                EventType = "MemberTemporaryPasswordSet",
+                EntityType = nameof(ApplicationUser),
+                EntityId = target.UserId,
+                JsonData = JsonSerializer.Serialize(new { TargetUserId = target.UserId, target.User.Email, Role = target.Role.ToString() })
+            });
+            await Db.SaveChangesAsync();
+            temporaryPassword = new() { UserId = target.UserId };
+            temporaryPasswordMessageClass = "alert-success";
+            temporaryPasswordMessage = $"A temporary password was set for {target.User.Email}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            temporaryPasswordMessageClass = "alert-danger";
+            temporaryPasswordMessage = ex.Message;
+        }
+        finally
+        {
+            settingTemporaryPassword = false;
+        }
     }
 
     private static string DimensionAccessLabel(OrganisationMembership member) =>
@@ -826,5 +903,11 @@ var outputVat=(await Db.SalesInvoices.Where(x=>x.OrganisationId==OrganisationId 
         }
     }
     private static string Initials(string name) => string.Concat(name.Split(' ',StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x=>char.ToUpperInvariant(x[0])));
+    private sealed class TemporaryPasswordModel
+    {
+        [Required] public string UserId { get; set; } = string.Empty;
+        [Required, StringLength(100, MinimumLength = 6)] public string Password { get; set; } = string.Empty;
+        [Required, Compare(nameof(Password), ErrorMessage = "The passwords do not match.")] public string ConfirmPassword { get; set; } = string.Empty;
+    }
     private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
 }
