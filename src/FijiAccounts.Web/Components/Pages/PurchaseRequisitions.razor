@@ -169,7 +169,7 @@ else
                                     @if (item.Status == PurchaseRequisitionStatus.Submitted && CanActOn(item) && item.CreatedByUserId != userId)
                                     {
                                         <button class="btn btn-sm btn-success me-1" @onclick="() => Approve(item.Id)">Approve</button>
-                                        <InputText class="form-control form-control-sm d-inline-block me-1" style="width: 12rem" placeholder="Rejection reason" @bind-Value="rejectionReasons[item.Id]" />
+                                        <input class="form-control form-control-sm d-inline-block me-1" style="width: 12rem" placeholder="Rejection reason" @bind="rejectionReasons[item.Id]" />
                                         <button class="btn btn-sm btn-outline-danger" @onclick="() => Reject(item.Id)">Reject</button>
                                     }
                                     @if (item.Status == PurchaseRequisitionStatus.Submitted)
