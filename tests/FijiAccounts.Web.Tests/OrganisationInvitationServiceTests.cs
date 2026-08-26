@@ -142,4 +142,132 @@ public sealed class OrganisationInvitationServiceTests
         Assert.Empty(await test.Db.OrganisationInvitations.ToListAsync());
         Assert.Equal(initialAuditCount, await test.Db.AuditEvents.CountAsync());
     }
+
+    [Fact]
+    public async Task ListPendingAsync_ReturnsActiveAndExpiredButNotCompletedInvitations()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+        var now = DateTimeOffset.UtcNow;
+        test.Db.OrganisationInvitations.AddRange(
+            Invitation(test.Organisation.Id, "expired@example.com", "expired-token", now.AddMinutes(-1)),
+            Invitation(test.Organisation.Id, "pending@example.com", "pending-token", now.AddDays(1)),
+            Invitation(test.Organisation.Id, "accepted@example.com", "accepted-token", now.AddDays(1), acceptedAt: now),
+            Invitation(test.Organisation.Id, "revoked@example.com", "revoked-token", now.AddDays(1), revokedAt: now));
+        await test.Db.SaveChangesAsync();
+
+        var pending = await service.ListPendingAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(2, pending.Count);
+        Assert.Equal("expired@example.com", pending[0].Email);
+        Assert.True(pending[0].IsExpired);
+        Assert.Equal("pending@example.com", pending[1].Email);
+        Assert.False(pending[1].IsExpired);
+    }
+
+    [Fact]
+    public async Task ReissueAsync_RevokesOldLinkAndRecordsAuditEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        const string oldToken = "old-pending-token";
+        var original = Invitation(
+            test.Organisation.Id,
+            "approver@example.com",
+            oldToken,
+            DateTimeOffset.UtcNow.AddDays(1),
+            OrganisationRole.Approver);
+        test.Db.OrganisationInvitations.Add(original);
+        await test.Db.SaveChangesAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+
+        var replacement = await service.ReissueAsync(
+            test.UserId,
+            test.Organisation.Id,
+            original.Id);
+
+        Assert.Equal(original.Email, replacement.Email);
+        Assert.Equal(original.Role, replacement.Role);
+        Assert.Null(await service.GetDetailsAsync(oldToken));
+        Assert.NotNull(await service.GetDetailsAsync(replacement.Token));
+        Assert.NotNull((await test.Db.OrganisationInvitations.FindAsync(original.Id))!.RevokedAt);
+        Assert.Single(await service.ListPendingAsync(test.UserId, test.Organisation.Id));
+        var audit = await test.Db.AuditEvents.SingleAsync(x =>
+            x.EventType == "OrganisationInvitationReissued");
+        Assert.Equal(test.UserId, audit.UserId);
+        Assert.Contains(original.Id.ToString(), audit.JsonData);
+    }
+
+    [Fact]
+    public async Task RevokeAsync_InvalidatesLinkAndRecordsAuditEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        const string token = "revocable-token";
+        var invitation = Invitation(
+            test.Organisation.Id,
+            "bookkeeper@example.com",
+            token,
+            DateTimeOffset.UtcNow.AddDays(1));
+        test.Db.OrganisationInvitations.Add(invitation);
+        await test.Db.SaveChangesAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+
+        await service.RevokeAsync(test.UserId, test.Organisation.Id, invitation.Id);
+
+        Assert.Null(await service.GetDetailsAsync(token));
+        Assert.Empty(await service.ListPendingAsync(test.UserId, test.Organisation.Id));
+        var audit = await test.Db.AuditEvents.SingleAsync(x =>
+            x.EventType == "OrganisationInvitationRevoked");
+        Assert.Equal(test.UserId, audit.UserId);
+        Assert.Equal(invitation.Id.ToString(), audit.EntityId);
+    }
+
+    [Fact]
+    public async Task PendingInvitationManagement_RejectsReadOnlyMember()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var invitation = Invitation(
+            test.Organisation.Id,
+            "pending@example.com",
+            "pending-management-token",
+            DateTimeOffset.UtcNow.AddDays(1));
+        test.Db.OrganisationInvitations.Add(invitation);
+        await test.Db.OrganisationMemberships
+            .Where(x =>
+                x.OrganisationId == test.Organisation.Id &&
+                x.UserId == test.UserId)
+            .ExecuteUpdateAsync(update =>
+                update.SetProperty(x => x.Role, OrganisationRole.ReadOnly));
+        await test.Db.SaveChangesAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ListPendingAsync(test.UserId, test.Organisation.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ReissueAsync(test.UserId, test.Organisation.Id, invitation.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.RevokeAsync(test.UserId, test.Organisation.Id, invitation.Id));
+        Assert.Null(invitation.RevokedAt);
+        Assert.Empty(await test.Db.AuditEvents.Where(x =>
+            x.EventType == "OrganisationInvitationReissued" ||
+            x.EventType == "OrganisationInvitationRevoked").ToListAsync());
+    }
+
+    private static OrganisationInvitation Invitation(
+        Guid organisationId,
+        string email,
+        string token,
+        DateTimeOffset expiresAt,
+        OrganisationRole role = OrganisationRole.Bookkeeper,
+        DateTimeOffset? acceptedAt = null,
+        DateTimeOffset? revokedAt = null) =>
+        new()
+        {
+            OrganisationId = organisationId,
+            Email = email,
+            Role = role,
+            TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))),
+            ExpiresAt = expiresAt,
+            AcceptedAt = acceptedAt,
+            RevokedAt = revokedAt
+        };
 }

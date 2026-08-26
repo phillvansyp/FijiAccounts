@@ -297,3 +297,8 @@ img,svg{max-width:100%}
     color: #065f46;
     background: #fff;
 }
+
+.status-pill.invitation-expired {
+    background: #fff1dd;
+    color: #8a5200;
+}
