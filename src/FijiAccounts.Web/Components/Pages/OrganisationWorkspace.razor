@@ -363,8 +363,8 @@ else
                 <ValidationSummary />
                 <div class="invite-fields">
                     <div><label class="form-label">Team member</label><InputSelect class="form-select" @bind-Value="temporaryPassword.UserId">@foreach (var member in CredentialResettableMembers) { <option value="@member.UserId">@member.User.Email — @member.Role</option> }</InputSelect></div>
-                    <div><label class="form-label">Temporary password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="temporaryPassword.Password" /></div>
-                    <div><label class="form-label">Confirm password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="temporaryPassword.ConfirmPassword" /></div>
+                    <div><label class="form-label" for="temporary-password">Temporary password</label><input id="temporary-password" name="temporaryPassword.Password" type="password" class="form-control" autocomplete="new-password" @bind="temporaryPassword.Password" @bind:event="oninput" /></div>
+                    <div><label class="form-label" for="temporary-password-confirmation">Confirm password</label><input id="temporary-password-confirmation" name="temporaryPassword.ConfirmPassword" type="password" class="form-control" autocomplete="new-password" @bind="temporaryPassword.ConfirmPassword" @bind:event="oninput" /></div>
                     <button class="btn btn-primary" disabled="@settingTemporaryPassword">@(settingTemporaryPassword ? "Setting…" : "Set password")</button>
                 </div>
             </EditForm>
