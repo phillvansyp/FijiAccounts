@@ -1,4 +1,5 @@
 using FijiAccounts.Web.Components.Account;
+using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -31,5 +32,20 @@ public sealed class AccountLockoutPolicyTests
         Assert.Equal(1, AccountLockoutPolicy.RemainingSeconds(now.AddSeconds(-1), now));
         Assert.Equal(60, AccountLockoutPolicy.RemainingSeconds(now.AddMinutes(5), now));
         Assert.Equal(60, AccountLockoutPolicy.RemainingSeconds(null, now));
+    }
+
+    [Fact]
+    public void ClearFailureStateUnlocksUserAndResetsAttempts()
+    {
+        var user = new ApplicationUser
+        {
+            AccessFailedCount = AccountLockoutPolicy.MaxFailedAccessAttempts,
+            LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(1)
+        };
+
+        AccountLockoutPolicy.ClearFailureState(user);
+
+        Assert.Equal(0, user.AccessFailedCount);
+        Assert.Null(user.LockoutEnd);
     }
 }
