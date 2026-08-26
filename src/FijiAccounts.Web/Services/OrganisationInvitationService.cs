@@ -7,8 +7,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record InvitationAcceptanceResult(bool Succeeded, string Message);
+public sealed record InvitationAcceptanceResult(
+    bool Succeeded,
+    string Message,
+    Guid? OrganisationId = null);
 public sealed record InvitationIssueResult(string Token, DateTimeOffset ExpiresAt);
+public sealed record InvitationDetails(
+    string Email,
+    string OrganisationName,
+    OrganisationRole Role,
+    DateTimeOffset ExpiresAt);
 
 public sealed class OrganisationInvitationService(
     ApplicationDbContext db,
@@ -111,7 +119,10 @@ public sealed class OrganisationInvitationService(
         if (invitation.AcceptedAt is not null)
         {
             return isMember
-                ? new(true, $"You already have {invitation.Role} access to {invitation.Organisation.LegalName}.")
+                ? new(
+                    true,
+                    $"You already have {invitation.Role} access to {invitation.Organisation.LegalName}.",
+                    invitation.OrganisationId)
                 : new(false, "This invitation has already been accepted.");
         }
 
@@ -140,7 +151,34 @@ public sealed class OrganisationInvitationService(
             })
         });
         await db.SaveChangesAsync(cancellationToken);
-        return new(true, $"You now have {invitation.Role} access to {invitation.Organisation.LegalName}.");
+        return new(
+            true,
+            $"You now have {invitation.Role} access to {invitation.Organisation.LegalName}.",
+            invitation.OrganisationId);
+    }
+
+    public async Task<InvitationDetails?> GetDetailsAsync(
+        string token,
+        CancellationToken cancellationToken = default)
+    {
+        var hash = HashToken(token);
+        var invitation = await db.OrganisationInvitations
+            .AsNoTracking()
+            .Include(x => x.Organisation)
+            .Where(x => x.TokenHash == hash)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (invitation is null ||
+            invitation.ExpiresAt <= DateTimeOffset.UtcNow ||
+            invitation.RevokedAt is not null)
+        {
+            return null;
+        }
+
+        return new InvitationDetails(
+            invitation.Email,
+            invitation.Organisation.LegalName,
+            invitation.Role,
+            invitation.ExpiresAt);
     }
 
     private static string HashToken(string token) =>

@@ -39,6 +39,8 @@ public sealed class OrganisationInvitationServiceTests
 
         Assert.True(accepted.Succeeded);
         Assert.True(reopened.Succeeded);
+        Assert.Equal(test.Organisation.Id, accepted.OrganisationId);
+        Assert.Equal(test.Organisation.Id, reopened.OrganisationId);
         Assert.Contains("already have", reopened.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await test.Db.OrganisationMemberships.CountAsync(
             x => x.OrganisationId == test.Organisation.Id && x.UserId == user.Id));
@@ -46,6 +48,32 @@ public sealed class OrganisationInvitationServiceTests
             x.EntityType == nameof(OrganisationInvitation) &&
             x.EntityId == test.Db.OrganisationInvitations.Single().Id.ToString() &&
             x.EventType == "OrganisationInvitationAccepted"));
+    }
+
+    [Fact]
+    public async Task GetDetailsAsync_ReturnsOnlyActiveInvitationDetails()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+        var issued = await service.IssueAsync(
+            test.UserId,
+            test.Organisation.Id,
+            "approver@example.com",
+            OrganisationRole.Approver);
+
+        var details = await service.GetDetailsAsync(issued.Token);
+        var unknown = await service.GetDetailsAsync("not-the-issued-token");
+
+        Assert.NotNull(details);
+        Assert.Equal("approver@example.com", details.Email);
+        Assert.Equal(test.Organisation.LegalName, details.OrganisationName);
+        Assert.Equal(OrganisationRole.Approver, details.Role);
+        Assert.Null(unknown);
+
+        var invitation = await test.Db.OrganisationInvitations.SingleAsync();
+        invitation.RevokedAt = DateTimeOffset.UtcNow;
+        await test.Db.SaveChangesAsync();
+        Assert.Null(await service.GetDetailsAsync(issued.Token));
     }
 
     [Fact]

@@ -1,25 +1,202 @@
 @page "/invite/{Token}"
-@attribute [Authorize]
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject OrganisationInvitationService Invitations
+@inject ApplicationDbContext Db
 @inject UserManager<ApplicationUser> UserManager
-@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager Navigation
+@inject ILogger<AcceptInvitation> Logger
 
-<PageTitle>Accept invitation</PageTitle>
-<h1>Organisation invitation</h1>
-@if (message is null) { <p>Checking your invitation...</p> } else { <div class="alert @alertClass">@message</div> }
+<PageTitle>Join organisation · Account Island</PageTitle>
+
+<img class="login-brand-logo" src="account-island-logo.png" alt="Account Island palm tree logo" />
+<span class="eyebrow">Account Island</span>
+<h1>@(Invitation is null ? "Organisation invitation" : $"Join {Invitation.OrganisationName}")</h1>
+
+@if (Invitation is null)
+{
+    <div class="alert alert-danger">This invitation is invalid or has expired.</div>
+}
+else if (Message is not null)
+{
+    <div class="alert @MessageClass">@Message</div>
+    @if (AcceptedOrganisationId is Guid organisationId)
+    {
+        <a class="btn btn-primary" href="o/@organisationId">Open organisation</a>
+    }
+}
+else if (ExistingAccount)
+{
+    <div class="row">
+        <div class="col-lg-6">
+            <section>
+                <h2>Sign in to accept</h2>
+                <p>
+                    <strong>@Invitation.Email</strong> already has an Account Island account.
+                    Sign in with that account to accept the @Invitation.Role invitation.
+                </p>
+                <a class="btn btn-primary w-100" href="@LoginUrl">Sign in and continue</a>
+            </section>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row">
+        <div class="col-lg-6">
+            <section>
+                <h2>Create your account</h2>
+                <p>
+                    You have been invited as <strong>@Invitation.Role</strong>.
+                    Choose a password to accept access.
+                </p>
+                <EditForm Model="Input" method="post" OnValidSubmit="CreateAccount" FormName="accept-invitation">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-danger" role="alert" />
+                    @if (IdentityErrors is not null)
+                    {
+                        <div class="alert alert-danger" role="alert">
+                            @string.Join(" ", IdentityErrors.Select(error => error.Description))
+                        </div>
+                    }
+                    <div class="form-floating mb-3">
+                        <input id="invited-email" class="form-control" value="@Invitation.Email" autocomplete="username" readonly />
+                        <label for="invited-email">Email</label>
+                    </div>
+                    <div class="form-floating mb-3">
+                        <InputText type="password" @bind-Value="Input.Password" id="invite-password" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                        <label for="invite-password">Create password</label>
+                        <ValidationMessage For="() => Input.Password" class="text-danger" />
+                    </div>
+                    <div class="form-floating mb-3">
+                        <InputText type="password" @bind-Value="Input.ConfirmPassword" id="invite-confirm-password" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                        <label for="invite-confirm-password">Confirm password</label>
+                        <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100">Create account and join</button>
+                </EditForm>
+            </section>
+        </div>
+    </div>
+}
 
 @code {
-    [Parameter] public string Token { get; set; } = string.Empty;
-    private string? message; private string alertClass = "alert-danger";
-    protected override async Task OnParametersSetAsync()
+    [Parameter]
+    public string Token { get; set; } = string.Empty;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    private InvitationDetails? Invitation { get; set; }
+    private bool ExistingAccount { get; set; }
+    private IEnumerable<IdentityError>? IdentityErrors { get; set; }
+    private string? Message { get; set; }
+    private string MessageClass { get; set; } = "alert-danger";
+    private Guid? AcceptedOrganisationId { get; set; }
+
+    private string LoginUrl => Navigation.GetUriWithQueryParameters(
+        "Account/Login",
+        new Dictionary<string, object?> { ["ReturnUrl"] = $"/invite/{Token}" });
+
+    protected override async Task OnInitializedAsync()
     {
-        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); var user = await UserManager.GetUserAsync(state.User); var email = user is null ? null : await UserManager.GetEmailAsync(user);
-        var result = await Invitations.AcceptAsync(user!.Id, email, Token);
-        alertClass = result.Succeeded ? "alert-success" : "alert-danger";
-        message = result.Message;
+        Input ??= new();
+        Invitation = await Invitations.GetDetailsAsync(Token);
+        if (Invitation is null)
+        {
+            return;
+        }
+
+        if (HttpContext.User.Identity?.IsAuthenticated == true)
+        {
+            var user = await UserManager.GetUserAsync(HttpContext.User);
+            var email = user is null ? null : await UserManager.GetEmailAsync(user);
+            var result = user is null
+                ? new InvitationAcceptanceResult(false, "Sign in using the invited email address.")
+                : await Invitations.AcceptAsync(user.Id, email, Token);
+            SetResult(result);
+            return;
+        }
+
+        ExistingAccount = await UserManager.FindByEmailAsync(Invitation.Email) is not null;
+    }
+
+    private async Task CreateAccount()
+    {
+        Invitation = await Invitations.GetDetailsAsync(Token);
+        if (Invitation is null)
+        {
+            Message = "This invitation is invalid or has expired.";
+            return;
+        }
+
+        var existingUser = await UserManager.FindByEmailAsync(Invitation.Email);
+        if (existingUser is not null)
+        {
+            ExistingAccount = true;
+            return;
+        }
+
+        await using var transaction = await Db.Database.BeginTransactionAsync();
+        var user = new ApplicationUser
+        {
+            UserName = Invitation.Email,
+            Email = Invitation.Email,
+            EmailConfirmed = true
+        };
+        var created = await UserManager.CreateAsync(user, Input.Password);
+        if (!created.Succeeded)
+        {
+            IdentityErrors = created.Errors;
+            return;
+        }
+
+        var accepted = await Invitations.AcceptAsync(
+            user.Id,
+            Invitation.Email,
+            Token);
+        if (!accepted.Succeeded)
+        {
+            Logger.LogError(
+                "Invitation onboarding failed after validating account {UserId}",
+                user.Id);
+            SetResult(accepted);
+            return;
+        }
+
+        await transaction.CommitAsync();
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        Navigation.NavigateTo($"o/{accepted.OrganisationId}");
+    }
+
+    private void SetResult(InvitationAcceptanceResult result)
+    {
+        Message = result.Message;
+        MessageClass = result.Succeeded ? "alert-success" : "alert-danger";
+        AcceptedOrganisationId = result.OrganisationId;
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [StringLength(
+            100,
+            ErrorMessage = "The password must be at least {2} and at most {1} characters long.",
+            MinimumLength = 6)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = string.Empty;
+
+        [DataType(DataType.Password)]
+        [Compare("Password", ErrorMessage = "The passwords do not match.")]
+        public string ConfirmPassword { get; set; } = string.Empty;
     }
 }

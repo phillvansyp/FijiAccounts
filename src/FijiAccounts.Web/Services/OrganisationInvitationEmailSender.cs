@@ -35,9 +35,9 @@ public sealed class OrganisationInvitationEmailSender(IEmailDeliveryService deli
             new TransactionalEmail(
                 email,
                 $"Invitation to {organisationName} on Account Island",
-                $"You have been invited to {organisationName} as {role}. Accept the invitation: {invitationLink}",
+                $"You have been invited to {organisationName} as {role}. Create your password or sign in to accept the invitation: {invitationLink}",
                 $"<p>You have been invited to <strong>{encodedOrganisation}</strong> as {encodedRole}.</p>" +
-                $"<p><a href=\"{encodedInvitationLink}\">Accept the invitation</a></p>"),
+                $"<p><a href=\"{encodedInvitationLink}\">Create your password and accept the invitation</a></p>"),
             cancellationToken);
     }
 }

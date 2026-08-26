@@ -71,6 +71,8 @@ public sealed class EmailSenderTests
         Assert.Contains("A&amp;B &lt;Limited&gt;", email.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("token=one&amp;source=two", email.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("A&B <Limited>", email.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Create your password", email.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Create your password", email.HtmlBody, StringComparison.Ordinal);
     }
 
     [Fact]
