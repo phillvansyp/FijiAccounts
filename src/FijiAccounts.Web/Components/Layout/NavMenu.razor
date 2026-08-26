@@ -10,7 +10,7 @@
 @inject OrganisationUpdateBroker Updates
 @inject IServiceScopeFactory ScopeFactory
 
-<header class="app-header"><nav class="nav-inner" aria-label="Primary navigation">
+<header class="app-header"><nav class="nav-inner" aria-label="Primary navigation" data-enhance-nav="false">
     <a class="brand" href=""><img class="brand-mark" src="account-island-logo.png" alt="" /><span>Account Island</span></a>
     <input id="menu-toggle" class="menu-toggle" type="checkbox" aria-label="Toggle navigation" /><label class="menu-button" for="menu-toggle"><span></span><span></span><span></span></label>
     <AuthorizeView><Authorized>
@@ -68,14 +68,28 @@
     private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
     protected override async Task OnInitializedAsync() { updateSubscription = Updates.Subscribe(OrganisationUpdated); await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
-    private async void LocationChanged(object? sender, LocationChangedEventArgs e) { await UpdateContext(); await InvokeAsync(StateHasChanged); }
+    private void LocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        ApplyLocation(e.Location);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
     private async Task UpdateContext()
     {
-        currentUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
-        var requestedOrganisationId = ExtractOrganisationId(currentUrl);
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         activeUserId = UserManager.GetUserId(state.User);
         accessibleOrganisations = activeUserId is null ? [] : await TenantAccess.ListAsync(activeUserId);
+
+        ApplyLocation(Navigation.Uri);
+        unreadNotificationCount = activeOrganisationId is null || activeUserId is null
+            ? 0
+            : await NotificationService.GetUnreadCountAsync(activeUserId, activeOrganisationId.Value);
+    }
+
+    private void ApplyLocation(string location)
+    {
+        currentUrl = Navigation.ToBaseRelativePath(location);
+        var requestedOrganisationId = ExtractOrganisationId(currentUrl);
 
         var requestedOrganisation = requestedOrganisationId is null
             ? null
@@ -95,10 +109,6 @@
             activeOrganisationId = null;
             activeOrganisationName = null;
         }
-
-        unreadNotificationCount = activeOrganisationId is null || activeUserId is null
-            ? 0
-            : await NotificationService.GetUnreadCountAsync(activeUserId, activeOrganisationId.Value);
     }
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
     private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
