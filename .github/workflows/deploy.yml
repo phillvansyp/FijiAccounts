@@ -81,9 +81,22 @@ jobs:
         run: |
           set -euo pipefail
           env_file="$DEPLOY_DIR/config/app.env"
+
+          # Keep only valid environment assignments. This also repairs files left
+          # behind by an accidentally multi-line secret before Docker reads them.
+          clean_file="$(mktemp)"
+          awk 'NF == 0 || /^[A-Za-z_][A-Za-z0-9_]*=/' "$env_file" > "$clean_file"
+          install -m 0600 "$clean_file" "$env_file"
+          rm -f "$clean_file"
+
           update_setting() {
             key="$1"
             value="$2"
+            if [[ "$value" == *$'\n'* ]]; then
+              echo "::warning::Secret for $key contained extra lines; only the first line was used."
+              value="${value%%$'\n'*}"
+            fi
+            value="${value%$'\r'}"
             temp_file="$(mktemp)"
             awk -F= -v key="$key" '$1 != key' "$env_file" > "$temp_file"
             printf '%s=%s\n' "$key" "$value" >> "$temp_file"
