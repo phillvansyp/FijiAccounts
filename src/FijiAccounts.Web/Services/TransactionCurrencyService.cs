@@ -358,13 +358,15 @@ public sealed class TransactionCurrencyService(
             return;
         }
 
-        var latestImport = await db.TransactionExchangeRates.AsNoTracking()
+        var importTimes = await db.TransactionExchangeRates.AsNoTracking()
             .Where(x => x.OrganisationId == organisationId &&
                 x.ToCurrency == "FJD" &&
                 x.Source == RbfSource)
-            .OrderByDescending(x => x.CreatedAt)
-            .Select(x => (DateTimeOffset?)x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+            .Select(x => x.CreatedAt)
+            .ToListAsync(ct);
+        var latestImport = importTimes.Count == 0
+            ? (DateTimeOffset?)null
+            : importTimes.Max();
         if (latestImport >= DateTimeOffset.UtcNow.AddHours(-6))
         {
             return;

@@ -81,6 +81,13 @@ public sealed class TransactionCurrencyServiceTests
         Assert.Equal(2.25m, await service.FindRateForOrganisationAsync(test.Organisation.Id, "USD", date));
         Assert.Equal(1.58881474m, await service.FindRateForOrganisationAsync(test.Organisation.Id, "AUD", date));
         Assert.Equal(1.31648236m, await service.FindRateForOrganisationAsync(test.Organisation.Id, "NZD", date));
+        Assert.Equal(
+            1.31648236m,
+            await service.FindRateAsync(
+                test.UserId,
+                test.Organisation.Id,
+                "NZD",
+                date.AddDays(1)));
     }
 
     private sealed class StubHttpClientFactory(string responseBody) : IHttpClientFactory
