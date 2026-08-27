@@ -42,6 +42,14 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot post invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be posted.");
+        if (invoice.Lines.Any(x => string.IsNullOrWhiteSpace(x.Description)))
+        {
+            throw new InvalidOperationException("Each invoice line needs a description before posting.");
+        }
+        if (invoice.TransactionTotal <= 0 || invoice.Total <= 0)
+        {
+            throw new InvalidOperationException("The invoice total must be greater than zero before posting.");
+        }
         var controls = await db.LedgerAccounts
     .Where(x =>
         x.OrganisationId == organisationId &&
@@ -262,10 +270,18 @@ if (!controlAccounts.TryGetValue(
         var vatSchedule = new FijiVatSchedule();
         var lines = request.Lines.Select(line =>
         {
+            if (string.IsNullOrWhiteSpace(line.Description))
+            {
+                throw new InvalidOperationException("Each invoice line needs a description before posting.");
+            }
             if (line.Quantity <= 0 || line.UnitPrice < 0) throw new InvalidOperationException("Invoice quantities must be positive and prices cannot be negative.");
             var net = new Money(line.Quantity * line.UnitPrice, currency).Round(); var tax = vatSchedule.CalculateFromExclusive(net, request.IssueDate, line.VatTreatment);
             return CreateLine(line, tax, exchangeRateToBase);
         }).ToList();
+        if (lines.Sum(x => x.TransactionGrossAmount) <= 0)
+        {
+            throw new InvalidOperationException("The invoice total must be greater than zero before posting.");
+        }
 
         var productIds = lines.Where(x => x.ProductItemId != null).Select(x => x.ProductItemId!.Value).Distinct().ToArray();
         var products = await db.ProductItems.Where(x => x.OrganisationId == request.OrganisationId && productIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);

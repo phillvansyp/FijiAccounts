@@ -497,7 +497,40 @@ else
 
         return new SalesInvoiceCodingSuggestion(accountId ?? fallbackAccount, fallbackVat, combinedSource);
     }
-    private async Task Post() { try { SalesInvoice invoice; if (InvoiceId is null) invoice = await InvoiceService.CreateAndPostAsync(userId, Request()); else { await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request()); invoice = await InvoiceService.PostDraftAsync(userId, OrganisationId, InvoiceId.Value); } await PersistCustomerInvoiceDefaultsAsync(invoice.CustomerId); Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}"); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { status = ex.Message; } }
+    private async Task Post()
+    {
+        status = null;
+        if (model.Lines.Any(x => string.IsNullOrWhiteSpace(x.Description)))
+        {
+            status = "Enter a description for every invoice line before posting.";
+            return;
+        }
+        if (model.Lines.Sum(x => x.Quantity * x.UnitPrice) <= 0)
+        {
+            status = "Enter an invoice amount greater than zero before posting.";
+            return;
+        }
+
+        try
+        {
+            SalesInvoice invoice;
+            if (InvoiceId is null)
+            {
+                invoice = await InvoiceService.CreateAndPostAsync(userId, Request());
+            }
+            else
+            {
+                await InvoiceService.UpdateDraftAsync(userId, InvoiceId.Value, Request());
+                invoice = await InvoiceService.PostDraftAsync(userId, OrganisationId, InvoiceId.Value);
+            }
+            await PersistCustomerInvoiceDefaultsAsync(invoice.CustomerId);
+            Navigation.NavigateTo($"o/{OrganisationId}/sales/{invoice.Id}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException)
+        {
+            status = ex.Message;
+        }
+    }
     private async Task PersistCustomerInvoiceDefaultsAsync(Guid customerId)
     {
         if (model.Lines.Count == 0) return;
