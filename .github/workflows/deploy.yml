@@ -121,11 +121,43 @@ jobs:
               exit 1
             fi
 
+            first_line() {
+              local value="$1"
+              value="${value%%$'\n'*}"
+              printf '%s' "${value%$'\r'}"
+            }
+            graph_tenant_id="$(first_line "$EMAIL_MICROSOFT_TENANT_ID")"
+            graph_client_id="$(first_line "$EMAIL_MICROSOFT_CLIENT_ID")"
+            graph_client_secret="$(first_line "$EMAIL_MICROSOFT_CLIENT_SECRET")"
+
+            token_result="$(docker run --rm --network host \
+              --env TENANT_ID="$graph_tenant_id" \
+              --env CLIENT_ID="$graph_client_id" \
+              --env CLIENT_SECRET="$graph_client_secret" \
+              --entrypoint sh curlimages/curl:8.12.1 -c '
+                curl --silent --show-error \
+                  --write-out "\n%{http_code}" \
+                  --request POST \
+                  --data-urlencode "client_id=$CLIENT_ID" \
+                  --data-urlencode "client_secret=$CLIENT_SECRET" \
+                  --data-urlencode "scope=https://graph.microsoft.com/.default" \
+                  --data-urlencode "grant_type=client_credentials" \
+                  "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
+              ')"
+            token_status="${token_result##*$'\n'}"
+            if [[ ! "$token_status" =~ ^2[0-9][0-9]$ ]]; then
+              token_body="${token_result%$'\n'*}"
+              token_error="$(printf '%s' "$token_body" | sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+              echo "Microsoft Graph credential validation failed (${token_error:-HTTP $token_status})." >&2
+              exit 1
+            fi
+            unset token_result
+
             update_setting Email__Provider MicrosoftGraph
             update_setting Email__FromAddress "$EMAIL_FROM_ADDRESS"
-            update_setting Email__MicrosoftGraph__TenantId "$EMAIL_MICROSOFT_TENANT_ID"
-            update_setting Email__MicrosoftGraph__ClientId "$EMAIL_MICROSOFT_CLIENT_ID"
-            update_setting Email__MicrosoftGraph__ClientSecret "$EMAIL_MICROSOFT_CLIENT_SECRET"
+            update_setting Email__MicrosoftGraph__TenantId "$graph_tenant_id"
+            update_setting Email__MicrosoftGraph__ClientId "$graph_client_id"
+            update_setting Email__MicrosoftGraph__ClientSecret "$graph_client_secret"
             echo "Production Microsoft Graph email settings provisioned."
             exit 0
           fi
