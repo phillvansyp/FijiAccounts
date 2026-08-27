@@ -31,6 +31,16 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Reclaim deployment disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker builder prune --all --force
+          docker image prune --all --force --filter "until=1h"
+          find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
+            -mtime +30 -delete 2>/dev/null || true
+          df -h "$DEPLOY_DIR"
+
       - name: Run test suite
         shell: bash
         run: /mnt/data/account-island/dotnet/dotnet test FijiAccounts.slnx --configuration Release
