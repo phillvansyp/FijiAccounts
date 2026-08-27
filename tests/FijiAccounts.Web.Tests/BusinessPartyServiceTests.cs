@@ -500,6 +500,57 @@ public sealed class BusinessPartyServiceTests
     }
 
     [Fact]
+    public async Task ContactAccountsEmail_IsSavedUpdatedAndAudited()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var request = CreateRequest(
+            test.Organisation.Id,
+            test.Account("4000").Id,
+            test.Account("6000").Id) with
+        {
+            AccountsEmail = " accounts@example.com "
+        };
+
+        var party = await service.CreateAsync(test.UserId, request);
+        Assert.Equal("accounts@example.com", party.AccountsEmail);
+
+        await service.UpdateEmailsAsync(
+            test.UserId,
+            new UpdateBusinessPartyEmailsRequest(
+                test.Organisation.Id,
+                party.Id,
+                "primary@example.com",
+                "billing@example.com"));
+
+        var stored = await test.Db.BusinessParties.AsNoTracking().SingleAsync(x => x.Id == party.Id);
+        Assert.Equal("primary@example.com", stored.Email);
+        Assert.Equal("billing@example.com", stored.AccountsEmail);
+        Assert.Contains(
+            await test.Db.AuditEvents.AsNoTracking().ToListAsync(),
+            x => x.EventType == "BusinessPartyEmailsUpdated" && x.EntityId == party.Id.ToString());
+    }
+
+    [Fact]
+    public async Task ContactAccountsEmail_RejectsInvalidAddress()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var request = CreateRequest(
+            test.Organisation.Id,
+            test.Account("4000").Id,
+            test.Account("6000").Id) with
+        {
+            AccountsEmail = "not-an-email"
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.CreateAsync(test.UserId, request));
+
+        Assert.Contains("accounts email", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Create_RejectsPurchaseAccountOutsideOrganisation()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
