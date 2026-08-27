@@ -10,6 +10,7 @@
 @inject SalesInvoiceService InvoiceService
 @inject SalesCreditNoteService CreditNoteService
 @inject OrganisationBrandingService BrandingService
+@inject SalesInvoiceEmailSender InvoiceEmailSender
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
@@ -38,7 +39,9 @@ else
             @onclick="() => showVoid = !showVoid">
         Void invoice
     </button>
-}<button class="btn btn-outline-secondary" @onclick="CopyInvoice">Copy invoice</button><button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+}<button class="btn btn-outline-secondary" @onclick="CopyInvoice">Copy invoice</button>@if (canPost && (invoice.Status is InvoiceStatus.Posted or InvoiceStatus.PartPaid or InvoiceStatus.Paid)) { <button class="btn btn-outline-primary" @onclick="OpenEmailInvoice">Email invoice</button> }<button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+    @if (showEmailInvoice) { <div class="void-panel no-print"><div><strong>Email @invoice.InvoiceNumber</strong><span>The accounts email is used first, then the primary contact email.</span></div><InputText class="form-control reason" @bind-Value="invoiceEmailRecipient" placeholder="Recipient email" /><button class="btn btn-primary" disabled="@sendingInvoiceEmail" @onclick="SendInvoiceEmail">@(sendingInvoiceEmail ? "Sending..." : "Send invoice")</button><button class="btn btn-outline-secondary" disabled="@sendingInvoiceEmail" @onclick="() => showEmailInvoice = false">Cancel</button></div> }
+    @if (invoiceEmailStatus is not null) { <div class="alert @(invoiceEmailSucceeded ? "alert-success" : "alert-danger") no-print">@invoiceEmailStatus</div> }
     @if (showVoid) { <div class="void-panel no-print"><div><strong>Void this invoice?</strong><span>A reversing journal will be posted and retained in the audit trail.</span></div><InputDate class="form-control" @bind-Value="voidDate" /><button class="btn btn-danger" @onclick="VoidInvoice">Post reversal</button><button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button></div> }
     @if (showCredit) { <div class="void-panel credit-panel no-print"><div><strong>Issue credit note</strong><span>Maximum: $@AvailableCredit.ToString("N2")</span></div><InputDate class="form-control" @bind-Value="creditDate" /><InputText class="form-control reason" @bind-Value="creditReason" placeholder="Reason" /><InputNumber class="form-control" @bind-Value="creditAmount" />@if (HasMixedVatRates) { <div><label class="form-label">VAT adjustment</label><InputNumber TValue="decimal?" class="form-control" @bind-Value="creditVatAmount" /></div> }<label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="restockTrackedItems" /><span class="form-check-label">Return tracked items to stock</span></label><button class="btn btn-primary" @onclick="CreateCredit">Post credit</button><button class="btn btn-outline-secondary" @onclick="() => showCredit = false">Cancel</button></div> }
     @if (status is not null) { <div class="alert alert-danger no-print">@status</div> }
@@ -204,6 +207,11 @@ else
 
     private bool canPost;
     private bool showVoid;
+    private bool showEmailInvoice;
+    private bool sendingInvoiceEmail;
+    private bool invoiceEmailSucceeded;
+    private string invoiceEmailRecipient = string.Empty;
+    private string? invoiceEmailStatus;
 
     private DateOnly voidDate =
         DateOnly.FromDateTime(DateTime.Today);
@@ -344,6 +352,38 @@ else
                   or UnauthorizedAccessException)
         {
             status = ex.Message;
+        }
+    }
+
+    private void OpenEmailInvoice()
+    {
+        if (invoice is null) return;
+        invoiceEmailRecipient = invoice.Customer.AccountsEmail ?? invoice.Customer.Email ?? string.Empty;
+        invoiceEmailStatus = null;
+        invoiceEmailSucceeded = false;
+        showEmailInvoice = true;
+    }
+
+    private async Task SendInvoiceEmail()
+    {
+        if (invoice is null || sendingInvoiceEmail) return;
+        sendingInvoiceEmail = true;
+        invoiceEmailStatus = null;
+        try
+        {
+            await InvoiceEmailSender.SendAsync(userId, OrganisationId, InvoiceId, invoiceEmailRecipient);
+            invoiceEmailSucceeded = true;
+            invoiceEmailStatus = $"Invoice {invoice.InvoiceNumber} sent to {invoiceEmailRecipient.Trim()}.";
+            showEmailInvoice = false;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            invoiceEmailSucceeded = false;
+            invoiceEmailStatus = ex.Message;
+        }
+        finally
+        {
+            sendingInvoiceEmail = false;
         }
     }
 
