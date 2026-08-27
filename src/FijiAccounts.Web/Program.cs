@@ -120,11 +120,36 @@ builder.Services.AddAuthorizationBuilder()
         PlatformAdminAccessService.PolicyName,
         policy => policy.RequireRole(PlatformAdminAccessService.RoleName));
 
-builder.Services.AddSingleton<IEmailDeliveryService, SmtpEmailDeliveryService>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SmtpEmailDeliveryService>();
+builder.Services.AddSingleton<MicrosoftGraphEmailDeliveryService>();
+builder.Services.AddSingleton<IEmailDeliveryService>(services =>
+{
+    var configuration = services.GetRequiredService<IConfiguration>();
+    return configuration["Email:Provider"]?.Trim().ToUpperInvariant() switch
+    {
+        "MICROSOFTGRAPH" => services.GetRequiredService<MicrosoftGraphEmailDeliveryService>(),
+        "SMTP" => services.GetRequiredService<SmtpEmailDeliveryService>(),
+        null or "" when services.GetRequiredService<MicrosoftGraphEmailDeliveryService>().IsConfigured =>
+            services.GetRequiredService<MicrosoftGraphEmailDeliveryService>(),
+        null or "" => services.GetRequiredService<SmtpEmailDeliveryService>(),
+        var provider => throw new InvalidOperationException(
+            $"Unsupported email delivery provider '{provider}'.")
+    };
+});
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PasswordResetRequestThrottle>();
+var graphEmailConfigured =
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:FromAddress"]) &&
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:MicrosoftGraph:TenantId"]) &&
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:MicrosoftGraph:ClientId"]) &&
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:MicrosoftGraph:ClientSecret"]);
+var smtpEmailConfigured =
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:FromAddress"]) &&
+    !string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"]);
 if (builder.Environment.IsDevelopment() &&
-    string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"]))
+    !graphEmailConfigured &&
+    !smtpEmailConfigured)
 {
     builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 }

@@ -71,12 +71,52 @@ jobs:
         shell: bash
         env:
           EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
+          EMAIL_MICROSOFT_TENANT_ID: ${{ secrets.EMAIL_MICROSOFT_TENANT_ID }}
+          EMAIL_MICROSOFT_CLIENT_ID: ${{ secrets.EMAIL_MICROSOFT_CLIENT_ID }}
+          EMAIL_MICROSOFT_CLIENT_SECRET: ${{ secrets.EMAIL_MICROSOFT_CLIENT_SECRET }}
           EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
           EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
           EMAIL_SMTP_USERNAME: ${{ secrets.EMAIL_SMTP_USERNAME }}
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
         run: |
           set -euo pipefail
+          env_file="$DEPLOY_DIR/config/app.env"
+          update_setting() {
+            key="$1"
+            value="$2"
+            temp_file="$(mktemp)"
+            awk -F= -v key="$key" '$1 != key' "$env_file" > "$temp_file"
+            printf '%s=%s\n' "$key" "$value" >> "$temp_file"
+            install -m 0600 "$temp_file" "$env_file"
+            rm -f "$temp_file"
+          }
+
+          graph_values=(
+            "$EMAIL_MICROSOFT_TENANT_ID"
+            "$EMAIL_MICROSOFT_CLIENT_ID"
+            "$EMAIL_MICROSOFT_CLIENT_SECRET"
+          )
+          graph_configured=0
+          for value in "${graph_values[@]}"; do
+            if [ -n "$value" ]; then
+              graph_configured=$((graph_configured + 1))
+            fi
+          done
+          if [ "$graph_configured" -gt 0 ]; then
+            if [ "$graph_configured" -ne "${#graph_values[@]}" ] || [ -z "$EMAIL_FROM_ADDRESS" ]; then
+              echo "Production Microsoft Graph email secrets are incomplete." >&2
+              exit 1
+            fi
+
+            update_setting Email__Provider MicrosoftGraph
+            update_setting Email__FromAddress "$EMAIL_FROM_ADDRESS"
+            update_setting Email__MicrosoftGraph__TenantId "$EMAIL_MICROSOFT_TENANT_ID"
+            update_setting Email__MicrosoftGraph__ClientId "$EMAIL_MICROSOFT_CLIENT_ID"
+            update_setting Email__MicrosoftGraph__ClientSecret "$EMAIL_MICROSOFT_CLIENT_SECRET"
+            echo "Production Microsoft Graph email settings provisioned."
+            exit 0
+          fi
+
           values=(
             "$EMAIL_FROM_ADDRESS"
             "$EMAIL_SMTP_HOST"
@@ -100,17 +140,7 @@ jobs:
             exit 1
           fi
 
-          env_file="$DEPLOY_DIR/config/app.env"
-          update_setting() {
-            key="$1"
-            value="$2"
-            temp_file="$(mktemp)"
-            awk -F= -v key="$key" '$1 != key' "$env_file" > "$temp_file"
-            printf '%s=%s\n' "$key" "$value" >> "$temp_file"
-            install -m 0600 "$temp_file" "$env_file"
-            rm -f "$temp_file"
-          }
-
+          update_setting Email__Provider Smtp
           update_setting Email__FromAddress "$EMAIL_FROM_ADDRESS"
           update_setting Email__Smtp__Host "$EMAIL_SMTP_HOST"
           update_setting Email__Smtp__Port "$EMAIL_SMTP_PORT"
