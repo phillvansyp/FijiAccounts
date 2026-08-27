@@ -297,6 +297,11 @@ if (app.Environment.IsDevelopment() ||
     await database.Database.MigrateAsync();
 }
 
+if (await AccountMaintenanceCommand.TryRunAsync(app, args))
+{
+    return;
+}
+
 await DevelopmentAccountSeeder.SeedAsync(app);
 await PlatformAdminSeeder.SeedAsync(app);
 await MobileAuthenticationSeeder.SeedAsync(app);
