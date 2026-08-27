@@ -293,6 +293,15 @@ else
             </div>
             @if (canManage)
             {
+                @if (string.Equals(access.Organisation.BaseCurrency, "FJD", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="d-flex align-items-center gap-3 mb-3">
+                        <button type="button" class="btn btn-outline-primary" @onclick="RefreshOfficialRates" disabled="@refreshingRates">
+                            @(refreshingRates ? "Updating rates..." : "Update official rates")
+                        </button>
+                        <span class="form-text">Imports the latest indicative USD, AUD and NZD rates published by the Reserve Bank of Fiji. A bank or manual rate for the same date remains in control.</span>
+                    </div>
+                }
                 <EditForm Model="rateModel" OnValidSubmit="SaveRate" FormName="transaction-exchange-rate">
                     <DataAnnotationsValidator />
                     <div class="row align-items-end">
@@ -474,7 +483,7 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private OrganisationBranding? branding; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked, uploadingLogo; private int logoInputKey; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private CurrencyModel currencyModel = new(); private RateModel rateModel = new(); private IReadOnlyList<CurrencyOption> currencies = []; private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private OrganisationBranding? branding; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked, uploadingLogo, refreshingRates; private int logoInputKey; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private CurrencyModel currencyModel = new(); private RateModel rateModel = new(); private IReadOnlyList<CurrencyOption> currencies = []; private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
     private string? LogoDataUrl => branding is null ? null : $"data:{branding.LogoContentType};base64,{Convert.ToBase64String(branding.LogoContent)}";
@@ -830,6 +839,26 @@ else
         {
             statusClass = "alert-danger";
             status = ex.Message;
+        }
+    }
+
+    private async Task RefreshOfficialRates()
+    {
+        refreshingRates = true;
+        try
+        {
+            var effectiveDate = await CurrencyService.RefreshOfficialRatesAsync(userId, OrganisationId);
+            statusClass = "alert-success";
+            status = $"Official USD, AUD and NZD reference rates updated for {effectiveDate:dd MMM yyyy}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
+        {
+            statusClass = "alert-danger";
+            status = $"Official rates could not be updated. {ex.Message}";
+        }
+        finally
+        {
+            refreshingRates = false;
         }
     }
 

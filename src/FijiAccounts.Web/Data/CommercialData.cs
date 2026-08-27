@@ -270,6 +270,7 @@ public sealed class SalesInvoice
     public decimal Subtotal { get; set; }
     public decimal VatTotal { get; set; }
     public decimal Total { get; set; }
+    public decimal TransactionAmountPaid { get; set; }
     public decimal AmountPaid { get; set; }
     public decimal AmountCredited { get; set; }
     public bool? IsTaxInvoice { get; set; }
@@ -397,6 +398,10 @@ public sealed class CustomerReceipt
     public DateOnly ReceiptDate { get; set; }
     [MaxLength(80)] public required string Reference { get; set; }
     public decimal Amount { get; set; }
+    [MaxLength(3)] public string Currency { get; set; } = "FJD";
+    public decimal TransactionAmount { get; set; }
+    public decimal ExchangeRateToBase { get; set; } = 1m;
+    public decimal RealisedExchangeDifference { get; set; }
     public Guid BankAccountId { get; set; }
     public LedgerAccount BankAccount { get; set; } = null!;
     public Guid PostedJournalId { get; set; }
@@ -413,6 +418,7 @@ public sealed class CustomerReceiptAllocation
     public CustomerReceipt CustomerReceipt { get; set; } = null!;
     public Guid SalesInvoiceId { get; set; }
     public SalesInvoice SalesInvoice { get; set; } = null!;
+    public decimal TransactionAmount { get; set; }
     public decimal Amount { get; set; }
 }
 

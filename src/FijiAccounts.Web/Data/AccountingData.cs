@@ -55,11 +55,13 @@ public static class FijiStarterChart
 New("3100", "Retained Earnings", AccountType.Equity),
 New("3200", "Opening Balance Equity", AccountType.Equity),
             New("4000", "Sales", AccountType.Revenue), New("4100", "Other Income", AccountType.Revenue),
+            New("4300", "Foreign Exchange Gains", AccountType.Revenue),
             New("5000", "Cost of Sales", AccountType.Expense), New("6000", "Wages and Salaries", AccountType.Expense),
             New("6100", "Rent", AccountType.Expense), New("6200", "Utilities", AccountType.Expense),
             New("6300", "Professional Fees", AccountType.Expense), New("6400", "Bank Fees and Charges", AccountType.Expense),
             New("6500", "Office Consumables", AccountType.Expense),
             New("6600", "IT & Computer Expenses", AccountType.Expense),
+            New("6950", "Foreign Exchange Losses", AccountType.Expense),
             New("6900", "Other Operating Expenses", AccountType.Expense)
         ];
     }

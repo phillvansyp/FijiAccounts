@@ -17,7 +17,8 @@ public sealed record SupplierPaymentRequest(
     string Reference,
     decimal Amount,
     Guid BankAccountId,
-    Guid? StatementLineId = null);
+    Guid? StatementLineId = null,
+    decimal? TransactionAmount = null);
 
 public sealed class PurchasingService(
     ApplicationDbContext db,
@@ -492,7 +493,7 @@ public sealed class PurchasingService(
         await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
             ct);
-        var bill = await db.SupplierBills.AsNoTracking().SingleOrDefaultAsync(
+        var bill = await db.SupplierBills.AsNoTracking().Include(x => x.Organisation).SingleOrDefaultAsync(
             x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct)
             ?? throw new InvalidOperationException("Supplier bill not found.");
         if (bill.BranchId is Guid branchId && bill.DivisionId is Guid divisionId &&
@@ -506,10 +507,18 @@ public sealed class PurchasingService(
             throw new InvalidOperationException("Only outstanding posted supplier bills can be paid.");
         }
         var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited;
+        var isBaseCurrency = string.Equals(bill.Currency, bill.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+        var transactionAmount = request.TransactionAmount ?? (isBaseCurrency ? request.Amount : 0m);
+        if (transactionAmount <= 0)
+        {
+            throw new InvalidOperationException($"Enter the amount paid in {bill.Currency}.");
+        }
+        var settlement = ForeignCurrencySettlement.Calculate(transactionAmount, bill.ExchangeRateToBase, request.Amount);
+        var allocatedBaseAmount = Math.Min(outstanding, settlement.DocumentBaseAmount);
         var pending = await db.SupplierPaymentApprovals.AsNoTracking()
             .Where(x => x.SupplierBillId == bill.Id && x.Status == SupplierPaymentApprovalStatus.Pending)
-            .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
-        if (request.Amount <= 0 || request.Amount > outstanding - pending)
+            .SumAsync(x => (decimal?)x.AllocatedBaseAmount, ct) ?? 0m;
+        if (allocatedBaseAmount <= 0 || allocatedBaseAmount > outstanding - pending + 0.01m)
         {
             throw new InvalidOperationException(
                 $"The requested payment must be between $0.01 and ${Math.Max(0, outstanding - pending):N2} after pending requests.");
@@ -552,6 +561,10 @@ public sealed class PurchasingService(
             PaymentDate = request.Date,
             Reference = request.Reference.Trim(),
             Amount = request.Amount,
+            Currency = bill.Currency,
+            TransactionAmount = transactionAmount,
+            ExchangeRateToBase = settlement.SettlementRateToBase,
+            AllocatedBaseAmount = allocatedBaseAmount,
             BankAccountId = request.BankAccountId,
             StatementLineId = request.StatementLineId,
             PurchaseApprovalPolicyId = policy?.Id,
@@ -599,7 +612,7 @@ public sealed class PurchasingService(
 
         var payment = await PostPaymentAsync(userId, new SupplierPaymentRequest(
             organisationId, approval.SupplierBillId, approval.PaymentDate, approval.Reference,
-            approval.Amount, approval.BankAccountId, approval.StatementLineId), approval, ct);
+            approval.Amount, approval.BankAccountId, approval.StatementLineId, approval.TransactionAmount), approval, ct);
         await transaction.CommitAsync(ct);
         notifications.PublishOrganisationUpdate(organisationId);
         return payment;
@@ -742,13 +755,20 @@ public sealed class PurchasingService(
                 throw new InvalidOperationException("The supplier payment must exactly match the outgoing statement amount.");
             }
         }
-        var bill = await db.SupplierBills.Include(x => x.Supplier).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
-        if (bill.Status is BillStatus.Voided or BillStatus.Credited)
+        var bill = await db.SupplierBills.Include(x => x.Supplier).Include(x => x.Organisation).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
+        if (bill.Status is BillStatus.Voided or BillStatus.Credited or BillStatus.Paid)
         {
             throw new InvalidOperationException(
                 "Only outstanding posted supplier bills can be paid.");
         }
-        var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited; if (request.Amount <= 0 || request.Amount > outstanding) throw new InvalidOperationException($"Payment must be between $0.01 and ${outstanding:N2}.");
+        var outstanding = bill.Total - bill.AmountPaid - bill.AmountCredited;
+        var isBaseCurrency = string.Equals(bill.Currency, bill.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+        var transactionAmount = request.TransactionAmount ?? (isBaseCurrency ? request.Amount : 0m);
+        if (transactionAmount <= 0) throw new InvalidOperationException($"Enter the amount paid in {bill.Currency}.");
+        var settlement = ForeignCurrencySettlement.Calculate(transactionAmount, bill.ExchangeRateToBase, request.Amount);
+        var allocatedBaseAmount = Math.Min(outstanding, settlement.DocumentBaseAmount);
+        if (settlement.DocumentBaseAmount > outstanding + 0.01m) throw new InvalidOperationException($"Payment exceeds the outstanding balance of {bill.Currency} {(outstanding / bill.ExchangeRateToBase):N2}.");
+        var realisedDifference = request.Amount - allocatedBaseAmount;
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, ct) ?? throw new InvalidOperationException("Select an active bank account.");
         var payable =
     await db.LedgerAccounts.SingleOrDefaultAsync(
@@ -764,22 +784,42 @@ public sealed class PurchasingService(
             throw new InvalidOperationException(
                 "Accounts Payable (2000) must be an active Liability account.");
         }
+        LedgerAccount? exchangeAccount = null;
+        if (realisedDifference != 0)
+        {
+            var accountCode = realisedDifference > 0 ? "6950" : "4300";
+            exchangeAccount = await db.LedgerAccounts.SingleOrDefaultAsync(
+                x => x.OrganisationId == request.OrganisationId && x.Code == accountCode && x.IsActive,
+                ct) ?? throw new InvalidOperationException(
+                    $"Foreign Exchange {(realisedDifference > 0 ? "Losses (6950)" : "Gains (4300)")} must be active.");
+        }
+        var paymentLines = new List<JournalLineInput>
+        {
+            new(payable.Id, bill.BillNumber, allocatedBaseAmount, 0),
+            new(bank.Id, bill.BillNumber, 0, request.Amount)
+        };
+        if (realisedDifference > 0)
+        {
+            paymentLines.Add(new(exchangeAccount!.Id, $"FX loss {bill.BillNumber}", realisedDifference, 0));
+        }
+        else if (realisedDifference < 0)
+        {
+            paymentLines.Add(new(exchangeAccount!.Id, $"FX gain {bill.BillNumber}", 0, -realisedDifference));
+        }
         var journalRequest = new JournalPostRequest(
             request.OrganisationId,
             request.Date,
             request.Reference,
             $"Payment for {bill.BillNumber}",
-            [
-                new(payable.Id, bill.BillNumber, request.Amount, 0),
-                new(bank.Id, bill.BillNumber, 0, request.Amount)
-            ],
+            paymentLines,
             bill.BranchId,
             bill.DivisionId);
         var journal = approval is null
             ? await posting.PostAsync(userId, journalRequest, ct)
             : await posting.PostApprovedWorkflowAsync(userId, journalRequest, ct);
-        var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
-        bill.AmountPaid += request.Amount; bill.Status = bill.AmountPaid + bill.AmountCredited == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
+        var payment = new SupplierPayment { OrganisationId = request.OrganisationId, BranchId = bill.BranchId, DivisionId = bill.DivisionId, SupplierId = bill.SupplierId, SupplierBillId = bill.Id, PaymentDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, Currency = bill.Currency, TransactionAmount = transactionAmount, ExchangeRateToBase = settlement.SettlementRateToBase, AllocatedBaseAmount = allocatedBaseAmount, RealisedExchangeDifference = realisedDifference, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        bill.TransactionAmountPaid += transactionAmount;
+        bill.AmountPaid += allocatedBaseAmount; bill.Status = bill.Total - bill.AmountPaid - bill.AmountCredited <= 0.01m ? BillStatus.Paid : BillStatus.PartPaid;
 
         if (bill.Status == BillStatus.Paid)
         {
@@ -789,7 +829,7 @@ public sealed class PurchasingService(
                 publishUpdate: false,
                 ct: ct);
         }
-        db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Amount, SupplierPaymentApprovalId = approval?.Id }));
+        db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Currency, payment.TransactionAmount, payment.Amount, payment.ExchangeRateToBase, payment.RealisedExchangeDifference, SupplierPaymentApprovalId = approval?.Id }));
         if (approval is not null)
         {
             approval.Status = SupplierPaymentApprovalStatus.Approved;
@@ -895,7 +935,7 @@ public sealed class PurchasingService(
         var reference = $"REV-{payment.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse payment {payment.Reference}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse supplier payment: {reason.Trim()}", lines), ct);
         var reversal = new SupplierPaymentReversal { OrganisationId = organisationId, SupplierPaymentId = payment.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId };
-        payment.SupplierBill.AmountPaid -= payment.Amount; if (payment.SupplierBill.AmountPaid < 0) throw new InvalidOperationException("Payment history is inconsistent and cannot be reversed."); var remaining = payment.SupplierBill.Total - payment.SupplierBill.AmountPaid - payment.SupplierBill.AmountCredited; payment.SupplierBill.Status = remaining <= 0 ? BillStatus.Credited : payment.SupplierBill.AmountPaid > 0 || payment.SupplierBill.AmountCredited > 0 ? BillStatus.PartPaid : BillStatus.Posted;
+        payment.SupplierBill.AmountPaid -= payment.AllocatedBaseAmount; payment.SupplierBill.TransactionAmountPaid -= payment.TransactionAmount; if (payment.SupplierBill.AmountPaid < 0 || payment.SupplierBill.TransactionAmountPaid < 0) throw new InvalidOperationException("Payment history is inconsistent and cannot be reversed."); var remaining = payment.SupplierBill.Total - payment.SupplierBill.AmountPaid - payment.SupplierBill.AmountCredited; payment.SupplierBill.Status = remaining <= 0 ? BillStatus.Credited : payment.SupplierBill.AmountPaid > 0 || payment.SupplierBill.AmountCredited > 0 ? BillStatus.PartPaid : BillStatus.Posted;
         db.SupplierPaymentReversals.Add(reversal); db.AuditEvents.Add(Audit(organisationId, userId, "SupplierPaymentReversed", nameof(SupplierPaymentReversal), reversal.Id, new { payment.Reference, payment.Amount, reason, ReversalJournalId = journal.Id })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(organisationId); return reversal;
     }
 
@@ -910,6 +950,10 @@ public sealed class PurchasingService(
         approval.PaymentDate,
         approval.Reference,
         approval.Amount,
+        approval.Currency,
+        approval.TransactionAmount,
+        approval.ExchangeRateToBase,
+        approval.AllocatedBaseAmount,
         approval.BankAccountId,
         approval.StatementLineId,
         approval.PurchaseApprovalPolicyId,

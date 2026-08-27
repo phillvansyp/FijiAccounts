@@ -13,7 +13,8 @@ public sealed record CustomerReceiptRequest(
     string Reference,
     decimal Amount,
     Guid BankAccountId,
-    Guid? StatementLineId = null);
+    Guid? StatementLineId = null,
+    decimal? TransactionAmount = null);
 
 public sealed class CustomerReceiptService(
     ApplicationDbContext db,
@@ -46,10 +47,26 @@ public sealed class CustomerReceiptService(
                 throw new InvalidOperationException("The customer receipt must exactly match the incoming statement amount.");
             }
         }
-        var invoice = await db.SalesInvoices.Include(x => x.Customer).SingleOrDefaultAsync(x => x.Id == request.SalesInvoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found in this organisation.");
-        if (invoice.Status is InvoiceStatus.Voided or InvoiceStatus.Draft or InvoiceStatus.Credited) throw new InvalidOperationException("Only outstanding posted invoices can receive payments.");
+        var invoice = await db.SalesInvoices.Include(x => x.Customer).Include(x => x.Organisation).SingleOrDefaultAsync(x => x.Id == request.SalesInvoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found in this organisation.");
+        if (invoice.Status is InvoiceStatus.Voided or InvoiceStatus.Draft or InvoiceStatus.Credited or InvoiceStatus.Paid) throw new InvalidOperationException("Only outstanding posted invoices can receive payments.");
         var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
-        if (request.Amount > outstanding) throw new InvalidOperationException($"Receipt exceeds the outstanding balance of ${outstanding:N2}.");
+        var isBaseCurrency = string.Equals(invoice.Currency, invoice.Organisation?.BaseCurrency ?? "FJD", StringComparison.OrdinalIgnoreCase);
+        var transactionAmount = request.TransactionAmount ?? (isBaseCurrency ? request.Amount : 0m);
+        if (transactionAmount <= 0)
+        {
+            throw new InvalidOperationException($"Enter the amount received in {invoice.Currency}.");
+        }
+        var settlement = ForeignCurrencySettlement.Calculate(
+            transactionAmount,
+            invoice.ExchangeRateToBase,
+            request.Amount);
+        if (settlement.DocumentBaseAmount > outstanding + 0.01m)
+        {
+            throw new InvalidOperationException(
+                $"Receipt exceeds the outstanding balance of {invoice.Currency} {(outstanding / invoice.ExchangeRateToBase):N2}.");
+        }
+        var carryingAmount = Math.Min(outstanding, settlement.DocumentBaseAmount);
+        var realisedDifference = request.Amount - carryingAmount;
         var bank = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == request.BankAccountId && x.OrganisationId == request.OrganisationId && x.IsActive && x.IsBankAccount, cancellationToken) ?? throw new InvalidOperationException("Select an active bank account.");
         var receivable =
     await db.LedgerAccounts.SingleOrDefaultAsync(
@@ -66,11 +83,36 @@ if (receivable is null ||
         "Accounts Receivable (1100) must be an active Asset account.");
 }
 
+        LedgerAccount? exchangeAccount = null;
+        if (realisedDifference != 0)
+        {
+            var accountCode = realisedDifference > 0 ? "4300" : "6950";
+            exchangeAccount = await db.LedgerAccounts.SingleOrDefaultAsync(
+                x => x.OrganisationId == request.OrganisationId && x.Code == accountCode && x.IsActive,
+                cancellationToken) ?? throw new InvalidOperationException(
+                    $"Foreign Exchange {(realisedDifference > 0 ? "Gains (4300)" : "Losses (6950)")} must be active.");
+        }
+
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.Date, request.Reference, $"Receipt for {invoice.InvoiceNumber}", [new(bank.Id, invoice.InvoiceNumber, request.Amount, 0), new(receivable.Id, invoice.InvoiceNumber, 0, request.Amount)], invoice.BranchId, invoice.DivisionId), cancellationToken);
-        var receipt = new CustomerReceipt { OrganisationId = request.OrganisationId, BranchId = invoice.BranchId, DivisionId = invoice.DivisionId, CustomerId = invoice.CustomerId, ReceiptDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
-        receipt.Allocations.Add(new CustomerReceiptAllocation { SalesInvoiceId = invoice.Id, Amount = request.Amount });
-        invoice.AmountPaid += request.Amount; invoice.Status = invoice.AmountPaid + invoice.AmountCredited == invoice.Total ? InvoiceStatus.Paid : InvoiceStatus.PartPaid;
+        var lines = new List<JournalLineInput>
+        {
+            new(bank.Id, invoice.InvoiceNumber, request.Amount, 0),
+            new(receivable.Id, invoice.InvoiceNumber, 0, carryingAmount)
+        };
+        if (realisedDifference > 0)
+        {
+            lines.Add(new(exchangeAccount!.Id, $"FX gain {invoice.InvoiceNumber}", 0, realisedDifference));
+        }
+        else if (realisedDifference < 0)
+        {
+            lines.Add(new(exchangeAccount!.Id, $"FX loss {invoice.InvoiceNumber}", -realisedDifference, 0));
+        }
+        var journal = await posting.PostAsync(userId, new JournalPostRequest(request.OrganisationId, request.Date, request.Reference, $"Receipt for {invoice.InvoiceNumber}", lines, invoice.BranchId, invoice.DivisionId), cancellationToken);
+        var receipt = new CustomerReceipt { OrganisationId = request.OrganisationId, BranchId = invoice.BranchId, DivisionId = invoice.DivisionId, CustomerId = invoice.CustomerId, ReceiptDate = request.Date, Reference = request.Reference.Trim(), Amount = request.Amount, Currency = invoice.Currency, TransactionAmount = transactionAmount, ExchangeRateToBase = settlement.SettlementRateToBase, RealisedExchangeDifference = realisedDifference, BankAccountId = bank.Id, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        receipt.Allocations.Add(new CustomerReceiptAllocation { SalesInvoiceId = invoice.Id, TransactionAmount = transactionAmount, Amount = carryingAmount });
+        invoice.TransactionAmountPaid += transactionAmount;
+        invoice.AmountPaid += carryingAmount;
+        invoice.Status = invoice.Total - invoice.AmountPaid - invoice.AmountCredited <= 0.01m ? InvoiceStatus.Paid : InvoiceStatus.PartPaid;
 
         if (invoice.Status == InvoiceStatus.Paid)
         {
@@ -81,7 +123,7 @@ if (receivable is null ||
                 ct: cancellationToken);
         }
         db.CustomerReceipts.Add(receipt);
-        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "CustomerReceiptRecorded", EntityType = nameof(CustomerReceipt), EntityId = receipt.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, receipt.Reference, receipt.Amount }) });
+        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "CustomerReceiptRecorded", EntityType = nameof(CustomerReceipt), EntityId = receipt.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, receipt.Reference, receipt.Currency, receipt.TransactionAmount, receipt.Amount, receipt.ExchangeRateToBase, receipt.RealisedExchangeDifference }) });
         if (statement is not null)
         {
             var bankJournalLine = journal.Lines.Single(x => x.LedgerAccountId == bank.Id);
@@ -130,7 +172,7 @@ await using var transaction =
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == receipt.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reference = $"REV-{receipt.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse receipt {receipt.Reference}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse customer receipt: {reason.Trim()}", lines), ct);
-        foreach (var allocation in receipt.Allocations) { var invoice = allocation.SalesInvoice; invoice.AmountPaid -= allocation.Amount; if (invoice.AmountPaid < 0) throw new InvalidOperationException("Receipt allocation history is inconsistent and cannot be reversed."); var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; invoice.Status = outstanding <= 0 ? (invoice.AmountCredited > 0 ? InvoiceStatus.Credited : InvoiceStatus.Paid) : invoice.AmountPaid > 0 || invoice.AmountCredited > 0 ? InvoiceStatus.PartPaid : InvoiceStatus.Posted; }
+        foreach (var allocation in receipt.Allocations) { var invoice = allocation.SalesInvoice; invoice.AmountPaid -= allocation.Amount; invoice.TransactionAmountPaid -= allocation.TransactionAmount; if (invoice.AmountPaid < 0 || invoice.TransactionAmountPaid < 0) throw new InvalidOperationException("Receipt allocation history is inconsistent and cannot be reversed."); var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; invoice.Status = outstanding <= 0 ? (invoice.AmountCredited > 0 ? InvoiceStatus.Credited : InvoiceStatus.Paid) : invoice.AmountPaid > 0 || invoice.AmountCredited > 0 ? InvoiceStatus.PartPaid : InvoiceStatus.Posted; }
         var reversal = new CustomerReceiptReversal { OrganisationId = organisationId, CustomerReceiptId = receipt.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId }; db.CustomerReceiptReversals.Add(reversal); db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "CustomerReceiptReversed", EntityType = nameof(CustomerReceiptReversal), EntityId = reversal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { receipt.Reference, receipt.Amount, reason, ReversalJournalId = journal.Id }) }); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); notifications.PublishOrganisationUpdate(organisationId); return reversal;
     }
 }

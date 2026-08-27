@@ -12,6 +12,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
+@inject TransactionCurrencyService CurrencyService
 @inject PurchaseApprovalPolicyService ApprovalPolicies
 @inject SupplierBillAttachmentService BillAttachments
 @inject SupplierCreditNoteService SupplierCredits
@@ -183,7 +184,8 @@ else
                 <label class="form-label">Payment date</label>
 
                 <InputDate class="form-control"
-                           @bind-Value="paymentDate" />
+                           @bind-Value="paymentDate"
+                           @bind-Value:after="RefreshPaymentRate" />
             </div>
 
             <div class="col-md-3">
@@ -214,15 +216,32 @@ else
                        @bind:event="oninput" />
             </div>
 
+            @if (IsForeignBill)
+            {
             <div class="col-md-2">
-                <label class="form-label">Amount</label>
+                <label class="form-label">Amount (@bill.Currency)</label>
 
                 <input type="number"
                        step="0.01"
                        class="form-control"
-                       @bind="paymentAmount"
-                       @bind:event="oninput" />
+                       @bind="paymentTransactionAmount"
+                       @bind:event="oninput"
+                       @bind:after="PaymentTransactionAmountChanged" />
             </div>
+
+            <div class="col-md-2">
+                <label class="form-label">Actual bank amount (@access.Organisation.BaseCurrency)</label>
+                <input type="number" step="0.01" class="form-control" @bind="paymentAmount" @bind:event="oninput" />
+                <div class="form-text">Reference rate: @paymentReferenceRate.ToString("0.########")</div>
+            </div>
+            }
+            else
+            {
+            <div class="col-md-2">
+                <label class="form-label">Amount (@access.Organisation.BaseCurrency)</label>
+                <input type="number" step="0.01" class="form-control" @bind="paymentAmount" @bind:event="oninput" @bind:after="BasePaymentAmountChanged" />
+            </div>
+            }
 
             <div class="col-md-2 d-flex align-items-end gap-2">
 
@@ -239,6 +258,11 @@ else
             </div>
 
         </div>
+
+        @if (IsForeignBill)
+        {
+            <div class="alert alert-info mt-3 mb-0">The bill remains at its original rate of @bill.ExchangeRateToBase.ToString("0.########"). This payment will record an estimated realised FX @(PaymentFxDifference >= 0 ? "loss" : "gain") of @access.Organisation.BaseCurrency @Math.Abs(PaymentFxDifference).ToString("N2").</div>
+        }
 
     </section>
 }
@@ -1108,6 +1132,8 @@ private DateOnly paymentDate =
 
 private string paymentReference = "";
 private decimal paymentAmount;
+private decimal paymentTransactionAmount;
+private decimal paymentReferenceRate = 1m;
 private Guid paymentBankAccountId;
 private Guid? rejectingApprovalId;
 private string paymentRejectionReason = "";
@@ -1119,6 +1145,8 @@ private string paymentRejectionReason = "";
         bill is null
             ? 0
             : bill.Total - bill.AmountPaid - bill.AmountCredited;
+    private bool IsForeignBill => bill is not null && access is not null && !string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+    private decimal PaymentFxDifference => bill is null ? 0m : paymentAmount - decimal.Round(paymentTransactionAmount * bill.ExchangeRateToBase, 2, MidpointRounding.AwayFromZero);
 
     private bool HasTrackedItems =>
         bill?.Lines.Any(x => x.ProductItem?.Kind == ProductKind.TrackedItem) == true;
@@ -1157,7 +1185,7 @@ private string paymentRejectionReason = "";
         }
     }
 
-    private void OpenPayment()
+    private async Task OpenPayment()
 {
     showPayment = true;
     showCredit = false;
@@ -1169,13 +1197,28 @@ private string paymentRejectionReason = "";
         DateOnly.FromDateTime(DateTime.Today);
 
     paymentReference = "";
-    paymentAmount = AmountDue;
+    paymentTransactionAmount = bill is null ? 0m : decimal.Round(AmountDue / bill.ExchangeRateToBase, 2, MidpointRounding.AwayFromZero);
+    await RefreshPaymentRate();
 
     paymentBankAccountId =
         bankAccounts.Count == 1
             ? bankAccounts[0].Id
             : Guid.Empty;
 }
+
+private async Task RefreshPaymentRate()
+{
+    if (bill is null || access is null) return;
+    paymentReferenceRate = IsForeignBill
+        ? await CurrencyService.FindRateAsync(userId, OrganisationId, bill.Currency, paymentDate) ?? bill.ExchangeRateToBase
+        : 1m;
+    PaymentTransactionAmountChanged();
+}
+
+private void PaymentTransactionAmountChanged() =>
+    paymentAmount = decimal.Round(paymentTransactionAmount * paymentReferenceRate, 2, MidpointRounding.AwayFromZero);
+
+private void BasePaymentAmountChanged() => paymentTransactionAmount = paymentAmount;
 
 private async Task RecordPayment()
 {
@@ -1187,7 +1230,8 @@ private async Task RecordPayment()
                 paymentDate,
                 paymentReference,
                 paymentAmount,
-                paymentBankAccountId);
+                paymentBankAccountId,
+                TransactionAmount: paymentTransactionAmount);
 
         if (RequiresPaymentApproval)
         {
