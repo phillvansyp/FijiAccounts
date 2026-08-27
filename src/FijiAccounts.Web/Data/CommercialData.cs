@@ -13,6 +13,7 @@ public sealed class BusinessParty
     public Organisation Organisation { get; set; } = null!;
     [MaxLength(160)] public required string Name { get; set; }
     [MaxLength(320)] public string? Email { get; set; }
+    [MaxLength(320)] public string? AccountsEmail { get; set; }
     [MaxLength(40)] public string? Phone { get; set; }
     [MaxLength(32)] public string? Tin { get; set; }
     [MaxLength(80)] public string? VatRegistrationNumber { get; set; }

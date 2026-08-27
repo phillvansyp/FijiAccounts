@@ -23,7 +23,14 @@ public sealed record CreateBusinessPartyRequest(
     string? SupplierAccountNumber = null,
     string? VatRegistrationNumber = null,
     string? DefaultSalesCurrency = null,
-    string? DefaultPurchaseCurrency = null);
+    string? DefaultPurchaseCurrency = null,
+    string? AccountsEmail = null);
+
+public sealed record UpdateBusinessPartyEmailsRequest(
+    Guid OrganisationId,
+    Guid BusinessPartyId,
+    string? Email,
+    string? AccountsEmail);
 
 public sealed record UpdateCustomerDefaultsRequest(
     Guid OrganisationId,
@@ -121,12 +128,8 @@ public sealed class BusinessPartyService(
                 cancellationToken);
         }
 
-        var email = OptionalText(request.Email, 320, "email address");
-        if (email is not null && !new EmailAddressAttribute().IsValid(email))
-        {
-            throw new InvalidOperationException(
-                "Enter a valid email address.");
-        }
+        var email = ValidateEmail(request.Email, "email address");
+        var accountsEmail = ValidateEmail(request.AccountsEmail, "accounts email address");
 
         var party =
             new BusinessParty
@@ -134,6 +137,7 @@ public sealed class BusinessPartyService(
                 OrganisationId = request.OrganisationId,
                 Name = RequiredText(request.Name, 160, "contact name"),
                 Email = email,
+                AccountsEmail = accountsEmail,
                 Tin = OptionalText(
                     request.Tin,
                     32,
@@ -197,6 +201,7 @@ public sealed class BusinessPartyService(
             {
                 party.Name,
                 party.Email,
+                party.AccountsEmail,
                 party.Tin,
                 InitialSupplierAccountNumber = initialSupplierAccountNumber,
                 party.VatRegistrationNumber,
@@ -221,6 +226,38 @@ public sealed class BusinessPartyService(
         await db.SaveChangesAsync(cancellationToken);
 
         return party;
+    }
+
+    public async Task UpdateEmailsAsync(
+        string userId,
+        UpdateBusinessPartyEmailsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, request.OrganisationId, cancellationToken);
+        var party = await db.BusinessParties.SingleOrDefaultAsync(
+            x => x.OrganisationId == request.OrganisationId &&
+                 x.Id == request.BusinessPartyId &&
+                 x.IsActive,
+            cancellationToken)
+            ?? throw new InvalidOperationException("Contact not found.");
+
+        var email = ValidateEmail(request.Email, "email address");
+        var accountsEmail = ValidateEmail(request.AccountsEmail, "accounts email address");
+        if (party.Email == email && party.AccountsEmail == accountsEmail)
+        {
+            return;
+        }
+
+        var previous = new { party.Email, party.AccountsEmail };
+        party.Email = email;
+        party.AccountsEmail = accountsEmail;
+        db.AuditEvents.Add(CreateAuditEvent(
+            request.OrganisationId,
+            userId,
+            "BusinessPartyEmailsUpdated",
+            party.Id,
+            new { party.Name, Old = previous, New = new { party.Email, party.AccountsEmail } }));
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UpdateCustomerDefaultsAsync(
@@ -283,6 +320,17 @@ public sealed class BusinessPartyService(
             party.Id,
             new { party.Name, Old = previous, New = updated }));
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static string? ValidateEmail(string? value, string label)
+    {
+        var email = OptionalText(value, 320, label);
+        if (email is not null && !new EmailAddressAttribute().IsValid(email))
+        {
+            throw new InvalidOperationException($"Enter a valid {label}.");
+        }
+
+        return email;
     }
 
     public async Task UpdateSupplierDefaultsAsync(

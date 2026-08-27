@@ -619,6 +619,10 @@ namespace FijiAccounts.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AccountsEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Address")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
