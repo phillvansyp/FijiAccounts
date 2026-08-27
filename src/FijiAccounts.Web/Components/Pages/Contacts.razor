@@ -237,11 +237,11 @@ else
                                     <div class="row">
                                         <div class="col-md-6 mb-3">
                                             <label class="form-label">Primary email</label>
-                                            <InputText class="form-control" @bind-Value="editingEmail" />
+                                            <input type="email" class="form-control" @bind="editingEmail" @bind:event="oninput" />
                                         </div>
                                         <div class="col-md-6 mb-3">
                                             <label class="form-label">Accounts email</label>
-                                            <InputText class="form-control" @bind-Value="editingAccountsEmail" />
+                                            <input type="email" class="form-control" @bind="editingAccountsEmail" @bind:event="oninput" />
                                             <div class="form-text">Used first for invoices and account documents.</div>
                                         </div>
                                     </div>
