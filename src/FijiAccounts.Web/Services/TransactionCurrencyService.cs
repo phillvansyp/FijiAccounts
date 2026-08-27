@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Services;
 
@@ -14,7 +15,8 @@ public sealed class TransactionCurrencyService(
     IHttpClientFactory? httpClientFactory = null)
 {
     private const string RbfSource = "Reserve Bank of Fiji indicative daily rate";
-    private static readonly Uri RbfRatesUri = new("https://www.rbf.gov.fj/");
+    private static readonly Uri RbfRatesUri = new(
+        "https://www.rbf.gov.fj/wp-json/wp/v2/pages?slug=home&_fields=content");
     private static readonly Regex RbfDatePattern = new(
         @"Exchange Rates</strong></a></h2>\s*<p[^>]*>\s*<span[^>]*>(?<date>[^<]+)</span>",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -233,6 +235,14 @@ public sealed class TransactionCurrencyService(
                 {
                     // Manual rates and the last cached official rate remain available offline.
                 }
+                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // A slow source must not stop the transaction screen loading.
+                }
+                catch (JsonException)
+                {
+                    // A malformed source response must not stop manual rate entry.
+                }
                 catch (InvalidOperationException ex) when (
                     ex.Message.StartsWith("The Reserve Bank of Fiji", StringComparison.Ordinal))
                 {
@@ -374,10 +384,15 @@ public sealed class TransactionCurrencyService(
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, RbfRatesUri);
-        request.Headers.UserAgent.ParseAdd("Mozilla/5.0 AccountIsland/1.0");
+        request.Headers.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 Chrome/127.0.0.0 Safari/537.36");
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.AcceptLanguage.ParseAdd("en-NZ,en;q=0.9");
         using var response = await httpClientFactory.CreateClient().SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
-        var html = await response.Content.ReadAsStringAsync(ct);
+        var payload = await response.Content.ReadAsStringAsync(ct);
+        var html = ExtractRbfPageContent(payload);
         var publication = ParseRbfRates(html);
 
         foreach (var quote in publication.Rates)
@@ -470,6 +485,26 @@ public sealed class TransactionCurrencyService(
         }
 
         return new RbfRatePublication(effectiveDate, rates);
+    }
+
+    internal static string ExtractRbfPageContent(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        var pages = document.RootElement;
+        if (pages.ValueKind != JsonValueKind.Array || pages.GetArrayLength() == 0)
+        {
+            throw new InvalidOperationException(
+                "The Reserve Bank of Fiji exchange-rate page could not be read.");
+        }
+
+        var content = pages[0].GetProperty("content").GetProperty("rendered").GetString();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException(
+                "The Reserve Bank of Fiji exchange-rate page could not be read.");
+        }
+
+        return WebUtility.HtmlDecode(content);
     }
 }
 
