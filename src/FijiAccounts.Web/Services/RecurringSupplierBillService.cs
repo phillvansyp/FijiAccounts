@@ -25,7 +25,9 @@ public sealed record RecurringSupplierBillRequest(
     int DueDays,
     IReadOnlyList<RecurringSupplierBillLineRequest> Lines,
     Guid? BranchId = null,
-    Guid? DivisionId = null);
+    Guid? DivisionId = null,
+    string? Currency = null,
+    decimal? ExchangeRateToBase = null);
 
 public sealed class RecurringSupplierBillService(
     ApplicationDbContext db,
@@ -56,6 +58,7 @@ public sealed class RecurringSupplierBillService(
         await ValidateRequestAsync(
             request,
             ct);
+        var currency = await ResolveCurrencyAsync(request, ct);
 
         var recurring =
             new RecurringSupplierBill
@@ -69,6 +72,8 @@ public sealed class RecurringSupplierBillService(
                 StartDate = request.StartDate,
                 NextBillDate = request.StartDate,
                 DueDays = request.DueDays,
+                Currency = currency.Code,
+                ExchangeRateToBase = currency.Rate,
                 CreatedByUserId = userId,
                 Lines = BuildLines(request)
             };
@@ -124,6 +129,7 @@ public sealed class RecurringSupplierBillService(
         await ValidateRequestAsync(
             request,
             ct);
+        var currency = await ResolveCurrencyAsync(request, ct);
 
         db.ChangeTracker.Clear();
 
@@ -167,6 +173,8 @@ public sealed class RecurringSupplierBillService(
         recurring.StartDate = request.StartDate;
         recurring.NextBillDate = request.StartDate;
         recurring.DueDays = request.DueDays;
+        recurring.Currency = currency.Code;
+        recurring.ExchangeRateToBase = currency.Rate;
 
         var replacementLines =
             BuildLines(request);
@@ -561,7 +569,9 @@ var recurring =
                                             x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
-                                DivisionId: template.DivisionId),
+                                DivisionId: template.DivisionId,
+                                Currency: template.Currency,
+                                ExchangeRateToBase: template.ExchangeRateToBase),
                             ct);
 
                     db.RecurringSupplierBillGenerations.Add(
@@ -712,6 +722,8 @@ var recurring =
                             scheduledDate),
                         BillDate = scheduledDate,
                         DueDate = scheduledDate.AddDays(template.DueDays),
+                        Currency = template.Currency,
+                        ExchangeRateToBase = template.ExchangeRateToBase,
                         Description = firstLine.Description,
                         Quantity = firstLine.Quantity,
                         UnitPrice = firstLine.UnitPrice,
@@ -764,6 +776,27 @@ var recurring =
         }
 
         return generated;
+    }
+
+    private async Task<(string Code, decimal Rate)> ResolveCurrencyAsync(
+        RecurringSupplierBillRequest request,
+        CancellationToken ct)
+    {
+        var baseCurrency = await db.Organisations.AsNoTracking()
+            .Where(x => x.Id == request.OrganisationId)
+            .Select(x => x.BaseCurrency)
+            .SingleAsync(ct);
+        var code = TransactionCurrencyService.NormalizeCode(
+            string.IsNullOrWhiteSpace(request.Currency) ? baseCurrency : request.Currency);
+        var rate = string.Equals(code, baseCurrency, StringComparison.OrdinalIgnoreCase)
+            ? 1m
+            : request.ExchangeRateToBase ?? throw new InvalidOperationException(
+                $"Enter a {code} to {baseCurrency} exchange rate.");
+        if (rate <= 0)
+        {
+            throw new InvalidOperationException("The exchange rate must be greater than zero.");
+        }
+        return (code, rate);
     }
 
     private async Task<EnterprisePostingDimension> ResolveDimensionAsync(

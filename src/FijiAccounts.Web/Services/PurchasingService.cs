@@ -8,7 +8,7 @@ using FijiAccounts.Web.Data;
 namespace FijiAccounts.Web.Services;
 
 public sealed record SupplierBillLineRequest(string Description, decimal Quantity, decimal UnitPrice, VatTreatment VatTreatment, Guid ExpenseAccountId, Guid? ProductItemId = null, Guid? ProjectId = null, Guid? ProjectCostCodeId = null);
-public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null, bool AmountsIncludeVat = false);
+public sealed record SupplierBillRequest(Guid OrganisationId, Guid SupplierId, string SupplierReference, DateOnly BillDate, DateOnly DueDate, IReadOnlyList<SupplierBillLineRequest> Lines, Guid? BranchId = null, Guid? DivisionId = null, bool AmountsIncludeVat = false, string? Currency = null, decimal? ExchangeRateToBase = null);
 public sealed record SupplierBillAttachmentRequest(string FileName, string ContentType, long OriginalSize, byte[] Content, bool IsCompressed);
 public sealed record SupplierPaymentRequest(
     Guid OrganisationId,
@@ -26,7 +26,8 @@ public sealed class PurchasingService(
     BankReconciliationService reconciliation,
     NotificationService notifications,
     EnterpriseStructureService structures,
-    PurchaseApprovalPolicyService approvalPolicies)
+    PurchaseApprovalPolicyService approvalPolicies,
+    TransactionCurrencyService currencies)
 {
     public Task<SupplierBill> PostBillAsync(
         string userId,
@@ -85,6 +86,23 @@ public sealed class PurchasingService(
             request.DivisionId,
             ct);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, ct);
+        var currency = TransactionCurrencyService.NormalizeCode(
+            string.IsNullOrWhiteSpace(request.Currency) ? organisation.BaseCurrency : request.Currency);
+        await currencies.RequireEnabledAsync(userId, request.OrganisationId, currency, ct);
+        var isBaseCurrency = string.Equals(currency, organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+        var exchangeRateToBase = isBaseCurrency
+            ? 1m
+            : request.ExchangeRateToBase ?? await currencies.FindRateAsync(
+                userId,
+                request.OrganisationId,
+                currency,
+                request.BillDate,
+                ct) ?? throw new InvalidOperationException(
+                    $"Enter a {currency} to {organisation.BaseCurrency} exchange rate for {request.BillDate:dd MMM yyyy}.");
+        if (exchangeRateToBase <= 0)
+        {
+            throw new InvalidOperationException("The exchange rate must be greater than zero.");
+        }
         await ProjectCodingValidator.ValidateAsync(db, request.OrganisationId, dimension.BranchId,
             dimension.DivisionId, request.Lines.Select(x => new ProjectCoding(x.ProjectId, x.ProjectCostCodeId)),
             cancellationToken: ct);
@@ -144,24 +162,32 @@ public sealed class PurchasingService(
                 throw new InvalidOperationException("Every bill line needs a description, positive quantity and non-negative price.");
             }
 
-            var enteredAmount = new Money(x.Quantity * x.UnitPrice, organisation.BaseCurrency).Round();
+            var enteredAmount = new Money(x.Quantity * x.UnitPrice, currency).Round();
             var tax = request.AmountsIncludeVat
                 ? schedule.CalculateFromInclusive(enteredAmount, request.BillDate, x.VatTreatment)
                 : schedule.CalculateFromExclusive(enteredAmount, request.BillDate, x.VatTreatment);
-            var exclusiveUnitPrice = request.AmountsIncludeVat
+            var transactionUnitPrice = request.AmountsIncludeVat
                 ? decimal.Round(tax.Exclusive.Amount / x.Quantity, 4, MidpointRounding.AwayFromZero)
                 : x.UnitPrice;
+            var baseNet = decimal.Round(tax.Exclusive.Amount * exchangeRateToBase, 2, MidpointRounding.AwayFromZero);
+            var baseVat = decimal.Round(tax.Vat.Amount * exchangeRateToBase, 2, MidpointRounding.AwayFromZero);
+            var baseGross = baseNet + baseVat;
+            var baseUnitPrice = decimal.Round(baseNet / x.Quantity, 4, MidpointRounding.AwayFromZero);
 
             return new SupplierBillLine
             {
                 Description = x.Description.Trim(),
                 Quantity = x.Quantity,
-                UnitPrice = exclusiveUnitPrice,
+                UnitPrice = baseUnitPrice,
                 VatTreatment = x.VatTreatment,
                 VatRate = tax.Rate,
-                NetAmount = tax.Exclusive.Amount,
-                VatAmount = tax.Vat.Amount,
-                GrossAmount = tax.Inclusive.Amount,
+                NetAmount = baseNet,
+                VatAmount = baseVat,
+                GrossAmount = baseGross,
+                TransactionUnitPrice = transactionUnitPrice,
+                TransactionNetAmount = tax.Exclusive.Amount,
+                TransactionVatAmount = tax.Vat.Amount,
+                TransactionGrossAmount = tax.Inclusive.Amount,
                 ExpenseAccountId = x.ExpenseAccountId,
                 ProductItemId = x.ProductItemId,
                 ProjectId = x.ProjectId,
@@ -248,6 +274,11 @@ public sealed class PurchasingService(
 
         if (sourcePurchaseOrder is not null)
         {
+            if (!isBaseCurrency)
+            {
+                throw new InvalidOperationException(
+                    "Purchase orders currently convert to supplier bills in the organisation base currency. Remove the purchase-order link before posting a foreign-currency bill.");
+            }
             var match = PurchaseOrderMatchService.Evaluate(
                 sourcePurchaseOrder,
                 organisation,
@@ -326,7 +357,7 @@ public sealed class PurchasingService(
                 : null;
 
         var sequence = (await db.SupplierBills.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0) + 1;
-        var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = supplierReference, BillDate = request.BillDate, DueDate = request.DueDate, Currency = organisation.BaseCurrency, Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
+        var bill = new SupplierBill { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, SupplierId = request.SupplierId, SequenceNumber = sequence, BillNumber = $"BILL-{sequence:D6}", SupplierReference = supplierReference, BillDate = request.BillDate, DueDate = request.DueDate, Currency = currency, ExchangeRateToBase = exchangeRateToBase, TransactionSubtotal = lines.Sum(x => x.TransactionNetAmount), TransactionVatTotal = lines.Sum(x => x.TransactionVatAmount), TransactionTotal = lines.Sum(x => x.TransactionGrossAmount), Status = BillStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var journalLines = lines.GroupBy(x => new { x.ExpenseAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.ExpenseAccountId, bill.BillNumber, x.Sum(y => y.NetAmount), 0, ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)).ToList();
         if (bill.VatTotal > 0)
         {
@@ -358,6 +389,9 @@ public sealed class PurchasingService(
                 new
                 {
                     bill.BillNumber,
+                    bill.Currency,
+                    bill.ExchangeRateToBase,
+                    bill.TransactionTotal,
                     bill.Total,
                     bill.VatTotal
                 }));

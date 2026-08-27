@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827102639_AddContactCurrencyDefaultsAndSalesCurrencies")]
+    partial class AddContactCurrencyDefaultsAndSalesCurrencies
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -1795,38 +1798,6 @@ namespace FijiAccounts.Web.Migrations
                     b.HasIndex("ProjectRevenueRecognitionAccountId");
 
                     b.ToTable("Organisations");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationBranding", b =>
-                {
-                    b.Property<Guid>("OrganisationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("LogoContent")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("LogoContentType")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LogoFileName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UploadedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UploadedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("OrganisationId");
-
-                    b.ToTable("OrganisationBrandings");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationCurrency", b =>
@@ -5699,17 +5670,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("ProjectContractLiabilityAccount");
 
                     b.Navigation("ProjectRevenueRecognitionAccount");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationBranding", b =>
-                {
-                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
-                        .WithOne()
-                        .HasForeignKey("FijiAccounts.Web.Data.OrganisationBranding", "OrganisationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Organisation");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationCurrency", b =>

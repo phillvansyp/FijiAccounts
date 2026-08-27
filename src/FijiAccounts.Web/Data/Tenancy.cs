@@ -150,6 +150,43 @@ public sealed class Organisation
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public sealed class OrganisationBranding
+{
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    [MaxLength(255)] public required string LogoFileName { get; set; }
+    [MaxLength(32)] public required string LogoContentType { get; set; }
+    public required byte[] LogoContent { get; set; }
+    public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string UploadedByUserId { get; set; }
+}
+
+public sealed class OrganisationCurrency
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    [MaxLength(3)] public required string Code { get; set; }
+    [MaxLength(80)] public required string Name { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+}
+
+public sealed class TransactionExchangeRate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    [MaxLength(3)] public required string FromCurrency { get; set; }
+    [MaxLength(3)] public required string ToCurrency { get; set; }
+    public DateOnly EffectiveDate { get; set; }
+    public decimal Rate { get; set; }
+    [MaxLength(80)] public string Source { get; set; } = "Manual";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+}
+
 public sealed class Branch
 {
     public Guid Id { get; set; } = Guid.NewGuid();

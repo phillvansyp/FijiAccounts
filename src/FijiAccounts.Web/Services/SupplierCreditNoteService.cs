@@ -16,6 +16,10 @@ public sealed class SupplierCreditNoteService(ApplicationDbContext db, TenantAcc
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, ct);
         if (!string.Equals(organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Only the verified Fiji supplier credit process is enabled at this stage.");
         var bill = await db.SupplierBills.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
+        if (!string.Equals(bill.Currency, organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Foreign-currency supplier credits will be enabled with foreign-currency settlement. Record a base-currency adjustment for now.");
+        }
         if (bill.Status is BillStatus.Voided or BillStatus.Credited) throw new InvalidOperationException("This supplier bill cannot be credited.");
         var available = bill.Total - bill.AmountPaid - bill.AmountCredited;
         if (request.Amount <= 0 || request.Amount > available) throw new InvalidOperationException($"Credit must be between $0.01 and ${available:N2}.");

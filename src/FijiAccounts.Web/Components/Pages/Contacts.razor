@@ -13,6 +13,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject BusinessPartyService BusinessParties
+@inject TransactionCurrencyService CurrencyService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -48,7 +49,7 @@ else
         <div class="mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
         <div class="row"><div class="col-md-6 mb-3"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="model.Email" /></div><div class="col-md-6 mb-3"><label class="form-label">TIN</label><InputText class="form-control" @bind-Value="model.Tin" /></div></div>
         <div class="mb-3"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="model.Type"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="3">Customer and supplier</option></InputSelect></div>
-        @if ((model.Type & PartyType.Customer) != 0) { <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Default sales account</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesAccountId"><option value="">Choose when entering an invoice</option>@foreach (var account in salesAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default sales VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesVatTreatment"><option value="">Choose when entering an invoice</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Sales invoice payment terms</label><div class="input-group"><InputNumber class="form-control" @bind-Value="model.DefaultSalesInvoiceDueDays" /><span class="input-group-text">days</span></div><div class="form-text">Due date will default to this many days after the invoice date.</div></div></div> }
+        @if ((model.Type & PartyType.Customer) != 0) { <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Default sales account</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesAccountId"><option value="">Choose when entering an invoice</option>@foreach (var account in salesAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default sales VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesVatTreatment"><option value="">Choose when entering an invoice</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default invoice currency</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesCurrency">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code - @currency.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Sales invoice payment terms</label><div class="input-group"><InputNumber class="form-control" @bind-Value="model.DefaultSalesInvoiceDueDays" /><span class="input-group-text">days</span></div><div class="form-text">Due date will default to this many days after the invoice date.</div></div></div> }
         @if ((model.Type & PartyType.Supplier) != 0)
         {
             <div class="row">
@@ -61,7 +62,7 @@ else
                     <InputText class="form-control" @bind-Value="model.VatRegistrationNumber" />
                 </div>
             </div>
-            <div class="row"><div class="col-md-8 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div></div>
+            <div class="row"><div class="col-md-5 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default bill currency</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseCurrency">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code - @currency.Name</option> }</InputSelect></div></div>
         }
         <button class="btn btn-primary">Add contact</button>
     </EditForm></div> }
@@ -150,6 +151,7 @@ else
                                 {
                                     <span> · @party.DefaultSalesVatTreatment</span>
                                 }
+                                <span> · @(party.DefaultSalesCurrency ?? access.Organisation.BaseCurrency)</span>
                             }
                             else
                             {
@@ -168,6 +170,7 @@ else
                                 {
                                     <span> · @party.DefaultPurchaseVatTreatment</span>
                                 }
+                                <span> · @(party.DefaultPurchaseCurrency ?? access.Organisation.BaseCurrency)</span>
                             }
                             else
                             {
@@ -221,6 +224,18 @@ else
                             <td colspan="9">
                                 <div class="setup-card">
                                     <h3>@party.Name customer settings</h3>
+
+                                    <div class="row mb-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Default invoice currency</label>
+                                            <InputSelect class="form-select" @bind-Value="editingCustomerCurrency">
+                                                @foreach (var currency in currencies.Where(x => x.IsActive))
+                                                {
+                                                    <option value="@currency.Code">@currency.Code - @currency.Name</option>
+                                                }
+                                            </InputSelect>
+                                        </div>
+                                    </div>
 
                                     <div class="row">
                                         <div class="col-md-4">
@@ -314,6 +329,15 @@ else
                                             <label class="form-label">VAT registration number</label>
                                             <InputText class="form-control"
                                                        @bind-Value="editDefaults.VatRegistrationNumber" />
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">Default bill currency</label>
+                                            <InputSelect class="form-select" @bind-Value="editDefaults.DefaultPurchaseCurrency">
+                                                @foreach (var currency in currencies.Where(x => x.IsActive))
+                                                {
+                                                    <option value="@currency.Code">@currency.Code - @currency.Name</option>
+                                                }
+                                            </InputSelect>
                                         </div>
                                     </div>
 
@@ -543,6 +567,7 @@ else
     private List<BusinessParty> parties = [];
     private List<LedgerAccount> salesAccounts = [];
     private List<LedgerAccount> purchaseAccounts = [];
+    private IReadOnlyList<CurrencyOption> currencies = [];
     private ContactModel model = new();
     private Guid? editingPartyId;
     private Guid? editingCustomerPartyId;
@@ -550,6 +575,7 @@ else
     private VatTreatment? editingCustomerVatTreatment;
     private int editingCustomerDueDays = 30;
     private PaymentTermType editingCustomerPaymentTermType = PaymentTermType.DaysAfterDocumentDate;
+    private string editingCustomerCurrency = "FJD";
     private PurchaseDefaultsModel editDefaults = new();
     private List<SupplierAccountProfile> editingSupplierAccounts = [];
     private NewSupplierAccountModel newSupplierAccount = new();
@@ -629,6 +655,7 @@ else
             canEdit = await TenantAccess.CanManageContactsAsync(userId, OrganisationId);
             canVerifyBankAccounts = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             searchTerm = Query?.Trim() ?? string.Empty;
+            currencies = await CurrencyService.ListAsync(userId, OrganisationId);
             model = new ContactModel
         {
             Type = NormalizedView == "suppliers"
@@ -643,7 +670,9 @@ else
                 access?.Organisation.DefaultSupplierBillPaymentTermType
                 ?? PaymentTermType.DaysAfterDocumentDate,
             DefaultSupplierBillDueDays =
-                access?.Organisation.DefaultSupplierBillDueDays ?? 30
+                access?.Organisation.DefaultSupplierBillDueDays ?? 30,
+            DefaultSalesCurrency = access!.Organisation.BaseCurrency,
+            DefaultPurchaseCurrency = access.Organisation.BaseCurrency
         };
             purchaseAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Code == "1200" || x.Code == "1500")).OrderBy(x => x.Code).ToListAsync();
             salesAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Revenue).OrderBy(x => x.Code).ToListAsync();
@@ -701,7 +730,9 @@ else
                     model.DefaultSupplierBillPaymentTermType,
                     model.DefaultSupplierBillDueDays,
                     model.SupplierAccountNumber,
-                    model.VatRegistrationNumber));
+                    model.VatRegistrationNumber,
+                    model.DefaultSalesCurrency,
+                    model.DefaultPurchaseCurrency));
             model = new ContactModel
             {
                 Type = NormalizedView == "suppliers"
@@ -716,7 +747,9 @@ else
                     access?.Organisation.DefaultSupplierBillPaymentTermType
                     ?? PaymentTermType.DaysAfterDocumentDate,
                 DefaultSupplierBillDueDays =
-                    access?.Organisation.DefaultSupplierBillDueDays ?? 30
+                    access?.Organisation.DefaultSupplierBillDueDays ?? 30,
+                DefaultSalesCurrency = access?.Organisation.BaseCurrency ?? "FJD",
+                DefaultPurchaseCurrency = access?.Organisation.BaseCurrency ?? "FJD"
             };
             showAddContact = false;
             ShowStatus($"{party.Name} added successfully.", "alert-success");
@@ -739,6 +772,10 @@ else
 
         editingCustomerDueDays =
             party.DefaultSalesInvoiceDueDays;
+        editingCustomerCurrency =
+            party.DefaultSalesCurrency
+            ?? access?.Organisation.BaseCurrency
+            ?? "FJD";
     }
 
     private void CancelCustomerSettings()
@@ -749,6 +786,7 @@ else
         editingCustomerDueDays = 30;
         editingCustomerPaymentTermType =
             PaymentTermType.DaysAfterDocumentDate;
+        editingCustomerCurrency = access?.Organisation.BaseCurrency ?? "FJD";
     }
 
     private async Task SaveCustomerSettings()
@@ -776,7 +814,8 @@ else
                     editingCustomerAccountId,
                     editingCustomerVatTreatment,
                     editingCustomerPaymentTermType,
-                    editingCustomerDueDays));
+                    editingCustomerDueDays,
+                    editingCustomerCurrency));
             CancelCustomerSettings();
             ShowStatus("Customer settings saved.", "alert-success");
             await Reload();
@@ -787,7 +826,7 @@ else
         }
     }
 
-    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { VatRegistrationNumber = party.VatRegistrationNumber, DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays }; editingSupplierAccounts = party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList(); editingSupplierBankAccounts = party.SupplierBankAccounts.OrderByDescending(x => x.IsDefault).ThenByDescending(x => x.SubmittedAt).ToList(); newSupplierAccount = new(); newSupplierBankAccount = new(); }
+    private void EditDefaults(BusinessParty party) { editingPartyId = party.Id; editDefaults = new() { VatRegistrationNumber = party.VatRegistrationNumber, DefaultPurchaseAccountId = party.DefaultPurchaseAccountId, DefaultPurchaseVatTreatment = party.DefaultPurchaseVatTreatment, DefaultSupplierBillPaymentTermType = party.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = party.DefaultSupplierBillDueDays, DefaultPurchaseCurrency = party.DefaultPurchaseCurrency ?? access?.Organisation.BaseCurrency ?? "FJD" }; editingSupplierAccounts = party.SupplierAccounts.OrderByDescending(x => x.IsDefault).ThenBy(x => x.Label).ToList(); editingSupplierBankAccounts = party.SupplierBankAccounts.OrderByDescending(x => x.IsDefault).ThenByDescending(x => x.SubmittedAt).ToList(); newSupplierAccount = new(); newSupplierBankAccount = new(); }
     private void CancelDefaults() { editingPartyId = null; editDefaults = new(); editingSupplierAccounts = []; editingSupplierBankAccounts = []; newSupplierAccount = new(); newSupplierBankAccount = new(); }
     private async Task SaveDefaults()
     {
@@ -803,7 +842,8 @@ else
                     editDefaults.DefaultPurchaseVatTreatment,
                     editDefaults.DefaultSupplierBillPaymentTermType,
                     editDefaults.DefaultSupplierBillDueDays,
-                    editDefaults.VatRegistrationNumber));
+                    editDefaults.VatRegistrationNumber,
+                    editDefaults.DefaultPurchaseCurrency));
             CancelDefaults();
             ShowStatus("Supplier settings saved.", "alert-success");
             await Reload();
@@ -938,7 +978,7 @@ else
             .ThenByDescending(x => x.SubmittedAt)
             .ToList();
 
-    private class PurchaseDefaultsModel { [StringLength(80)] public string? VatRegistrationNumber { get; set; } public Guid? DefaultSalesAccountId { get; set; } public VatTreatment? DefaultSalesVatTreatment { get; set; } public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
+    private class PurchaseDefaultsModel { [StringLength(80)] public string? VatRegistrationNumber { get; set; } public Guid? DefaultSalesAccountId { get; set; } public VatTreatment? DefaultSalesVatTreatment { get; set; } public Guid? DefaultPurchaseAccountId { get; set; } public VatTreatment? DefaultPurchaseVatTreatment { get; set; } [Required, StringLength(3, MinimumLength = 3)] public string DefaultSalesCurrency { get; set; } = "FJD"; [Required, StringLength(3, MinimumLength = 3)] public string DefaultPurchaseCurrency { get; set; } = "FJD"; public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; }
     private static string FormatPaymentTerms(
         PaymentTermType type,
         int value)

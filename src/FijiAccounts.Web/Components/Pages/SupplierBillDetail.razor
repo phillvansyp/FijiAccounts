@@ -404,6 +404,14 @@ else
                         <strong>@bill.Currency</strong>
                     </div>
 
+                    @if (!string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div>
+                            <span>Exchange rate</span>
+                            <strong>1 @bill.Currency = @bill.ExchangeRateToBase.ToString("0.########") @access.Organisation.BaseCurrency</strong>
+                        </div>
+                    }
+
                     <div>
                         <span>Branch / division</span>
                         <strong>@bill.Branch?.Name / @bill.Division?.Name</strong>
@@ -437,9 +445,9 @@ else
                                     <td><strong>@line.Description</strong></td>
                                     <td>@ProjectLabel(line)</td>
                                     <td class="number">@line.Quantity.ToString("N2")</td>
-                                    <td class="number">$@line.UnitPrice.ToString("N2")</td>
+                                    <td class="number">@bill.Currency @line.TransactionUnitPrice.ToString("N2")</td>
                                     <td><span class="tax-pill">@line.VatTreatment</span></td>
-                                    <td class="number amount-cell">$@line.NetAmount.ToString("N2")</td>
+                                    <td class="number amount-cell">@bill.Currency @line.TransactionNetAmount.ToString("N2")</td>
                                 </tr>
                             }
                         </tbody>
@@ -455,12 +463,16 @@ else
                 </div>
 
                 <div class="bill-totals">
-                    <div><span>Subtotal</span><strong>$@bill.Subtotal.ToString("N2")</strong></div>
-                    <div><span>@access.Organisation.TaxLabel</span><strong>$@bill.VatTotal.ToString("N2")</strong></div>
-                    <div class="total-line"><span>Total</span><strong>$@bill.Total.ToString("N2")</strong></div>
-                    <div><span>Credits</span><strong>$@bill.AmountCredited.ToString("N2")</strong></div>
-                    <div><span>Paid</span><strong>$@bill.AmountPaid.ToString("N2")</strong></div>
-                    <div class="amount-due"><span>Amount due</span><strong>$@AmountDue.ToString("N2")</strong></div>
+                    <div><span>Subtotal</span><strong>@bill.Currency @bill.TransactionSubtotal.ToString("N2")</strong></div>
+                    <div><span>@access.Organisation.TaxLabel</span><strong>@bill.Currency @bill.TransactionVatTotal.ToString("N2")</strong></div>
+                    <div class="total-line"><span>Total</span><strong>@bill.Currency @bill.TransactionTotal.ToString("N2")</strong></div>
+                    @if (!string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <div><span>Posted value</span><strong>@access.Organisation.BaseCurrency @bill.Total.ToString("N2")</strong></div>
+                    }
+                    <div><span>Credits (base)</span><strong>@access.Organisation.BaseCurrency @bill.AmountCredited.ToString("N2")</strong></div>
+                    <div><span>Paid (base)</span><strong>@access.Organisation.BaseCurrency @bill.AmountPaid.ToString("N2")</strong></div>
+                    <div class="amount-due"><span>Amount due (base)</span><strong>@access.Organisation.BaseCurrency @AmountDue.ToString("N2")</strong></div>
                 </div>
             </section>
 

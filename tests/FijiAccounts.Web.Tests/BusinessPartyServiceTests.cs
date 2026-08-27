@@ -9,6 +9,42 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BusinessPartyServiceTests
 {
     [Fact]
+    public async Task ContactCurrencyDefaults_AreSavedAndAudited()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var party = await service.CreateAsync(
+            test.UserId,
+            CreateRequest(test.Organisation.Id, test.Account("4000").Id, test.Account("6000").Id));
+
+        await service.UpdateCustomerDefaultsAsync(
+            test.UserId,
+            new UpdateCustomerDefaultsRequest(
+                test.Organisation.Id,
+                party.Id,
+                party.DefaultSalesAccountId,
+                party.DefaultSalesVatTreatment,
+                party.DefaultSalesInvoicePaymentTermType,
+                party.DefaultSalesInvoiceDueDays,
+                "USD"));
+        await service.UpdateSupplierDefaultsAsync(
+            test.UserId,
+            new UpdateSupplierDefaultsRequest(
+                test.Organisation.Id,
+                party.Id,
+                party.DefaultPurchaseAccountId,
+                party.DefaultPurchaseVatTreatment,
+                party.DefaultSupplierBillPaymentTermType,
+                party.DefaultSupplierBillDueDays,
+                party.VatRegistrationNumber,
+                "AUD"));
+
+        var stored = await test.Db.BusinessParties.AsNoTracking().SingleAsync(x => x.Id == party.Id);
+        Assert.Equal("USD", stored.DefaultSalesCurrency);
+        Assert.Equal("AUD", stored.DefaultPurchaseCurrency);
+    }
+
+    [Fact]
     public async Task Manager_CanCreateContactAndUpdateDefaults()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

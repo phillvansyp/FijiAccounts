@@ -21,7 +21,9 @@ public sealed record CreateBusinessPartyRequest(
     PaymentTermType DefaultSupplierBillPaymentTermType,
     int DefaultSupplierBillDueDays,
     string? SupplierAccountNumber = null,
-    string? VatRegistrationNumber = null);
+    string? VatRegistrationNumber = null,
+    string? DefaultSalesCurrency = null,
+    string? DefaultPurchaseCurrency = null);
 
 public sealed record UpdateCustomerDefaultsRequest(
     Guid OrganisationId,
@@ -29,7 +31,8 @@ public sealed record UpdateCustomerDefaultsRequest(
     Guid? SalesAccountId,
     VatTreatment? VatTreatment,
     PaymentTermType PaymentTermType,
-    int DueDays);
+    int DueDays,
+    string? Currency = null);
 
 public sealed record UpdateSupplierDefaultsRequest(
     Guid OrganisationId,
@@ -38,7 +41,8 @@ public sealed record UpdateSupplierDefaultsRequest(
     VatTreatment? VatTreatment,
     PaymentTermType PaymentTermType,
     int DueDays,
-    string? VatRegistrationNumber);
+    string? VatRegistrationNumber,
+    string? Currency = null);
 
 public sealed record SupplierAccountProfileRequest(
     Guid OrganisationId,
@@ -68,8 +72,11 @@ public sealed record LearnSupplierPurchaseDefaultsRequest(
 
 public sealed class BusinessPartyService(
     ApplicationDbContext db,
-    TenantAccessService access)
+    TenantAccessService access,
+    TransactionCurrencyService? currencyService = null)
 {
+    private readonly TransactionCurrencyService currencies =
+        currencyService ?? new TransactionCurrencyService(db, access);
     public async Task<BusinessParty> CreateAsync(
         string userId,
         CreateBusinessPartyRequest request,
@@ -93,6 +100,11 @@ public sealed class BusinessPartyService(
                 request.DefaultSalesAccountId,
                 request.DefaultSalesVatTreatment,
                 cancellationToken);
+            await ValidateCurrencyAsync(
+                userId,
+                request.OrganisationId,
+                request.DefaultSalesCurrency,
+                cancellationToken);
         }
 
         if ((request.Type & PartyType.Supplier) != 0)
@@ -101,6 +113,11 @@ public sealed class BusinessPartyService(
                 request.OrganisationId,
                 request.DefaultPurchaseAccountId,
                 request.DefaultPurchaseVatTreatment,
+                cancellationToken);
+            await ValidateCurrencyAsync(
+                userId,
+                request.OrganisationId,
+                request.DefaultPurchaseCurrency,
                 cancellationToken);
         }
 
@@ -138,6 +155,12 @@ public sealed class BusinessPartyService(
                     (request.Type & PartyType.Supplier) != 0
                         ? request.DefaultPurchaseVatTreatment
                         : null,
+                DefaultSalesCurrency = (request.Type & PartyType.Customer) != 0
+                    ? NormalizeOptionalCurrency(request.DefaultSalesCurrency)
+                    : null,
+                DefaultPurchaseCurrency = (request.Type & PartyType.Supplier) != 0
+                    ? NormalizeOptionalCurrency(request.DefaultPurchaseCurrency)
+                    : null,
                 DefaultSalesInvoicePaymentTermType =
                     request.DefaultSalesInvoicePaymentTermType,
                 DefaultSalesInvoiceDueDays =
@@ -183,14 +206,16 @@ public sealed class BusinessPartyService(
                     party.DefaultSalesAccountId,
                     VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
                     PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
-                    DueDays = party.DefaultSalesInvoiceDueDays
+                    DueDays = party.DefaultSalesInvoiceDueDays,
+                    party.DefaultSalesCurrency
                 },
                 SupplierDefaults = new
                 {
                     party.DefaultPurchaseAccountId,
                     VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
                     PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
-                    DueDays = party.DefaultSupplierBillDueDays
+                    DueDays = party.DefaultSupplierBillDueDays,
+                    party.DefaultPurchaseCurrency
                 }
             }));
         await db.SaveChangesAsync(cancellationToken);
@@ -213,6 +238,11 @@ public sealed class BusinessPartyService(
             request.SalesAccountId,
             request.VatTreatment,
             cancellationToken);
+        await ValidateCurrencyAsync(
+            userId,
+            request.OrganisationId,
+            request.Currency,
+            cancellationToken);
 
         var party = await GetPartyAsync(
             request.OrganisationId,
@@ -224,14 +254,16 @@ public sealed class BusinessPartyService(
             SalesAccountId = party.DefaultSalesAccountId,
             VatTreatment = party.DefaultSalesVatTreatment?.ToString(),
             PaymentTermType = party.DefaultSalesInvoicePaymentTermType.ToString(),
-            DueDays = party.DefaultSalesInvoiceDueDays
+            DueDays = party.DefaultSalesInvoiceDueDays,
+            Currency = party.DefaultSalesCurrency
         };
         var updated = new
         {
             SalesAccountId = request.SalesAccountId,
             VatTreatment = request.VatTreatment?.ToString(),
             PaymentTermType = request.PaymentTermType.ToString(),
-            DueDays = request.DueDays
+            DueDays = request.DueDays,
+            Currency = NormalizeOptionalCurrency(request.Currency)
         };
         if (previous.Equals(updated))
         {
@@ -242,6 +274,7 @@ public sealed class BusinessPartyService(
         party.DefaultSalesInvoiceDueDays = request.DueDays;
         party.DefaultSalesAccountId = request.SalesAccountId;
         party.DefaultSalesVatTreatment = request.VatTreatment;
+        party.DefaultSalesCurrency = NormalizeOptionalCurrency(request.Currency);
 
         db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,
@@ -267,6 +300,11 @@ public sealed class BusinessPartyService(
             request.PurchaseAccountId,
             request.VatTreatment,
             cancellationToken);
+        await ValidateCurrencyAsync(
+            userId,
+            request.OrganisationId,
+            request.Currency,
+            cancellationToken);
 
         var party = await GetPartyAsync(
             request.OrganisationId,
@@ -283,7 +321,8 @@ public sealed class BusinessPartyService(
             PurchaseAccountId = party.DefaultPurchaseAccountId,
             VatTreatment = party.DefaultPurchaseVatTreatment?.ToString(),
             PaymentTermType = party.DefaultSupplierBillPaymentTermType.ToString(),
-            DueDays = party.DefaultSupplierBillDueDays
+            DueDays = party.DefaultSupplierBillDueDays,
+            Currency = party.DefaultPurchaseCurrency
         };
         var updated = new
         {
@@ -291,7 +330,8 @@ public sealed class BusinessPartyService(
             PurchaseAccountId = request.PurchaseAccountId,
             VatTreatment = request.VatTreatment?.ToString(),
             PaymentTermType = request.PaymentTermType.ToString(),
-            DueDays = request.DueDays
+            DueDays = request.DueDays,
+            Currency = NormalizeOptionalCurrency(request.Currency)
         };
         if (previous.Equals(updated))
         {
@@ -303,6 +343,7 @@ public sealed class BusinessPartyService(
         party.DefaultPurchaseVatTreatment = request.VatTreatment;
         party.DefaultSupplierBillPaymentTermType = request.PaymentTermType;
         party.DefaultSupplierBillDueDays = request.DueDays;
+        party.DefaultPurchaseCurrency = NormalizeOptionalCurrency(request.Currency);
 
         db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,
@@ -851,6 +892,29 @@ public sealed class BusinessPartyService(
                 "Select an active sales account from this organisation.");
         }
     }
+
+    private async Task ValidateCurrencyAsync(
+        string userId,
+        Guid organisationId,
+        string? currency,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            return;
+        }
+
+        await currencies.RequireEnabledAsync(
+            userId,
+            organisationId,
+            currency,
+            cancellationToken);
+    }
+
+    private static string? NormalizeOptionalCurrency(string? currency) =>
+        string.IsNullOrWhiteSpace(currency)
+            ? null
+            : TransactionCurrencyService.NormalizeCode(currency);
 
     private static void ValidatePartyType(PartyType type)
     {

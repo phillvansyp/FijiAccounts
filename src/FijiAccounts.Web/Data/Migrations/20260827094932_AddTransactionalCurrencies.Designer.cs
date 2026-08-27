@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827094932_AddTransactionalCurrencies")]
+    partial class AddTransactionalCurrencies
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -626,18 +629,10 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<Guid?>("DefaultPurchaseAccountId")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DefaultPurchaseCurrency")
-                        .HasMaxLength(3)
-                        .HasColumnType("TEXT");
-
                     b.Property<int?>("DefaultPurchaseVatTreatment")
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid?>("DefaultSalesAccountId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DefaultSalesCurrency")
-                        .HasMaxLength(3)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("DefaultSalesInvoiceDueDays")
@@ -1795,38 +1790,6 @@ namespace FijiAccounts.Web.Migrations
                     b.HasIndex("ProjectRevenueRecognitionAccountId");
 
                     b.ToTable("Organisations");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationBranding", b =>
-                {
-                    b.Property<Guid>("OrganisationId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("LogoContent")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("LogoContentType")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LogoFileName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UploadedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UploadedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("OrganisationId");
-
-                    b.ToTable("OrganisationBrandings");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationCurrency", b =>
@@ -3063,11 +3026,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("TEXT");
 
@@ -3515,10 +3473,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<DateOnly>("DueDate")
                         .HasColumnType("TEXT");
 
-                    b.Property<decimal>("ExchangeRateToBase")
-                        .HasPrecision(18, 8)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("InvoiceNumber")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -3578,18 +3532,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("Total")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionSubtotal")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionTotal")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionVatTotal")
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
@@ -3654,22 +3596,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("SalesInvoiceId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionGrossAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionNetAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionUnitPrice")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("TransactionVatAmount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("UnitPrice")
@@ -5699,17 +5625,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("ProjectContractLiabilityAccount");
 
                     b.Navigation("ProjectRevenueRecognitionAccount");
-                });
-
-            modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationBranding", b =>
-                {
-                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
-                        .WithOne()
-                        .HasForeignKey("FijiAccounts.Web.Data.OrganisationBranding", "OrganisationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Organisation");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationCurrency", b =>

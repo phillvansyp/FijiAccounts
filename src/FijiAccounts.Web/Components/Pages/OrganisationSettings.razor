@@ -11,6 +11,8 @@
 @inject TenantAccessService TenantAccess
 @inject EnterpriseStructureService EnterpriseStructures
 @inject OrganisationSettingsService SettingsService
+@inject OrganisationBrandingService BrandingService
+@inject TransactionCurrencyService CurrencyService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -107,6 +109,27 @@ else
     <div class="settings-grid">
         <section class="settings-card"><h2>Business details</h2><p>Used on transactions, reports and tax documents.</p>
             <EditForm Model="model" OnValidSubmit="Save" FormName="organisation-settings"><DataAnnotationsValidator /><ValidationSummary />
+                <div class="company-logo-setting">
+                    <div class="company-logo-preview">
+                        @if (branding is not null)
+                        {
+                            <img src="@LogoDataUrl" alt="@($"{model.LegalName} logo")" />
+                        }
+                        else
+                        {
+                            <span>@CompanyInitials</span>
+                        }
+                    </div>
+                    <div class="company-logo-controls">
+                        <label class="form-label">Company logo</label>
+                        <InputFile @key="logoInputKey" class="form-control" OnChange="UploadLogo" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" disabled="@(!canManage || uploadingLogo)" />
+                        <div class="form-text">PNG, JPEG or WebP, up to 1 MB. A wide or square logo with a transparent background works best.</div>
+                        @if (branding is not null && canManage)
+                        {
+                            <button type="button" class="btn btn-sm btn-outline-danger mt-2" disabled="@uploadingLogo" @onclick="RemoveLogo">Remove logo</button>
+                        }
+                    </div>
+                </div>
                 <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
@@ -244,6 +267,49 @@ else
             @if (!jurisdiction.TaxPackEnabled) { <div class="compliance-note"><strong>Posting protection is active</strong><span>Transactions remain locked until this country’s tax rules have been independently verified and activated.</span></div> }
             @if (canChangeJurisdiction) { <label class="form-label mt-3">Change jurisdiction before posting begins</label><InputSelect class="form-select" @bind-Value="selectedCountry">@foreach (var item in IslandJurisdictions.All) { <option value="@item.CountryCode">@item.CountryName — @item.CurrencyCode</option> }</InputSelect><button class="btn btn-outline-primary mt-2" @onclick="ChangeJurisdiction">Apply jurisdiction</button> }
             else if (canManage) { <small class="locked-note">Jurisdiction is locked because accounting transactions already exist.</small> }
+        </section>
+        <section class="settings-card">
+            <h2>Transaction currencies</h2>
+            <p>Enable currencies used on bills and maintain dated rates into @access.Organisation.BaseCurrency.</p>
+            <div class="table-responsive mb-3">
+                <table class="table mb-0">
+                    <thead><tr><th>Currency</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var currency in currencies)
+                        {
+                            <tr>
+                                <td><strong>@currency.Code</strong> - @currency.Name @(currency.IsBaseCurrency ? "(base)" : "")</td>
+                                <td>@(currency.IsActive ? "Active" : "Inactive")</td>
+                                <td class="text-end">
+                                    @if (canManage && !currency.IsBaseCurrency)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleCurrency(currency)">@(currency.IsActive ? "Disable" : "Enable")</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (canManage)
+            {
+                <EditForm Model="rateModel" OnValidSubmit="SaveRate" FormName="transaction-exchange-rate">
+                    <DataAnnotationsValidator />
+                    <div class="row align-items-end">
+                        <div class="col-md-4 mb-3"><label class="form-label">Foreign currency</label><InputSelect class="form-select" @bind-Value="rateModel.Currency">@foreach (var currency in currencies.Where(x => x.IsActive && !x.IsBaseCurrency)) { <option value="@currency.Code">@currency.Code</option> }</InputSelect></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="rateModel.EffectiveDate" /></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Rate to @access.Organisation.BaseCurrency</label><InputNumber class="form-control" @bind-Value="rateModel.Rate" step="0.00000001" /><div class="form-text">1 @rateModel.Currency equals this amount in @access.Organisation.BaseCurrency.</div></div>
+                    </div>
+                    <button class="btn btn-primary mb-4">Save exchange rate</button>
+                </EditForm>
+                <details>
+                    <summary><strong>Add another currency</strong></summary>
+                    <EditForm Model="currencyModel" OnValidSubmit="AddCurrency" FormName="add-transaction-currency" class="mt-3">
+                        <DataAnnotationsValidator />
+                        <div class="row align-items-end"><div class="col-md-4 mb-3"><label class="form-label">Three-letter code</label><InputText class="form-control text-uppercase" @bind-Value="currencyModel.Code" /></div><div class="col-md-5 mb-3"><label class="form-label">Currency name</label><InputText class="form-control" @bind-Value="currencyModel.Name" /></div><div class="col-md-3 mb-3"><button class="btn btn-outline-primary">Add currency</button></div></div>
+                    </EditForm>
+                </details>
+            }
         </section>
         <section class="settings-card">
             <h2>Company branches</h2>
@@ -408,10 +474,60 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private OrganisationBranding? branding; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked, uploadingLogo; private int logoInputKey; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private CurrencyModel currencyModel = new(); private RateModel rateModel = new(); private IReadOnlyList<CurrencyOption> currencies = []; private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = ModelFrom(access.Organisation); await LoadWipSettings(); await LoadHierarchy(); }
+    private string? LogoDataUrl => branding is null ? null : $"data:{branding.LogoContentType};base64,{Convert.ToBase64String(branding.LogoContent)}";
+    private string CompanyInitials => string.Concat(model.LegalName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x => char.ToUpperInvariant(x[0])));
+    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canChangeJurisdiction = canManage && !await Db.PostedJournals.AnyAsync(x => x.OrganisationId == OrganisationId); jurisdiction = IslandJurisdictions.Get(access.Organisation.CountryCode); selectedCountry = jurisdiction.CountryCode; model = ModelFrom(access.Organisation); branding = await BrandingService.GetAsync(userId, OrganisationId); await LoadWipSettings(); await LoadHierarchy(); await LoadCurrencies(); }
+    private async Task UploadLogo(InputFileChangeEventArgs args)
+    {
+        if (!canManage) return;
+        uploadingLogo = true;
+        try
+        {
+            var file = args.File;
+            await using var input = file.OpenReadStream(OrganisationBrandingService.MaximumLogoBytes);
+            using var output = new MemoryStream();
+            await input.CopyToAsync(output);
+            branding = await BrandingService.SaveAsync(
+                userId,
+                new OrganisationLogoUploadRequest(
+                    OrganisationId,
+                    file.Name,
+                    file.ContentType,
+                    output.ToArray()));
+            logoInputKey++;
+            statusClass = "alert-success";
+            status = "Company logo saved.";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = $"Company logo was not saved: {ex.Message}";
+        }
+        finally
+        {
+            uploadingLogo = false;
+        }
+    }
+    private async Task RemoveLogo()
+    {
+        if (!canManage) return;
+        try
+        {
+            await BrandingService.DeleteAsync(userId, OrganisationId);
+            branding = null;
+            logoInputKey++;
+            statusClass = "alert-success";
+            status = "Company logo removed.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = $"Company logo was not removed: {ex.Message}";
+        }
+    }
     private async Task Save()
     {
         if (!canManage || access is null) return;
@@ -659,6 +775,64 @@ else
         }
     }
 
+    private async Task LoadCurrencies()
+    {
+        currencies = await CurrencyService.ListAsync(userId, OrganisationId);
+        if (string.IsNullOrWhiteSpace(rateModel.Currency) ||
+            currencies.All(x => x.Code != rateModel.Currency || !x.IsActive || x.IsBaseCurrency))
+        {
+            rateModel.Currency = currencies.FirstOrDefault(x => x.IsActive && !x.IsBaseCurrency)?.Code ?? "USD";
+        }
+    }
+
+    private async Task AddCurrency()
+    {
+        try
+        {
+            await CurrencyService.AddAsync(userId, OrganisationId, currencyModel.Code, currencyModel.Name);
+            currencyModel = new();
+            await LoadCurrencies();
+            statusClass = "alert-success";
+            status = "Currency added.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private async Task ToggleCurrency(CurrencyOption currency)
+    {
+        try
+        {
+            await CurrencyService.SetActiveAsync(userId, OrganisationId, currency.Code, !currency.IsActive);
+            await LoadCurrencies();
+            statusClass = "alert-success";
+            status = $"{currency.Code} {(currency.IsActive ? "disabled" : "enabled")}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private async Task SaveRate()
+    {
+        try
+        {
+            await CurrencyService.SaveRateAsync(userId, OrganisationId, rateModel.Currency, rateModel.EffectiveDate, rateModel.Rate);
+            statusClass = "alert-success";
+            status = $"{rateModel.Currency} exchange rate saved for {rateModel.EffectiveDate:dd MMM yyyy}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
     private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Tin = organisation.Tin, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval };
     private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } }
     private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
@@ -666,4 +840,6 @@ else
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
     private sealed class BranchModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
     private sealed class DivisionModel { [Required] public Guid BranchId { get; set; } [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
+    private sealed class CurrencyModel { [Required, StringLength(3, MinimumLength = 3)] public string Code { get; set; } = ""; [Required, StringLength(80)] public string Name { get; set; } = ""; }
+    private sealed class RateModel { [Required, StringLength(3, MinimumLength = 3)] public string Currency { get; set; } = "USD"; public DateOnly EffectiveDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); [Range(typeof(decimal), "0.00000001", "9999999999")] public decimal Rate { get; set; } }
 }

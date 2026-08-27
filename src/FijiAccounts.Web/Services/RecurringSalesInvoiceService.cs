@@ -25,13 +25,17 @@ public sealed record RecurringSalesInvoiceRequest(
     int DueDays,
     IReadOnlyList<RecurringSalesInvoiceLineRequest> Lines,
     Guid? BranchId = null,
-    Guid? DivisionId = null);
+    Guid? DivisionId = null,
+    string? Currency = null);
 
 public sealed class RecurringSalesInvoiceService(
     ApplicationDbContext db,
     TenantAccessService access,
-    SalesInvoiceService salesInvoices)
+    SalesInvoiceService salesInvoices,
+    TransactionCurrencyService? currencyService = null)
 {
+    private readonly TransactionCurrencyService currencies =
+        currencyService ?? new TransactionCurrencyService(db, access);
     public async Task<RecurringSalesInvoice> CreateAsync(
         string userId,
         RecurringSalesInvoiceRequest request,
@@ -46,6 +50,15 @@ public sealed class RecurringSalesInvoiceService(
         }
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+        var organisation = await db.Organisations.AsNoTracking().SingleAsync(
+            x => x.Id == request.OrganisationId,
+            ct);
+        var currency = TransactionCurrencyService.NormalizeCode(
+            request.Currency ?? organisation.BaseCurrency);
+        await currencies.RequireEnabledForOrganisationAsync(
+            request.OrganisationId,
+            currency,
+            ct);
 
         await ProjectCodingValidator.ValidateAsync(
             db,
@@ -146,6 +159,7 @@ public sealed class RecurringSalesInvoiceService(
                 StartDate = request.StartDate,
                 NextInvoiceDate = request.StartDate,
                 DueDays = request.DueDays,
+                Currency = currency,
                 CreatedByUserId = userId,
                 Lines = request.Lines
                     .Select(x =>
@@ -207,6 +221,15 @@ public sealed class RecurringSalesInvoiceService(
         }
 
         var dimension = await ResolveDimensionAsync(userId, request, ct);
+        var organisation = await db.Organisations.AsNoTracking().SingleAsync(
+            x => x.Id == request.OrganisationId,
+            ct);
+        var currency = TransactionCurrencyService.NormalizeCode(
+            request.Currency ?? organisation.BaseCurrency);
+        await currencies.RequireEnabledForOrganisationAsync(
+            request.OrganisationId,
+            currency,
+            ct);
 
         await ProjectCodingValidator.ValidateAsync(
             db,
@@ -342,6 +365,7 @@ public sealed class RecurringSalesInvoiceService(
         recurring.StartDate = request.StartDate;
         recurring.NextInvoiceDate = request.StartDate;
         recurring.DueDays = request.DueDays;
+        recurring.Currency = currency;
 
         var replacementLines =
             request.Lines
@@ -616,7 +640,8 @@ public sealed class RecurringSalesInvoiceService(
                                             ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
-                                DivisionId: template.DivisionId),
+                                DivisionId: template.DivisionId,
+                                Currency: template.Currency),
                             ct);
 
                     db.RecurringSalesInvoiceGenerations.Add(
@@ -744,7 +769,8 @@ public sealed class RecurringSalesInvoiceService(
                                             ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
                                 BranchId: template.BranchId,
-                                DivisionId: template.DivisionId),
+                                DivisionId: template.DivisionId,
+                                Currency: template.Currency),
                             ct);
 
                     db.RecurringSalesInvoiceGenerations.Add(

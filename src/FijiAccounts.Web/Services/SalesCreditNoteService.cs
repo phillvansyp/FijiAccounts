@@ -22,6 +22,15 @@ public sealed class SalesCreditNoteService(ApplicationDbContext db, TenantAccess
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot issue credit notes for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == request.SalesInvoiceId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Invoice not found.");
+        var baseCurrency = await db.Organisations.AsNoTracking()
+            .Where(x => x.Id == request.OrganisationId)
+            .Select(x => x.BaseCurrency)
+            .SingleAsync(ct);
+        if (!string.Equals(invoice.Currency, baseCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Foreign-currency sales credits are not available until foreign settlement accounting is enabled.");
+        }
         if (invoice.Status is InvoiceStatus.Draft or InvoiceStatus.Voided or InvoiceStatus.Credited) throw new InvalidOperationException("This invoice cannot be credited.");
         var available = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; if (request.Amount <= 0 || request.Amount > available) throw new InvalidOperationException($"Credit must be between $0.01 and ${available:N2}.");
         if (string.IsNullOrWhiteSpace(request.Reason)) throw new InvalidOperationException("Enter a reason for the credit note.");

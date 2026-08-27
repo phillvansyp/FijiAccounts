@@ -54,6 +54,8 @@ var structures =
 var approvalPolicies =
     new PurchaseApprovalPolicyService(Db, Access);
 
+var currencies = new TransactionCurrencyService(Db, Access);
+
 
 PurchaseOrders =
     new PurchaseOrderService(
@@ -72,7 +74,8 @@ SalesInvoices =
         Db,
         Access,
         Posting,
-        structures);
+        structures,
+        currencies);
 
 Purchasing =
     new PurchasingService(
@@ -82,7 +85,8 @@ Purchasing =
         Reconciliation,
         Notifications,
         structures,
-        approvalPolicies);
+        approvalPolicies,
+        currencies);
 
 CustomerReceipts =
     new CustomerReceiptService(

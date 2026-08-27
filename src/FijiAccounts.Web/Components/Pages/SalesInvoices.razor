@@ -33,9 +33,9 @@ else
     </div>
 
     <div class="invoice-summary">
-        <article><span>Total invoiced</span><strong>$@invoices.Sum(x => x.Total).ToString("N2")</strong><small>@invoices.Count invoice@(invoices.Count == 1 ? "" : "s")</small></article>
-        <article><span>Outstanding</span><strong>$@invoices.Where(x => x.Status != InvoiceStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Awaiting payment</small></article>
-        <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>$@OverdueTotal.ToString("N2")</strong><small>@OverdueCount invoice@(OverdueCount == 1 ? "" : "s") past due</small></article>
+        <article><span>Total invoiced</span><strong>@access.Organisation.BaseCurrency @invoices.Sum(x => x.Total).ToString("N2")</strong><small>@invoices.Count invoice@(invoices.Count == 1 ? "" : "s")</small></article>
+        <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @invoices.Where(x => x.Status != InvoiceStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Awaiting payment</small></article>
+        <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>@access.Organisation.BaseCurrency @OverdueTotal.ToString("N2")</strong><small>@OverdueCount invoice@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
 
     @if (canPost && customers.Count == 0)
@@ -384,10 +384,10 @@ else
                                 @FormatCustomerPurchaseOrders(invoice)
                             </td>
                             <td><span class="status-badge status-@invoice.Status.ToString().ToLowerInvariant()">@(overdue ? "Overdue" : invoice.Status)</span></td>
-                            <td class="text-end">$@invoice.Subtotal.ToString("N2")</td>
-                            <td class="text-end">$@invoice.VatTotal.ToString("N2")</td>
-                            <td class="text-end">$@invoice.Total.ToString("N2")</td>
-                            <td class="text-end outstanding">$@((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2"))</td>
+                            <td class="text-end">@invoice.Currency @invoice.TransactionSubtotal.ToString("N2")</td>
+                            <td class="text-end">@invoice.Currency @invoice.TransactionVatTotal.ToString("N2")</td>
+                            <td class="text-end">@invoice.Currency @invoice.TransactionTotal.ToString("N2")</td>
+                            <td class="text-end outstanding">@access.Organisation.BaseCurrency @((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2"))</td>
                         </tr>
                     }
                     </tbody>

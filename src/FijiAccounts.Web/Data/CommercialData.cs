@@ -27,6 +27,8 @@ public sealed class BusinessParty
     public Guid? DefaultPurchaseAccountId { get; set; }
     public LedgerAccount? DefaultPurchaseAccount { get; set; }
     public VatTreatment? DefaultPurchaseVatTreatment { get; set; }
+    [MaxLength(3)] public string? DefaultSalesCurrency { get; set; }
+    [MaxLength(3)] public string? DefaultPurchaseCurrency { get; set; }
 
     public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } =
         PaymentTermType.DaysAfterDocumentDate;
@@ -159,6 +161,7 @@ public sealed class RecurringSalesInvoice
     public DateOnly NextInvoiceDate { get; set; }
 
     public int DueDays { get; set; }
+    [MaxLength(3)] public string Currency { get; set; } = "FJD";
 
     public bool IsActive { get; set; } = true;
 
@@ -259,6 +262,10 @@ public sealed class SalesInvoice
     public DateOnly IssueDate { get; set; }
     public DateOnly DueDate { get; set; }
     [MaxLength(3)] public string Currency { get; set; } = "FJD";
+    public decimal ExchangeRateToBase { get; set; } = 1m;
+    public decimal TransactionSubtotal { get; set; }
+    public decimal TransactionVatTotal { get; set; }
+    public decimal TransactionTotal { get; set; }
     public InvoiceStatus Status { get; set; }
     public decimal Subtotal { get; set; }
     public decimal VatTotal { get; set; }
@@ -357,11 +364,15 @@ public sealed class SalesInvoiceLine
 
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
+    public decimal TransactionUnitPrice { get; set; }
     public VatTreatment VatTreatment { get; set; }
     public decimal VatRate { get; set; }
     public decimal NetAmount { get; set; }
     public decimal VatAmount { get; set; }
     public decimal GrossAmount { get; set; }
+    public decimal TransactionNetAmount { get; set; }
+    public decimal TransactionVatAmount { get; set; }
+    public decimal TransactionGrossAmount { get; set; }
     public Guid RevenueAccountId { get; set; }
     public LedgerAccount RevenueAccount { get; set; } = null!;
     public Guid? ProductItemId { get; set; }

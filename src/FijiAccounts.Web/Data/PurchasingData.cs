@@ -16,6 +16,8 @@ public sealed class SupplierBillDraft
     [MaxLength(80)] public string SupplierReference { get; set; } = "";
     public DateOnly BillDate { get; set; }
     public DateOnly DueDate { get; set; }
+    [MaxLength(3)] public string Currency { get; set; } = "FJD";
+    public decimal ExchangeRateToBase { get; set; } = 1m;
     [MaxLength(300)] public string Description { get; set; } = "";
     public decimal Quantity { get; set; } = 1;
     public decimal UnitPrice { get; set; }
@@ -77,6 +79,10 @@ public sealed class SupplierBill
     public DateOnly BillDate { get; set; }
     public DateOnly DueDate { get; set; }
     [MaxLength(3)] public string Currency { get; set; } = "FJD";
+    public decimal ExchangeRateToBase { get; set; } = 1m;
+    public decimal TransactionSubtotal { get; set; }
+    public decimal TransactionVatTotal { get; set; }
+    public decimal TransactionTotal { get; set; }
     public BillStatus Status { get; set; }
     public decimal Subtotal { get; set; }
     public decimal VatTotal { get; set; }
@@ -163,6 +169,10 @@ public sealed class SupplierBillLine
     public decimal NetAmount { get; set; }
     public decimal VatAmount { get; set; }
     public decimal GrossAmount { get; set; }
+    public decimal TransactionUnitPrice { get; set; }
+    public decimal TransactionNetAmount { get; set; }
+    public decimal TransactionVatAmount { get; set; }
+    public decimal TransactionGrossAmount { get; set; }
     public Guid ExpenseAccountId { get; set; }
     public LedgerAccount ExpenseAccount { get; set; } = null!;
     public Guid? ProductItemId { get; set; }
@@ -289,6 +299,9 @@ public sealed class RecurringSupplierBill
     public DateOnly NextBillDate { get; set; }
 
     public int DueDays { get; set; }
+
+    [MaxLength(3)] public string Currency { get; set; } = "FJD";
+    public decimal ExchangeRateToBase { get; set; } = 1m;
 
     public bool IsActive { get; set; } = true;
 

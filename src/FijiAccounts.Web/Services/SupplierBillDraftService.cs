@@ -27,7 +27,9 @@ public sealed record SaveSupplierBillDraftRequest(
     DateOnly DueDate,
     IReadOnlyList<SupplierBillDraftLineRequest> Lines,
     SupplierBillAttachmentRequest? Attachment = null,
-    bool AmountsIncludeVat = false);
+    bool AmountsIncludeVat = false,
+    string? Currency = null,
+    decimal? ExchangeRateToBase = null);
 
 public sealed class SupplierBillDraftService(
     ApplicationDbContext db,
@@ -65,6 +67,18 @@ public sealed class SupplierBillDraftService(
 
         var previous = created ? null : Evidence(draft);
         var firstLine = request.Lines[0];
+        var organisation = await db.Organisations.AsNoTracking()
+            .SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
+        var currency = TransactionCurrencyService.NormalizeCode(
+            string.IsNullOrWhiteSpace(request.Currency) ? organisation.BaseCurrency : request.Currency);
+        var exchangeRate = string.Equals(currency, organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase)
+            ? 1m
+            : request.ExchangeRateToBase ?? throw new InvalidOperationException(
+                $"Enter a {currency} to {organisation.BaseCurrency} exchange rate.");
+        if (exchangeRate <= 0)
+        {
+            throw new InvalidOperationException("The exchange rate must be greater than zero.");
+        }
         var additionalLinesJson = JsonSerializer.Serialize(request.Lines.Skip(1));
         var supplierReference = request.SupplierReference.Trim();
         var attachment = request.Attachment;
@@ -76,6 +90,8 @@ public sealed class SupplierBillDraftService(
             draft.SupplierReference == supplierReference &&
             draft.BillDate == request.BillDate &&
             draft.DueDate == request.DueDate &&
+            draft.Currency == currency &&
+            draft.ExchangeRateToBase == exchangeRate &&
             draft.Description == firstLine.Description.Trim() &&
             draft.Quantity == firstLine.Quantity &&
             draft.UnitPrice == firstLine.UnitPrice &&
@@ -102,6 +118,8 @@ public sealed class SupplierBillDraftService(
         draft.SupplierReference = supplierReference;
         draft.BillDate = request.BillDate;
         draft.DueDate = request.DueDate;
+        draft.Currency = currency;
+        draft.ExchangeRateToBase = exchangeRate;
         draft.Description = firstLine.Description.Trim();
         draft.Quantity = firstLine.Quantity;
         draft.UnitPrice = firstLine.UnitPrice;
@@ -408,6 +426,8 @@ public sealed class SupplierBillDraftService(
             draft.SupplierReference,
             draft.BillDate,
             draft.DueDate,
+            draft.Currency,
+            draft.ExchangeRateToBase,
             draft.AmountsIncludeVat,
             FirstLine = new
             {

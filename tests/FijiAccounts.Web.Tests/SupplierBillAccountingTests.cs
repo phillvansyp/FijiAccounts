@@ -9,6 +9,51 @@ namespace FijiAccounts.Web.Tests;
 public sealed class SupplierBillAccountingTests
 {
     [Fact]
+    public async Task PostBill_InForeignCurrency_PreservesDocumentAmountsAndPostsBaseCurrency()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+
+        var bill = await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "USD-001",
+                new DateOnly(2026, 8, 27),
+                new DateOnly(2026, 9, 27),
+                [new SupplierBillLineRequest(
+                    "Imported supplies",
+                    1m,
+                    100m,
+                    VatTreatment.Standard,
+                    test.Account("6500").Id)],
+                Currency: "usd",
+                ExchangeRateToBase: 2.2m));
+
+        Assert.Equal("USD", bill.Currency);
+        Assert.Equal(2.2m, bill.ExchangeRateToBase);
+        Assert.Equal(100m, bill.TransactionSubtotal);
+        Assert.Equal(12.5m, bill.TransactionVatTotal);
+        Assert.Equal(112.5m, bill.TransactionTotal);
+        Assert.Equal(220m, bill.Subtotal);
+        Assert.Equal(27.5m, bill.VatTotal);
+        Assert.Equal(247.5m, bill.Total);
+
+        var line = Assert.Single(bill.Lines);
+        Assert.Equal(100m, line.TransactionUnitPrice);
+        Assert.Equal(100m, line.TransactionNetAmount);
+        Assert.Equal(220m, line.UnitPrice);
+        Assert.Equal(220m, line.NetAmount);
+
+        var journal = await test.LoadJournalAsync(bill.PostedJournalId);
+        Assert.Equal(247.5m, journal.Lines.Sum(x => x.Debit));
+        Assert.Equal(247.5m, journal.Lines.Sum(x => x.Credit));
+        Assert.Equal(220m, journal.Lines.Single(x => x.LedgerAccount.Code == "6500").Debit);
+        Assert.Equal(27.5m, journal.Lines.Single(x => x.LedgerAccount.Code == "1150").Debit);
+        Assert.Equal(247.5m, journal.Lines.Single(x => x.LedgerAccount.Code == "2000").Credit);
+    }
+
+    [Fact]
     public async Task PostBill_WithFijiVat_PostsBalancedApExpenseAndVatJournal()
     {
         await using var test =

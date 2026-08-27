@@ -77,6 +77,43 @@ public sealed class SalesInvoiceAccountingTests
     }
 
     [Fact]
+    public async Task PostUsdInvoice_PreservesUsdAndPostsConvertedFjdJournal()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+
+        var result = await test.SalesInvoices.CreateAndPostAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                test.Organisation.Id,
+                test.Customer.Id,
+                new DateOnly(2026, 8, 18),
+                new DateOnly(2026, 9, 17),
+                [new SalesInvoiceLineRequest(
+                    "Consulting services",
+                    1m,
+                    100m,
+                    VatTreatment.Standard,
+                    test.Account("4000").Id)],
+                Currency: "USD",
+                ExchangeRateToBase: 2m));
+
+        Assert.Equal("USD", result.Currency);
+        Assert.Equal(2m, result.ExchangeRateToBase);
+        Assert.Equal(100m, result.TransactionSubtotal);
+        Assert.Equal(12.50m, result.TransactionVatTotal);
+        Assert.Equal(112.50m, result.TransactionTotal);
+        Assert.Equal(200m, result.Subtotal);
+        Assert.Equal(25m, result.VatTotal);
+        Assert.Equal(225m, result.Total);
+        Assert.Equal(100m, result.Lines.Single().TransactionUnitPrice);
+        Assert.Equal(200m, result.Lines.Single().UnitPrice);
+
+        var journal = await test.LoadJournalAsync(result.PostedJournalId!.Value);
+        Assert.Equal(225m, journal.Lines.Sum(x => x.Debit));
+        Assert.Equal(225m, journal.Lines.Sum(x => x.Credit));
+    }
+
+    [Fact]
     public async Task CreateAndPostAsync_WhenReceivablesControlAccountIsInactive_IsRejected()
     {
         await using var test =
