@@ -12,7 +12,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Accounting periods Â· Account Island</PageTitle>
+<PageTitle>Accounting periods - Account Island</PageTitle>
 
 @if (access is null)
 {
@@ -187,7 +187,7 @@ else
                                 <div class="d-flex align-items-end gap-2">
                                     <button class="btn btn-primary"
                                             disabled="@savingEdit">
-                                        @(savingEdit ? "Savingâ€¦" : "Save changes")
+                                        @(savingEdit ? "Saving..." : "Save changes")
                                     </button>
 
                                     <button type="button"
@@ -233,7 +233,7 @@ else
                             @if (loadingReadiness)
                             {
                                 <div class="alert alert-secondary mb-3">
-                                    Checking period readinessâ€¦
+                                    Checking period readiness...
                                 </div>
                             }
                             else if (periodReadiness is not null)

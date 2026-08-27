@@ -16,7 +16,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 
-<PageTitle>@(order?.PurchaseOrderNumber ?? "Purchase order") Ãƒâ€šÃ‚Â· Account Island</PageTitle>
+<PageTitle>@(order?.PurchaseOrderNumber ?? "Purchase order") - Account Island</PageTitle>
 
 @if (order is null || access is null)
 {
@@ -39,7 +39,7 @@ else
 
                 <a class="back-link"
                    href="/o/@OrganisationId/purchase-orders">
-                    ÃƒÂ¢Ã¢â‚¬Â Ã‚Â Purchase orders
+                    Back to purchase orders
                 </a>
 
                 <span class="eyebrow">

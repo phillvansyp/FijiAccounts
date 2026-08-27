@@ -20,8 +20,9 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 
-<PageTitle>New invoice Â· Account Island</PageTitle>
+<PageTitle>New invoice - Account Island</PageTitle>
 @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else if (!canManage) { <div class="alert alert-danger">You do not have permission to create or edit sales invoices for this organisation. <a href="o/@OrganisationId/sales">Return to sales invoices</a></div> }
 else if (customers.Count == 0) { <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
 else
 {
@@ -130,7 +131,7 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; } [Parameter] public Guid? InvoiceId { get; set; } [Parameter] public Guid? RecurringInvoiceId { get; set; }
-    private AccessibleOrganisation? access; private string userId = ""; private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private InvoiceEditorModel model = new(); private bool isRecurringInvoice; private RecurringInvoiceEditorModel recurringModel = new(); private string? status; private decimal Subtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
+    private AccessibleOrganisation? access; private string userId = ""; private bool canManage; private List<BusinessParty> customers = []; private List<LedgerAccount> revenueAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private InvoiceEditorModel model = new(); private bool isRecurringInvoice; private RecurringInvoiceEditorModel recurringModel = new(); private string? status; private decimal Subtotal => model.Lines.Sum(x => x.Quantity * x.UnitPrice);
     protected override async Task OnParametersSetAsync()
     {
         var state =
@@ -146,6 +147,14 @@ else
                 OrganisationId);
 
         if (access is null)
+            return;
+
+        canManage =
+            await TenantAccess.CanPostJournalsAsync(
+                userId,
+                OrganisationId);
+
+        if (!canManage)
             return;
 
         customers =
