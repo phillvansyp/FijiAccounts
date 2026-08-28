@@ -129,6 +129,7 @@ else
                         Document="document"
                         OrganisationId="OrganisationId"
                         PartyId="PartyId"
+                        RetainUntil="RetentionDate(document)"
                         OnDelete="DeleteDocument" />
                 }
             }
@@ -159,6 +160,8 @@ else
     private DateOnly? expiryDate;
 
     private string? message;
+    private int financialYearEndMonth = 12;
+    private int financialYearEndDay = 31;
 
     protected override async Task OnInitializedAsync()
     {
@@ -169,10 +172,14 @@ else
         userId =
             UserManager.GetUserId(state.User)!;
 
-        if (await TenantAccess.FindAsync(userId, OrganisationId) is null)
+        var tenant = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (tenant is null)
         {
             return;
         }
+
+        financialYearEndMonth = tenant.Organisation.FinancialYearEndMonth;
+        financialYearEndDay = tenant.Organisation.FinancialYearEndDay;
 
         party =
             await Db.BusinessParties
@@ -383,23 +390,35 @@ else
     }
     private async Task DeleteDocument(Guid id)
     {
-        var deleted = await Documents.DeleteAsync(
-            userId,
-            OrganisationId,
-            id);
-
-        if (!deleted)
+        try
         {
-            message = "Document not found.";
-            return;
-        }
+            var deleted = await Documents.DeleteAsync(
+                userId,
+                OrganisationId,
+                id);
 
-        documents =
-            await Documents.GetForPartyAsync(
+            if (!deleted)
+            {
+                message = "Document not found.";
+                return;
+            }
+
+            documents = await Documents.GetForPartyAsync(
                 userId,
                 OrganisationId,
                 PartyId);
 
-        message =
-            "Document deleted.";
-    }}
+            message = "Document deleted.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            message = ex.Message;
+        }
+    }
+
+    private DateOnly RetentionDate(BusinessPartyDocument document) =>
+        RecordRetentionPolicy.RetainUntil(
+            DateOnly.FromDateTime(document.UploadedAtUtc.UtcDateTime),
+            financialYearEndMonth,
+            financialYearEndDay);
+}
