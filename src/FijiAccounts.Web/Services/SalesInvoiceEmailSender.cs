@@ -11,7 +11,8 @@ public sealed class SalesInvoiceEmailSender(
     ApplicationDbContext db,
     TenantAccessService access,
     IEmailDeliveryService delivery,
-    SalesInvoicePdfRenderer pdfRenderer)
+    SalesInvoicePdfRenderer pdfRenderer,
+    ILogger<SalesInvoiceEmailSender> logger)
 {
     public async Task SendAsync(
         string userId,
@@ -52,12 +53,35 @@ public sealed class SalesInvoiceEmailSender(
             throw new InvalidOperationException("Only active posted invoices can be emailed.");
         }
 
-        var branding = await db.OrganisationBrandings
-            .AsNoTracking()
-            .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
-        var pdf = pdfRenderer.Render(invoice, branding);
+        if (!delivery.IsConfigured)
+        {
+            throw new InvalidOperationException(
+                "Invoice email is not configured for this environment.");
+        }
 
-        await delivery.SendAsync(BuildMessage(invoice, recipient, pdf), cancellationToken);
+        try
+        {
+            var branding = await db.OrganisationBrandings
+                .AsNoTracking()
+                .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
+            var pdf = pdfRenderer.Render(invoice, branding);
+            await delivery.SendAsync(BuildMessage(invoice, recipient, pdf), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                ex,
+                "Invoice email delivery failed for invoice {InvoiceId} to {Recipient}.",
+                invoiceId,
+                recipient);
+            throw new InvalidOperationException(
+                "The invoice email could not be delivered. Check the email setup and try again.",
+                ex);
+        }
 
         db.AuditEvents.Add(new AuditEvent
         {

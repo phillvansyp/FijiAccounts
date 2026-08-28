@@ -125,7 +125,7 @@ public sealed class SalesInvoicePdfRenderer
                 gfx.DrawImage(image, Margin, 88, image.PixelWidth * ratio, image.PixelHeight * ratio);
                 logoDrawn = true;
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or NotSupportedException)
             {
                 // A valid invoice is more important than an unsupported logo encoding.
             }
