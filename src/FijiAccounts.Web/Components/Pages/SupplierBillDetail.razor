@@ -65,7 +65,8 @@ else
 
                         <a class="btn btn-outline-secondary attachment-top-button"
                            href="@AttachmentUrl(attachment)"
-                           target="_blank">
+                           target="_blank"
+                           title="Retained until @AttachmentRetainUntil.ToString("dd MMM yyyy")">
                             Attachments
                             <span class="attachment-count">1</span>
                         </a>
@@ -86,7 +87,7 @@ else
                                 <div class="attachment-menu-title">
                                     <strong>Attachments</strong>
                                     <span>
-                                        @bill.Attachments.Count files
+                                        @bill.Attachments.Count files · retained until @AttachmentRetainUntil.ToString("dd MMM yyyy")
                                     </span>
                                 </div>
 
@@ -116,7 +117,8 @@ else
                                         {
                                             <button type="button"
                                                     class="attachment-delete"
-                                                    title="Delete attachment"
+                                                    disabled="@AttachmentDeletionProtected"
+                                                    title="@(AttachmentDeletionProtected ? RecordRetentionPolicy.ProtectedMessage(AttachmentRetainUntil) : "Delete attachment")"
                                                     @onclick="() => DeleteDocument(attachment.Id)">
                                                 ×
                                             </button>
@@ -1146,6 +1148,14 @@ private string paymentRejectionReason = "";
             ? 0
             : bill.Total - bill.AmountPaid - bill.AmountCredited;
     private bool IsForeignBill => bill is not null && access is not null && !string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+    private DateOnly AttachmentRetainUntil => bill is null || access is null
+        ? DateOnly.MinValue
+        : RecordRetentionPolicy.RetainUntil(
+            bill.BillDate,
+            access.Organisation.FinancialYearEndMonth,
+            access.Organisation.FinancialYearEndDay);
+    private bool AttachmentDeletionProtected =>
+        RecordRetentionPolicy.IsProtected(AttachmentRetainUntil);
     private decimal PaymentFxDifference => bill is null ? 0m : paymentAmount - decimal.Round(paymentTransactionAmount * bill.ExchangeRateToBase, 2, MidpointRounding.AwayFromZero);
 
     private bool HasTrackedItems =>
