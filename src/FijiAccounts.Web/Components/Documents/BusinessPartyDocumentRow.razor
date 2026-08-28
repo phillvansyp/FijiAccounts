@@ -1,4 +1,5 @@
 @using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
 
 <tr>
 
@@ -37,9 +38,10 @@
     </td>
 
     <td>
-        <span class="badge bg-success">
-            Active
-        </span>
+        <span class="badge bg-success">Retained</span>
+        <div class="text-muted small">
+            Until @RetainUntil.ToString("dd MMM yyyy")
+        </div>
     </td>
 
     <td>
@@ -80,8 +82,10 @@
 
         <button type="button"
                 class="btn btn-sm btn-outline-danger"
+                disabled="@DeletionProtected"
+                title="@(DeletionProtected ? RecordRetentionPolicy.ProtectedMessage(RetainUntil) : "Delete document")"
                 @onclick="DeleteClicked">
-            Delete
+            @(DeletionProtected ? "Protected" : "Delete")
         </button>
 
     </td>
@@ -102,6 +106,11 @@
 
     [Parameter]
     public EventCallback<Guid> OnDelete { get; set; }
+
+    [Parameter]
+    public DateOnly RetainUntil { get; set; }
+
+    private bool DeletionProtected => RecordRetentionPolicy.IsProtected(RetainUntil);
 
 
     private async Task DeleteClicked()
