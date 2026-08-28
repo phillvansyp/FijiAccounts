@@ -494,6 +494,57 @@ public sealed class TenantAccessAccountingTests
         Assert.Null(inaccessible);
     }
 
+    [Fact]
+    public async Task CustomPermissionProfile_OverridesStandardRolePermissions()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var profile = new OrganisationPermissionProfile
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "Operations lead",
+            CanManageTeam = true,
+            CanPostAccounting = true,
+            CanManageContacts = true,
+            CanApprovePurchases = true,
+            CreatedByUserId = test.UserId
+        };
+        test.Db.OrganisationPermissionProfiles.Add(profile);
+        var membership = await test.Db.OrganisationMemberships.SingleAsync(x =>
+            x.UserId == test.UserId && x.OrganisationId == test.Organisation.Id);
+        membership.Role = OrganisationRole.ReadOnly;
+        membership.PermissionProfile = profile;
+        await test.Db.SaveChangesAsync();
+        var approvals = new PurchaseApprovalPolicyService(test.Db, test.Access);
+
+        Assert.True(await test.Access.CanManageTeamAsync(test.UserId, test.Organisation.Id));
+        Assert.True(await test.Access.CanPostJournalsAsync(test.UserId, test.Organisation.Id));
+        Assert.True(await test.Access.CanManageContactsAsync(test.UserId, test.Organisation.Id));
+        Assert.True(await approvals.CanApproveAsync(test.UserId, test.Organisation.Id, PurchaseApprovalRequirement.OwnerOrAdministrator));
+        Assert.False(await approvals.CanApproveAsync(test.UserId, test.Organisation.Id, PurchaseApprovalRequirement.OwnerOnly));
+    }
+
+    [Fact]
+    public async Task CustomPermissionProfile_CanRemoveAdministratorTeamManagement()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var profile = new OrganisationPermissionProfile
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "Restricted administrator",
+            CreatedByUserId = test.UserId
+        };
+        test.Db.OrganisationPermissionProfiles.Add(profile);
+        var membership = await test.Db.OrganisationMemberships.SingleAsync(x =>
+            x.UserId == test.UserId && x.OrganisationId == test.Organisation.Id);
+        membership.Role = OrganisationRole.Administrator;
+        membership.PermissionProfile = profile;
+        await test.Db.SaveChangesAsync();
+
+        Assert.False(await test.Access.CanManageTeamAsync(test.UserId, test.Organisation.Id));
+        Assert.False(await test.Access.CanPostJournalsAsync(test.UserId, test.Organisation.Id));
+        Assert.False(await test.Access.CanManageContactsAsync(test.UserId, test.Organisation.Id));
+    }
+
     private static async Task<Organisation> AddOrganisationAsync(
         AccountingTestDatabase test,
         string legalName,

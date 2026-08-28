@@ -62,7 +62,7 @@ public sealed class SalesInvoiceEmailSenderTests
         var organisation = new Organisation
         {
             LegalName = "JCR 2006 Limited",
-            BusinessAddress = "Level 3, Jetpoint, Nadi, Fiji",
+            BusinessAddress = "Level 3, Jetpoint,Nadi,Fiji",
             Tin = "2900933974",
             BaseCurrency = "FJD"
         };
@@ -72,9 +72,25 @@ public sealed class SalesInvoiceEmailSenderTests
             Name = "1st Call Recruitment",
             Type = PartyType.Customer
         };
+        var branch = new Branch
+        {
+            Organisation = organisation,
+            OrganisationId = organisation.Id,
+            Code = "MAIN",
+            Name = "Main Branch"
+        };
+        var division = new Division
+        {
+            Branch = branch,
+            BranchId = branch.Id,
+            Code = "GENERAL",
+            Name = "General"
+        };
         var invoice = new SalesInvoice
         {
             Organisation = organisation,
+            Branch = branch,
+            Division = division,
             Customer = customer,
             CustomerId = customer.Id,
             InvoiceNumber = "INV-000003",
@@ -96,7 +112,7 @@ public sealed class SalesInvoiceEmailSenderTests
                     Quantity = 1,
                     TransactionUnitPrice = 26047.90m,
                     TransactionNetAmount = 26047.90m,
-                    VatTreatment = VatTreatment.Exempt
+                    VatTreatment = VatTreatment.ZeroRated
                 }
             ]
         };
@@ -110,5 +126,55 @@ public sealed class SalesInvoiceEmailSenderTests
         Assert.Contains("Commercial Invoice", text);
         Assert.Contains("INV-000003", text);
         Assert.Contains("Call Centre", text);
+        Assert.Contains("Main Branch", text);
+        Assert.Contains("General", text);
+        Assert.Contains("Project", text);
+        Assert.Contains("Customer PO", text);
+        Assert.Contains("Zero-rated 0%", text);
+        Assert.Contains("Powered by AccountIsland.com", text);
     }
+
+    [Fact]
+    public void PdfRenderer_FallsBackWhenBrandLogoIsInvalid()
+    {
+        var organisation = new Organisation
+        {
+            LegalName = "JCR 2006 Limited",
+            BaseCurrency = "FJD"
+        };
+        var customer = new BusinessParty
+        {
+            Organisation = organisation,
+            Name = "1st Call Recruitment",
+            Type = PartyType.Customer
+        };
+        var invoice = new SalesInvoice
+        {
+            Organisation = organisation,
+            Customer = customer,
+            CustomerId = customer.Id,
+            InvoiceNumber = "INV-000003",
+            IssueDate = new DateOnly(2026, 8, 28),
+            DueDate = new DateOnly(2026, 9, 4),
+            Currency = "NZD",
+            Status = InvoiceStatus.Posted,
+            CreatedByUserId = "user"
+        };
+        var branding = new OrganisationBranding
+        {
+            Organisation = organisation,
+            OrganisationId = organisation.Id,
+            LogoFileName = "invalid.png",
+            LogoContentType = "image/png",
+            LogoContent = [0x01, 0x02, 0x03],
+            UploadedByUserId = "user"
+        };
+
+        var pdf = new SalesInvoicePdfRenderer().Render(invoice, branding);
+
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(pdf, 0, 4));
+        using var document = UglyToad.PdfPig.PdfDocument.Open(pdf);
+        Assert.Contains("JCR 2006 Limited", document.GetPage(1).Text);
+    }
+
 }

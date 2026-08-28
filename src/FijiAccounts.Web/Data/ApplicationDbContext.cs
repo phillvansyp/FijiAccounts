@@ -24,6 +24,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Division> Divisions => Set<Division>();
     public DbSet<OrganisationMembership> OrganisationMemberships => Set<OrganisationMembership>();
+    public DbSet<OrganisationPermissionProfile> OrganisationPermissionProfiles =>
+        Set<OrganisationPermissionProfile>();
     public DbSet<OrganisationDimensionAccessGrant> OrganisationDimensionAccessGrants =>
         Set<OrganisationDimensionAccessGrant>();
     public DbSet<AccountantEngagement> AccountantEngagements => Set<AccountantEngagement>();
@@ -264,6 +266,19 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationMembership>().HasKey(x => new { x.OrganisationId, x.UserId });
         builder.Entity<OrganisationMembership>().HasIndex(x => x.UserId);
+        builder.Entity<OrganisationPermissionProfile>()
+            .HasIndex(x => new { x.OrganisationId, x.Name })
+            .IsUnique();
+        builder.Entity<OrganisationPermissionProfile>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<OrganisationMembership>()
+            .HasOne(x => x.PermissionProfile)
+            .WithMany(x => x.Members)
+            .HasForeignKey(x => x.PermissionProfileId)
+            .OnDelete(DeleteBehavior.SetNull);
         builder.Entity<OrganisationDimensionAccessGrant>()
             .HasIndex(x => new { x.OrganisationId, x.UserId, x.BranchId, x.DivisionId })
             .IsUnique();

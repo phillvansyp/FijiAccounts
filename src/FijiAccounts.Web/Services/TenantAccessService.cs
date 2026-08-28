@@ -14,14 +14,21 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             .Where(x => x.UserId == userId &&
                 (x.Organisation.OrganisationGroupId == null ||
                  x.Organisation.OrganisationGroup!.Status == TenantStatus.Active))
-            .Select(x => new AccessibleOrganisation(x.Organisation, x.Role.ToString(), false)).ToListAsync();
+            .Select(x => new AccessibleOrganisation(
+                x.Organisation,
+                x.Role == OrganisationRole.Owner
+                    ? "Owner"
+                    : x.PermissionProfileId != null ? x.PermissionProfile!.Name : x.Role.ToString(),
+                false)).ToListAsync();
 
         var practiceIds = await db.OrganisationMemberships.AsNoTracking()
             .Where(x => x.UserId == userId && x.Organisation.Kind == OrganisationKind.AccountingPractice &&
                 (x.Organisation.OrganisationGroupId == null ||
                  x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
-                (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator ||
-                 x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper))
+                (x.Role == OrganisationRole.Owner ||
+                 (x.PermissionProfileId != null
+                     ? x.PermissionProfile!.CanPostAccounting || x.PermissionProfile.CanManageContacts
+                     : x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper)))
             .Select(x => x.OrganisationId).ToArrayAsync();
         var clients = await db.AccountantEngagements.AsNoTracking().Include(x => x.ClientOrganisation)
             .Where(x => practiceIds.Contains(x.PracticeOrganisationId) && x.RevokedAt == null &&
@@ -39,7 +46,10 @@ public sealed class TenantAccessService(ApplicationDbContext db)
     public async Task<bool> CanManageTeamAsync(string userId, Guid organisationId) =>
         await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&
             (x.Organisation.OrganisationGroupId == null || x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
-            (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator));
+            (x.Role == OrganisationRole.Owner ||
+             (x.PermissionProfileId != null
+                 ? x.PermissionProfile!.CanManageTeam
+                 : x.Role == OrganisationRole.Administrator)));
 
     public async Task<List<Branch>> ListAccessibleBranchesAsync(
         string userId,
@@ -370,12 +380,18 @@ public sealed class TenantAccessService(ApplicationDbContext db)
     {
         if (await db.OrganisationMemberships.AnyAsync(x => x.UserId == userId && x.OrganisationId == organisationId &&
             (x.Organisation.OrganisationGroupId == null || x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
-            (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper))) return true;
+            (x.Role == OrganisationRole.Owner ||
+             (x.PermissionProfileId != null
+                 ? x.PermissionProfile!.CanPostAccounting
+                 : x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper)))) return true;
 
         return await db.AccountantEngagements.AnyAsync(e => e.ClientOrganisationId == organisationId && e.RevokedAt == null &&
             (e.ClientOrganisation.OrganisationGroupId == null || e.ClientOrganisation.OrganisationGroup!.Status == TenantStatus.Active) &&
             e.Access != EngagementAccess.ReadOnly && db.OrganisationMemberships.Any(m => m.OrganisationId == e.PracticeOrganisationId && m.UserId == userId &&
-                (m.Role == OrganisationRole.Owner || m.Role == OrganisationRole.Administrator || m.Role == OrganisationRole.Accountant || m.Role == OrganisationRole.Bookkeeper)));
+                (m.Role == OrganisationRole.Owner ||
+                 (m.PermissionProfileId != null
+                     ? m.PermissionProfile!.CanPostAccounting
+                     : m.Role == OrganisationRole.Administrator || m.Role == OrganisationRole.Accountant || m.Role == OrganisationRole.Bookkeeper))));
     }
 
     public async Task<bool> CanManageContactsAsync(
@@ -388,12 +404,10 @@ public sealed class TenantAccessService(ApplicationDbContext db)
             x.OrganisationId == organisationId &&
             (x.Organisation.OrganisationGroupId == null ||
              x.Organisation.OrganisationGroup!.Status == TenantStatus.Active) &&
-            (
-                x.Role == OrganisationRole.Owner ||
-                x.Role == OrganisationRole.Administrator ||
-                x.Role == OrganisationRole.Accountant ||
-                x.Role == OrganisationRole.Bookkeeper
-            )))
+            (x.Role == OrganisationRole.Owner ||
+             (x.PermissionProfileId != null
+                 ? x.PermissionProfile!.CanManageContacts
+                 : x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Accountant || x.Role == OrganisationRole.Bookkeeper))))
     {
         return true;
     }
@@ -409,11 +423,9 @@ public sealed class TenantAccessService(ApplicationDbContext db)
                 m =>
                     m.OrganisationId == e.PracticeOrganisationId &&
                     m.UserId == userId &&
-                    (
-                        m.Role == OrganisationRole.Owner ||
-                        m.Role == OrganisationRole.Administrator ||
-                        m.Role == OrganisationRole.Accountant ||
-                        m.Role == OrganisationRole.Bookkeeper
-                    )));
+                    (m.Role == OrganisationRole.Owner ||
+                     (m.PermissionProfileId != null
+                         ? m.PermissionProfile!.CanManageContacts
+                         : m.Role == OrganisationRole.Administrator || m.Role == OrganisationRole.Accountant || m.Role == OrganisationRole.Bookkeeper))));
 }
 }

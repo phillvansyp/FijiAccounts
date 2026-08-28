@@ -134,8 +134,9 @@ public sealed class PurchaseApprovalPolicyService(
             (requirement == PurchaseApprovalRequirement.OwnerOnly
                 ? x.Role == OrganisationRole.Owner
                 : x.Role == OrganisationRole.Owner ||
-                  x.Role == OrganisationRole.Administrator ||
-                  x.Role == OrganisationRole.Approver), ct);
+                  (x.PermissionProfileId != null
+                      ? x.PermissionProfile!.CanApprovePurchases
+                      : x.Role == OrganisationRole.Administrator || x.Role == OrganisationRole.Approver)), ct);
     }
 
     private async Task RequireManagerAsync(string userId, Guid organisationId)

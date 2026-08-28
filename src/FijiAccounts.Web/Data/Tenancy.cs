@@ -229,8 +229,26 @@ public sealed class OrganisationMembership
     public required string UserId { get; set; }
     public ApplicationUser User { get; set; } = null!;
     public OrganisationRole Role { get; set; }
+    public Guid? PermissionProfileId { get; set; }
+    public OrganisationPermissionProfile? PermissionProfile { get; set; }
     public DimensionAccessMode DimensionAccessMode { get; set; } = DimensionAccessMode.All;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class OrganisationPermissionProfile
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Organisation Organisation { get; set; } = null!;
+    [MaxLength(100)] public required string Name { get; set; }
+    [MaxLength(500)] public string? Description { get; set; }
+    public bool CanManageTeam { get; set; }
+    public bool CanPostAccounting { get; set; }
+    public bool CanManageContacts { get; set; }
+    public bool CanApprovePurchases { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string CreatedByUserId { get; set; }
+    public List<OrganisationMembership> Members { get; set; } = [];
 }
 
 public sealed class OrganisationDimensionAccessGrant
