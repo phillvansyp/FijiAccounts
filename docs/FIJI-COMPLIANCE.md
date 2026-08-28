@@ -8,7 +8,7 @@ This is a living engineering control document, not legal advice. Every rule requ
 | VAT treatments | Standard, zero-rated, exempt, out of scope | Encode supply classifications from legislation with citations |
 | Tax invoices and credit notes | Posting validation, immutable identity snapshots, invoice classification, VAT totals, and printable documents implemented against the 1 Aug 2024 regulations | Obtain Fiji tax-practitioner review of classifications, thresholds, wording, and samples before production release |
 | VMS/EFD | Not implemented | Build against FRCS protocol and complete accreditation |
-| VAT registration | Organisation status, effective date, TIN, and business address captured; taxable invoice posting is blocked unless registration is active | Add turnover monitoring and alerts |
+| VAT registration | Organisation status, effective date, TIN, and business address captured; taxable invoice posting is blocked unless registration is active; rolling 12-month taxable turnover monitoring and 80%/threshold alerts are implemented | Obtain practitioner review of the alert calculation and add forecast turnover inputs |
 | Income tax | Not implemented | Add workpapers after practitioner-approved specification |
 | PAYE/payroll | Not implemented | Version schedules and obligations by effective date |
 | Record retention | Audit architecture planned | Confirm periods and immutable storage policy |

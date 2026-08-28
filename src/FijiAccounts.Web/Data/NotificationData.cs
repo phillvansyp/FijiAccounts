@@ -15,7 +15,8 @@ public enum NotificationType
     PaymentDue,
     PaymentOverdue,
     System,
-    PaymentDueSoon
+    PaymentDueSoon,
+    VatRegistration
 }
 
 public enum NotificationStatus

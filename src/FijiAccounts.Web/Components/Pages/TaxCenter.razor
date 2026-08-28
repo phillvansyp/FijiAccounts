@@ -7,6 +7,7 @@
 @using FijiAccounts.Web.Services
 @inject TenantAccessService TenantAccess
 @inject VatWorkpaperService VatWorkpapers
+@inject VatTurnoverMonitorService VatTurnoverMonitor
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -44,6 +45,29 @@ else
     }
     else
     {
+        @if (turnover is not null)
+        {
+            <div class="alert @(turnover.RequiresRegistration ? "alert-danger" : turnover.IsApproachingThreshold ? "alert-warning" : "alert-info")">
+                <strong>12-month taxable turnover: @access.Organisation.BaseCurrency @turnover.TaxableTurnover.ToString("N2")</strong>
+                <div>
+                    @turnover.From.ToString("dd MMM yyyy") to @turnover.To.ToString("dd MMM yyyy") ·
+                    @turnover.ThresholdPercentage.ToString("N1")% of the FJD @turnover.RegistrationThreshold.ToString("N2") VAT registration threshold.
+                </div>
+                @if (turnover.RequiresRegistration)
+                {
+                    <div>Registration may now be required within 21 consecutive days. Confirm the position with FRCS or your Fiji tax practitioner.</div>
+                }
+                else if (turnover.IsApproachingThreshold)
+                {
+                    <div>FJD @turnover.RemainingBeforeThreshold.ToString("N2") remains before the threshold is exceeded.</div>
+                }
+                else if (!turnover.IsVatRegistered)
+                {
+                    <div>Account Island will warn the organisation as taxable turnover approaches the threshold.</div>
+                }
+            </div>
+        }
+
         <section class="report-controls no-print">
             <EditForm Model="period"
                       OnValidSubmit="Load"
@@ -195,6 +219,7 @@ else
     private IslandJurisdiction? jurisdiction;
     private readonly PeriodModel period = new();
     private VatWorkpaper? workpaper;
+    private VatTurnoverAssessment? turnover;
     private string? error;
 
     protected override async Task OnParametersSetAsync()
@@ -238,6 +263,9 @@ else
 
         if (jurisdiction.TaxPackEnabled)
         {
+            turnover = await VatTurnoverMonitor.GetAssessmentAsync(
+                OrganisationId,
+                today);
             await Load();
         }
     }

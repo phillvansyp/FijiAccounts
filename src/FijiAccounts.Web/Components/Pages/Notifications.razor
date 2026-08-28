@@ -47,6 +47,11 @@ else
                 @onclick="() => selectedCategory = NotificationType.System">
             System
         </button>
+
+        <button class="@GetCategoryClass(NotificationType.VatRegistration)"
+                @onclick="() => selectedCategory = NotificationType.VatRegistration">
+            Tax
+        </button>
     </div>
 
 
