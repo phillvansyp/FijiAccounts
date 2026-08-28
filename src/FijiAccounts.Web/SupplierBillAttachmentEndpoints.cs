@@ -33,6 +33,13 @@ public static class SupplierBillAttachmentEndpoints
                     return Results.NotFound();
                 }
 
+                await attachments.RecordExportAsync(
+                    userId!,
+                    organisationId,
+                    billId,
+                    attachment,
+                    cancellationToken);
+
                 byte[] content;
 
                 if (attachment.IsCompressed)
