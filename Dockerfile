@@ -3,6 +3,7 @@
 FROM alpine:3.22
 RUN apk add --no-cache \
     ca-certificates \
+    font-dejavu \
     icu-libs \
     libgcc \
     libssl3 \
