@@ -138,11 +138,40 @@ public sealed class BusinessPartyDocumentService(
             return false;
         }
 
+        var organisation = await db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == organisationId, ct);
+        var retainUntil = RecordRetentionPolicy.RetainUntil(
+            DateOnly.FromDateTime(document.UploadedAtUtc.UtcDateTime),
+            organisation.FinancialYearEndMonth,
+            organisation.FinancialYearEndDay);
+
+        if (RecordRetentionPolicy.IsProtected(retainUntil))
+        {
+            throw new InvalidOperationException(
+                RecordRetentionPolicy.ProtectedMessage(retainUntil));
+        }
+
         db.BusinessPartyDocuments.Remove(document);
         db.AuditEvents.Add(Audit(organisationId, userId, "BusinessPartyDocumentDeleted", document, document.BusinessParty.Name));
 
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task RecordExportAsync(
+        string userId,
+        Guid organisationId,
+        BusinessPartyDocument document,
+        CancellationToken ct = default)
+    {
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "BusinessPartyDocumentExported",
+            document,
+            "Document export"));
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<BusinessPartyDocument?> GetAsync(

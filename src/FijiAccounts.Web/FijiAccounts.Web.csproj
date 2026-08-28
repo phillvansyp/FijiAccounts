@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>aspnet-FijiAccounts_Web-070d9780-84c8-4938-a33b-533322048675</UserSecretsId>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tmp\**;**\tmp\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

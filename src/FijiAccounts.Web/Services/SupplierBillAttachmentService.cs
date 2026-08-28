@@ -97,6 +97,20 @@ public sealed class SupplierBillAttachmentService(
             return false;
         }
 
+        var organisation = await db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == organisationId, cancellationToken);
+        var retainUntil = RecordRetentionPolicy.RetainUntil(
+            bill.BillDate,
+            organisation.FinancialYearEndMonth,
+            organisation.FinancialYearEndDay);
+
+        if (RecordRetentionPolicy.IsProtected(retainUntil))
+        {
+            throw new InvalidOperationException(
+                RecordRetentionPolicy.ProtectedMessage(retainUntil));
+        }
+
         db.SupplierBillAttachments.Remove(attachment);
         db.AuditEvents.Add(RemovedAudit(
             organisationId,
@@ -106,6 +120,27 @@ public sealed class SupplierBillAttachmentService(
         await db.SaveChangesAsync(cancellationToken);
 
         return true;
+    }
+
+    public async Task RecordExportAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierBillId,
+        SupplierBillAttachment attachment,
+        CancellationToken cancellationToken = default)
+    {
+        var bill = await db.SupplierBills
+            .AsNoTracking()
+            .SingleAsync(
+                x => x.Id == supplierBillId && x.OrganisationId == organisationId,
+                cancellationToken);
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "SupplierBillDocumentExported",
+            bill,
+            attachment));
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     internal static SupplierBillAttachment CreateValidated(
