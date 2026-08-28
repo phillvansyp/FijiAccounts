@@ -264,6 +264,14 @@ else
         </section>
         <section class="settings-card"><h2>Island jurisdiction</h2><p>Controls currency, local dates, tax terminology and compliance rules.</p>
             <dl class="jurisdiction-list"><div><dt>Country</dt><dd>@jurisdiction.CountryName</dd></div><div><dt>Base currency</dt><dd>@access.Organisation.BaseCurrency</dd></div><div><dt>Time zone</dt><dd>@access.Organisation.TimeZoneId</dd></div><div><dt>Indirect tax</dt><dd>@access.Organisation.TaxLabel</dd></div><div><dt>Financial year end</dt><dd>@FinancialYearEnd</dd></div></dl>
+
+            @if (access.Organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="alert alert-info mt-3 mb-0">
+                    <strong>Seven-year record retention is active.</strong>
+                    Posted accounting records and supporting documents are protected through the end of the applicable financial year plus seven years. Document exports are recorded in the audit trail.
+                </div>
+            }
             @if (!jurisdiction.TaxPackEnabled) { <div class="compliance-note"><strong>Posting protection is active</strong><span>Transactions remain locked until this country’s tax rules have been independently verified and activated.</span></div> }
             @if (canChangeJurisdiction) { <label class="form-label mt-3">Change jurisdiction before posting begins</label><InputSelect class="form-select" @bind-Value="selectedCountry">@foreach (var item in IslandJurisdictions.All) { <option value="@item.CountryCode">@item.CountryName — @item.CurrencyCode</option> }</InputSelect><button class="btn btn-outline-primary mt-2" @onclick="ChangeJurisdiction">Apply jurisdiction</button> }
             else if (canManage) { <small class="locked-note">Jurisdiction is locked because accounting transactions already exist.</small> }
