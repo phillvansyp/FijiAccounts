@@ -58,14 +58,13 @@ public sealed class SalesInvoicePdfRenderer
                 y += 31;
             }
 
-            var detail = LineItemDetail(line);
-            var rowHeight = string.IsNullOrWhiteSpace(detail) ? 46d : 58d;
-            DrawCell(gfx, line.Description, regular, Margin + 8, y + 10, 205);
-            if (!string.IsNullOrWhiteSpace(detail))
-                DrawCell(gfx, detail, small, Margin + 8, y + 29, 205);
-            DrawRight(gfx, line.Quantity.ToString("N2"), regular, Margin + 278, y + 25);
-            DrawRight(gfx, $"{invoice.Currency} {line.TransactionUnitPrice:N2}", regular, Margin + 378, y + 25);
-            DrawCell(gfx, FijiTaxDocumentCompliance.TaxLabel(line), regular, Margin + 393, y + 10, 72);
+            const double rowHeight = 48d;
+            DrawCell(gfx, line.Description, regular, Margin + 8, y + 16, 100);
+            DrawCell(gfx, ProjectLabel(line), regular, Margin + 116, y + 16, 49);
+            DrawCell(gfx, string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber!, regular, Margin + 173, y + 16, 58);
+            DrawRight(gfx, line.Quantity.ToString("N2"), regular, Margin + 273, y + 25);
+            DrawRight(gfx, $"{invoice.Currency} {line.TransactionUnitPrice:N2}", regular, Margin + 358, y + 25);
+            DrawCell(gfx, FijiTaxDocumentCompliance.TaxLabel(line), regular, Margin + 368, y + 16, 66);
             DrawRight(gfx, $"{invoice.Currency} {line.TransactionNetAmount:N2}", regular, PageWidth - Margin - 8, y + 25);
             gfx.DrawLine(border, Margin, y + rowHeight, PageWidth - Margin, y + rowHeight);
             y += rowHeight;
@@ -186,9 +185,11 @@ public sealed class SalesInvoicePdfRenderer
         gfx.DrawRectangle(background, Margin, y, PageWidth - (Margin * 2), 31);
         var white = XBrushes.White;
         gfx.DrawString("Description", bold, white, new XPoint(Margin + 8, y + 20));
-        DrawRight(gfx, "Qty", bold, Margin + 278, y + 20, white);
-        DrawRight(gfx, "Unit price", bold, Margin + 378, y + 20, white);
-        gfx.DrawString("Tax treatment", bold, white, new XPoint(Margin + 393, y + 20));
+        gfx.DrawString("Project", bold, white, new XPoint(Margin + 116, y + 20));
+        gfx.DrawString("Customer PO", bold, white, new XPoint(Margin + 173, y + 20));
+        DrawRight(gfx, "Qty", bold, Margin + 273, y + 20, white);
+        DrawRight(gfx, "Unit price", bold, Margin + 358, y + 20, white);
+        gfx.DrawString("Tax treatment", bold, white, new XPoint(Margin + 368, y + 20));
         DrawRight(gfx, "VAT excl.", bold, PageWidth - Margin - 8, y + 20, white);
     }
 
@@ -264,6 +265,7 @@ public sealed class SalesInvoicePdfRenderer
 
     private static void DrawCell(XGraphics gfx, string value, XFont font, double x, double y, double maxWidth)
     {
+        value = System.Text.RegularExpressions.Regex.Replace(value, @",\s*", ", ");
         var words = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (words.Length == 0) return;
 
@@ -296,15 +298,9 @@ public sealed class SalesInvoicePdfRenderer
     private static string SupplierName(SalesInvoice invoice) =>
         invoice.SupplierNameSnapshot ?? invoice.Organisation.LegalName;
 
-    private static string LineItemDetail(SalesInvoiceLine line)
-    {
-        var parts = new List<string>();
-        if (line.Project is not null)
-            parts.Add($"Project: {line.Project.ProjectNumber}{(line.ProjectCostCode is null ? string.Empty : $" / {line.ProjectCostCode.Code}")}");
-        if (!string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber))
-            parts.Add($"Customer PO: {line.CustomerPurchaseOrderNumber}");
-        return string.Join(" | ", parts);
-    }
+    private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
+        ? "—"
+        : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? string.Empty : $" / {line.ProjectCostCode.Code}")}";
 
     private static string StatusLabel(InvoiceStatus status) => status == InvoiceStatus.PartPaid
         ? "Part paid"
