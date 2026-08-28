@@ -49,6 +49,7 @@ public sealed class SalesInvoicePdfRenderer
         {
             if (y > PageHeight - 150)
             {
+                DrawFooter(gfx, small, muted);
                 gfx.Dispose();
                 page = AddPage(document);
                 gfx = XGraphics.FromPdfPage(page);
@@ -73,6 +74,7 @@ public sealed class SalesInvoicePdfRenderer
         y = Math.Max(y + 32, 395);
         if (y > PageHeight - 245)
         {
+            DrawFooter(gfx, small, muted);
             gfx.Dispose();
             page = AddPage(document);
             gfx = XGraphics.FromPdfPage(page);
@@ -81,6 +83,7 @@ public sealed class SalesInvoicePdfRenderer
         }
 
         DrawTotals(gfx, invoice, y, regular, bold, navy);
+        DrawFooter(gfx, small, muted);
         gfx.Dispose();
 
         using var output = new MemoryStream();
@@ -149,6 +152,9 @@ public sealed class SalesInvoicePdfRenderer
         DrawRight(gfx, $"{invoice.InvoiceNumber} (continued)", small, PageWidth - Margin, 48);
         gfx.DrawLine(new XPen(XColor.FromArgb(7, 59, 76), 1.5), Margin, 60, PageWidth - Margin, 60);
     }
+
+    private static void DrawFooter(XGraphics gfx, XFont small, XBrush muted) =>
+        DrawCentered(gfx, "Powered by AccountIsland.com", small, muted, Margin, PageWidth - Margin, PageHeight - 22);
 
     private static void DrawMeta(
         XGraphics gfx,
