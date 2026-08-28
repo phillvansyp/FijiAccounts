@@ -63,8 +63,9 @@ else
                 }
                 else if (!turnover.IsVatRegistered)
                 {
-                    <div>Account Island will warn the organisation as taxable turnover approaches the threshold.</div>
+                    <div>Account Island will warn the organisation as posted taxable turnover approaches the threshold.</div>
                 }
+                <div class="small mt-1">This historical monitor does not include expected turnover from future contracts or other forecast supplies.</div>
             </div>
         }
 
@@ -261,7 +262,8 @@ else
                 1)
             .AddDays(-1);
 
-        if (jurisdiction.TaxPackEnabled)
+        if (jurisdiction.TaxPackEnabled &&
+            access.Organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase))
         {
             turnover = await VatTurnoverMonitor.GetAssessmentAsync(
                 OrganisationId,

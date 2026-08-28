@@ -91,6 +91,21 @@ public sealed class BusinessPartyDocumentServiceTests
     }
 
     [Fact]
+    public async Task DeleteAsync_DoesNotApplyFijiRetentionRuleToAnotherJurisdiction()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var service = new BusinessPartyDocumentService(test.Db, test.Access);
+        var document = await service.AddAsync(test.UserId, Request(test));
+
+        Assert.True(await service.DeleteAsync(
+            test.UserId,
+            test.Organisation.Id,
+            document.Id));
+    }
+
+    [Fact]
     public async Task UnauthorizedAndCrossTenantOperations_CreateNoAuditNoise()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -167,6 +182,13 @@ public sealed class BusinessPartyDocumentServiceTests
         Assert.NotNull(downloaded);
         Assert.Equal(document.Id, downloaded.Id);
         Assert.Equal([1, 2, 3, 4], downloaded.Content);
+        await service.RecordExportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            downloaded);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == document.Id.ToString() &&
+            x.EventType == "BusinessPartyDocumentExported"));
         Assert.Null(await service.GetAsync(
             test.UserId,
             test.Organisation.Id,

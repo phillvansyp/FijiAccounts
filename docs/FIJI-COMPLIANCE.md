@@ -8,15 +8,16 @@ This is a living engineering control document, not legal advice. Every rule requ
 | VAT treatments | Standard, zero-rated, exempt, out of scope | Encode supply classifications from legislation with citations |
 | Tax invoices and credit notes | Posting validation, immutable identity snapshots, invoice classification, VAT totals, and printable documents implemented against the 1 Aug 2024 regulations | Obtain Fiji tax-practitioner review of classifications, thresholds, wording, and samples before production release |
 | VMS/EFD | Not implemented | Build against FRCS protocol and complete accreditation |
-| VAT registration | Organisation status, effective date, TIN, and business address captured; taxable invoice posting is blocked unless registration is active; rolling 12-month taxable turnover monitoring and 80%/threshold alerts are implemented | Obtain practitioner review of the alert calculation and add forecast turnover inputs |
+| VAT registration | Organisation status, effective date, TIN, and business address captured; taxable invoice posting is blocked unless registration is active; rolling 12-month posted taxable turnover monitoring and 80%/threshold alerts are implemented | Obtain practitioner review of the alert calculation and add forecast turnover inputs |
 | Income tax | Not implemented | Add workpapers after practitioner-approved specification |
 | PAYE/payroll | Not implemented | Version schedules and obligations by effective date |
-| Record retention | Audit architecture planned | Confirm periods and immutable storage policy |
+| Record retention | Seven-year deletion safeguards and export audit events implemented for contact documents and supplier-bill attachments | Obtain practitioner review, extend coverage to every retained record class, and move files to immutable object storage |
 
 Primary sources:
 
 - https://www.laws.gov.fj/Acts/ViewSection/79117
 - https://www.laws.gov.fj/Acts/ViewSection/79125
+- https://www.laws.gov.fj/Acts/ViewSection/62518
 - https://www.frcs.org.fj/wp-content/uploads/2023/11/VAT-Guide-01.11.2-Online-version.pdf
 - https://frcs.org.fj/our-services/taxation-section/non-individuals/reporting-and-paying-taxes/vat-guide/
 - https://frcs.org.fj/our-services/vat-monitoring-system-vms/vms-faqs/

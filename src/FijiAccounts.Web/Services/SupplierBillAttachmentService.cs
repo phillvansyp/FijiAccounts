@@ -105,7 +105,8 @@ public sealed class SupplierBillAttachmentService(
             organisation.FinancialYearEndMonth,
             organisation.FinancialYearEndDay);
 
-        if (RecordRetentionPolicy.IsProtected(retainUntil))
+        if (organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
+            RecordRetentionPolicy.IsProtected(retainUntil))
         {
             throw new InvalidOperationException(
                 RecordRetentionPolicy.ProtectedMessage(retainUntil));
@@ -129,6 +130,13 @@ public sealed class SupplierBillAttachmentService(
         SupplierBillAttachment attachment,
         CancellationToken cancellationToken = default)
     {
+        if (attachment.OrganisationId != organisationId ||
+            attachment.SupplierBillId != supplierBillId ||
+            await access.FindAsync(userId, organisationId) is null)
+        {
+            throw new UnauthorizedAccessException();
+        }
+
         var bill = await db.SupplierBills
             .AsNoTracking()
             .SingleAsync(

@@ -130,6 +130,7 @@ else
                         OrganisationId="OrganisationId"
                         PartyId="PartyId"
                         RetainUntil="RetentionDate(document)"
+                        RetentionRequired="recordRetentionRequired"
                         OnDelete="DeleteDocument" />
                 }
             }
@@ -162,6 +163,7 @@ else
     private string? message;
     private int financialYearEndMonth = 12;
     private int financialYearEndDay = 31;
+    private bool recordRetentionRequired;
 
     protected override async Task OnInitializedAsync()
     {
@@ -180,6 +182,9 @@ else
 
         financialYearEndMonth = tenant.Organisation.FinancialYearEndMonth;
         financialYearEndDay = tenant.Organisation.FinancialYearEndDay;
+        recordRetentionRequired = tenant.Organisation.CountryCode.Equals(
+            "FJ",
+            StringComparison.OrdinalIgnoreCase);
 
         party =
             await Db.BusinessParties

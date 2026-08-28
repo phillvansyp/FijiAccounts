@@ -146,7 +146,8 @@ public sealed class BusinessPartyDocumentService(
             organisation.FinancialYearEndMonth,
             organisation.FinancialYearEndDay);
 
-        if (RecordRetentionPolicy.IsProtected(retainUntil))
+        if (organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
+            RecordRetentionPolicy.IsProtected(retainUntil))
         {
             throw new InvalidOperationException(
                 RecordRetentionPolicy.ProtectedMessage(retainUntil));
@@ -165,6 +166,12 @@ public sealed class BusinessPartyDocumentService(
         BusinessPartyDocument document,
         CancellationToken ct = default)
     {
+        if (document.OrganisationId != organisationId ||
+            await access.FindAsync(userId, organisationId) is null)
+        {
+            throw new UnauthorizedAccessException();
+        }
+
         db.AuditEvents.Add(Audit(
             organisationId,
             userId,

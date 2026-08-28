@@ -123,13 +123,6 @@ public sealed class VatTurnoverMonitorService(
             return assessment;
         }
 
-        if (existing.Any(x => x.Severity == severity))
-        {
-            return assessment;
-        }
-
-        await ResolveAsync(existing, organisationId, ct);
-
         var title = assessment.RequiresRegistration
             ? "VAT registration threshold exceeded"
             : "VAT registration threshold approaching";
@@ -137,6 +130,30 @@ public sealed class VatTurnoverMonitorService(
         var message = assessment.RequiresRegistration
             ? $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2}. FRCS guidance requires VAT registration within 21 consecutive days after turnover exceeds FJD {assessment.RegistrationThreshold:N2}."
             : $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2} ({assessment.ThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold).";
+
+        if (existing.Count == 1 && existing[0].Severity == severity)
+        {
+            var current = existing[0];
+            var changed =
+                current.Title != title ||
+                current.Message != message ||
+                current.Amount != assessment.TaxableTurnover ||
+                current.Currency != organisation.BaseCurrency;
+
+            if (changed)
+            {
+                current.Title = title;
+                current.Message = message;
+                current.Amount = assessment.TaxableTurnover;
+                current.Currency = organisation.BaseCurrency;
+                await db.SaveChangesAsync(ct);
+                notifications.PublishOrganisationUpdate(organisationId);
+            }
+
+            return assessment;
+        }
+
+        await ResolveAsync(existing, organisationId, ct);
 
         await notifications.CreateAsync(
             new CreateNotificationRequest(

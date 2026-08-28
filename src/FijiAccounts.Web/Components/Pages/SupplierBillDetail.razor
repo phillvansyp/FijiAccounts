@@ -66,7 +66,7 @@ else
                         <a class="btn btn-outline-secondary attachment-top-button"
                            href="@AttachmentUrl(attachment)"
                            target="_blank"
-                           title="Retained until @AttachmentRetainUntil.ToString("dd MMM yyyy")">
+                           title="@(AttachmentDeletionProtected ? $"Retained until {AttachmentRetainUntil:dd MMM yyyy}" : "Open attachment")">
                             Attachments
                             <span class="attachment-count">1</span>
                         </a>
@@ -87,7 +87,11 @@ else
                                 <div class="attachment-menu-title">
                                     <strong>Attachments</strong>
                                     <span>
-                                        @bill.Attachments.Count files · retained until @AttachmentRetainUntil.ToString("dd MMM yyyy")
+                                        @bill.Attachments.Count files
+                                        @if (AttachmentDeletionProtected)
+                                        {
+                                            <text> · retained until @AttachmentRetainUntil.ToString("dd MMM yyyy")</text>
+                                        }
                                     </span>
                                 </div>
 
@@ -1155,6 +1159,7 @@ private string paymentRejectionReason = "";
             access.Organisation.FinancialYearEndMonth,
             access.Organisation.FinancialYearEndDay);
     private bool AttachmentDeletionProtected =>
+        access?.Organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) == true &&
         RecordRetentionPolicy.IsProtected(AttachmentRetainUntil);
     private decimal PaymentFxDifference => bill is null ? 0m : paymentAmount - decimal.Round(paymentTransactionAmount * bill.ExchangeRateToBase, 2, MidpointRounding.AwayFromZero);
 

@@ -38,10 +38,17 @@
     </td>
 
     <td>
-        <span class="badge bg-success">Retained</span>
-        <div class="text-muted small">
-            Until @RetainUntil.ToString("dd MMM yyyy")
-        </div>
+        @if (RetentionRequired)
+        {
+            <span class="badge bg-success">Retained</span>
+            <div class="text-muted small">
+                Until @RetainUntil.ToString("dd MMM yyyy")
+            </div>
+        }
+        else
+        {
+            <span class="badge bg-success">Active</span>
+        }
     </td>
 
     <td>
@@ -110,7 +117,11 @@
     [Parameter]
     public DateOnly RetainUntil { get; set; }
 
-    private bool DeletionProtected => RecordRetentionPolicy.IsProtected(RetainUntil);
+    [Parameter]
+    public bool RetentionRequired { get; set; }
+
+    private bool DeletionProtected =>
+        RetentionRequired && RecordRetentionPolicy.IsProtected(RetainUntil);
 
 
     private async Task DeleteClicked()

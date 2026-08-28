@@ -68,6 +68,30 @@ public sealed class VatTurnoverMonitorServiceTests
         Assert.True(alert.IsRead);
     }
 
+    [Fact]
+    public async Task RefreshAlert_UpdatesAnOpenAlertWhenTurnoverChangesWithinSeverity()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.IsVatRegistered = false;
+        AddInvoice(test, new DateOnly(2026, 6, 10), 85_000m, VatTreatment.Standard);
+        await test.Db.SaveChangesAsync();
+
+        var service = new VatTurnoverMonitorService(test.Db, test.Notifications);
+        await service.RefreshAlertAsync(test.Organisation.Id, new DateOnly(2026, 8, 28));
+
+        AddInvoice(test, new DateOnly(2026, 7, 10), 5_000m, VatTreatment.ZeroRated);
+        await test.Db.SaveChangesAsync();
+        await service.RefreshAlertAsync(test.Organisation.Id, new DateOnly(2026, 8, 28));
+
+        var alerts = await test.Db.Notifications
+            .Where(x => x.Type == NotificationType.VatRegistration)
+            .ToListAsync();
+        var alert = Assert.Single(alerts);
+        Assert.Equal(NotificationStatus.Open, alert.Status);
+        Assert.Equal(90_000m, alert.Amount);
+        Assert.Contains("90,000.00", alert.Message);
+    }
+
     private static void AddInvoice(
         AccountingTestDatabase test,
         DateOnly issueDate,

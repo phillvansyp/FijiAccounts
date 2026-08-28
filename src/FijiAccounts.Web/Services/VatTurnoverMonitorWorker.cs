@@ -29,6 +29,10 @@ public sealed class VatTurnoverMonitorWorker(
                     await monitor.RefreshAlertAsync(organisationId, today, stoppingToken);
                 }
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "VAT turnover monitoring failed.");

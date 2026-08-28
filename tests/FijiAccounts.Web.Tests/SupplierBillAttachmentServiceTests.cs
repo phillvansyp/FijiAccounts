@@ -129,6 +129,27 @@ public sealed class SupplierBillAttachmentServiceTests
     }
 
     [Fact]
+    public async Task DeleteAsync_DoesNotApplyFijiRetentionRuleToAnotherJurisdiction()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var bill = await PostBillAsync(test, "SUP-NZ-RETENTION");
+        var service = new SupplierBillAttachmentService(test.Db, test.Access);
+        var attachment = await service.AddAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            Attachment());
+
+        Assert.True(await service.DeleteAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            attachment.Id));
+    }
+
+    [Fact]
     public async Task ReadOnlyAndCrossTenantAttempts_CreateNoAuditNoise()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -217,6 +238,14 @@ public sealed class SupplierBillAttachmentServiceTests
         Assert.NotNull(downloaded);
         Assert.Equal(attachment.Id, downloaded.Id);
         Assert.Equal([1, 2, 3, 4], downloaded.Content);
+        await service.RecordExportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            downloaded);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == bill.Id.ToString() &&
+            x.EventType == "SupplierBillDocumentExported"));
         Assert.Null(await service.GetAsync(
             test.UserId,
             test.Organisation.Id,
