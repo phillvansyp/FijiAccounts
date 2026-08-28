@@ -8,7 +8,7 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BusinessPartyDocumentServiceTests
 {
     [Fact]
-    public async Task AddAndDeleteAsync_NormalizePersistAndAuditMetadataWithoutContent()
+    public async Task AddAndDeleteAsync_NormalizePersistProtectAndAuditMetadataWithoutContent()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var service = new BusinessPartyDocumentService(test.Db, test.Access);
@@ -27,10 +27,13 @@ public sealed class BusinessPartyDocumentServiceTests
         Assert.Equal("Annual terms", document.Description);
         Assert.Equal("contract.pdf", document.FileName);
         Assert.Equal("application/pdf", document.ContentType);
-        Assert.True(await service.DeleteAsync(
-            test.UserId,
-            test.Organisation.Id,
-            document.Id));
+        var protectedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(test.UserId, test.Organisation.Id, document.Id));
+        Assert.Contains("seven-year", protectedError.Message, StringComparison.OrdinalIgnoreCase);
+
+        document.UploadedAtUtc = DateTimeOffset.UtcNow.AddYears(-9);
+        await test.Db.SaveChangesAsync();
+        Assert.True(await service.DeleteAsync(test.UserId, test.Organisation.Id, document.Id));
         Assert.False(await service.DeleteAsync(
             test.UserId,
             test.Organisation.Id,
