@@ -154,7 +154,7 @@ public sealed class SalesInvoicePdfRenderer
     }
 
     private static void DrawFooter(XGraphics gfx, XFont small, XBrush muted) =>
-        DrawCentered(gfx, "Powered by AccountIsland.com", small, muted, Margin, PageWidth - Margin, PageHeight - 22);
+        DrawCentered(gfx, "Powered by www.accountisland.com", small, muted, Margin, PageWidth - Margin, PageHeight - 22);
 
     private static void DrawMeta(
         XGraphics gfx,
