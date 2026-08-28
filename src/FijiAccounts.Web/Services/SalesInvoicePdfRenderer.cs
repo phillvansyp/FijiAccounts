@@ -41,7 +41,7 @@ public sealed class SalesInvoicePdfRenderer
         DrawHeader(gfx, invoice, branding, heading, invoiceNumber, small, navy, green);
         DrawMeta(gfx, invoice, regular, bold, small, muted);
 
-        var y = 267d;
+        var y = 255d;
         DrawTableHeader(gfx, y, bold);
         y += 31;
 
@@ -58,19 +58,20 @@ public sealed class SalesInvoicePdfRenderer
                 y += 31;
             }
 
-            var rowHeight = 36d;
-            DrawCell(gfx, line.Description, regular, Margin + 8, y + 7, 105);
-            DrawCell(gfx, ProjectLabel(line), regular, Margin + 121, y + 7, 67);
-            DrawCell(gfx, string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "-" : line.CustomerPurchaseOrderNumber!, regular, Margin + 192, y + 7, 74);
-            DrawRight(gfx, line.Quantity.ToString("N2"), regular, Margin + 318, y + 8);
-            DrawRight(gfx, $"{invoice.Currency} {line.TransactionUnitPrice:N2}", regular, Margin + 410, y + 8);
-            DrawCell(gfx, FijiTaxDocumentCompliance.TaxLabel(line), regular, Margin + 419, y + 7, 64);
-            DrawRight(gfx, $"{invoice.Currency} {line.TransactionNetAmount:N2}", regular, PageWidth - Margin - 8, y + 8);
+            var detail = LineItemDetail(line);
+            var rowHeight = string.IsNullOrWhiteSpace(detail) ? 46d : 58d;
+            DrawCell(gfx, line.Description, regular, Margin + 8, y + 10, 205);
+            if (!string.IsNullOrWhiteSpace(detail))
+                DrawCell(gfx, detail, small, Margin + 8, y + 29, 205);
+            DrawRight(gfx, line.Quantity.ToString("N2"), regular, Margin + 278, y + 25);
+            DrawRight(gfx, $"{invoice.Currency} {line.TransactionUnitPrice:N2}", regular, Margin + 378, y + 25);
+            DrawCell(gfx, FijiTaxDocumentCompliance.TaxLabel(line), regular, Margin + 393, y + 10, 72);
+            DrawRight(gfx, $"{invoice.Currency} {line.TransactionNetAmount:N2}", regular, PageWidth - Margin - 8, y + 25);
             gfx.DrawLine(border, Margin, y + rowHeight, PageWidth - Margin, y + rowHeight);
             y += rowHeight;
         }
 
-        y = Math.Max(y + 20, 370);
+        y = Math.Max(y + 32, 395);
         if (y > PageHeight - 245)
         {
             gfx.Dispose();
@@ -106,9 +107,6 @@ public sealed class SalesInvoicePdfRenderer
         XBrush navy,
         XBrush green)
     {
-        gfx.DrawString(DocumentTitle(invoice), heading, navy, new XPoint(Margin, 58));
-        gfx.DrawLine(new XPen(XColor.FromArgb(7, 59, 76), 2.2), Margin, 72, PageWidth - Margin, 72);
-
         var logoDrawn = false;
         if (branding is not null && branding.LogoContentType is "image/png" or "image/jpeg")
         {
@@ -121,8 +119,8 @@ public sealed class SalesInvoicePdfRenderer
                     writable: false,
                     publiclyVisible: true);
                 using var image = XImage.FromStream(stream);
-                var ratio = Math.Min(150d / image.PixelWidth, 58d / image.PixelHeight);
-                gfx.DrawImage(image, Margin, 88, image.PixelWidth * ratio, image.PixelHeight * ratio);
+                var ratio = Math.Min(125d / image.PixelWidth, 48d / image.PixelHeight);
+                gfx.DrawImage(image, Margin, 28, image.PixelWidth * ratio, image.PixelHeight * ratio);
                 logoDrawn = true;
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or NotSupportedException)
@@ -132,11 +130,13 @@ public sealed class SalesInvoicePdfRenderer
         }
         if (!logoDrawn)
         {
-            gfx.DrawString(SupplierName(invoice), invoiceNumber, green, new XPoint(Margin, 115));
+            gfx.DrawString(SupplierName(invoice), invoiceNumber, green, new XPoint(Margin, 59));
         }
 
-        DrawRight(gfx, invoice.InvoiceNumber, invoiceNumber, PageWidth - Margin, 105);
-        DrawRight(gfx, StatusLabel(invoice.Status), small, PageWidth - Margin, 132, green);
+        DrawCentered(gfx, DocumentTitle(invoice), heading, navy, 168, 428, 61);
+        DrawRight(gfx, invoice.InvoiceNumber, invoiceNumber, PageWidth - Margin, 49);
+        DrawRight(gfx, StatusLabel(invoice.Status), small, PageWidth - Margin, 72, green);
+        gfx.DrawLine(new XPen(XColor.FromArgb(7, 59, 76), 2.2), Margin, 98, PageWidth - Margin, 98);
     }
 
     private static void DrawContinuationHeader(
@@ -159,25 +159,25 @@ public sealed class SalesInvoicePdfRenderer
         XFont small,
         XBrush muted)
     {
-        const double y = 172;
+        const double y = 132;
         gfx.DrawString("FROM", small, muted, new XPoint(Margin, y));
         gfx.DrawString(SupplierName(invoice), bold, XBrushes.Black, new XPoint(Margin, y + 18));
-        DrawCell(gfx, invoice.SupplierAddressSnapshot ?? invoice.Organisation.BusinessAddress ?? string.Empty, regular, Margin, y + 34, 150);
+        DrawCell(gfx, invoice.SupplierAddressSnapshot ?? invoice.Organisation.BusinessAddress ?? string.Empty, regular, Margin, y + 36, 175);
         var supplierTin = invoice.SupplierTinSnapshot ?? invoice.Organisation.Tin;
         if (!string.IsNullOrWhiteSpace(supplierTin))
-            gfx.DrawString($"TIN: {supplierTin}", regular, XBrushes.Black, new XPoint(Margin, y + 66));
+            gfx.DrawString($"TIN: {supplierTin}", regular, XBrushes.Black, new XPoint(Margin, y + 76));
 
-        const double billX = 220;
+        const double billX = 218;
         gfx.DrawString("BILL TO", small, muted, new XPoint(billX, y));
         gfx.DrawString(invoice.RecipientNameSnapshot ?? invoice.Customer.Name, bold, XBrushes.Black, new XPoint(billX, y + 18));
-        DrawCell(gfx, invoice.RecipientAddressSnapshot ?? invoice.Customer.Address ?? string.Empty, regular, billX, y + 34, 130);
+        DrawCell(gfx, invoice.RecipientAddressSnapshot ?? invoice.Customer.Address ?? string.Empty, regular, billX, y + 36, 125);
 
-        const double labelX = 390;
+        const double labelX = 360;
         const double valueX = PageWidth - Margin;
         DrawPair(gfx, "Issue date", invoice.IssueDate.ToString("dd MMM yyyy"), labelX, valueX, y, regular, muted);
-        DrawPair(gfx, "Due date", invoice.DueDate.ToString("dd MMM yyyy"), labelX, valueX, y + 20, regular, muted);
-        DrawPair(gfx, "Currency", invoice.Currency, labelX, valueX, y + 40, regular, muted);
-        DrawPair(gfx, "Branch / division", $"{invoice.Branch?.Name ?? "-"} / {invoice.Division?.Name ?? "-"}", labelX, valueX, y + 60, regular, muted);
+        DrawPair(gfx, "Due date", invoice.DueDate.ToString("dd MMM yyyy"), labelX, valueX, y + 24, regular, muted);
+        DrawPair(gfx, "Currency", invoice.Currency, labelX, valueX, y + 48, regular, muted);
+        DrawPair(gfx, "Branch / division", $"{invoice.Branch?.Name ?? "-"} / {invoice.Division?.Name ?? "-"}", labelX, valueX, y + 72, regular, muted);
     }
 
     private static void DrawTableHeader(XGraphics gfx, double y, XFont bold)
@@ -186,11 +186,9 @@ public sealed class SalesInvoicePdfRenderer
         gfx.DrawRectangle(background, Margin, y, PageWidth - (Margin * 2), 31);
         var white = XBrushes.White;
         gfx.DrawString("Description", bold, white, new XPoint(Margin + 8, y + 20));
-        gfx.DrawString("Project", bold, white, new XPoint(Margin + 121, y + 20));
-        gfx.DrawString("Customer PO", bold, white, new XPoint(Margin + 192, y + 20));
-        DrawRight(gfx, "Qty", bold, Margin + 318, y + 20, white);
-        DrawRight(gfx, "Unit price", bold, Margin + 410, y + 20, white);
-        gfx.DrawString("Tax", bold, white, new XPoint(Margin + 419, y + 20));
+        DrawRight(gfx, "Qty", bold, Margin + 278, y + 20, white);
+        DrawRight(gfx, "Unit price", bold, Margin + 378, y + 20, white);
+        gfx.DrawString("Tax treatment", bold, white, new XPoint(Margin + 393, y + 20));
         DrawRight(gfx, "VAT excl.", bold, PageWidth - Margin - 8, y + 20, white);
     }
 
@@ -258,6 +256,12 @@ public sealed class SalesInvoicePdfRenderer
         gfx.DrawString(value, font, brush, new XPoint(right - width, baseline));
     }
 
+    private static void DrawCentered(XGraphics gfx, string value, XFont font, XBrush brush, double left, double right, double baseline)
+    {
+        var width = gfx.MeasureString(value, font).Width;
+        gfx.DrawString(value, font, brush, new XPoint(left + ((right - left - width) / 2), baseline));
+    }
+
     private static void DrawCell(XGraphics gfx, string value, XFont font, double x, double y, double maxWidth)
     {
         var words = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -292,9 +296,15 @@ public sealed class SalesInvoicePdfRenderer
     private static string SupplierName(SalesInvoice invoice) =>
         invoice.SupplierNameSnapshot ?? invoice.Organisation.LegalName;
 
-    private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
-        ? "-"
-        : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? string.Empty : $" / {line.ProjectCostCode.Code}")}";
+    private static string LineItemDetail(SalesInvoiceLine line)
+    {
+        var parts = new List<string>();
+        if (line.Project is not null)
+            parts.Add($"Project: {line.Project.ProjectNumber}{(line.ProjectCostCode is null ? string.Empty : $" / {line.ProjectCostCode.Code}")}");
+        if (!string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber))
+            parts.Add($"Customer PO: {line.CustomerPurchaseOrderNumber}");
+        return string.Join(" | ", parts);
+    }
 
     private static string StatusLabel(InvoiceStatus status) => status == InvoiceStatus.PartPaid
         ? "Part paid"
