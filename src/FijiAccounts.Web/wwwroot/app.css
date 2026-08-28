@@ -71,6 +71,7 @@ h1:focus {
 img,svg{max-width:100%}
 .page-content .table-responsive{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .page-content .d-flex{min-width:0;flex-wrap:wrap;gap:.5rem}
+@media print{.app-header{display:none!important}.app-shell,.app-main{min-height:0!important;background:#fff!important}.page-content{width:100%!important;max-width:none!important;margin:0!important;padding:0!important}}
 @media(max-width:800px){.hero,.feature-grid,.org-grid{grid-template-columns:1fr}.hero{gap:2rem;padding:2rem 0}}
 .workspace-heading { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:2rem; }
 .stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
