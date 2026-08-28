@@ -32,6 +32,12 @@ public static class BusinessPartyDocumentEndpoints
                     return Results.NotFound();
                 }
 
+                await documents.RecordExportAsync(
+                    userId!,
+                    organisationId,
+                    document,
+                    cancellationToken);
+
                 byte[] content;
 
                 if (document.IsCompressed)
