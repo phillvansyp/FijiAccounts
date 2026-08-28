@@ -12,7 +12,16 @@ public sealed record TransactionalEmail(
     string Recipient,
     string Subject,
     string TextBody,
-    string? HtmlBody = null);
+    string? HtmlBody = null,
+    IReadOnlyList<TransactionalEmailAttachment>? Attachments = null)
+{
+    public IReadOnlyList<TransactionalEmailAttachment> Files => Attachments ?? [];
+}
+
+public sealed record TransactionalEmailAttachment(
+    string FileName,
+    string ContentType,
+    byte[] Content);
 
 public interface IEmailDeliveryService
 {
@@ -51,6 +60,13 @@ public sealed class SmtpEmailDeliveryService(IConfiguration configuration) : IEm
                 email.TextBody,
                 Encoding.UTF8,
                 MediaTypeNames.Text.Plain));
+        }
+        foreach (var attachment in email.Files)
+        {
+            message.Attachments.Add(new Attachment(
+                new MemoryStream(attachment.Content, writable: false),
+                attachment.FileName,
+                attachment.ContentType));
         }
 
         using var client = new SmtpClient(
@@ -106,24 +122,37 @@ public sealed class MicrosoftGraphEmailDeliveryService(
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer",
             await GetAccessTokenAsync(client, cancellationToken));
+        var graphMessage = new Dictionary<string, object?>
+        {
+            ["subject"] = email.Subject,
+            ["body"] = new
+            {
+                contentType = email.HtmlBody is null ? "Text" : "HTML",
+                content = email.HtmlBody ?? email.TextBody
+            },
+            ["toRecipients"] = new[]
+            {
+                new
+                {
+                    emailAddress = new { address = email.Recipient }
+                }
+            }
+        };
+        if (email.Files.Count > 0)
+        {
+            graphMessage["attachments"] = email.Files.Select(attachment =>
+                new Dictionary<string, object?>
+                {
+                    ["@odata.type"] = "#microsoft.graph.fileAttachment",
+                    ["name"] = attachment.FileName,
+                    ["contentType"] = attachment.ContentType,
+                    ["contentBytes"] = Convert.ToBase64String(attachment.Content)
+                }).ToArray();
+        }
+
         request.Content = JsonContent.Create(new
         {
-            message = new
-            {
-                subject = email.Subject,
-                body = new
-                {
-                    contentType = email.HtmlBody is null ? "Text" : "HTML",
-                    content = email.HtmlBody ?? email.TextBody
-                },
-                toRecipients = new[]
-                {
-                    new
-                    {
-                        emailAddress = new { address = email.Recipient }
-                    }
-                }
-            },
+            message = graphMessage,
             saveToSentItems = true
         });
 
