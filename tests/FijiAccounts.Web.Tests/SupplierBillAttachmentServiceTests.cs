@@ -9,7 +9,7 @@ namespace FijiAccounts.Web.Tests;
 public sealed class SupplierBillAttachmentServiceTests
 {
     [Fact]
-    public async Task AddAndDeleteAsync_PersistMetadataAndAuditWithoutContent()
+    public async Task AddAndDeleteAsync_PersistProtectAndAuditWithoutContent()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var bill = await PostBillAsync(test, "SUP-ATTACH-1");
@@ -31,6 +31,17 @@ public sealed class SupplierBillAttachmentServiceTests
         Assert.False(stored.IsCompressed);
         Assert.Equal([1, 2, 3, 4], stored.Content);
 
+        var protectedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(
+                test.UserId,
+                test.Organisation.Id,
+                bill.Id,
+                attachment.Id));
+        Assert.Contains("seven-year", protectedError.Message, StringComparison.OrdinalIgnoreCase);
+
+        bill.BillDate = new DateOnly(2017, 8, 23);
+        test.Db.SupplierBills.Update(bill);
+        await test.Db.SaveChangesAsync();
         Assert.True(await service.DeleteAsync(
             test.UserId,
             test.Organisation.Id,
