@@ -1,0 +1,27 @@
+name: Diagnose production invoice email
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Read redacted invoice email failure
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 5
+    steps:
+      - name: Show latest Microsoft Graph email failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$({ docker logs --since 30m account-island-app 2>&1 || true; } \
+            | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[redacted-email]/g' \
+            | grep -E -A 10 -B 3 'Microsoft Graph email delivery failed|Invoice email delivery failed' \
+            | tail -n 100)"
+          if [ -z "$output" ]; then
+            echo "No recent invoice email failure was found." >&2
+            exit 1
+          fi
+          printf '%s\n' "$output"
