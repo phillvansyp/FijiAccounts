@@ -23,15 +23,19 @@ public sealed record AccountingPeriodReadiness(
     int DraftSalesInvoices,
     int DraftSupplierBills,
     int FixedAssetsRequiringDepreciation,
-    int InventoryIntegrityWarnings)
+    int InventoryIntegrityWarnings,
+    int PendingFiscalDocuments)
 {
+    public bool HasBlockingItems => PendingFiscalDocuments > 0;
+
     public bool IsReady =>
-    UnreconciledBankStatementLines == 0 &&
-    IncompleteBankReconciliations == 0 &&
-    DraftSalesInvoices == 0 &&
-    DraftSupplierBills == 0 &&
-    FixedAssetsRequiringDepreciation == 0 &&
-    InventoryIntegrityWarnings == 0;
+        UnreconciledBankStatementLines == 0 &&
+        IncompleteBankReconciliations == 0 &&
+        DraftSalesInvoices == 0 &&
+        DraftSupplierBills == 0 &&
+        FixedAssetsRequiringDepreciation == 0 &&
+        InventoryIntegrityWarnings == 0 &&
+        PendingFiscalDocuments == 0;
 
     public int WarningCount =>
     UnreconciledBankStatementLines +
@@ -39,7 +43,8 @@ public sealed record AccountingPeriodReadiness(
     DraftSalesInvoices +
     DraftSupplierBills +
     FixedAssetsRequiringDepreciation +
-    InventoryIntegrityWarnings;
+    InventoryIntegrityWarnings +
+    PendingFiscalDocuments;
 }
 
 public sealed class AccountingPeriodService(
@@ -302,13 +307,60 @@ var inventoryIntegrityWarnings =
         (position.Quantity == 0m &&
          Math.Abs(position.Value) > 0.01m));
 
+        var pendingFiscalInvoices =
+            await db.FiscalisationRecords.CountAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.Status != FiscalisationStatus.Accepted &&
+                    x.SalesInvoice != null &&
+                    x.SalesInvoice.IssueDate >= period.StartsOn &&
+                    x.SalesInvoice.IssueDate <= period.EndsOn,
+                ct);
+
+        var pendingFiscalCreditNotes =
+            await db.FiscalisationRecords.CountAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.Status != FiscalisationStatus.Accepted &&
+                    x.SalesCreditNote != null &&
+                    x.SalesCreditNote.CreditDate >= period.StartsOn &&
+                    x.SalesCreditNote.CreditDate <= period.EndsOn,
+                ct);
+
+        var pendingFiscalCreditNoteReversals =
+            await db.FiscalisationRecords.CountAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.Status != FiscalisationStatus.Accepted &&
+                    x.SalesCreditNoteReversal != null &&
+                    x.SalesCreditNoteReversal.ReversalDate >= period.StartsOn &&
+                    x.SalesCreditNoteReversal.ReversalDate <= period.EndsOn,
+                ct);
+
+        var pendingFiscalInvoiceVoids =
+            await db.FiscalisationRecords.CountAsync(
+                x =>
+                    x.OrganisationId == organisationId &&
+                    x.Status != FiscalisationStatus.Accepted &&
+                    x.SalesInvoiceVoid != null &&
+                    x.SalesInvoiceVoid.VoidDate >= period.StartsOn &&
+                    x.SalesInvoiceVoid.VoidDate <= period.EndsOn,
+                ct);
+
+        var pendingFiscalDocuments =
+            pendingFiscalInvoices +
+            pendingFiscalCreditNotes +
+            pendingFiscalCreditNoteReversals +
+            pendingFiscalInvoiceVoids;
+
         return new AccountingPeriodReadiness(
     unreconciledBankStatementLines,
     incompleteBankReconciliations,
     draftSalesInvoices,
     draftSupplierBills,
     fixedAssetsRequiringDepreciation,
-    inventoryIntegrityWarnings);
+    inventoryIntegrityWarnings,
+    pendingFiscalDocuments);
     }
 
     public async Task SetLockedAsync(
@@ -352,6 +404,12 @@ if (locked)
             organisationId,
             periodId,
             ct);
+
+    if (readiness.HasBlockingItems)
+    {
+        throw new InvalidOperationException(
+            "Complete or recover every pending fiscal document before locking the period.");
+    }
 
     if (!readiness.IsReady && !acknowledgeWarnings)
     {
@@ -420,6 +478,8 @@ FixedAssetsRequiringDepreciation =
     readiness?.FixedAssetsRequiringDepreciation ?? 0,
     InventoryIntegrityWarnings =
     readiness?.InventoryIntegrityWarnings ?? 0,
+PendingFiscalDocuments =
+    readiness?.PendingFiscalDocuments ?? 0,
 WarningsAcknowledged =
     warningsAcknowledged
                 })

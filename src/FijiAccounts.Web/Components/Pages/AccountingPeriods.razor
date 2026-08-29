@@ -247,12 +247,19 @@ else
                                 }
                                 else
                                 {
-                                    <div class="alert alert-warning mb-3">
-                                        <strong>Review before locking.</strong>
+                                    <div class="alert @(periodReadiness.HasBlockingItems ? "alert-danger" : "alert-warning") mb-3">
+                                        <strong>@(periodReadiness.HasBlockingItems ? "Resolve before locking." : "Review before locking.")</strong>
 
                                         <div>
                                             Fiji Accounts found unfinished items associated with this period.
-                                            You can still lock the period if these are expected.
+                                            @if (periodReadiness.HasBlockingItems)
+                                            {
+                                                <span>Pending fiscal documents must be completed or recovered before the period can be locked.</span>
+                                            }
+                                            else
+                                            {
+                                                <span>You can still lock the period if these are expected.</span>
+                                            }
                                         </div>
 
                                         <ul class="mb-0 mt-2">
@@ -316,6 +323,17 @@ else
     </li>
 }
 
+                                            @if (periodReadiness.PendingFiscalDocuments > 0)
+                                            {
+                                                <li>
+                                                    @periodReadiness.PendingFiscalDocuments pending fiscal
+                                                    @(periodReadiness.PendingFiscalDocuments == 1 ? "document requires" : "documents require")
+                                                    acceptance or recovery
+                                                </li>
+                                            }
+
+                                            @if (!periodReadiness.HasBlockingItems)
+                                            {
                                             <div class="form-check mt-3">
     <InputCheckbox class="form-check-input"
                    @bind-Value="warningsAcknowledged" />
@@ -323,6 +341,7 @@ else
         I have reviewed these outstanding items and want to lock the period anyway.
     </label>
 </div>
+                                            }
                                         </ul>
                                     </div>
                                 }
@@ -336,6 +355,7 @@ else
     (
         loadingReadiness ||
         periodReadiness is null ||
+        periodReadiness.HasBlockingItems ||
         (!periodReadiness.IsReady && !warningsAcknowledged)
     ))"
                                     @onclick="() => ConfirmToggle(item)">

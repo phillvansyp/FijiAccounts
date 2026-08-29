@@ -35,6 +35,8 @@ public sealed class AccountingPeriodReadinessTests
         Assert.Equal(0, readiness.DraftSupplierBills);
         Assert.Equal(0, readiness.FixedAssetsRequiringDepreciation);
         Assert.Equal(0, readiness.InventoryIntegrityWarnings);
+        Assert.Equal(0, readiness.PendingFiscalDocuments);
+        Assert.False(readiness.HasBlockingItems);
     }
 
     [Fact]
@@ -574,6 +576,65 @@ public async Task Inventory_MovementAfterPeriodEnd_DoesNotAffectReadiness()
     }
 
     [Fact]
+    public async Task PendingFiscalDocument_InPeriod_IsBlocking()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var period =
+            await CreatePeriodAsync(test);
+
+        await AddFiscalInvoiceAsync(
+            test,
+            new DateOnly(2026, 7, 22),
+            FiscalisationStatus.RecoveryRequired);
+
+        var service =
+            new AccountingPeriodService(
+                test.Db,
+                test.Access);
+
+        var readiness =
+            await service.GetReadinessAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id);
+
+        Assert.False(readiness.IsReady);
+        Assert.True(readiness.HasBlockingItems);
+        Assert.Equal(1, readiness.PendingFiscalDocuments);
+    }
+
+    [Fact]
+    public async Task AcceptedFiscalDocument_InPeriod_IsNotBlocking()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var period =
+            await CreatePeriodAsync(test);
+
+        await AddFiscalInvoiceAsync(
+            test,
+            new DateOnly(2026, 7, 22),
+            FiscalisationStatus.Accepted);
+
+        var service =
+            new AccountingPeriodService(
+                test.Db,
+                test.Access);
+
+        var readiness =
+            await service.GetReadinessAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id);
+
+        Assert.Equal(0, readiness.PendingFiscalDocuments);
+        Assert.False(readiness.HasBlockingItems);
+    }
+
+    [Fact]
     public async Task ItemsOutsidePeriod_AreNotReported()
     {
         await using var test =
@@ -716,6 +777,89 @@ public async Task LockPeriod_WithOutstandingItems_CanBeAcknowledged()
         "\"WarningsAcknowledged\":true",
         audit.JsonData);
 }
+
+    [Fact]
+    public async Task LockPeriod_WithPendingFiscalDocument_CannotBeAcknowledged()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+
+        var period =
+            await CreatePeriodAsync(test);
+
+        await AddFiscalInvoiceAsync(
+            test,
+            new DateOnly(2026, 7, 22),
+            FiscalisationStatus.Prepared);
+
+        var service =
+            new AccountingPeriodService(
+                test.Db,
+                test.Access);
+
+        var ex =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    service.SetLockedAsync(
+                        test.UserId,
+                        test.Organisation.Id,
+                        period.Id,
+                        true,
+                        acknowledgeWarnings: true));
+
+        Assert.Equal(
+            "Complete or recover every pending fiscal document before locking the period.",
+            ex.Message);
+
+        var reloaded =
+            await test.Db.AccountingPeriods
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == period.Id);
+
+        Assert.False(reloaded.IsLocked);
+    }
+
+    private static async Task AddFiscalInvoiceAsync(
+        AccountingTestDatabase test,
+        DateOnly issueDate,
+        FiscalisationStatus status)
+    {
+        var invoice =
+            new SalesInvoice
+            {
+                OrganisationId = test.Organisation.Id,
+                CustomerId = test.Customer.Id,
+                InvoiceNumber = $"FISCAL-{Guid.NewGuid():N}",
+                IssueDate = issueDate,
+                DueDate = issueDate.AddDays(30),
+                Status = InvoiceStatus.Draft,
+                Subtotal = 100m,
+                VatTotal = 15m,
+                Total = 115m,
+                AmountPaid = 0m,
+                AmountCredited = 0m,
+                CreatedByUserId = test.UserId
+            };
+
+        test.Db.SalesInvoices.Add(invoice);
+        test.Db.FiscalisationRecords.Add(
+            new FiscalisationRecord
+            {
+                OrganisationId = test.Organisation.Id,
+                SourceDocumentKind = FiscalSourceDocumentKind.SalesInvoice,
+                SalesInvoice = invoice,
+                Status = status,
+                RequestHash = new string('a', 64),
+                RequestJson = "{}",
+                CreatedByUserId = test.UserId,
+                AcceptedAt =
+                    status == FiscalisationStatus.Accepted
+                        ? DateTimeOffset.UtcNow
+                        : null
+            });
+
+        await test.Db.SaveChangesAsync();
+    }
 
     private static async Task<AccountingPeriod> CreatePeriodAsync(
         AccountingTestDatabase test)
