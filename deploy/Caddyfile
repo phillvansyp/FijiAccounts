@@ -3,7 +3,7 @@
 }
 
 http://app.accountisland.com {
-	redir https://app.accountisland.com{uri} permanent
+	redir https://app.accountisland.com:8443{uri} permanent
 }
 
 https://app.accountisland.com {

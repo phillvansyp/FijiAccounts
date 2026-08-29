@@ -35,7 +35,6 @@ services:
       - /mnt/data/account-island/caddy/config:/config
       - /etc/letsencrypt:/etc/letsencrypt:ro
     ports:
-      - "192.168.1.125:80:80"
       - "192.168.1.125:8280:80"
       - "192.168.1.125:443:443"
       - "192.168.1.125:8443:443"
