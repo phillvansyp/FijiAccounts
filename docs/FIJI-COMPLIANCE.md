@@ -11,7 +11,7 @@ This is a living engineering control document, not legal advice. Every rule requ
 | VAT registration | Organisation status, effective date, TIN, and business address captured; taxable invoice posting is blocked unless registration is active; rolling 12-month posted taxable turnover monitoring, expected taxable turnover for the next 12 months, and 80%/threshold alerts are implemented | Obtain practitioner review of the historical and forecast alert calculations |
 | Income tax | Not implemented | Add workpapers after practitioner-approved specification |
 | PAYE/payroll | Not implemented | Version schedules and obligations by effective date |
-| Record retention | Seven-year deletion safeguards and export audit events implemented for contact documents and supplier-bill attachments | Obtain practitioner review, extend coverage to every retained record class, and move files to immutable object storage |
+| Record retention | Seven-year deletion safeguards and export audit events implemented for contact documents, supplier-bill attachments, bank-statement source files and their imported transaction batches | Obtain practitioner review and move files to immutable object storage |
 
 Primary sources:
 

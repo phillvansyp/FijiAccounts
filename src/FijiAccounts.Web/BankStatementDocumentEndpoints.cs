@@ -29,6 +29,13 @@ public static class BankStatementDocumentEndpoints
                     return Results.NotFound();
                 }
 
+                await statements.RecordDocumentExportAsync(
+                    userId!,
+                    organisationId,
+                    batchId,
+                    document,
+                    cancellationToken);
+
                 return Results.File(
                     document.Content,
                     document.ContentType,

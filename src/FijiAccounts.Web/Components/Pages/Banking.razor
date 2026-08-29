@@ -156,7 +156,7 @@ else
     {
         <section class="add-bank import-panel">
             <h2>Statement import history</h2>
-            <p>Delete a complete import if the wrong statement was uploaded. Imports containing reconciled transactions are locked.</p>
+            <p>Delete a complete import if the wrong statement was uploaded. Fiji imports inside the seven-year retention period and imports containing reconciled transactions are locked.</p>
 
             @if (statementImports.Count == 0)
             {
@@ -216,6 +216,10 @@ else
                                         else if (item.CanDelete)
                                         {
                                             <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => BeginImportDeletion(item.BatchId)">Delete import</button>
+                                        }
+                                        else if (item.RetainUntil is not null)
+                                        {
+                                            <span class="text-muted">Protected until @item.RetainUntil.Value.ToString("dd MMM yyyy")</span>
                                         }
                                         else
                                         {

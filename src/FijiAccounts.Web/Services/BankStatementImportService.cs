@@ -31,7 +31,8 @@ public sealed record BankStatementImportBatch(
     DateTimeOffset ImportedAt,
     bool CanDelete,
     Guid? DocumentId,
-    string? DocumentFileName);
+    string? DocumentFileName,
+    DateOnly? RetainUntil);
 public sealed record BankStatementImportDeleteResult(Guid BatchId, int Deleted);
 
 public sealed class BankStatementImportService(ApplicationDbContext db, TenantAccessService access)
@@ -195,24 +196,44 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 x.OrganisationId == organisationId &&
                 batchIds.Contains(x.ImportBatchId))
             .ToDictionaryAsync(x => x.ImportBatchId, ct);
+        var organisation = await db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == organisationId, ct);
+        var protectsRecords = organisation.CountryCode.Equals(
+            "FJ",
+            StringComparison.OrdinalIgnoreCase);
 
         return importedLines
             .GroupBy(x => x.ImportBatchId!.Value)
-            .Select(group => new BankStatementImportBatch(
-                group.Key,
-                group.First().BankAccountId,
-                group.First().BankAccount.Name,
-                group.First().Source,
-                group.Min(x => x.TransactionDate),
-                group.Max(x => x.TransactionDate),
-                group.Count(),
-                group.Sum(x => x.Amount),
-                group.Min(x => x.ImportedAt),
-                group.All(x =>
-                    x.ReconciledAt == null &&
-                    x.MatchedPostedJournalLineId == null),
-                documents.GetValueOrDefault(group.Key)?.Id,
-                documents.GetValueOrDefault(group.Key)?.FileName))
+            .Select(group =>
+            {
+                var lastDate = group.Max(x => x.TransactionDate);
+                var retainUntil = RecordRetentionPolicy.RetainUntil(
+                    lastDate,
+                    organisation.FinancialYearEndMonth,
+                    organisation.FinancialYearEndDay);
+                var protectedUntil = protectsRecords &&
+                    RecordRetentionPolicy.IsProtected(retainUntil)
+                        ? retainUntil
+                        : (DateOnly?)null;
+
+                return new BankStatementImportBatch(
+                    group.Key,
+                    group.First().BankAccountId,
+                    group.First().BankAccount.Name,
+                    group.First().Source,
+                    group.Min(x => x.TransactionDate),
+                    lastDate,
+                    group.Count(),
+                    group.Sum(x => x.Amount),
+                    group.Min(x => x.ImportedAt),
+                    protectedUntil is null && group.All(x =>
+                        x.ReconciledAt == null &&
+                        x.MatchedPostedJournalLineId == null),
+                    documents.GetValueOrDefault(group.Key)?.Id,
+                    documents.GetValueOrDefault(group.Key)?.FileName,
+                    protectedUntil);
+            })
             .OrderByDescending(x => x.ImportedAt)
             .ToList();
     }
@@ -267,6 +288,20 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
         {
             throw new InvalidOperationException(
                 "This import cannot be deleted because it is inside a completed reconciliation period.");
+        }
+
+        var organisation = await db.Organisations
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == organisationId, ct);
+        var retainUntil = RecordRetentionPolicy.RetainUntil(
+            lastDate,
+            organisation.FinancialYearEndMonth,
+            organisation.FinancialYearEndDay);
+        if (organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
+            RecordRetentionPolicy.IsProtected(retainUntil))
+        {
+            throw new InvalidOperationException(
+                RecordRetentionPolicy.ProtectedMessage(retainUntil));
         }
 
         var document = await db.BankStatementImportDocuments
@@ -331,6 +366,39 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 x.OrganisationId == organisationId &&
                 x.ImportBatchId == batchId,
                 ct);
+    }
+
+    public async Task RecordDocumentExportAsync(
+        string userId,
+        Guid organisationId,
+        Guid batchId,
+        BankStatementImportDocument document,
+        CancellationToken ct = default)
+    {
+        if (document.OrganisationId != organisationId ||
+            document.ImportBatchId != batchId ||
+            await access.FindAsync(userId, organisationId) is null)
+        {
+            throw new UnauthorizedAccessException();
+        }
+
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = "BankStatementDocumentExported",
+            EntityType = nameof(BankStatementImportDocument),
+            EntityId = document.Id.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                document.ImportBatchId,
+                document.BankAccountId,
+                document.FileName,
+                document.ContentType,
+                document.OriginalSize
+            })
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<BankImportResult> ImportCsvAsync(

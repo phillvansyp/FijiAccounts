@@ -545,7 +545,8 @@ public sealed class BankStatementImportAccountingTests
         Assert.Equal(new DateOnly(2026, 6, 30), batch.LastDate);
         Assert.Equal(2, batch.LineCount);
         Assert.Equal(65m, batch.NetAmount);
-        Assert.True(batch.CanDelete);
+        Assert.False(batch.CanDelete);
+        Assert.Equal(new DateOnly(2033, 12, 31), batch.RetainUntil);
         Assert.Null(batch.DocumentId);
         Assert.Null(batch.DocumentFileName);
     }
@@ -588,11 +589,22 @@ public sealed class BankStatementImportAccountingTests
             test.Organisation.Id,
             imported.BatchId));
 
-        await service.DeleteImportBatchAsync(
+        await service.RecordDocumentExportAsync(
             test.UserId,
             test.Organisation.Id,
-            imported.BatchId);
-        Assert.False(await test.Db.BankStatementImportDocuments.AnyAsync(x =>
+            imported.BatchId,
+            document);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EventType == "BankStatementDocumentExported" &&
+            x.EntityId == document.Id.ToString()));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteImportBatchAsync(
+                test.UserId,
+                test.Organisation.Id,
+                imported.BatchId));
+        Assert.Contains("seven-year", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(await test.Db.BankStatementImportDocuments.AnyAsync(x =>
             x.ImportBatchId == imported.BatchId));
     }
 
@@ -631,7 +643,7 @@ public sealed class BankStatementImportAccountingTests
             test.UserId,
             test.Organisation.Id,
             bank.Id,
-            [new StatementPreviewLine(new DateOnly(2026, 6, 12), "Wrong import", "WRONG-1", -45m)],
+            [new StatementPreviewLine(new DateOnly(2010, 6, 12), "Wrong import", "WRONG-1", -45m)],
             "CSV");
 
         var result = await service.DeleteImportBatchAsync(
