@@ -14,3 +14,26 @@ public sealed class ImmutableDocumentObject
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
 }
+
+public enum ImmutableDocumentIntegrityStatus
+{
+    Healthy,
+    AttentionRequired
+}
+
+public sealed class ImmutableDocumentIntegrityScan
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public int ObjectCount { get; set; }
+    public int LinkedDocumentCount { get; set; }
+    public int VerifiedObjectCount { get; set; }
+    public int IntegrityFailureCount { get; set; }
+    public int MissingObjectReferenceCount { get; set; }
+    public int LegacyDocumentCount { get; set; }
+    public int UnreferencedObjectCount { get; set; }
+    public ImmutableDocumentIntegrityStatus Status { get; set; }
+    public DateTimeOffset CompletedAt { get; set; } = DateTimeOffset.UtcNow;
+    public long CompletedAtTicks { get; set; } = DateTimeOffset.UtcNow.UtcTicks;
+    [MaxLength(450)] public required string CompletedByUserId { get; set; }
+}

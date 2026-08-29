@@ -1,0 +1,153 @@
+@page "/o/{OrganisationId:guid}/tax/retention"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject TenantAccessService TenantAccess
+@inject ImmutableDocumentIntegrityService Integrity
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Record retention · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Fiji record retention</p>
+            <h1>Retained document integrity</h1>
+            <p class="page-intro">Monitor immutable storage coverage and verify retained files against their recorded SHA-256 hashes.</p>
+        </div>
+        <div class="d-flex gap-2 no-print">
+            @if (canManage)
+            {
+                <button class="btn btn-primary" @onclick="RunScan" disabled="@scanning">
+                    @(scanning ? "Scanning…" : "Run integrity scan")
+                </button>
+            }
+            <a class="btn btn-outline-secondary" href="@($"/o/{OrganisationId}/tax")">Back to tax centre</a>
+        </div>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">@message</div>
+    }
+
+    @if (scan is null)
+    {
+        <section class="card"><div class="card-body">
+            <h2 class="h5">No integrity scan recorded</h2>
+            <p class="mb-0">The scheduled worker will create the first report automatically. An owner or administrator can also run it now.</p>
+        </div></section>
+    }
+    else
+    {
+        <div class="alert @(scan.Status == ImmutableDocumentIntegrityStatus.Healthy ? "alert-success" : "alert-danger")">
+            <strong>@(scan.Status == ImmutableDocumentIntegrityStatus.Healthy ? "Retained document integrity verified." : "Retained document integrity needs attention.")</strong>
+            <div>Last scanned @scan.CompletedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm") by @ScanActor(scan.CompletedByUserId).</div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-4"><section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Immutable objects</span>
+                <h2 class="h3 mt-2">@scan.ObjectCount</h2>
+                <p class="mb-0">@scan.VerifiedObjectCount verified successfully.</p>
+            </div></section></div>
+            <div class="col-md-4"><section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Linked retained files</span>
+                <h2 class="h3 mt-2">@scan.LinkedDocumentCount</h2>
+                <p class="mb-0">Contact, supplier-bill and bank-statement documents.</p>
+            </div></section></div>
+            <div class="col-md-4"><section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Unreferenced retained objects</span>
+                <h2 class="h3 mt-2">@scan.UnreferencedObjectCount</h2>
+                <p class="mb-0">Preserved objects whose source record was later removed.</p>
+            </div></section></div>
+        </div>
+
+        <section class="card">
+            <div class="card-header"><strong>Control results</strong></div>
+            <div class="table-responsive">
+                <table class="table mb-0 align-middle">
+                    <thead><tr><th>Control</th><th>Result</th><th>Status</th></tr></thead>
+                    <tbody>
+                        <tr><td>SHA-256 and content-length verification</td><td>@scan.IntegrityFailureCount failures</td><td><span class="badge @Badge(scan.IntegrityFailureCount)">@Status(scan.IntegrityFailureCount)</span></td></tr>
+                        <tr><td>Document-to-object tenant references</td><td>@scan.MissingObjectReferenceCount missing or cross-tenant</td><td><span class="badge @Badge(scan.MissingObjectReferenceCount)">@Status(scan.MissingObjectReferenceCount)</span></td></tr>
+                        <tr><td>Legacy document coverage</td><td>@scan.LegacyDocumentCount without immutable references</td><td><span class="badge @Badge(scan.LegacyDocumentCount)">@Status(scan.LegacyDocumentCount)</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <p class="text-secondary mt-3">A scheduled scan runs every 24 hours for Fiji organisations. Results and manual scans are retained in the audit trail.</p>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private ImmutableDocumentIntegrityScan? scan;
+    private string userId = "";
+    private bool canManage;
+    private bool scanning;
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? "";
+        access = string.IsNullOrEmpty(userId)
+            ? null
+            : await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null)
+        {
+            scan = null;
+            return;
+        }
+
+        canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        scan = await Integrity.GetLatestAsync(userId, OrganisationId);
+    }
+
+    private async Task RunScan()
+    {
+        scanning = true;
+        message = null;
+        try
+        {
+            scan = await Integrity.ScanAsync(userId, OrganisationId);
+            message = scan.Status == ImmutableDocumentIntegrityStatus.Healthy
+                ? "Integrity scan completed successfully."
+                : "Integrity scan completed and found controls requiring attention.";
+            messageClass = scan.Status == ImmutableDocumentIntegrityStatus.Healthy
+                ? "alert-success"
+                : "alert-danger";
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            messageClass = "alert-danger";
+        }
+        finally
+        {
+            scanning = false;
+        }
+    }
+
+    private static string Badge(int failures) =>
+        failures == 0 ? "text-bg-success" : "text-bg-danger";
+
+    private static string Status(int failures) =>
+        failures == 0 ? "Passed" : "Attention required";
+
+    private static string ScanActor(string actor) =>
+        actor.StartsWith("system:", StringComparison.Ordinal) ? "scheduled control" : "an authorised user";
+}

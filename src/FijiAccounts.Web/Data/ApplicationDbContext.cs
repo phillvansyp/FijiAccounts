@@ -37,6 +37,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<ImmutableDocumentObject> ImmutableDocumentObjects =>
         Set<ImmutableDocumentObject>();
+    public DbSet<ImmutableDocumentIntegrityScan> ImmutableDocumentIntegrityScans =>
+        Set<ImmutableDocumentIntegrityScan>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<FiscalisationRecord> FiscalisationRecords =>
         Set<FiscalisationRecord>();
@@ -130,6 +132,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .IsUnique();
         builder.Entity<ImmutableDocumentObject>()
             .HasIndex(x => new { x.OrganisationId, x.Sha256 });
+        builder.Entity<ImmutableDocumentIntegrityScan>()
+            .HasIndex(x => new { x.OrganisationId, x.CompletedAtTicks });
         builder.Entity<Organisation>()
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.Companies)
@@ -1251,6 +1255,8 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<SupplierCreditNoteReversal>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<ImmutableDocumentObject>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<ImmutableDocumentIntegrityScan>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
 {
     throw new InvalidOperationException(
