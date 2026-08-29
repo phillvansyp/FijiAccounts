@@ -176,7 +176,9 @@ builder.Services.ConfigureApplicationCookie(options =>
 {
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
     options.SlidingExpiration = true;
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
     options.Events.OnRedirectToLogin = context =>
@@ -355,12 +357,15 @@ app.MapBusinessPartyDocumentEndpoints();
 app.MapBankStatementDocumentEndpoints();
 
 app.MapGet(
-        "/health",
-        async (ApplicationDbContext database, CancellationToken cancellationToken) =>
-            await database.Database.CanConnectAsync(cancellationToken)
-                ? Results.Ok(new { status = "healthy" })
-                : Results.StatusCode(StatusCodes.Status503ServiceUnavailable))
+        "/health/live",
+        (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(new { status = "healthy" });
+        })
     .AllowAnonymous();
+app.MapGet("/health", DatabaseReadinessAsync).AllowAnonymous();
+app.MapGet("/health/ready", DatabaseReadinessAsync).AllowAnonymous();
 
 if (app.Environment.IsDevelopment() ||
     builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
@@ -397,5 +402,39 @@ if (builder.Configuration.GetValue<bool>("DevSeed:SeedOnly"))
 }
 
 app.Run();
+
+static async Task<IResult> DatabaseReadinessAsync(
+    ApplicationDbContext database,
+    HttpContext context,
+    CancellationToken cancellationToken)
+{
+    context.Response.Headers.CacheControl = "no-store";
+    try
+    {
+        if (!await database.Database.CanConnectAsync(cancellationToken))
+        {
+            return Results.Json(
+                new { status = "unhealthy", reason = "database_unavailable" },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var pending = await database.Database
+            .GetPendingMigrationsAsync(cancellationToken);
+        if (pending.Any())
+        {
+            return Results.Json(
+                new { status = "unhealthy", reason = "database_migrations_pending" },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return Results.Ok(new { status = "healthy" });
+    }
+    catch (Exception) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Json(
+            new { status = "unhealthy", reason = "database_check_failed" },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+}
 
 public partial class Program;

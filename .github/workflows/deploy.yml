@@ -37,7 +37,8 @@ jobs:
           set -euo pipefail
           docker builder prune --all --force
           docker image prune --all --force --filter "until=1h"
-          find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
+          find "$DEPLOY_DIR/backups" -type f \
+            \( -name 'account-island-*.tar.gz' -o -name 'account-island-*.tar.gz.sha256' \) \
             -mtime +30 -delete 2>/dev/null || true
           df -h "$DEPLOY_DIR"
 
@@ -213,7 +214,15 @@ jobs:
 
           previous_image="$(docker inspect --format '{{.Config.Image}}' account-island-app 2>/dev/null || true)"
           app_was_running="$(docker inspect --format '{{.State.Running}}' account-island-app 2>/dev/null || true)"
+          restore_dir=""
+          cleanup_restore_check() {
+            if [ -n "$restore_dir" ] && [[ "$restore_dir" == "$DEPLOY_DIR"/restore-check.* ]]; then
+              rm -rf -- "$restore_dir"
+              restore_dir=""
+            fi
+          }
           rollback() {
+            cleanup_restore_check
             echo "Deployment failed; restoring the previous application image."
             if [ -n "$previous_image" ]; then
               APP_IMAGE="$previous_image" docker compose up -d app
@@ -232,6 +241,25 @@ jobs:
             alpine:3.22 \
             tar -C /source -czf "/backup/$backup_name" .
 
+          backup_path="$DEPLOY_DIR/backups/$backup_name"
+          tar -tzf "$backup_path" >/dev/null
+          (cd "$DEPLOY_DIR/backups" && sha256sum "$backup_name" > "$backup_name.sha256")
+
+          restore_dir="$(mktemp -d "$DEPLOY_DIR/restore-check.XXXXXX")"
+          tar -C "$restore_dir" -xzf "$backup_path"
+          docker run --rm \
+            --volume "$restore_dir:/restore" \
+            alpine:3.22 sh -c 'chown -R 1654:1654 /restore'
+          docker run --rm \
+            --network none \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Database__MigrateOnStartup=false \
+            --env Maintenance__VerifyDatabase__RequireCurrentMigrations=false \
+            --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+            --volume "$restore_dir:/app/data" \
+            "$APP_IMAGE" verify-database
+          cleanup_restore_check
+
           docker compose up -d --remove-orphans
 
           docker run --rm --network host curlimages/curl:8.12.1 \
@@ -241,7 +269,8 @@ jobs:
             http://192.168.1.125:8188/health >/dev/null
 
           trap - ERR
-          find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
+          find "$DEPLOY_DIR/backups" -type f \
+            \( -name 'account-island-*.tar.gz' -o -name 'account-island-*.tar.gz.sha256' \) \
             -mtime +30 -delete
           docker image prune --force --filter "until=168h"
 

@@ -8,8 +8,10 @@ Linux Docker host and are published at `https://app.accountisland.com`:
 - Public address: `222.154.228.115`.
 
 Every push to `main` runs the test suite, builds an immutable image, backs up the
-SQLite data directory, and deploys it. If the application health check on the
-Docker host fails, the workflow starts the previous image again. After a
+SQLite data directory, verifies the archive checksum, restores it into an
+isolated temporary directory, runs SQLite's integrity check through the
+application maintenance command, and then deploys it. If the application health
+check on the Docker host fails, the workflow starts the previous image again. After a
 successful deployment, a separate GitHub-hosted job checks the public HTTPS
 endpoint so DNS, router forwarding, Caddy, TLS, and the application are covered.
 A public-check failure marks the workflow failed but does not automatically roll
@@ -137,7 +139,13 @@ certificate from `/etc/letsencrypt`.
 
 ## Operations
 
-The deployment workflow has two distinct health checks:
+The application exposes separate health signals:
+
+- `/health/live` confirms that the application process can serve requests.
+- `/health/ready` confirms database connectivity and that no migrations are pending.
+- `/health` is a compatibility alias for the readiness check.
+
+The deployment workflow has two network-level checks:
 
 - The self-hosted deployment job checks `192.168.1.125:8188` and rolls the
   application image back if that internal check fails.
@@ -154,6 +162,33 @@ docker compose logs --tail 200 caddy
 curl --fail https://app.accountisland.com/health
 ```
 
-Backups are stored in `/mnt/data/account-island/backups` and retained for 30
-days. Copy them to separate storage; a backup on the same machine is not
-sufficient for disaster recovery.
+Backups and their `.sha256` checksum files are stored in
+`/mnt/data/account-island/backups` and retained for 30 days. Every deployment
+performs a temporary restore and database integrity check before starting the
+new image. Copy both files to separate storage; a verified backup on the same
+machine is still not sufficient for disaster recovery.
+
+To verify a copied backup manually, first validate its checksum and extract it
+to a new empty directory. Never extract over the live data directory. Run the
+deployed image against that temporary copy with networking disabled:
+
+```bash
+cd /path/to/offsite-copy
+sha256sum --check account-island-YYYYMMDDTHHMMSSZ.tar.gz.sha256
+restore_dir="$(mktemp -d)"
+tar -C "$restore_dir" -xzf account-island-YYYYMMDDTHHMMSSZ.tar.gz
+docker run --rm --volume "$restore_dir:/restore" alpine:3.22 \
+  sh -c 'chown -R 1654:1654 /restore'
+docker run --rm --network none \
+  --env ASPNETCORE_ENVIRONMENT=Production \
+  --env Database__MigrateOnStartup=false \
+  --env Maintenance__VerifyDatabase__RequireCurrentMigrations=false \
+  --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+  --volume "$restore_dir:/app/data" \
+  account-island:IMAGE-TAG verify-database
+```
+
+Delete the temporary restore directory only after confirming it is the directory
+created for the drill. A production restore must be performed during a declared
+maintenance window, with the application stopped and the existing data directory
+moved aside rather than overwritten.
