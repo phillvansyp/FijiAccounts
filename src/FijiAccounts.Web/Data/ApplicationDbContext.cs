@@ -271,6 +271,9 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationMembership>().HasKey(x => new { x.OrganisationId, x.UserId });
         builder.Entity<OrganisationMembership>().HasIndex(x => x.UserId);
+        builder.Entity<Organisation>()
+            .Property(x => x.ExpectedTaxableTurnoverNext12Months)
+            .HasPrecision(18, 2);
         builder.Entity<OrganisationPermissionProfile>()
             .HasIndex(x => new { x.OrganisationId, x.Name })
             .IsUnique();

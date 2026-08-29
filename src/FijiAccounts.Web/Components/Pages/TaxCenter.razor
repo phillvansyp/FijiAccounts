@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
+@using System.ComponentModel.DataAnnotations
 @using FijiAccounts.Domain.Tax
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
@@ -65,8 +66,48 @@ else
                 {
                     <div>Account Island will warn the organisation as posted taxable turnover approaches the threshold.</div>
                 }
-                <div class="small mt-1">This historical monitor does not include expected turnover from future contracts or other forecast supplies.</div>
+                @if (turnover.ExpectedTaxableTurnoverNext12Months is decimal expectedTurnover)
+                {
+                    <div class="mt-1">
+                        Expected taxable turnover for the next 12 months:
+                        FJD @expectedTurnover.ToString("N2")
+                        (@turnover.ForecastThresholdPercentage?.ToString("N1")% of the threshold).
+                    </div>
+                    @if (turnover.ForecastUpdatedAt is not null)
+                    {
+                        <div class="small">Forecast updated @turnover.ForecastUpdatedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm").</div>
+                    }
+                }
+                else
+                {
+                    <div class="small mt-1">Add expected taxable turnover from future contracts and other forecast supplies to complete the forward-looking check.</div>
+                }
             </div>
+
+            @if (canEditForecast)
+            {
+                <section class="report-controls no-print">
+                    <EditForm Model="forecast"
+                              OnValidSubmit="SaveForecast"
+                              FormName="vat-turnover-forecast">
+                        <DataAnnotationsValidator />
+                        <div>
+                            <label class="form-label">Expected taxable turnover — next 12 months (FJD)</label>
+                            <InputNumber class="form-control"
+                                         @bind-Value="forecast.ExpectedTaxableTurnoverNext12Months" />
+                            <ValidationMessage For="@(() => forecast.ExpectedTaxableTurnoverNext12Months)" />
+                        </div>
+                        <button class="btn btn-outline-primary" disabled="@savingForecast">
+                            @(savingForecast ? "Saving..." : "Save forecast")
+                        </button>
+                        <span>Use the total expected taxable supplies for the coming 12 months; do not add it to the historical figure.</span>
+                    </EditForm>
+                    @if (forecastMessage is not null)
+                    {
+                        <div class="alert @(forecastError ? "alert-danger" : "alert-success") mb-0">@forecastMessage</div>
+                    }
+                </section>
+            }
         }
 
         <section class="report-controls no-print">
@@ -219,16 +260,22 @@ else
     private AccessibleOrganisation? access;
     private IslandJurisdiction? jurisdiction;
     private readonly PeriodModel period = new();
+    private readonly ForecastModel forecast = new();
     private VatWorkpaper? workpaper;
     private VatTurnoverAssessment? turnover;
     private string? error;
+    private string? userId;
+    private bool canEditForecast;
+    private bool savingForecast;
+    private bool forecastError;
+    private string? forecastMessage;
 
     protected override async Task OnParametersSetAsync()
     {
         var state =
             await AuthenticationStateProvider.GetAuthenticationStateAsync();
 
-        var userId = UserManager.GetUserId(state.User)!;
+        userId = UserManager.GetUserId(state.User)!;
 
         access =
             await TenantAccess.FindAsync(
@@ -268,7 +315,44 @@ else
             turnover = await VatTurnoverMonitor.GetAssessmentAsync(
                 OrganisationId,
                 today);
+            forecast.ExpectedTaxableTurnoverNext12Months =
+                turnover.ExpectedTaxableTurnoverNext12Months;
+            canEditForecast = await TenantAccess.CanPostJournalsAsync(
+                userId,
+                OrganisationId);
             await Load();
+        }
+    }
+
+    private async Task SaveForecast()
+    {
+        if (userId is null)
+        {
+            return;
+        }
+
+        savingForecast = true;
+        forecastMessage = null;
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            turnover = await VatTurnoverMonitor.UpdateForecastAsync(
+                userId,
+                new UpdateVatTurnoverForecastRequest(
+                    OrganisationId,
+                    forecast.ExpectedTaxableTurnoverNext12Months),
+                today);
+            forecastError = false;
+            forecastMessage = "VAT turnover forecast saved and alerts refreshed.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            forecastError = true;
+            forecastMessage = ex.Message;
+        }
+        finally
+        {
+            savingForecast = false;
         }
     }
 
@@ -295,5 +379,15 @@ else
     {
         public DateOnly From { get; set; }
         public DateOnly To { get; set; }
+    }
+
+    private sealed class ForecastModel
+    {
+        [Range(
+            typeof(decimal),
+            "0",
+            "1000000000000",
+            ErrorMessage = "Expected taxable turnover must be between FJD 0.00 and FJD 1,000,000,000,000.00.")]
+        public decimal? ExpectedTaxableTurnoverNext12Months { get; set; }
     }
 }

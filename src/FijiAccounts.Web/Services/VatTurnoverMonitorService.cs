@@ -1,6 +1,7 @@
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Services;
 
@@ -8,6 +9,8 @@ public sealed record VatTurnoverAssessment(
     DateOnly From,
     DateOnly To,
     decimal TaxableTurnover,
+    decimal? ExpectedTaxableTurnoverNext12Months,
+    DateTimeOffset? ForecastUpdatedAt,
     decimal RegistrationThreshold,
     bool IsVatRegistered)
 {
@@ -18,18 +21,48 @@ public sealed record VatTurnoverAssessment(
     public decimal RemainingBeforeThreshold =>
         Math.Max(0m, RegistrationThreshold - TaxableTurnover);
 
+    public decimal? ForecastThresholdPercentage =>
+        ExpectedTaxableTurnoverNext12Months is null || RegistrationThreshold == 0
+            ? null
+            : Math.Round(
+                ExpectedTaxableTurnoverNext12Months.Value /
+                RegistrationThreshold * 100m,
+                1);
+
+    public decimal AlertTurnover =>
+        Math.Max(TaxableTurnover, ExpectedTaxableTurnoverNext12Months ?? 0m);
+
+    public bool HistoricalRequiresRegistration =>
+        !IsVatRegistered && TaxableTurnover > RegistrationThreshold;
+
+    public bool ForecastRequiresRegistration =>
+        !IsVatRegistered &&
+        ExpectedTaxableTurnoverNext12Months > RegistrationThreshold;
+
+    public bool ForecastIsApproachingThreshold =>
+        !IsVatRegistered &&
+        ExpectedTaxableTurnoverNext12Months >= RegistrationThreshold * 0.8m;
+
     public bool IsApproachingThreshold =>
-        !IsVatRegistered && TaxableTurnover >= RegistrationThreshold * 0.8m;
+        !IsVatRegistered &&
+        (TaxableTurnover >= RegistrationThreshold * 0.8m ||
+         ForecastIsApproachingThreshold);
 
     public bool RequiresRegistration =>
-        !IsVatRegistered && TaxableTurnover > RegistrationThreshold;
+        HistoricalRequiresRegistration || ForecastRequiresRegistration;
 }
+
+public sealed record UpdateVatTurnoverForecastRequest(
+    Guid OrganisationId,
+    decimal? ExpectedTaxableTurnoverNext12Months);
 
 public sealed class VatTurnoverMonitorService(
     ApplicationDbContext db,
-    NotificationService notifications)
+    NotificationService notifications,
+    TenantAccessService access)
 {
     public const decimal FijiRegistrationThreshold = 100_000m;
+    public const decimal MaximumForecastTurnover = 1_000_000_000_000m;
 
     public async Task<VatTurnoverAssessment> GetAssessmentAsync(
         Guid organisationId,
@@ -90,8 +123,65 @@ public sealed class VatTurnoverMonitorService(
             periodStart,
             periodEnd,
             Math.Max(0m, sales - voids - credits + creditReversals),
+            organisation.ExpectedTaxableTurnoverNext12Months,
+            organisation.VatTurnoverForecastUpdatedAt,
             FijiRegistrationThreshold,
             organisation.IsVatRegistered);
+    }
+
+    public async Task<VatTurnoverAssessment> UpdateForecastAsync(
+        string userId,
+        UpdateVatTurnoverForecastRequest request,
+        DateOnly asOf,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, request.OrganisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot update the VAT turnover forecast for this organisation.");
+        }
+
+        if (request.ExpectedTaxableTurnoverNext12Months is < 0m or > MaximumForecastTurnover)
+        {
+            throw new InvalidOperationException(
+                $"Expected taxable turnover must be between FJD 0.00 and FJD {MaximumForecastTurnover:N2}.");
+        }
+
+        var organisation = await db.Organisations.SingleAsync(
+            x => x.Id == request.OrganisationId,
+            ct);
+        if (!organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The Fiji VAT turnover forecast is available only to Fiji organisations.");
+        }
+
+        var previous = organisation.ExpectedTaxableTurnoverNext12Months;
+        var updated = request.ExpectedTaxableTurnoverNext12Months;
+        if (previous != updated)
+        {
+            var updatedAt = DateTimeOffset.UtcNow;
+            organisation.ExpectedTaxableTurnoverNext12Months = updated;
+            organisation.VatTurnoverForecastUpdatedAt = updatedAt;
+            organisation.VatTurnoverForecastUpdatedByUserId = userId;
+            db.AuditEvents.Add(new AuditEvent
+            {
+                OrganisationId = organisation.Id,
+                UserId = userId,
+                EventType = "VatTurnoverForecastUpdated",
+                EntityType = nameof(Organisation),
+                EntityId = organisation.Id.ToString(),
+                JsonData = JsonSerializer.Serialize(new
+                {
+                    PreviousExpectedTaxableTurnoverNext12Months = previous,
+                    ExpectedTaxableTurnoverNext12Months = updated,
+                    updatedAt
+                })
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        return (await RefreshAlertAsync(organisation.Id, asOf, ct))!;
     }
 
     public async Task<VatTurnoverAssessment?> RefreshAlertAsync(
@@ -130,9 +220,15 @@ public sealed class VatTurnoverMonitorService(
             ? "VAT registration threshold exceeded"
             : "VAT registration threshold approaching";
 
-        var message = assessment.RequiresRegistration
-            ? $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2}. FRCS guidance requires VAT registration within 21 consecutive days after turnover exceeds FJD {assessment.RegistrationThreshold:N2}."
-            : $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2} ({assessment.ThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold).";
+        var message = assessment.ForecastRequiresRegistration &&
+                      !assessment.HistoricalRequiresRegistration
+            ? $"Expected taxable turnover for the next 12 months is FJD {assessment.ExpectedTaxableTurnoverNext12Months:N2}, above the FJD {assessment.RegistrationThreshold:N2} VAT registration threshold. Confirm the registration position with FRCS or a Fiji tax practitioner."
+            : assessment.RequiresRegistration
+                ? $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2}. FRCS guidance requires VAT registration within 21 consecutive days after turnover exceeds FJD {assessment.RegistrationThreshold:N2}."
+                : assessment.ForecastIsApproachingThreshold &&
+                  assessment.ExpectedTaxableTurnoverNext12Months > assessment.TaxableTurnover
+                    ? $"Expected taxable turnover for the next 12 months is FJD {assessment.ExpectedTaxableTurnoverNext12Months:N2} ({assessment.ForecastThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold)."
+                    : $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2} ({assessment.ThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold).";
 
         if (existing.Count == 1 && existing[0].Severity == severity)
         {
@@ -140,14 +236,14 @@ public sealed class VatTurnoverMonitorService(
             var changed =
                 current.Title != title ||
                 current.Message != message ||
-                current.Amount != assessment.TaxableTurnover ||
+                current.Amount != assessment.AlertTurnover ||
                 current.Currency != organisation.BaseCurrency;
 
             if (changed)
             {
                 current.Title = title;
                 current.Message = message;
-                current.Amount = assessment.TaxableTurnover;
+                current.Amount = assessment.AlertTurnover;
                 current.Currency = organisation.BaseCurrency;
                 await db.SaveChangesAsync(ct);
                 notifications.PublishOrganisationUpdate(organisationId);
@@ -167,7 +263,7 @@ public sealed class VatTurnoverMonitorService(
                 severity,
                 nameof(Organisation),
                 organisationId.ToString(),
-                assessment.TaxableTurnover,
+                assessment.AlertTurnover,
                 organisation.BaseCurrency),
             ct);
 
