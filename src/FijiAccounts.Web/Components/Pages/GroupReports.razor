@@ -21,7 +21,7 @@
 }
 else
 {
-    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines company ledgers and consolidation-only eliminations in the group presentation currency without changing their legal or tax boundaries.</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">Group reporting</p><h1>Consolidated financial report</h1><p>Combines company ledgers and consolidation-only eliminations in the group presentation currency without changing their legal or tax boundaries.</p></div><a class="btn btn-outline-secondary no-print" href="@($"o/{OrganisationId}/reports/group/setup")">Group account setup</a></div>
     <section class="card p-4 mb-3 no-print">
         <EditForm Model="filter" OnValidSubmit="Load" FormName="group-report-filter">
             <div class="row align-items-end">

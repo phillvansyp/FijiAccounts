@@ -17,6 +17,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         Set<GroupEliminationJournal>();
     public DbSet<GroupEliminationJournalLine> GroupEliminationJournalLines =>
         Set<GroupEliminationJournalLine>();
+    public DbSet<GroupLedgerAccount> GroupLedgerAccounts => Set<GroupLedgerAccount>();
+    public DbSet<GroupLedgerAccountMapping> GroupLedgerAccountMappings =>
+        Set<GroupLedgerAccountMapping>();
+    public DbSet<IntercompanyAccountConfiguration> IntercompanyAccountConfigurations =>
+        Set<IntercompanyAccountConfiguration>();
     public DbSet<CashflowScenario> CashflowScenarios => Set<CashflowScenario>();
     public DbSet<CashflowScenarioEvent> CashflowScenarioEvents =>
         Set<CashflowScenarioEvent>();
@@ -233,6 +238,82 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .WithMany(x => x.Lines)
             .HasForeignKey(x => x.GroupEliminationJournalId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<GroupLedgerAccount>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.Code })
+            .IsUnique();
+        builder.Entity<GroupLedgerAccount>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.LedgerAccounts)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasIndex(x => x.LedgerAccountId)
+            .IsUnique();
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.OrganisationId });
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.LedgerAccountMappings)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasOne(x => x.LedgerAccount)
+            .WithMany()
+            .HasForeignKey(x => x.LedgerAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<GroupLedgerAccountMapping>()
+            .HasOne(x => x.GroupLedgerAccount)
+            .WithMany(x => x.Mappings)
+            .HasForeignKey(x => x.GroupLedgerAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasIndex(x => new
+            {
+                x.OrganisationGroupId,
+                x.OrganisationId,
+                x.CounterpartyOrganisationId
+            })
+            .IsUnique();
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.IntercompanyAccountConfigurations)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne(x => x.CounterpartyOrganisation)
+            .WithMany()
+            .HasForeignKey(x => x.CounterpartyOrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne<LedgerAccount>()
+            .WithMany()
+            .HasForeignKey(x => x.ReceivableAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne<LedgerAccount>()
+            .WithMany()
+            .HasForeignKey(x => x.PayableAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne<LedgerAccount>()
+            .WithMany()
+            .HasForeignKey(x => x.RevenueAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyAccountConfiguration>()
+            .HasOne<LedgerAccount>()
+            .WithMany()
+            .HasForeignKey(x => x.ExpenseAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CashflowScenario>()
             .HasIndex(x => new { x.OrganisationId, x.Name })
             .IsUnique();

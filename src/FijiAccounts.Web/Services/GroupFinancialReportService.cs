@@ -97,6 +97,17 @@ public sealed class GroupFinancialReportService(
                 x.EffectiveDate <= to)
             .OrderByDescending(x => x.EffectiveDate)
             .ToListAsync(cancellationToken);
+        var accountMappings = await db.GroupLedgerAccountMappings
+            .AsNoTracking()
+            .Where(x => x.OrganisationGroupId == group.OrganisationGroupId &&
+                        x.GroupLedgerAccount.IsActive)
+            .Select(x => new CompanyAccountMapping(
+                x.OrganisationId,
+                x.LedgerAccount.Code,
+                x.GroupLedgerAccount.Code,
+                x.GroupLedgerAccount.Name,
+                x.GroupLedgerAccount.Type))
+            .ToListAsync(cancellationToken);
 
         var companyReports = new List<TranslatedCompanyReport>();
         foreach (var company in group.Companies)
@@ -113,7 +124,10 @@ public sealed class GroupFinancialReportService(
                 GroupExchangeRateType.Closing,
                 storedRates,
                 to);
-            var sourceReport = await financialReports.GetAsync(company.Id, from, to, cancellationToken);
+            var sourceReport = ApplyGroupAccountMappings(
+                await financialReports.GetAsync(company.Id, from, to, cancellationToken),
+                company.Id,
+                accountMappings);
             companyReports.Add(new(
                 company,
                 Translate(sourceReport, averageRate, closingRate),
@@ -284,6 +298,43 @@ public sealed class GroupFinancialReportService(
         return new(balances, trial);
     }
 
+    private static FinancialReportData ApplyGroupAccountMappings(
+        FinancialReportData source,
+        Guid organisationId,
+        IReadOnlyList<CompanyAccountMapping> mappings)
+    {
+        var byCode = mappings
+            .Where(x => x.OrganisationId == organisationId)
+            .ToDictionary(x => x.CompanyAccountCode, StringComparer.OrdinalIgnoreCase);
+        var balances = source.Balances.Select(row =>
+        {
+            if (!byCode.TryGetValue(row.Code, out var mapping))
+            {
+                return row;
+            }
+
+            return new FinancialAccountBalance(
+                mapping.GroupAccountCode,
+                mapping.GroupAccountName,
+                mapping.GroupAccountType,
+                row.DisplayAmount);
+        }).ToList();
+        var trial = source.TrialBalance.Select(row =>
+        {
+            if (!byCode.TryGetValue(row.Code, out var mapping))
+            {
+                return row;
+            }
+
+            return new TrialBalanceRow(
+                mapping.GroupAccountCode,
+                mapping.GroupAccountName,
+                row.Debit,
+                row.Credit);
+        }).ToList();
+        return new(balances, trial);
+    }
+
     private static string RateLabel(GroupExchangeRateType type) =>
         type == GroupExchangeRateType.PeriodAverage ? "period-average" : "closing";
 
@@ -292,4 +343,11 @@ public sealed class GroupFinancialReportService(
         FinancialReportData Report,
         decimal PeriodAverageRate,
         decimal ClosingRate);
+
+    private sealed record CompanyAccountMapping(
+        Guid OrganisationId,
+        string CompanyAccountCode,
+        string GroupAccountCode,
+        string GroupAccountName,
+        AccountType GroupAccountType);
 }

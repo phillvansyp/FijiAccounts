@@ -24,6 +24,9 @@ public sealed class OrganisationGroup
     public List<OrganisationGroupMembership> Memberships { get; set; } = [];
     public List<GroupExchangeRate> ExchangeRates { get; set; } = [];
     public List<GroupEliminationJournal> EliminationJournals { get; set; } = [];
+    public List<GroupLedgerAccount> LedgerAccounts { get; set; } = [];
+    public List<GroupLedgerAccountMapping> LedgerAccountMappings { get; set; } = [];
+    public List<IntercompanyAccountConfiguration> IntercompanyAccountConfigurations { get; set; } = [];
 
     public bool IsDemo { get; set; }
     public TenantStatus Status { get; set; } = TenantStatus.Active;

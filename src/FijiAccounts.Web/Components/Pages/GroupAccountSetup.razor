@@ -1,0 +1,343 @@
+@page "/o/{OrganisationId:guid}/reports/group/setup"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject GroupAccountMappingService GroupAccounts
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Group account setup · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else if (setup is null)
+{
+    <div class="alert alert-info">Loading group account setup…</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Group accounting</p>
+            <h1>Group chart and intercompany setup</h1>
+            <p>Map each legal company's accounts into one canonical group chart and define the accounts used with every intercompany partner.</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="@($"o/{OrganisationId}/reports/group")">Back to group reports</a>
+    </div>
+
+    @if (status is not null)
+    {
+        <div class="alert @statusClass">@status</div>
+    }
+
+    <section class="card p-4 mb-3">
+        <div class="d-flex flex-wrap justify-content-between gap-3 align-items-start">
+            <div>
+                <p class="eyebrow">Mapping coverage</p>
+                <h2>@setup.MappedCompanyAccountCount of @setup.ActiveCompanyAccountCount accounts mapped</h2>
+                <p class="text-muted mb-0">Mapped accounts use the canonical code and name in consolidated reports. Unmapped accounts remain visible under their company code.</p>
+            </div>
+            <span class="badge @(setup.MappingComplete ? "bg-success" : "bg-warning text-dark")">@(setup.MappingComplete ? "Complete" : "Setup required")</span>
+        </div>
+        @if (setup.CanManage && setup.Companies.Count > 0)
+        {
+            <div class="row align-items-end mt-3">
+                <div class="col-md-5 mb-2">
+                    <label class="form-label">Start the group chart from</label>
+                    <InputSelect class="form-select" @bind-Value="sourceCompanyId">
+                        @foreach (var company in setup.Companies)
+                        {
+                            <option value="@company.Id">@company.LegalName</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <button class="btn btn-primary" @onclick="InitialiseFromCompany">Create and map matching group accounts</button>
+                </div>
+            </div>
+        }
+    </section>
+
+    <section class="card p-4 mb-3">
+        <h2>Canonical group accounts</h2>
+        <p class="text-muted">These codes provide the common reporting structure across every legal company.</p>
+        @if (setup.CanManage)
+        {
+            <EditForm Model="accountModel" OnValidSubmit="CreateGroupAccount" FormName="create-group-account">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row align-items-end">
+                    <div class="col-md-2 mb-2"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="accountModel.Code" /></div>
+                    <div class="col-md-3 mb-2"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="accountModel.Name" /></div>
+                    <div class="col-md-2 mb-2"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="accountModel.Type">@foreach (var type in Enum.GetValues<AccountType>()) { <option value="@type">@type</option> }</InputSelect></div>
+                    <div class="col-md-3 mb-2"><label class="form-label">Purpose</label><InputSelect class="form-select" @bind-Value="accountModel.Purpose">@foreach (var purpose in Enum.GetValues<GroupAccountPurpose>()) { <option value="@purpose">@PurposeLabel(purpose)</option> }</InputSelect></div>
+                    <div class="col-md-2 mb-2"><button class="btn btn-outline-primary">Add account</button></div>
+                </div>
+            </EditForm>
+        }
+        <div class="table-responsive mt-3">
+            <table class="table align-middle">
+                <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Purpose</th><th class="text-end">Mapped accounts</th></tr></thead>
+                <tbody>
+                    @foreach (var account in setup.GroupAccounts)
+                    {
+                        <tr><td><strong>@account.Code</strong></td><td>@account.Name</td><td>@account.Type</td><td>@PurposeLabel(account.Purpose)</td><td class="text-end">@setup.Mappings.Count(x => x.GroupLedgerAccountId == account.Id)</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card p-4 mb-3">
+        <h2>Company account mappings</h2>
+        <p class="text-muted">A company account can only map to a group account of the same accounting type.</p>
+        @foreach (var company in setup.Companies)
+        {
+            <details class="border rounded p-3 mb-2" open="@(company.Id == setup.Companies[0].Id)">
+                <summary><strong>@company.LegalName</strong> · @CompanyMappedCount(company.Id) of @CompanyAccountCount(company.Id) mapped</summary>
+                <div class="table-responsive mt-3">
+                    <table class="table align-middle mb-0">
+                        <thead><tr><th>Company account</th><th>Type</th><th>Canonical group account</th></tr></thead>
+                        <tbody>
+                            @foreach (var companyAccount in setup.CompanyAccounts.Where(x => x.OrganisationId == company.Id))
+                            {
+                                <tr>
+                                    <td><strong>@companyAccount.Code</strong> · @companyAccount.Name</td>
+                                    <td>@companyAccount.Type</td>
+                                    <td>
+                                        <select class="form-select" value="@MappedGroupAccountId(companyAccount.Id)" disabled="@(!setup.CanManage)" @onchange="e => SaveMapping(companyAccount.Id, e.Value?.ToString())">
+                                            <option value="">Not mapped</option>
+                                            @foreach (var groupAccount in setup.GroupAccounts.Where(x => x.Type == companyAccount.Type))
+                                            {
+                                                <option value="@groupAccount.Id">@groupAccount.Code · @groupAccount.Name</option>
+                                            }
+                                        </select>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        }
+    </section>
+
+    <section class="card p-4 mb-3">
+        <h2>Intercompany partner accounts</h2>
+        <p class="text-muted">Configure one directional set for each company and counterparty. Create dedicated due-from, due-to, revenue and expense accounts in the company's chart before saving.</p>
+        @if (setup.Companies.Count < 2)
+        {
+            <div class="alert alert-info mb-0">Add another legal company to this group before configuring intercompany accounts.</div>
+        }
+        else
+        {
+            @if (setup.CanManage)
+            {
+                <EditForm Model="partnerModel" OnValidSubmit="SavePartnerConfiguration" FormName="intercompany-account-configuration">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+                    <div class="row">
+                        <div class="col-md-3 mb-2"><label class="form-label">Company</label><InputSelect class="form-select" @bind-Value="partnerModel.OrganisationId" @bind-Value:after="ResetPartnerAccounts">@foreach (var company in setup.Companies) { <option value="@company.Id">@company.LegalName</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Counterparty</label><InputSelect class="form-select" @bind-Value="partnerModel.CounterpartyOrganisationId">@foreach (var company in setup.Companies.Where(x => x.Id != partnerModel.OrganisationId)) { <option value="@company.Id">@company.LegalName</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Due from / receivable</label><InputSelect class="form-select" @bind-Value="partnerModel.ReceivableAccountId">@AccountOptions(AccountType.Asset)</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Due to / payable</label><InputSelect class="form-select" @bind-Value="partnerModel.PayableAccountId">@AccountOptions(AccountType.Liability)</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Intercompany revenue</label><InputSelect class="form-select" @bind-Value="partnerModel.RevenueAccountId">@AccountOptions(AccountType.Revenue)</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Intercompany expense</label><InputSelect class="form-select" @bind-Value="partnerModel.ExpenseAccountId">@AccountOptions(AccountType.Expense)</InputSelect></div>
+                        <div class="col-md-3 mb-2 d-flex align-items-end"><button class="btn btn-primary">Save partner setup</button></div>
+                        <div class="col-md-3 mb-2 d-flex align-items-end"><a class="btn btn-outline-secondary" href="@($"o/{partnerModel.OrganisationId}/accounts")">Open company chart</a></div>
+                    </div>
+                </EditForm>
+            }
+            <div class="table-responsive mt-3">
+                <table class="table align-middle">
+                    <thead><tr><th>Company</th><th>Counterparty</th><th>Due from</th><th>Due to</th><th>Revenue</th><th>Expense</th><th>Updated</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in setup.IntercompanyConfigurations)
+                        {
+                            <tr><td>@CompanyName(item.OrganisationId)</td><td>@CompanyName(item.CounterpartyOrganisationId)</td><td>@AccountName(item.ReceivableAccountId)</td><td>@AccountName(item.PayableAccountId)</td><td>@AccountName(item.RevenueAccountId)</td><td>@AccountName(item.ExpenseAccountId)</td><td>@item.UpdatedAt.ToLocalTime().ToString("dd MMM yyyy")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private GroupAccountSetupView? setup;
+    private string userId = "";
+    private Guid sourceCompanyId;
+    private GroupAccountModel accountModel = new();
+    private PartnerAccountModel partnerModel = new();
+    private string? status;
+    private string statusClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        try
+        {
+            setup = await GroupAccounts.GetAsync(userId, OrganisationId);
+            if (setup.Companies.Count > 0 && !setup.Companies.Any(x => x.Id == sourceCompanyId))
+            {
+                sourceCompanyId = setup.Companies[0].Id;
+            }
+            if (setup.Companies.Count > 1 && !setup.Companies.Any(x => x.Id == partnerModel.OrganisationId))
+            {
+                partnerModel.OrganisationId = setup.Companies[0].Id;
+                ResetPartnerAccounts();
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            statusClass = "alert-warning";
+        }
+    }
+
+    private async Task InitialiseFromCompany()
+    {
+        await Run(async () =>
+        {
+            var mapped = await GroupAccounts.InitialiseFromCompanyAsync(userId, OrganisationId, sourceCompanyId);
+            status = mapped == 0 ? "The selected company chart was already mapped." : $"Created the group chart and mapped {mapped} company accounts.";
+        });
+    }
+
+    private async Task CreateGroupAccount()
+    {
+        await Run(async () =>
+        {
+            await GroupAccounts.CreateAsync(userId, new(
+                OrganisationId,
+                accountModel.Code,
+                accountModel.Name,
+                accountModel.Type,
+                accountModel.Purpose));
+            accountModel = new();
+            status = "Group account created.";
+        });
+    }
+
+    private async Task SaveMapping(Guid ledgerAccountId, string? selectedValue)
+    {
+        Guid? groupAccountId = Guid.TryParse(selectedValue, out var parsed) ? parsed : null;
+        await Run(async () =>
+        {
+            await GroupAccounts.SetMappingAsync(userId, new(OrganisationId, ledgerAccountId, groupAccountId));
+            status = groupAccountId is null ? "Account mapping removed." : "Account mapping saved.";
+        });
+    }
+
+    private async Task SavePartnerConfiguration()
+    {
+        await Run(async () =>
+        {
+            await GroupAccounts.SaveIntercompanyConfigurationAsync(userId, new(
+                OrganisationId,
+                partnerModel.OrganisationId,
+                partnerModel.CounterpartyOrganisationId,
+                partnerModel.ReceivableAccountId,
+                partnerModel.PayableAccountId,
+                partnerModel.RevenueAccountId,
+                partnerModel.ExpenseAccountId));
+            status = "Intercompany partner accounts saved.";
+        });
+    }
+
+    private async Task Run(Func<Task> action)
+    {
+        try
+        {
+            status = null;
+            await action();
+            statusClass = "alert-success";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            statusClass = "alert-warning";
+        }
+    }
+
+    private void ResetPartnerAccounts()
+    {
+        if (setup is null) return;
+        partnerModel.CounterpartyOrganisationId = setup.Companies.FirstOrDefault(x => x.Id != partnerModel.OrganisationId)?.Id ?? Guid.Empty;
+        partnerModel.ReceivableAccountId = FirstAccount(AccountType.Asset);
+        partnerModel.PayableAccountId = FirstAccount(AccountType.Liability);
+        partnerModel.RevenueAccountId = FirstAccount(AccountType.Revenue);
+        partnerModel.ExpenseAccountId = FirstAccount(AccountType.Expense);
+    }
+
+    private Guid FirstAccount(AccountType type) =>
+        setup?.CompanyAccounts.FirstOrDefault(x => x.OrganisationId == partnerModel.OrganisationId && x.Type == type)?.Id ?? Guid.Empty;
+
+    private RenderFragment AccountOptions(AccountType type) => builder =>
+    {
+        if (setup is null) return;
+        var sequence = 0;
+        foreach (var account in setup.CompanyAccounts.Where(x => x.OrganisationId == partnerModel.OrganisationId && x.Type == type))
+        {
+            builder.OpenElement(sequence++, "option");
+            builder.AddAttribute(sequence++, "value", account.Id);
+            builder.AddContent(sequence++, $"{account.Code} · {account.Name}");
+            builder.CloseElement();
+        }
+    };
+
+    private string MappedGroupAccountId(Guid ledgerAccountId) =>
+        setup?.Mappings.FirstOrDefault(x => x.LedgerAccountId == ledgerAccountId)?.GroupLedgerAccountId.ToString() ?? "";
+    private int CompanyAccountCount(Guid companyId) => setup?.CompanyAccounts.Count(x => x.OrganisationId == companyId) ?? 0;
+    private int CompanyMappedCount(Guid companyId) => setup?.CompanyAccounts.Count(account => account.OrganisationId == companyId && setup.Mappings.Any(mapping => mapping.LedgerAccountId == account.Id)) ?? 0;
+    private string CompanyName(Guid companyId) => setup?.Companies.FirstOrDefault(x => x.Id == companyId)?.LegalName ?? "Unknown company";
+    private string AccountName(Guid accountId)
+    {
+        var account = setup?.CompanyAccounts.FirstOrDefault(x => x.Id == accountId);
+        return account is null ? "Unknown account" : $"{account.Code} · {account.Name}";
+    }
+    private static string PurposeLabel(GroupAccountPurpose purpose) => purpose switch
+    {
+        GroupAccountPurpose.IntercompanyReceivable => "Intercompany receivable",
+        GroupAccountPurpose.IntercompanyPayable => "Intercompany payable",
+        GroupAccountPurpose.IntercompanyRevenue => "Intercompany revenue",
+        GroupAccountPurpose.IntercompanyExpense => "Intercompany expense",
+        _ => "Standard"
+    };
+
+    private sealed class GroupAccountModel
+    {
+        [Required, StringLength(32)] public string Code { get; set; } = "";
+        [Required, StringLength(160)] public string Name { get; set; } = "";
+        public AccountType Type { get; set; }
+        public GroupAccountPurpose Purpose { get; set; }
+    }
+
+    private sealed class PartnerAccountModel
+    {
+        public Guid OrganisationId { get; set; }
+        public Guid CounterpartyOrganisationId { get; set; }
+        public Guid ReceivableAccountId { get; set; }
+        public Guid PayableAccountId { get; set; }
+        public Guid RevenueAccountId { get; set; }
+        public Guid ExpenseAccountId { get; set; }
+    }
+}
