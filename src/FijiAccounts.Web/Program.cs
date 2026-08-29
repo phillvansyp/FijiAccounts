@@ -234,6 +234,7 @@ builder.Services.AddHostedService<VatTurnoverMonitorWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<IImmutableDocumentStore, DatabaseImmutableDocumentStore>();
+builder.Services.AddScoped<ImmutableDocumentBackfillService>();
 builder.Services.AddSingleton<OrganisationUpdateBroker>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<CashflowForecastService>();
@@ -348,6 +349,18 @@ if (app.Environment.IsDevelopment() ||
     await using var migrationScope = app.Services.CreateAsyncScope();
     var database = migrationScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     await database.Database.MigrateAsync();
+    var backfill = migrationScope.ServiceProvider
+        .GetRequiredService<ImmutableDocumentBackfillService>();
+    var backfillResult = await backfill.BackfillAsync();
+    if (backfillResult.Total > 0)
+    {
+        app.Logger.LogInformation(
+            "Backfilled {Total} retained documents into immutable storage ({BusinessPartyDocuments} contact, {SupplierBillAttachments} supplier bill, {BankStatementDocuments} bank statement).",
+            backfillResult.Total,
+            backfillResult.BusinessPartyDocuments,
+            backfillResult.SupplierBillAttachments,
+            backfillResult.BankStatementDocuments);
+    }
 }
 
 if (await AccountMaintenanceCommand.TryRunAsync(app, args))
