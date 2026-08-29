@@ -19,7 +19,7 @@ public sealed class VatTurnoverMonitorWorker(
                 var monitor = scope.ServiceProvider.GetRequiredService<VatTurnoverMonitorService>();
                 var organisationIds = await db.Organisations
                     .AsNoTracking()
-                    .Where(x => x.CountryCode == "FJ")
+                    .Where(x => x.CountryCode == "FJ" || x.CountryCode == "NZ")
                     .Select(x => x.Id)
                     .ToListAsync(stoppingToken);
                 var today = DateOnly.FromDateTime(DateTime.Today);

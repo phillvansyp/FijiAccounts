@@ -34,7 +34,7 @@ public partial class SalesInvoiceDetail
     private IEnumerable<(string Label, decimal Amount)> SupplyTotals => invoice?.Lines
         .Where(x => x.VatTreatment != VatTreatment.Standard)
         .GroupBy(x => x.VatTreatment)
-        .Select(group => ($"{FijiTaxDocumentCompliance.TaxLabel(group.First())} supplies", group.Sum(x => x.TransactionNetAmount + x.TransactionVatAmount)))
+        .Select(group => ($"{TaxDocumentCompliance.TaxLabel(group.First(), access?.Organisation.TaxLabel ?? "Tax")} supplies", group.Sum(x => x.TransactionNetAmount + x.TransactionVatAmount)))
         ?? [];
 
     private void OpenCredit()

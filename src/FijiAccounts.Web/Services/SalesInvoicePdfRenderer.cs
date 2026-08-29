@@ -65,7 +65,7 @@ public sealed class SalesInvoicePdfRenderer
             DrawCell(gfx, string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber!, regular, Margin + 173, y + 16, 58);
             DrawRight(gfx, line.Quantity.ToString("N2"), regular, Margin + 273, y + 25);
             DrawRight(gfx, $"{invoice.Currency} {line.TransactionUnitPrice:N2}", regular, Margin + 358, y + 25);
-            DrawCell(gfx, FijiTaxDocumentCompliance.TaxLabel(line), regular, Margin + 368, y + 16, 66);
+            DrawCell(gfx, TaxDocumentCompliance.TaxLabel(line, TaxName(invoice)), regular, Margin + 368, y + 16, 66);
             DrawRight(gfx, $"{invoice.Currency} {line.TransactionNetAmount:N2}", regular, PageWidth - Margin - 8, y + 25);
             gfx.DrawLine(border, Margin, y + rowHeight, PageWidth - Margin, y + rowHeight);
             y += rowHeight;
@@ -215,7 +215,7 @@ public sealed class SalesInvoicePdfRenderer
                      .Where(line => line.VatTreatment != VatTreatment.Standard)
                      .GroupBy(line => line.VatTreatment))
         {
-            var label = $"{FijiTaxDocumentCompliance.TaxLabel(supply.First())} supplies";
+            var label = $"{TaxDocumentCompliance.TaxLabel(supply.First(), TaxName(invoice))} supplies";
             var amount = supply.Sum(line => line.TransactionNetAmount + line.TransactionVatAmount);
             DrawTotal(gfx, label, $"{invoice.Currency} {amount:N2}", x, y, regular, bold);
             y += 23;
@@ -303,6 +303,9 @@ public sealed class SalesInvoicePdfRenderer
 
     private static string SupplierName(SalesInvoice invoice) =>
         invoice.SupplierNameSnapshot ?? invoice.Organisation.LegalName;
+
+    private static string TaxName(SalesInvoice invoice) =>
+        invoice.Organisation?.TaxLabel ?? "Tax";
 
     private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
         ? "—"

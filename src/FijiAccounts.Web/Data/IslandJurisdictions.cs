@@ -15,6 +15,7 @@ public static class IslandJurisdictions
     public static readonly IReadOnlyList<IslandJurisdiction> All =
     [
         new("FJ", "Fiji", "FJD", "Pacific/Fiji", "VAT", 12, 31, true),
+        new("NZ", "New Zealand", "NZD", "Pacific/Auckland", "GST", 3, 31, true),
         new("WS", "Samoa", "WST", "Pacific/Apia", "VAGST", 6, 30, false),
         new("TO", "Tonga", "TOP", "Pacific/Tongatapu", "Consumption tax", 6, 30, false),
         new("VU", "Vanuatu", "VUV", "Pacific/Efate", "VAT", 12, 31, false),

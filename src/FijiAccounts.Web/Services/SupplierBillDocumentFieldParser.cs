@@ -41,8 +41,9 @@ public static partial class SupplierBillDocumentFieldParser
         decimal gross,
         DateOnly billDate,
         string currency,
-        VatTreatment vatTreatment) =>
-        new FijiVatSchedule()
+        VatTreatment vatTreatment,
+        string countryCode = "FJ") =>
+        IndirectTaxSchedules.For(countryCode)
             .CalculateFromInclusive(
                 new Money(gross, currency),
                 billDate,

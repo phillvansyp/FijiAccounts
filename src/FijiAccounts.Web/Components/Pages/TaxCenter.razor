@@ -8,6 +8,7 @@
 @using FijiAccounts.Web.Services
 @inject TenantAccessService TenantAccess
 @inject VatWorkpaperService VatWorkpapers
+@inject NewZealandGstReturnService NewZealandGstReturns
 @inject VatTurnoverMonitorService VatTurnoverMonitor
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -52,15 +53,15 @@ else
                 <strong>12-month taxable turnover: @access.Organisation.BaseCurrency @turnover.TaxableTurnover.ToString("N2")</strong>
                 <div>
                     @turnover.From.ToString("dd MMM yyyy") to @turnover.To.ToString("dd MMM yyyy") ·
-                    @turnover.ThresholdPercentage.ToString("N1")% of the FJD @turnover.RegistrationThreshold.ToString("N2") VAT registration threshold.
+                    @turnover.ThresholdPercentage.ToString("N1")% of the @access.Organisation.BaseCurrency @turnover.RegistrationThreshold.ToString("N2") @access.Organisation.TaxLabel registration threshold.
                 </div>
                 @if (turnover.RequiresRegistration)
                 {
-                    <div>Registration may now be required within 21 consecutive days. Confirm the position with FRCS or your Fiji tax practitioner.</div>
+                    <div>@RegistrationGuidance</div>
                 }
                 else if (turnover.IsApproachingThreshold)
                 {
-                    <div>FJD @turnover.RemainingBeforeThreshold.ToString("N2") remains before the threshold is exceeded.</div>
+                    <div>@access.Organisation.BaseCurrency @turnover.RemainingBeforeThreshold.ToString("N2") remains before the threshold is reached.</div>
                 }
                 else if (!turnover.IsVatRegistered)
                 {
@@ -70,7 +71,7 @@ else
                 {
                     <div class="mt-1">
                         Expected taxable turnover for the next 12 months:
-                        FJD @expectedTurnover.ToString("N2")
+                        @access.Organisation.BaseCurrency @expectedTurnover.ToString("N2")
                         (@turnover.ForecastThresholdPercentage?.ToString("N1")% of the threshold).
                     </div>
                     @if (turnover.ForecastUpdatedAt is not null)
@@ -92,7 +93,7 @@ else
                               FormName="vat-turnover-forecast">
                         <DataAnnotationsValidator />
                         <div>
-                            <label class="form-label">Expected taxable turnover — next 12 months (FJD)</label>
+                            <label class="form-label">Expected taxable turnover — next 12 months (@access.Organisation.BaseCurrency)</label>
                             <InputNumber class="form-control"
                                          @bind-Value="forecast.ExpectedTaxableTurnoverNext12Months" />
                             <ValidationMessage For="@(() => forecast.ExpectedTaxableTurnoverNext12Months)" />
@@ -124,7 +125,7 @@ else
                 </div>
                 <button class="btn btn-primary">Update review</button>
             </EditForm>
-            <span>Accrual basis · @access.Organisation.BaseCurrency</span>
+            <span>@(IsNewZealand ? "Invoice basis" : "Accrual basis") · @access.Organisation.BaseCurrency</span>
         </section>
 
         @if (error is not null)
@@ -155,6 +156,42 @@ else
                     </small>
                 </article>
             </div>
+
+            @if (nzReturn is not null)
+            {
+                <section class="financial-report">
+                    <header>
+                        <div>
+                            <h2>New Zealand GST return workpaper</h2>
+                            <p>GST101 boxes · invoice basis · @nzReturn.From.ToString("dd MMM yyyy") to @nzReturn.To.ToString("dd MMM yyyy")</p>
+                        </div>
+                        <strong>@access.Organisation.LegalName</strong>
+                    </header>
+                    <table class="report-table">
+                        <tbody>
+                            <tr><td>Box 5 · Total sales and income</td><td class="number">$@nzReturn.Box5TotalSalesAndIncome.ToString("N2")</td></tr>
+                            <tr><td>Box 6 · Zero-rated supplies</td><td class="number">$@nzReturn.Box6ZeroRatedSupplies.ToString("N2")</td></tr>
+                            <tr><td>Box 7 · Taxable sales</td><td class="number">$@nzReturn.Box7TaxableSales.ToString("N2")</td></tr>
+                            <tr><td>Box 8 · GST on sales</td><td class="number">$@nzReturn.Box8GstOnSales.ToString("N2")</td></tr>
+                            <tr><td>Box 9 · Debit adjustments</td><td class="number">$@nzReturn.Box9DebitAdjustments.ToString("N2")</td></tr>
+                            <tr><td>Box 10 · Total GST collected</td><td class="number">$@nzReturn.Box10TotalGstCollected.ToString("N2")</td></tr>
+                            <tr><td>Box 11 · Purchases and expenses</td><td class="number">$@nzReturn.Box11PurchasesAndExpenses.ToString("N2")</td></tr>
+                            <tr><td>Box 12 · GST on purchases</td><td class="number">$@nzReturn.Box12GstOnPurchases.ToString("N2")</td></tr>
+                            <tr><td>Box 13 · Credit adjustments</td><td class="number">$@nzReturn.Box13CreditAdjustments.ToString("N2")</td></tr>
+                            <tr><td>Box 14 · Total GST credits</td><td class="number">$@nzReturn.Box14TotalGstCredits.ToString("N2")</td></tr>
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <th>Box 15 · GST @(nzReturn.IsRefund ? "refund" : "to pay")</th>
+                                <th class="number">$@Math.Abs(nzReturn.Box15NetGst).ToString("N2")</th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    <div class="alert alert-warning mt-4 mb-0">
+                        Debit and credit adjustments are shown as zero until manual adjustment support is added. Review these boxes and the underlying transactions before filing with Inland Revenue. Account Island has not filed this return.
+                    </div>
+                </section>
+            }
 
             <section class="financial-report">
                 <header>
@@ -262,6 +299,7 @@ else
     private readonly PeriodModel period = new();
     private readonly ForecastModel forecast = new();
     private VatWorkpaper? workpaper;
+    private NewZealandGstReturn? nzReturn;
     private VatTurnoverAssessment? turnover;
     private string? error;
     private string? userId;
@@ -310,7 +348,7 @@ else
             .AddDays(-1);
 
         if (jurisdiction.TaxPackEnabled &&
-            access.Organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase))
+            (access.Organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) || IsNewZealand))
         {
             turnover = await VatTurnoverMonitor.GetAssessmentAsync(
                 OrganisationId,
@@ -343,7 +381,7 @@ else
                     forecast.ExpectedTaxableTurnoverNext12Months),
                 today);
             forecastError = false;
-            forecastMessage = "VAT turnover forecast saved and alerts refreshed.";
+            forecastMessage = $"{access?.Organisation.TaxLabel ?? "Tax"} turnover forecast saved and alerts refreshed.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {
@@ -366,14 +404,29 @@ else
                     period.From,
                     period.To);
 
+            nzReturn = IsNewZealand
+                ? await NewZealandGstReturns.GetInvoiceBasisAsync(
+                    OrganisationId,
+                    period.From,
+                    period.To)
+                : null;
+
             error = null;
         }
         catch (ArgumentException ex)
         {
             workpaper = null;
+            nzReturn = null;
             error = ex.Message;
         }
     }
+
+    private bool IsNewZealand =>
+        access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
+
+    private string RegistrationGuidance => IsNewZealand
+        ? "GST registration may now be required because taxable turnover has reached, or is expected to reach, NZD 60,000 in a 12-month period. Confirm the position with Inland Revenue or your New Zealand tax adviser."
+        : "VAT registration may now be required within 21 consecutive days. Confirm the position with FRCS or your Fiji tax practitioner.";
 
     private sealed class PeriodModel
     {
@@ -387,7 +440,7 @@ else
             typeof(decimal),
             "0",
             "1000000000000",
-            ErrorMessage = "Expected taxable turnover must be between FJD 0.00 and FJD 1,000,000,000,000.00.")]
+            ErrorMessage = "Expected taxable turnover must be between 0.00 and 1,000,000,000,000.00.")]
         public decimal? ExpectedTaxableTurnoverNext12Months { get; set; }
     }
 }

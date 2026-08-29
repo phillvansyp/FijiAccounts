@@ -156,7 +156,7 @@ public sealed class PurchasingService(
             throw new InvalidOperationException(
                 "Accounts Payable (2000) must be an active Liability account.");
         }
-        var schedule = new FijiVatSchedule();
+        var schedule = IndirectTaxSchedules.For(organisation.CountryCode);
         var lines = request.Lines.Select(x =>
         {
             if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0)

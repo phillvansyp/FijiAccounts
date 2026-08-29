@@ -14,7 +14,11 @@ public sealed class SupplierCreditNoteService(ApplicationDbContext db, TenantAcc
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot issue supplier credit notes for this organisation.");
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, ct);
-        if (!string.Equals(organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Only the verified Fiji supplier credit process is enabled at this stage.");
+        if (!string.Equals(organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(organisation.CountryCode, "NZ", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Supplier credits are currently enabled only for Fiji and New Zealand organisations.");
+        }
         var bill = await db.SupplierBills.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == request.SupplierBillId && x.OrganisationId == request.OrganisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
         if (!string.Equals(bill.Currency, organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase))
         {

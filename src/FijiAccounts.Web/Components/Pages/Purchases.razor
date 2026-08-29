@@ -974,7 +974,7 @@ private void ToggleRecurringBill()
             return exclusiveUnitPrice;
         }
 
-        var rate = new FijiVatSchedule().StandardRateOn(bill.BillDate);
+        var rate = IndirectTaxSchedules.For(access?.Organisation.CountryCode ?? "FJ").StandardRateOn(bill.BillDate);
         return decimal.Round(exclusiveUnitPrice * (1m + rate), 4, MidpointRounding.AwayFromZero);
     }
 
@@ -985,7 +985,7 @@ private void ToggleRecurringBill()
             return enteredUnitPrice;
         }
 
-        var rate = new FijiVatSchedule().StandardRateOn(bill.BillDate);
+        var rate = IndirectTaxSchedules.For(access?.Organisation.CountryCode ?? "FJ").StandardRateOn(bill.BillDate);
         return decimal.Round(enteredUnitPrice / (1m + rate), 4, MidpointRounding.AwayFromZero);
     }
 

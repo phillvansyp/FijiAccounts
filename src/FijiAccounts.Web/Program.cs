@@ -260,6 +260,7 @@ builder.Services.AddScoped<FinancialControlService>();
 builder.Services.AddScoped<FinancialIntelligenceService>();
 builder.Services.AddScoped<CashRunwayService>();
 builder.Services.AddScoped<VatWorkpaperService>();
+builder.Services.AddScoped<NewZealandGstReturnService>();
 builder.Services.AddScoped<VatTurnoverMonitorService>();
 builder.Services.AddScoped<PurchasingService>();
 builder.Services.AddScoped<SupplierBillDraftService>();

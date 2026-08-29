@@ -3,24 +3,37 @@ using FijiAccounts.Web.Data;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record FijiTaxDocumentClassification(
+public sealed record TaxDocumentClassification(
     bool IsTaxInvoice,
     bool IsSimplified,
     string ComplianceVersion);
 
-public static class FijiTaxDocumentCompliance
+public static class TaxDocumentCompliance
 {
     public const decimal MandatoryIssueThreshold = 10m;
     public const decimal SimplifiedInvoiceThreshold = 100m;
     public const string CurrentComplianceVersion = "FJ-VAT-REGS-2024-08-01";
+    public const decimal NewZealandSellerGstNumberThreshold = 200m;
+    public const decimal NewZealandBuyerDetailsThreshold = 1_000m;
+    public const string NewZealandComplianceVersion = "NZ-GST-TSI-2023-04-01";
 
-    public static FijiTaxDocumentClassification ClassifyAndValidate(
+    public static TaxDocumentClassification ClassifyAndValidate(
         Organisation organisation,
         BusinessParty recipient,
         DateOnly issueDate,
         decimal total,
         IReadOnlyCollection<SalesInvoiceLine> lines)
     {
+        if (string.Equals(organisation.CountryCode, "NZ", StringComparison.OrdinalIgnoreCase))
+        {
+            return ClassifyAndValidateNewZealand(
+                organisation,
+                recipient,
+                issueDate,
+                total,
+                lines);
+        }
+
         if (!string.Equals(organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase))
         {
             return new(false, false, $"{organisation.CountryCode.ToUpperInvariant()}-COMMERCIAL");
@@ -56,6 +69,51 @@ public static class FijiTaxDocumentCompliance
         return new(true, simplified, CurrentComplianceVersion);
     }
 
+    private static TaxDocumentClassification ClassifyAndValidateNewZealand(
+        Organisation organisation,
+        BusinessParty recipient,
+        DateOnly issueDate,
+        decimal total,
+        IReadOnlyCollection<SalesInvoiceLine> lines)
+    {
+        var hasTaxableSupply = lines.Any(x =>
+            x.VatTreatment is VatTreatment.Standard or VatTreatment.ZeroRated);
+        if (!hasTaxableSupply)
+        {
+            return new(false, false, NewZealandComplianceVersion);
+        }
+
+        var registrationActive = organisation.IsVatRegistered &&
+            organisation.VatRegistrationDate is not null &&
+            organisation.VatRegistrationDate <= issueDate;
+        if (!registrationActive)
+        {
+            throw new InvalidOperationException(
+                "This invoice contains a taxable supply, but the organisation's New Zealand GST registration is not active on the supply date.");
+        }
+
+        if (total > NewZealandSellerGstNumberThreshold)
+        {
+            Require(
+                organisation.Tin,
+                "Set the organisation's New Zealand GST number before issuing taxable supply information over NZD 200.");
+        }
+
+        if (total > NewZealandBuyerDetailsThreshold)
+        {
+            Require(recipient.Name, "Set the buyer's name for taxable supply information over NZD 1,000.");
+            if (string.IsNullOrWhiteSpace(recipient.Address) &&
+                string.IsNullOrWhiteSpace(recipient.Email) &&
+                string.IsNullOrWhiteSpace(recipient.Phone))
+            {
+                throw new InvalidOperationException(
+                    "Set the buyer's address, email or phone for taxable supply information over NZD 1,000.");
+            }
+        }
+
+        return new(true, total <= NewZealandBuyerDetailsThreshold, NewZealandComplianceVersion);
+    }
+
     public static void ApplySnapshot(
         SalesInvoice invoice,
         Organisation organisation,
@@ -78,9 +136,9 @@ public static class FijiTaxDocumentCompliance
         invoice.RecipientTinSnapshot = Clean(recipient.Tin);
     }
 
-    public static string TaxLabel(SalesInvoiceLine line) => line.VatTreatment switch
+    public static string TaxLabel(SalesInvoiceLine line, string taxLabel = "Tax") => line.VatTreatment switch
     {
-        VatTreatment.Standard => $"VAT {line.VatRate:P1}",
+        VatTreatment.Standard => $"{taxLabel} {line.VatRate:P1}",
         VatTreatment.ZeroRated => "Zero-rated 0%",
         VatTreatment.Exempt => "Exempt",
         _ => "Out of scope"
@@ -93,4 +151,39 @@ public static class FijiTaxDocumentCompliance
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}
+
+public static class FijiTaxDocumentCompliance
+{
+    public const decimal MandatoryIssueThreshold = TaxDocumentCompliance.MandatoryIssueThreshold;
+    public const decimal SimplifiedInvoiceThreshold = TaxDocumentCompliance.SimplifiedInvoiceThreshold;
+    public const string CurrentComplianceVersion = TaxDocumentCompliance.CurrentComplianceVersion;
+
+    public static TaxDocumentClassification ClassifyAndValidate(
+        Organisation organisation,
+        BusinessParty recipient,
+        DateOnly issueDate,
+        decimal total,
+        IReadOnlyCollection<SalesInvoiceLine> lines) =>
+        TaxDocumentCompliance.ClassifyAndValidate(
+            organisation,
+            recipient,
+            issueDate,
+            total,
+            lines);
+
+    public static void ApplySnapshot(
+        SalesInvoice invoice,
+        Organisation organisation,
+        BusinessParty recipient) =>
+        TaxDocumentCompliance.ApplySnapshot(invoice, organisation, recipient);
+
+    public static string TaxLabel(SalesInvoiceLine line) =>
+        TaxDocumentCompliance.TaxLabel(
+            line,
+            line.SalesInvoice?.TaxDocumentComplianceVersion?.StartsWith(
+                "NZ-",
+                StringComparison.OrdinalIgnoreCase) == true
+                ? "GST"
+                : "VAT");
 }

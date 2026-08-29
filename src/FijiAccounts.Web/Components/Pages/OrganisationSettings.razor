@@ -133,7 +133,7 @@ else
                 <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
                 <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
-                <div class="mb-3"><label class="form-label">Business address</label><InputTextArea class="form-control" @bind-Value="model.BusinessAddress" disabled="@(!canManage)" /><div class="form-text">Printed on full Fiji tax invoices.</div></div>
+                <div class="mb-3"><label class="form-label">Business address</label><InputTextArea class="form-control" @bind-Value="model.BusinessAddress" disabled="@(!canManage)" /><div class="form-text">Printed on customer documents where required.</div></div>
                 @if (string.Equals(access.Organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase))
                 {
                     <div class="border rounded p-3 mb-3">
@@ -142,6 +142,17 @@ else
                         @if (model.IsVatRegistered)
                         {
                             <label class="form-label">VAT registration effective date</label><InputDate class="form-control" @bind-Value="model.VatRegistrationDate" disabled="@(!canManage)" />
+                        }
+                    </div>
+                }
+                else if (string.Equals(access.Organisation.CountryCode, "NZ", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="border rounded p-3 mb-3">
+                        <div class="form-check form-switch"><InputCheckbox class="form-check-input" @bind-Value="model.IsVatRegistered" disabled="@(!canManage)" /><label class="form-check-label"><strong>Registered for New Zealand GST</strong></label></div>
+                        <div class="form-text mb-3">GST-registered businesses may charge 15% GST and prepare invoice-basis GST return workpapers.</div>
+                        @if (model.IsVatRegistered)
+                        {
+                            <label class="form-label">GST registration effective date</label><InputDate class="form-control" @bind-Value="model.VatRegistrationDate" disabled="@(!canManage)" />
                         }
                     </div>
                 }

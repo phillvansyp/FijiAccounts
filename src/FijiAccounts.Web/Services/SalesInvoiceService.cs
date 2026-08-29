@@ -110,7 +110,7 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
             x => x.Id == invoice.CustomerId && x.OrganisationId == organisationId,
             cancellationToken);
         invoice.InvoiceNumber = AllocateSalesInvoiceNumber(organisation);
-        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
+        TaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
         db.AuditEvents.Add(new AuditEvent
         {
             OrganisationId = organisationId,
@@ -170,7 +170,7 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
             x => x.Id == invoice.CustomerId && x.OrganisationId == organisationId,
             cancellationToken);
 
-        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
+        TaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
 
         if (invoice.InvoiceNumber.StartsWith("DRAFT-", StringComparison.OrdinalIgnoreCase))
         {
@@ -360,7 +360,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         if (request.DueDate < request.IssueDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter valid invoice dates and at least one line.");
         if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer in this organisation.");
         var accountIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray(); if (await db.LedgerAccounts.CountAsync(x => x.OrganisationId == request.OrganisationId && x.IsActive && accountIds.Contains(x.Id) && x.Type == AccountType.Revenue, cancellationToken) != accountIds.Length) throw new InvalidOperationException("Every line must use an active revenue account.");
-        var schedule = new FijiVatSchedule(); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, currency).Round(), request.IssueDate, x.VatTreatment); return CreateLine(x, tax, exchangeRateToBase); }).ToList();
+        var schedule = IndirectTaxSchedules.For(organisation.CountryCode); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, currency).Round(), request.IssueDate, x.VatTreatment); return CreateLine(x, tax, exchangeRateToBase); }).ToList();
     }
 
     internal Task<SalesInvoice> CreateAndPostAutomaticallyAsync(
@@ -445,7 +445,7 @@ if (!controlAccounts.TryGetValue(
         "VAT Payable (2100) must be an active Liability account.");
 }
 
-        var vatSchedule = new FijiVatSchedule();
+        var vatSchedule = IndirectTaxSchedules.For(organisation.CountryCode);
         var lines = request.Lines.Select(line =>
         {
             if (string.IsNullOrWhiteSpace(line.Description))
@@ -484,7 +484,7 @@ if (!controlAccounts.TryGetValue(
         var customer = await db.BusinessParties.AsNoTracking().SingleAsync(
             x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId,
             cancellationToken);
-        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
+        TaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
         db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };

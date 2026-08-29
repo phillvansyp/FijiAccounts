@@ -79,7 +79,7 @@ public sealed class EnterpriseStructureService(
             UserId = userId,
             Role = OrganisationRole.Owner
         });
-        db.LedgerAccounts.AddRange(FijiStarterChart.For(company.Id));
+        db.LedgerAccounts.AddRange(StarterCharts.For(company.Id, company.CountryCode));
         db.AuditEvents.Add(new AuditEvent
         {
             OrganisationId = company.Id,
@@ -345,7 +345,7 @@ public sealed class EnterpriseStructureService(
                     ? OrganisationRole.Owner
                     : OrganisationRole.Administrator
             });
-        db.LedgerAccounts.AddRange(FijiStarterChart.For(company.Id));
+        db.LedgerAccounts.AddRange(StarterCharts.For(company.Id, company.CountryCode));
         db.AuditEvents.Add(StructureAudit(
             company.Id,
             userId,

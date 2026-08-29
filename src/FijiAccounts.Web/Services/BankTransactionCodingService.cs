@@ -307,9 +307,13 @@ var isLiabilityAccount =
             ?? throw new InvalidOperationException(
                 "Choose an active non-bank account.");
 
-        var tax = new FijiVatSchedule()
+        var organisationTaxSettings = await db.Organisations.AsNoTracking()
+            .Where(x => x.Id == request.OrganisationId)
+            .Select(x => new { x.CountryCode, x.BaseCurrency })
+            .SingleAsync(ct);
+        var tax = IndirectTaxSchedules.For(organisationTaxSettings.CountryCode)
             .CalculateFromInclusive(
-                new Money(amount, "FJD"),
+                new Money(amount, organisationTaxSettings.BaseCurrency),
                 statement.TransactionDate,
                 request.VatTreatment);
 

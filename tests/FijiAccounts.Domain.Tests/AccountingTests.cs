@@ -56,6 +56,29 @@ public class AccountingTests
     }
 
     [Fact]
+    public void New_Zealand_GST_schedule_calculates_fifteen_percent()
+    {
+        var exclusive = new NewZealandGstSchedule().CalculateFromExclusive(
+            new Money(100m, "NZD"), new DateOnly(2026, 8, 29), VatTreatment.Standard);
+        var inclusive = new NewZealandGstSchedule().CalculateFromInclusive(
+            new Money(115m, "NZD"), new DateOnly(2026, 8, 29), VatTreatment.Standard);
+
+        Assert.Equal(15m, exclusive.Vat.Amount);
+        Assert.Equal(115m, exclusive.Inclusive.Amount);
+        Assert.Equal(100m, inclusive.Exclusive.Amount);
+        Assert.Equal(15m, inclusive.Vat.Amount);
+    }
+
+    [Fact]
+    public void Indirect_tax_schedule_factory_keeps_Fiji_and_New_Zealand_distinct()
+    {
+        Assert.Equal(0.125m, IndirectTaxSchedules.For("FJ").StandardRateOn(new DateOnly(2026, 8, 29)));
+        Assert.Equal(0.15m, IndirectTaxSchedules.For("NZ").StandardRateOn(new DateOnly(2026, 8, 29)));
+        Assert.Throws<DomainException>(() =>
+            IndirectTaxSchedules.For("AU").StandardRateOn(new DateOnly(2026, 8, 29)));
+    }
+
+    [Fact]
     public void Inventory_weighted_average_preserves_total_value()
     {
         var average = InventoryValuation.WeightedAverage(10m, 5m, 5m, 8m);

@@ -33,11 +33,11 @@ public sealed record VatTurnoverAssessment(
         Math.Max(TaxableTurnover, ExpectedTaxableTurnoverNext12Months ?? 0m);
 
     public bool HistoricalRequiresRegistration =>
-        !IsVatRegistered && TaxableTurnover > RegistrationThreshold;
+        !IsVatRegistered && TaxableTurnover >= RegistrationThreshold;
 
     public bool ForecastRequiresRegistration =>
         !IsVatRegistered &&
-        ExpectedTaxableTurnoverNext12Months > RegistrationThreshold;
+        ExpectedTaxableTurnoverNext12Months >= RegistrationThreshold;
 
     public bool ForecastIsApproachingThreshold =>
         !IsVatRegistered &&
@@ -62,6 +62,7 @@ public sealed class VatTurnoverMonitorService(
     TenantAccessService access)
 {
     public const decimal FijiRegistrationThreshold = 100_000m;
+    public const decimal NewZealandRegistrationThreshold = 60_000m;
     public const decimal MaximumForecastTurnover = 1_000_000_000_000m;
 
     public async Task<VatTurnoverAssessment> GetAssessmentAsync(
@@ -125,7 +126,9 @@ public sealed class VatTurnoverMonitorService(
             Math.Max(0m, sales - voids - credits + creditReversals),
             organisation.ExpectedTaxableTurnoverNext12Months,
             organisation.VatTurnoverForecastUpdatedAt,
-            FijiRegistrationThreshold,
+            organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase)
+                ? NewZealandRegistrationThreshold
+                : FijiRegistrationThreshold,
             organisation.IsVatRegistered);
     }
 
@@ -144,16 +147,17 @@ public sealed class VatTurnoverMonitorService(
         if (request.ExpectedTaxableTurnoverNext12Months is < 0m or > MaximumForecastTurnover)
         {
             throw new InvalidOperationException(
-                $"Expected taxable turnover must be between FJD 0.00 and FJD {MaximumForecastTurnover:N2}.");
+                $"Expected taxable turnover must be between 0.00 and {MaximumForecastTurnover:N2}.");
         }
 
         var organisation = await db.Organisations.SingleAsync(
             x => x.Id == request.OrganisationId,
             ct);
-        if (!organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase))
+        if (!organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
+            !organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "The Fiji VAT turnover forecast is available only to Fiji organisations.");
+                "The indirect-tax turnover forecast is available only to Fiji and New Zealand organisations.");
         }
 
         var previous = organisation.ExpectedTaxableTurnoverNext12Months;
@@ -202,9 +206,9 @@ public sealed class VatTurnoverMonitorService(
                 x.Status != NotificationStatus.Resolved)
             .ToListAsync(ct);
 
-        var shouldAlert =
-            organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
-            assessment.IsApproachingThreshold;
+        var supported = organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) ||
+                        organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase);
+        var shouldAlert = supported && assessment.IsApproachingThreshold;
 
         var severity = assessment.RequiresRegistration
             ? NotificationSeverity.Critical
@@ -216,19 +220,26 @@ public sealed class VatTurnoverMonitorService(
             return assessment;
         }
 
+        var taxLabel = organisation.TaxLabel;
+        var authority = organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase)
+            ? "Inland Revenue or a New Zealand tax adviser"
+            : "FRCS or a Fiji tax practitioner";
+        var registrationAction = organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase)
+            ? $"Confirm the registration position with {authority}."
+            : $"Registration may be required within 21 consecutive days. Confirm the registration position with {authority}.";
         var title = assessment.RequiresRegistration
-            ? "VAT registration threshold exceeded"
-            : "VAT registration threshold approaching";
+            ? $"{taxLabel} registration threshold reached"
+            : $"{taxLabel} registration threshold approaching";
 
         var message = assessment.ForecastRequiresRegistration &&
                       !assessment.HistoricalRequiresRegistration
-            ? $"Expected taxable turnover for the next 12 months is FJD {assessment.ExpectedTaxableTurnoverNext12Months:N2}, above the FJD {assessment.RegistrationThreshold:N2} VAT registration threshold. Confirm the registration position with FRCS or a Fiji tax practitioner."
+            ? $"Expected taxable turnover for the next 12 months is {organisation.BaseCurrency} {assessment.ExpectedTaxableTurnoverNext12Months:N2}, above the {organisation.BaseCurrency} {assessment.RegistrationThreshold:N2} {taxLabel} registration threshold. {registrationAction}"
             : assessment.RequiresRegistration
-                ? $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2}. FRCS guidance requires VAT registration within 21 consecutive days after turnover exceeds FJD {assessment.RegistrationThreshold:N2}."
+                ? $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is {organisation.BaseCurrency} {assessment.TaxableTurnover:N2}, at or above the {organisation.BaseCurrency} {assessment.RegistrationThreshold:N2} {taxLabel} registration threshold. {registrationAction}"
                 : assessment.ForecastIsApproachingThreshold &&
                   assessment.ExpectedTaxableTurnoverNext12Months > assessment.TaxableTurnover
-                    ? $"Expected taxable turnover for the next 12 months is FJD {assessment.ExpectedTaxableTurnoverNext12Months:N2} ({assessment.ForecastThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold)."
-                    : $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is FJD {assessment.TaxableTurnover:N2} ({assessment.ThresholdPercentage:N1}% of the FJD {assessment.RegistrationThreshold:N2} registration threshold).";
+                    ? $"Expected taxable turnover for the next 12 months is {organisation.BaseCurrency} {assessment.ExpectedTaxableTurnoverNext12Months:N2} ({assessment.ForecastThresholdPercentage:N1}% of the {organisation.BaseCurrency} {assessment.RegistrationThreshold:N2} registration threshold)."
+                    : $"Taxable turnover for the 12 months to {assessment.To:dd MMM yyyy} is {organisation.BaseCurrency} {assessment.TaxableTurnover:N2} ({assessment.ThresholdPercentage:N1}% of the {organisation.BaseCurrency} {assessment.RegistrationThreshold:N2} registration threshold).";
 
         if (existing.Count == 1 && existing[0].Severity == severity)
         {

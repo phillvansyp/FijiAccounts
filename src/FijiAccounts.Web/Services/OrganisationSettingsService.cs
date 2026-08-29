@@ -43,11 +43,12 @@ public sealed class OrganisationSettingsService(
         var tradingName = OptionalText(request.TradingName, 80, "trading name");
         var tin = OptionalText(request.Tin, 32, "tax identification number");
         var businessAddress = OptionalText(request.BusinessAddress, 500, "business address");
+        var countryCode = (await db.Organisations.AsNoTracking()
+            .Where(x => x.Id == request.OrganisationId)
+            .Select(x => x.CountryCode)
+            .SingleOrDefaultAsync(cancellationToken)) ?? "";
         if (request.IsVatRegistered &&
-            string.Equals((await db.Organisations.AsNoTracking()
-                .Where(x => x.Id == request.OrganisationId)
-                .Select(x => x.CountryCode)
-                .SingleOrDefaultAsync(cancellationToken)) ?? "", "FJ", StringComparison.OrdinalIgnoreCase))
+            string.Equals(countryCode, "FJ", StringComparison.OrdinalIgnoreCase))
         {
             if (tin is null) throw new InvalidOperationException(
                 "A Fiji VAT-registered organisation must have a TIN.");
@@ -55,6 +56,14 @@ public sealed class OrganisationSettingsService(
                 "A Fiji VAT-registered organisation must have a business address.");
             if (request.VatRegistrationDate is null) throw new InvalidOperationException(
                 "Enter the Fiji VAT registration effective date.");
+        }
+        else if (request.IsVatRegistered &&
+                 string.Equals(countryCode, "NZ", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tin is null) throw new InvalidOperationException(
+                "A New Zealand GST-registered organisation must have a GST number.");
+            if (request.VatRegistrationDate is null) throw new InvalidOperationException(
+                "Enter the New Zealand GST registration effective date.");
         }
         ValidatePaymentTerm(
             request.DefaultSalesInvoicePaymentTermType,

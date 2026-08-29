@@ -6,7 +6,14 @@ public enum VatTreatment { Standard, ZeroRated, Exempt, OutOfScope }
 
 public sealed record VatRate(DateOnly EffectiveFrom, DateOnly? EffectiveTo, decimal Rate);
 
-public sealed class FijiVatSchedule
+public interface IIndirectTaxSchedule
+{
+    decimal StandardRateOn(DateOnly date);
+    VatResult CalculateFromExclusive(Money exclusive, DateOnly date, VatTreatment treatment);
+    VatResult CalculateFromInclusive(Money inclusive, DateOnly date, VatTreatment treatment);
+}
+
+public sealed class FijiVatSchedule : IIndirectTaxSchedule
 {
     // Effective-dated historical rates. Classification of supplies is a separate concern.
     private static readonly VatRate[] Rates =
@@ -35,6 +42,63 @@ public sealed class FijiVatSchedule
         var vat = new Money(roundedInclusive.Amount - exclusive.Amount, inclusive.Currency).Round();
         return new(exclusive, vat, roundedInclusive, rate, treatment);
     }
+}
+
+public sealed class NewZealandGstSchedule : IIndirectTaxSchedule
+{
+    public decimal StandardRateOn(DateOnly date)
+    {
+        if (date < new DateOnly(2010, 10, 1))
+        {
+            throw new DomainException(
+                $"No reviewed New Zealand GST rate exists for {date:yyyy-MM-dd}.");
+        }
+
+        return 0.15m;
+    }
+
+    public VatResult CalculateFromExclusive(
+        Money exclusive,
+        DateOnly date,
+        VatTreatment treatment)
+    {
+        var rate = treatment == VatTreatment.Standard ? StandardRateOn(date) : 0m;
+        var tax = new Money(exclusive.Amount * rate, exclusive.Currency).Round();
+        return new(
+            exclusive.Round(),
+            tax,
+            new Money(exclusive.Amount + tax.Amount, exclusive.Currency).Round(),
+            rate,
+            treatment);
+    }
+
+    public VatResult CalculateFromInclusive(
+        Money inclusive,
+        DateOnly date,
+        VatTreatment treatment)
+    {
+        var roundedInclusive = inclusive.Round();
+        var rate = treatment == VatTreatment.Standard ? StandardRateOn(date) : 0m;
+        var exclusive = new Money(
+            roundedInclusive.Amount / (1m + rate),
+            inclusive.Currency).Round();
+        var tax = new Money(
+            roundedInclusive.Amount - exclusive.Amount,
+            inclusive.Currency).Round();
+        return new(exclusive, tax, roundedInclusive, rate, treatment);
+    }
+}
+
+public static class IndirectTaxSchedules
+{
+    public static IIndirectTaxSchedule For(string countryCode) =>
+        countryCode.ToUpperInvariant() switch
+        {
+            "FJ" => new FijiVatSchedule(),
+            "NZ" => new NewZealandGstSchedule(),
+            _ => throw new DomainException(
+                $"No reviewed indirect-tax schedule exists for {countryCode.ToUpperInvariant()}.")
+        };
 }
 
 public sealed record VatResult(Money Exclusive, Money Vat, Money Inclusive, decimal Rate, VatTreatment Treatment);

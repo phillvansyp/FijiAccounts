@@ -66,3 +66,58 @@ New("3200", "Opening Balance Equity", AccountType.Equity),
         ];
     }
 }
+
+public static class NewZealandStarterChart
+{
+    public static IReadOnlyList<LedgerAccount> For(Guid organisationId)
+    {
+        LedgerAccount New(string code, string name, AccountType type) =>
+            new()
+            {
+                OrganisationId = organisationId,
+                Code = code,
+                Name = name,
+                Type = type,
+                IsSystemAccount = true,
+                IsBankAccount = code == "1000"
+            };
+        return
+        [
+            New("1000", "Bank", AccountType.Asset),
+            New("1100", "Accounts Receivable", AccountType.Asset),
+            New("1150", "GST Receivable", AccountType.Asset),
+            New("1200", "Inventory", AccountType.Asset),
+            New("1500", "Property, Plant and Equipment", AccountType.Asset),
+            New("2000", "Accounts Payable", AccountType.Liability),
+            New("2100", "GST Payable", AccountType.Liability),
+            New("2200", "PAYE and Other Payroll Liabilities", AccountType.Liability),
+            New("2500", "Loans", AccountType.Liability),
+            New("3000", "Owner's Equity", AccountType.Equity),
+            New("3100", "Retained Earnings", AccountType.Equity),
+            New("3200", "Opening Balance Equity", AccountType.Equity),
+            New("4000", "Sales", AccountType.Revenue),
+            New("4100", "Other Income", AccountType.Revenue),
+            New("4300", "Foreign Exchange Gains", AccountType.Revenue),
+            New("5000", "Cost of Sales", AccountType.Expense),
+            New("6000", "Wages and Salaries", AccountType.Expense),
+            New("6100", "Rent", AccountType.Expense),
+            New("6200", "Utilities", AccountType.Expense),
+            New("6300", "Professional Fees", AccountType.Expense),
+            New("6400", "Bank Fees and Charges", AccountType.Expense),
+            New("6500", "Office Expenses", AccountType.Expense),
+            New("6600", "IT and Computer Expenses", AccountType.Expense),
+            New("6900", "Other Operating Expenses", AccountType.Expense),
+            New("6950", "Foreign Exchange Losses", AccountType.Expense)
+        ];
+    }
+}
+
+public static class StarterCharts
+{
+    public static IReadOnlyList<LedgerAccount> For(
+        Guid organisationId,
+        string countryCode) =>
+        countryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase)
+            ? NewZealandStarterChart.For(organisationId)
+            : FijiStarterChart.For(organisationId);
+}

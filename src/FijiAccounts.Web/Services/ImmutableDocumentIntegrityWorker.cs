@@ -24,7 +24,7 @@ public sealed class ImmutableDocumentIntegrityWorker(
                 var organisationIds = await db.Organisations
                     .AsNoTracking()
                     .Where(x =>
-                        x.CountryCode == "FJ" &&
+                        (x.CountryCode == "FJ" || x.CountryCode == "NZ") &&
                         !db.ImmutableDocumentIntegrityScans.Any(scan =>
                             scan.OrganisationId == x.Id &&
                             scan.CompletedAtTicks >= recentCutoffTicks))

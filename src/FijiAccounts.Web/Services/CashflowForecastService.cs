@@ -96,7 +96,7 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
                 if (dueDate <= horizon)
                 {
                     events.Add(new(dueDate < asAt ? asAt : dueDate,
-                        GrossTotal(template.Lines, date, organisation.BaseCurrency),
+                        GrossTotal(template.Lines, date, organisation.BaseCurrency, organisation.CountryCode),
                         CashflowDirection.Receipt, CashflowSource.RecurringTemplate));
                 }
             }
@@ -116,7 +116,7 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
                 if (dueDate <= horizon)
                 {
                     events.Add(new(dueDate < asAt ? asAt : dueDate,
-                        GrossTotal(template.Lines, date, organisation.BaseCurrency),
+                        GrossTotal(template.Lines, date, organisation.BaseCurrency, organisation.CountryCode),
                         CashflowDirection.Payment, CashflowSource.RecurringTemplate));
                 }
             }
@@ -231,9 +231,9 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
         }
     }
 
-    private static decimal GrossTotal<TLine>(IEnumerable<TLine> lines, DateOnly date, string currency)
+    private static decimal GrossTotal<TLine>(IEnumerable<TLine> lines, DateOnly date, string currency, string countryCode)
     {
-        var schedule = new FijiVatSchedule();
+        var schedule = IndirectTaxSchedules.For(countryCode);
         return lines.Sum(line =>
         {
             var values = line switch
