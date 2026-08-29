@@ -244,3 +244,30 @@ jobs:
           find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
             -mtime +30 -delete
           docker image prune --force --filter "until=168h"
+
+  verify-public:
+    name: Verify public HTTPS
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check the public health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail --silent --show-error --location \
+            --retry 12 --retry-delay 10 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 \
+            --output "$response_file" \
+            https://app.accountisland.com/health
+
+          if ! grep --extended-regexp --quiet \
+            '"status"[[:space:]]*:[[:space:]]*"healthy"' \
+            "$response_file"; then
+            echo "Public health endpoint did not report healthy." >&2
+            exit 1
+          fi

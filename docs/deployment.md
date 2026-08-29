@@ -8,8 +8,12 @@ Linux Docker host and are published at `https://app.accountisland.com`:
 - Public address: `222.154.228.115`.
 
 Every push to `main` runs the test suite, builds an immutable image, backs up the
-SQLite data directory, and deploys it. If the public health check fails, the
-workflow starts the previous image again.
+SQLite data directory, and deploys it. If the application health check on the
+Docker host fails, the workflow starts the previous image again. After a
+successful deployment, a separate GitHub-hosted job checks the public HTTPS
+endpoint so DNS, router forwarding, Caddy, TLS, and the application are covered.
+A public-check failure marks the workflow failed but does not automatically roll
+back an application that passed its internal health check.
 
 ## One-time server preparation
 
@@ -133,10 +137,20 @@ certificate from `/etc/letsencrypt`.
 
 ## Operations
 
+The deployment workflow has two distinct health checks:
+
+- The self-hosted deployment job checks `192.168.1.125:8188` and rolls the
+  application image back if that internal check fails.
+- A GitHub-hosted job then checks `https://app.accountisland.com/health` from
+  outside the production network. If it fails, inspect public DNS, router port
+  forwarding, Caddy, and the TLS certificate before considering an application
+  rollback.
+
 ```bash
 cd /mnt/data/account-island/stack
 docker compose ps
 docker compose logs --tail 200 app
+docker compose logs --tail 200 caddy
 curl --fail https://app.accountisland.com/health
 ```
 
