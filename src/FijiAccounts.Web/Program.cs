@@ -53,6 +53,15 @@ builder.Services.AddOptions<MobileApiOptions>()
     .Validate(options => options.RateLimitWindowSeconds > 0,
         "MobileApi:RateLimitWindowSeconds must be positive.")
     .ValidateOnStart();
+builder.Services.AddOptions<ImmutableDocumentStorageOptions>()
+    .Bind(builder.Configuration.GetSection(ImmutableDocumentStorageOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.Provider),
+        "DocumentStorage:Provider is required.")
+    .Validate(options => options.RequiredRetentionYears is >= 7 and <= 100,
+        "DocumentStorage:RequiredRetentionYears must be between 7 and 100.")
+    .Validate(options => options.RequireNativeRetentionLock,
+        "DocumentStorage:RequireNativeRetentionLock must remain enabled for production readiness.")
+    .ValidateOnStart();
 var mobileApiConfiguration = builder.Configuration
     .GetSection(MobileApiOptions.SectionName)
     .Get<MobileApiOptions>() ?? new MobileApiOptions();
@@ -234,7 +243,12 @@ builder.Services.AddHostedService<VatTurnoverMonitorWorker>();
 builder.Services.AddHostedService<ImmutableDocumentIntegrityWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
-builder.Services.AddScoped<IImmutableDocumentStore, DatabaseImmutableDocumentStore>();
+builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
+builder.Services.AddScoped<IImmutableDocumentStore>(services =>
+    services.GetRequiredService<DatabaseImmutableDocumentStore>());
+builder.Services.AddScoped<IImmutableDocumentProviderDiagnostics>(services =>
+    services.GetRequiredService<DatabaseImmutableDocumentStore>());
+builder.Services.AddScoped<ImmutableDocumentStorageReadinessService>();
 builder.Services.AddScoped<ImmutableDocumentBackfillService>();
 builder.Services.AddScoped<ImmutableDocumentIntegrityService>();
 builder.Services.AddSingleton<OrganisationUpdateBroker>();

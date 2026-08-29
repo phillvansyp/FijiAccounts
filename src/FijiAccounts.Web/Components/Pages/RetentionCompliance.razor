@@ -6,6 +6,7 @@
 @using FijiAccounts.Web.Services
 @inject TenantAccessService TenantAccess
 @inject ImmutableDocumentIntegrityService Integrity
+@inject ImmutableDocumentStorageReadinessService StorageReadiness
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -37,6 +38,50 @@ else
     @if (message is not null)
     {
         <div class="alert @messageClass">@message</div>
+    }
+
+    @if (storageReadiness is not null)
+    {
+        <section class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Storage provider readiness</strong>
+                <span class="badge @(storageReadiness.IsProductionReady ? "text-bg-success" : "text-bg-warning")">
+                    @(storageReadiness.IsProductionReady ? "Production ready" : "Development only")
+                </span>
+            </div>
+            <div class="card-body border-bottom">
+                <h2 class="h5">@storageReadiness.DisplayName</h2>
+                <p class="mb-0">
+                    @if (storageReadiness.IsProductionReady)
+                    {
+                        <span>The active provider satisfies every configured write-once retention control.</span>
+                    }
+                    else if (storageReadiness.IsDevelopmentCompatible)
+                    {
+                        <span>The compatibility provider supports local workflow testing, but it does not satisfy external write-once retention requirements.</span>
+                    }
+                    else
+                    {
+                        <span>The configured provider is unavailable or has failed a required application control.</span>
+                    }
+                </p>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0 align-middle">
+                    <thead><tr><th>Provider control</th><th>Evidence</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var control in storageReadiness.Controls)
+                    {
+                        <tr>
+                            <td>@control.Name</td>
+                            <td>@control.Detail</td>
+                            <td><span class="badge @(control.Passed ? "text-bg-success" : "text-bg-warning")">@(control.Passed ? "Passed" : "Required")</span></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
     }
 
     @if (scan is null)
@@ -94,6 +139,7 @@ else
 
     private AccessibleOrganisation? access;
     private ImmutableDocumentIntegrityScan? scan;
+    private ImmutableDocumentStorageReadinessReport? storageReadiness;
     private string userId = "";
     private bool canManage;
     private bool scanning;
@@ -110,10 +156,12 @@ else
         if (access is null)
         {
             scan = null;
+            storageReadiness = null;
             return;
         }
 
         canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        storageReadiness = await StorageReadiness.CheckAsync();
         scan = await Integrity.GetLatestAsync(userId, OrganisationId);
     }
 

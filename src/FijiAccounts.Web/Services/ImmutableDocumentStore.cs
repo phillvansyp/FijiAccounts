@@ -25,7 +25,7 @@ public interface IImmutableDocumentStore
 }
 
 public sealed class DatabaseImmutableDocumentStore(ApplicationDbContext db)
-    : IImmutableDocumentStore
+    : IImmutableDocumentStore, IImmutableDocumentProviderDiagnostics
 {
     public const string ProviderName = "database";
 
@@ -80,5 +80,24 @@ public sealed class DatabaseImmutableDocumentStore(ApplicationDbContext db)
         }
 
         return stored.Content;
+    }
+
+    public async Task<ImmutableDocumentProviderHealth> ProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var available = await db.Database.CanConnectAsync(cancellationToken);
+        return new(
+            ProviderName,
+            "Database compatibility provider",
+            available,
+            available
+                ? "The application database is available."
+                : "The application database is unavailable.",
+            new(
+                ApplicationAppendOnly: true,
+                IntegrityVerification: true,
+                TenantIsolation: true,
+                NativeRetentionLock: false,
+                ConfiguredRetentionYears: null));
     }
 }
