@@ -55,6 +55,30 @@ permission parity, not limited companion apps. Their API, authentication,
 offline, receipt-capture, approval, and store-release architecture is defined in
 [docs/MOBILE-APPLICATION-ARCHITECTURE.md](docs/MOBILE-APPLICATION-ARCHITECTURE.md).
 
+The active market scope is Fiji first, with New Zealand supported on the same
+country-aware foundation. Australia and further jurisdictions are deferred until
+the Fiji product base is releaseable and proven.
+
+### Release operations gate — finish before public release
+
+The application and deployment workflow contain the required backup replication,
+checksum verification, restore validation, health checks and failure-alert
+plumbing. The remaining work depends on production infrastructure and is deferred
+while product development continues:
+
+1. Provision a separate owner-controlled backup host and restricted SSH account.
+2. Configure the protected off-host backup secrets described in
+   [docs/deployment.md](docs/deployment.md#off-host-backups-and-operations-alerts).
+3. Configure the operations-alert recipient and verify delivery using the
+   production email provider.
+4. Run and record an off-host restore drill, including checksum and database
+   integrity verification.
+5. Confirm deployment and public-health failure alerts before release sign-off.
+
+This gate is not complete merely because local backups and automated tests pass.
+No production backup or alert coverage should be claimed until the configured
+off-host workflow and restore drill have been verified.
+
 ### Phase 1 — Fiji accounting core
 
 1. Tenant context, invitations, permissions and accountant client switching
