@@ -52,6 +52,11 @@ public sealed class GroupEliminationService(ApplicationDbContext db)
                 x.IsActive)
             .Select(x => new { x.Code, x.Name, x.Type })
             .ToListAsync(cancellationToken);
+        storedAccounts.AddRange(await db.GroupLedgerAccounts
+            .AsNoTracking()
+            .Where(x => x.OrganisationGroupId == access.Id && x.IsActive)
+            .Select(x => new { x.Code, x.Name, x.Type })
+            .ToListAsync(cancellationToken));
         var accounts = storedAccounts
             .Select(x => new GroupEliminationAccount(x.Code, x.Name, x.Type))
             .Distinct()
@@ -114,6 +119,11 @@ public sealed class GroupEliminationService(ApplicationDbContext db)
             .Select(x => new { x.Code, x.Name, x.Type })
             .Distinct()
             .ToListAsync(cancellationToken);
+        validAccounts.AddRange(await db.GroupLedgerAccounts
+            .AsNoTracking()
+            .Where(x => x.OrganisationGroupId == access.Id && x.IsActive)
+            .Select(x => new { x.Code, x.Name, x.Type })
+            .ToListAsync(cancellationToken));
         foreach (var line in normalisedLines)
         {
             if (!validAccounts.Any(x =>

@@ -22,6 +22,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         Set<GroupLedgerAccountMapping>();
     public DbSet<IntercompanyAccountConfiguration> IntercompanyAccountConfigurations =>
         Set<IntercompanyAccountConfiguration>();
+    public DbSet<IntercompanyTransactionTag> IntercompanyTransactionTags =>
+        Set<IntercompanyTransactionTag>();
+    public DbSet<IntercompanyTransactionMatch> IntercompanyTransactionMatches =>
+        Set<IntercompanyTransactionMatch>();
     public DbSet<CashflowScenario> CashflowScenarios => Set<CashflowScenario>();
     public DbSet<CashflowScenarioEvent> CashflowScenarioEvents =>
         Set<CashflowScenarioEvent>();
@@ -313,6 +317,51 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasOne<LedgerAccount>()
             .WithMany()
             .HasForeignKey(x => x.ExpenseAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionTag>()
+            .HasIndex(x => new { x.DocumentType, x.SourceDocumentId })
+            .IsUnique();
+        builder.Entity<IntercompanyTransactionTag>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.OrganisationId, x.CounterpartyOrganisationId });
+        builder.Entity<IntercompanyTransactionTag>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.IntercompanyTransactionTags)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionTag>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionTag>()
+            .HasOne(x => x.CounterpartyOrganisation)
+            .WithMany()
+            .HasForeignKey(x => x.CounterpartyOrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasIndex(x => new { x.LeftTransactionTagId, x.RightTransactionTagId })
+            .IsUnique();
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasIndex(x => new { x.OrganisationGroupId, x.Status });
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasOne(x => x.OrganisationGroup)
+            .WithMany(x => x.IntercompanyTransactionMatches)
+            .HasForeignKey(x => x.OrganisationGroupId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasOne(x => x.LeftTransactionTag)
+            .WithMany()
+            .HasForeignKey(x => x.LeftTransactionTagId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasOne(x => x.RightTransactionTag)
+            .WithMany()
+            .HasForeignKey(x => x.RightTransactionTagId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<IntercompanyTransactionMatch>()
+            .HasOne(x => x.GroupEliminationJournal)
+            .WithMany()
+            .HasForeignKey(x => x.GroupEliminationJournalId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<CashflowScenario>()
             .HasIndex(x => new { x.OrganisationId, x.Name })

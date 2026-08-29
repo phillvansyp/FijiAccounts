@@ -154,6 +154,21 @@ public sealed class DemoDataService(
         {
             if (!preserveTenant)
             {
+                await db.IntercompanyTransactionMatches
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
+                await db.IntercompanyTransactionTags
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
+                await db.IntercompanyAccountConfigurations
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
+                await db.GroupLedgerAccountMappings
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
+                await db.GroupLedgerAccounts
+                    .Where(x => x.OrganisationGroupId == demoGroupId)
+                    .ExecuteDeleteAsync(ct);
                 await db.GroupEliminationJournalLines
                     .Where(x => x.GroupEliminationJournal.OrganisationGroupId == demoGroupId)
                     .ExecuteDeleteAsync(ct);
@@ -175,6 +190,22 @@ public sealed class DemoDataService(
             throw new InvalidOperationException(
                 "The Demo tenant must contain its landing company before data can be generated.");
         }
+
+        await db.IntercompanyTransactionMatches
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.IntercompanyTransactionTags
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.IntercompanyAccountConfigurations
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.GroupLedgerAccountMappings
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
+        await db.GroupLedgerAccounts
+            .Where(x => x.OrganisationGroupId == demoGroupId)
+            .ExecuteDeleteAsync(ct);
 
         var invoiceIds = await db.SalesInvoices
             .Where(x => organisationIds.Contains(x.OrganisationId))

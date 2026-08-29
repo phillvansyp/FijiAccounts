@@ -1,0 +1,316 @@
+@page "/o/{OrganisationId:guid}/reports/group/intercompany"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject IntercompanyReconciliationService Reconciliation
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Intercompany reconciliation · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else if (dashboard is null)
+{
+    <div class="alert alert-info">Loading intercompany reconciliation…</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Group accounting</p>
+            <h1>Intercompany reconciliation</h1>
+            <p>Tag posted company documents, match reciprocal entries and review consolidation-only eliminations without changing legal-company ledgers or VAT records.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-outline-secondary" href="@($"o/{OrganisationId}/reports/group/setup")">Account setup</a>
+            <a class="btn btn-outline-secondary" href="@($"o/{OrganisationId}/reports/group")">Group reports</a>
+        </div>
+    </div>
+
+    @if (status is not null)
+    {
+        <div class="alert @statusClass">@status</div>
+    }
+
+    <div class="row mb-3">
+        <div class="col-md-4 mb-2"><div class="card p-3 h-100"><p class="eyebrow">Tagged</p><h2 class="mb-0">@dashboard.Tags.Count</h2></div></div>
+        <div class="col-md-4 mb-2"><div class="card p-3 h-100"><p class="eyebrow">Active matches</p><h2 class="mb-0">@dashboard.Matches.Count(x => x.Status != IntercompanyMatchStatus.Rejected)</h2></div></div>
+        <div class="col-md-4 mb-2"><div class="card p-3 h-100"><p class="eyebrow">Exceptions</p><h2 class="mb-0">@dashboard.ExceptionCount</h2></div></div>
+    </div>
+
+    @if (dashboard.CanManage)
+    {
+        <section class="card p-4 mb-3">
+            <h2>Tag a posted document</h2>
+            <p class="text-muted">The tag stores a durable snapshot for group reconciliation. It does not edit or repost the source document.</p>
+            @if (dashboard.Companies.Count < 2)
+            {
+                <div class="alert alert-info mb-0">Add another company to this group before tagging intercompany activity.</div>
+            }
+            else if (dashboard.AvailableDocuments.Count == 0)
+            {
+                <div class="alert alert-info mb-0">There are no untagged posted documents available.</div>
+            }
+            else
+            {
+                <div class="row align-items-end">
+                    <div class="col-md-7 mb-2">
+                        <label class="form-label">Source document</label>
+                        <select class="form-select" @bind="selectedDocumentKey" @bind:after="ResetCounterparty">
+                            @foreach (var document in dashboard.AvailableDocuments)
+                            {
+                                <option value="@DocumentKey(document)">@document.OrganisationName · @DocumentTypeLabel(document.Type) · @document.Reference · @document.Currency @document.Amount.ToString("N2")</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <label class="form-label">Counterparty company</label>
+                        <select class="form-select" @bind="counterpartyOrganisationId">
+                            @foreach (var company in CounterpartyCompanies())
+                            {
+                                <option value="@company.Id">@company.LegalName</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-2 mb-2"><button class="btn btn-primary" @onclick="TagDocument">Tag document</button></div>
+                </div>
+            }
+        </section>
+    }
+
+    <section class="card p-4 mb-3">
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+            <div><h2>Match review</h2><p class="text-muted mb-0">Suggestions use reciprocal companies, compatible document types, currency, amount and dates within 45 days.</p></div>
+            @if (dashboard.CanManage)
+            {
+                <button class="btn btn-outline-primary" @onclick="RefreshSuggestions">Refresh suggestions</button>
+            }
+        </div>
+        <div class="table-responsive mt-3">
+            <table class="table align-middle">
+                <thead><tr><th>First document</th><th>Reciprocal document</th><th>Difference</th><th>Status</th><th class="text-end">Review</th></tr></thead>
+                <tbody>
+                    @if (dashboard.Matches.Count == 0)
+                    {
+                        <tr><td colspan="5" class="text-muted">No matches proposed yet.</td></tr>
+                    }
+                    @foreach (var match in dashboard.Matches)
+                    {
+                        <tr>
+                            <td>@TagSummary(match.Left)</td>
+                            <td>@TagSummary(match.Right)</td>
+                            <td>
+                                @if (match.HasCurrencyMismatch)
+                                {
+                                    <span class="badge bg-warning text-dark">Currency mismatch</span>
+                                }
+                                @if (match.AmountDifference != 0m)
+                                {
+                                    <span class="badge bg-warning text-dark">@dashboard.Currency @match.AmountDifference.ToString("N2")</span>
+                                }
+                                @if (match.IsExact)
+                                {
+                                    <span class="badge bg-success">Exact</span>
+                                }
+                            </td>
+                            <td><span class="badge @MatchStatusClass(match)">@MatchStatusLabel(match)</span></td>
+                            <td class="text-end">
+                                @if (dashboard.CanManage && match.Status == IntercompanyMatchStatus.Proposed)
+                                {
+                                    <button class="btn btn-sm btn-outline-success me-1" disabled="@(!match.IsExact)" @onclick="() => Review(match.Id, true)">Confirm</button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => Review(match.Id, false)">Reject</button>
+                                }
+                                else if (dashboard.CanManage && match.CanCreateElimination)
+                                {
+                                    <button class="btn btn-sm btn-primary" @onclick="() => PostElimination(match.Id)">Post elimination</button>
+                                }
+                                else if (match.GroupEliminationJournalId is not null)
+                                {
+                                    <span class="text-success">Elimination posted</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card p-4 mb-3">
+        <h2>Tagged documents and unmatched exceptions</h2>
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th>Company</th><th>Counterparty</th><th>Document</th><th>Date</th><th class="text-end">Amount</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @if (dashboard.Tags.Count == 0)
+                    {
+                        <tr><td colspan="7" class="text-muted">No intercompany documents have been tagged.</td></tr>
+                    }
+                    @foreach (var tag in dashboard.Tags)
+                    {
+                        <tr>
+                            <td>@tag.OrganisationName</td>
+                            <td>@tag.CounterpartyOrganisationName</td>
+                            <td>@DocumentTypeLabel(tag.DocumentType) · <strong>@tag.Reference</strong></td>
+                            <td>@tag.DocumentDate.ToString("dd MMM yyyy")</td>
+                            <td class="text-end">@tag.Currency @tag.Amount.ToString("N2")</td>
+                            <td><span class="badge @(tag.IsMatched ? "bg-success" : "bg-warning text-dark")">@(tag.IsMatched ? "In review" : "Unmatched")</span></td>
+                            <td class="text-end">
+                                @if (dashboard.CanManage && !tag.IsMatched)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveTag(tag.Id)">Remove</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private IntercompanyReconciliationDashboard? dashboard;
+    private string userId = "";
+    private string selectedDocumentKey = "";
+    private Guid counterpartyOrganisationId;
+    private string? status;
+    private string statusClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        try
+        {
+            dashboard = await Reconciliation.GetAsync(userId, OrganisationId);
+            if (dashboard.AvailableDocuments.Count > 0 &&
+                !dashboard.AvailableDocuments.Any(x => DocumentKey(x) == selectedDocumentKey))
+            {
+                selectedDocumentKey = DocumentKey(dashboard.AvailableDocuments[0]);
+            }
+            ResetCounterparty();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            statusClass = "alert-warning";
+        }
+    }
+
+    private async Task TagDocument()
+    {
+        if (!TrySelectedDocument(out var document)) return;
+        await Run(async () =>
+        {
+            await Reconciliation.TagAsync(userId, new(
+                OrganisationId,
+                document.Type,
+                document.Id,
+                counterpartyOrganisationId));
+            status = "Intercompany document tagged.";
+        });
+    }
+
+    private async Task RefreshSuggestions() => await Run(async () =>
+    {
+        var count = await Reconciliation.RefreshSuggestionsAsync(userId, OrganisationId);
+        status = count == 0 ? "No new reciprocal matches were found." : $"Created {count} match suggestion{(count == 1 ? "" : "s")}.";
+    });
+
+    private async Task Review(Guid matchId, bool confirm) => await Run(async () =>
+    {
+        await Reconciliation.ReviewMatchAsync(userId, OrganisationId, matchId, confirm);
+        status = confirm ? "Intercompany match confirmed." : "Intercompany match rejected.";
+    });
+
+    private async Task RemoveTag(Guid tagId) => await Run(async () =>
+    {
+        await Reconciliation.RemoveTagAsync(userId, OrganisationId, tagId);
+        status = "Intercompany tag removed.";
+    });
+
+    private async Task PostElimination(Guid matchId) => await Run(async () =>
+    {
+        var journal = await Reconciliation.PostEliminationAsync(userId, OrganisationId, matchId);
+        status = $"Elimination {journal.Reference} posted to the group consolidation only.";
+    });
+
+    private async Task Run(Func<Task> action)
+    {
+        try
+        {
+            status = null;
+            await action();
+            statusClass = "alert-success";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            statusClass = "alert-warning";
+        }
+    }
+
+    private void ResetCounterparty()
+    {
+        if (dashboard is null || !TrySelectedDocument(out var document)) return;
+        var options = dashboard.Companies.Where(x => x.Id != document.OrganisationId).ToList();
+        if (options.All(x => x.Id != counterpartyOrganisationId))
+        {
+            counterpartyOrganisationId = options.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+    }
+
+    private IEnumerable<GroupSetupCompany> CounterpartyCompanies()
+    {
+        if (dashboard is null || !TrySelectedDocument(out var document)) return [];
+        return dashboard.Companies.Where(x => x.Id != document.OrganisationId);
+    }
+
+    private bool TrySelectedDocument(out IntercompanySourceDocument document)
+    {
+        document = null!;
+        if (dashboard is null) return false;
+        var parts = selectedDocumentKey.Split('|');
+        if (parts.Length != 2 ||
+            !Enum.TryParse<IntercompanyDocumentType>(parts[0], out var type) ||
+            !Guid.TryParse(parts[1], out var id)) return false;
+        document = dashboard.AvailableDocuments.FirstOrDefault(x => x.Type == type && x.Id == id)!;
+        return document is not null;
+    }
+
+    private static string DocumentKey(IntercompanySourceDocument document) => $"{document.Type}|{document.Id}";
+    private static string TagSummary(IntercompanyTagView tag) => $"{tag.OrganisationName} · {DocumentTypeLabel(tag.DocumentType)} {tag.Reference} · {tag.Currency} {tag.Amount:N2}";
+    private static string DocumentTypeLabel(IntercompanyDocumentType type) => type switch
+    {
+        IntercompanyDocumentType.SalesInvoice => "Sales invoice",
+        IntercompanyDocumentType.SupplierBill => "Supplier bill",
+        IntercompanyDocumentType.CustomerReceipt => "Customer receipt",
+        IntercompanyDocumentType.SupplierPayment => "Supplier payment",
+        _ => "Journal"
+    };
+    private static string MatchStatusLabel(IntercompanyMatchView match) =>
+        match.GroupEliminationJournalId is not null ? "Eliminated" : match.Status.ToString();
+    private static string MatchStatusClass(IntercompanyMatchView match) =>
+        match.GroupEliminationJournalId is not null || match.Status == IntercompanyMatchStatus.Confirmed
+            ? "bg-success"
+            : match.Status == IntercompanyMatchStatus.Rejected
+                ? "bg-secondary"
+                : match.IsExact ? "bg-info text-dark" : "bg-warning text-dark";
+}

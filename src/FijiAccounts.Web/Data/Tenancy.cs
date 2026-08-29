@@ -27,6 +27,8 @@ public sealed class OrganisationGroup
     public List<GroupLedgerAccount> LedgerAccounts { get; set; } = [];
     public List<GroupLedgerAccountMapping> LedgerAccountMappings { get; set; } = [];
     public List<IntercompanyAccountConfiguration> IntercompanyAccountConfigurations { get; set; } = [];
+    public List<IntercompanyTransactionTag> IntercompanyTransactionTags { get; set; } = [];
+    public List<IntercompanyTransactionMatch> IntercompanyTransactionMatches { get; set; } = [];
 
     public bool IsDemo { get; set; }
     public TenantStatus Status { get; set; } = TenantStatus.Active;
