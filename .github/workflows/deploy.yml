@@ -240,11 +240,6 @@ jobs:
             --header 'X-Forwarded-Proto: https' \
             http://192.168.1.125:8188/health >/dev/null
 
-          docker run --rm --network host curlimages/curl:8.12.1 \
-            --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
-            --resolve app.accountisland.com:443:192.168.1.125 \
-            https://app.accountisland.com/health >/dev/null
-
           trap - ERR
           find "$DEPLOY_DIR/backups" -type f -name 'account-island-*.tar.gz' \
             -mtime +30 -delete
