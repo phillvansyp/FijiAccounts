@@ -91,6 +91,35 @@ public sealed class FiscalisedSalesCreditNoteReversalPostingTests
         Assert.Equal(setup.Credit.Total, setup.Invoice.AmountCredited);
     }
 
+    [Fact]
+    public async Task LockedPeriod_PreventsReversalGatewaySubmission()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var setup = await CreateFiscalCreditAsync(test);
+        var gateway = new CountingFiscalisationGateway();
+        var service = CreateReversalService(test, setup.Workflow, gateway);
+        var draft = await service.CreateDraftAsync(
+            test.UserId, test.Organisation.Id, setup.Credit.Id,
+            new DateOnly(2026, 8, 31), "Locked-period correction");
+        test.Db.AccountingPeriods.Add(new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "August 2026",
+            StartsOn = new DateOnly(2026, 8, 1),
+            EndsOn = new DateOnly(2026, 8, 31),
+            IsLocked = true
+        });
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PostAsync(test.UserId, test.Organisation.Id, draft.Id));
+
+        Assert.Contains("accounting period is locked", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, gateway.SubmissionCount);
+        Assert.Equal(0, gateway.RecoveryCount);
+        Assert.False(await test.Db.FiscalisationRecords.AnyAsync(x => x.SalesCreditNoteReversalId == draft.Id));
+    }
+
     private static async Task<FiscalCreditSetup> CreateFiscalCreditAsync(AccountingTestDatabase test)
     {
         var invoice = await test.SalesInvoices.CreateAndPostAsync(test.UserId, new(

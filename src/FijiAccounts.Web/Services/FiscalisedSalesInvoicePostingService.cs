@@ -27,6 +27,21 @@ public sealed class FiscalisedSalesInvoicePostingService(
                 userId, organisationId, invoiceId, cancellationToken);
         }
 
+        var invoiceDate = await db.SalesInvoices.AsNoTracking()
+            .Where(x => x.Id == invoiceId && x.OrganisationId == organisationId)
+            .Select(x => (DateOnly?)x.IssueDate)
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Invoice not found.");
+        var record = await db.FiscalisationRecords.SingleOrDefaultAsync(
+            x => x.SalesInvoiceId == invoiceId && x.OrganisationId == organisationId,
+            cancellationToken);
+        if (record is null ||
+            record.Status is FiscalisationStatus.Prepared or FiscalisationStatus.Rejected)
+        {
+            await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+                db, organisationId, invoiceDate, cancellationToken);
+        }
+
         await invoices.ReserveFinalNumberAsync(
             userId, organisationId, invoiceId, cancellationToken);
         var invoice = await db.SalesInvoices.AsNoTracking()
@@ -34,9 +49,6 @@ public sealed class FiscalisedSalesInvoicePostingService(
             .SingleAsync(
                 x => x.Id == invoiceId && x.OrganisationId == organisationId,
                 cancellationToken);
-        var record = await db.FiscalisationRecords.SingleOrDefaultAsync(
-            x => x.SalesInvoiceId == invoiceId && x.OrganisationId == organisationId,
-            cancellationToken);
         if (record is null)
         {
             var submission = submissionFactory.Create(
@@ -76,6 +88,9 @@ public sealed class FiscalisedSalesInvoicePostingService(
                 ? "The fiscal response is uncertain. Recover it before posting the invoice."
                 : record.ErrorMessage ?? "The fiscal submission was not accepted.");
         }
+
+        await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+            db, organisationId, invoice.IssueDate, cancellationToken);
 
         return await invoices.PostAcceptedFiscalDraftAsync(
             userId, organisationId, invoiceId, cancellationToken);

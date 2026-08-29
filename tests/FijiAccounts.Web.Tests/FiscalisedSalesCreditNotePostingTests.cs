@@ -205,6 +205,43 @@ public sealed class FiscalisedSalesCreditNotePostingTests
             (await test.Db.SalesCreditNotes.AsNoTracking().SingleAsync(x => x.Id == draft.Id)).Status);
     }
 
+    [Fact]
+    public async Task LockedPeriod_PreventsCreditNoteGatewaySubmission()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var invoice = await CreateMixedInvoiceAsync(test);
+        var workflow = new FiscalisationWorkflowService(test.Db, test.Access);
+        await AcceptOriginalAsync(test, invoice, workflow);
+        EnableFiscalisation(test);
+        await test.Db.SaveChangesAsync();
+        var gateway = new CountingFiscalisationGateway();
+        var service = CreateService(test, workflow, gateway);
+        var draft = await service.CreateDraftAsync(test.UserId, new(
+            test.Organisation.Id,
+            invoice.Id,
+            new DateOnly(2026, 8, 30),
+            "Locked-period refund",
+            [new(invoice.Lines[0].Id, 56.25m)],
+            false));
+        test.Db.AccountingPeriods.Add(new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "August 2026",
+            StartsOn = new DateOnly(2026, 8, 1),
+            EndsOn = new DateOnly(2026, 8, 31),
+            IsLocked = true
+        });
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PostAsync(test.UserId, test.Organisation.Id, draft.Id));
+
+        Assert.Contains("accounting period is locked", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, gateway.SubmissionCount);
+        Assert.Equal(0, gateway.RecoveryCount);
+        Assert.False(await test.Db.FiscalisationRecords.AnyAsync(x => x.SalesCreditNoteId == draft.Id));
+    }
+
     private static FiscalisedSalesCreditNotePostingService CreateService(
         AccountingTestDatabase test,
         FiscalisationWorkflowService workflow,

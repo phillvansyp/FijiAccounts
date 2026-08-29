@@ -95,6 +95,12 @@ public sealed class FiscalisedSalesCreditNoteReversalPostingService(
         var record = await db.FiscalisationRecords.SingleOrDefaultAsync(x =>
             x.SalesCreditNoteReversalId == reversal.Id && x.OrganisationId == organisationId,
             cancellationToken);
+        if (record is null ||
+            record.Status is FiscalisationStatus.Prepared or FiscalisationStatus.Rejected)
+        {
+            await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+                db, organisationId, reversal.ReversalDate, cancellationToken);
+        }
         if (record is null)
         {
             var submission = submissionFactory.Create(
@@ -120,6 +126,9 @@ public sealed class FiscalisedSalesCreditNoteReversalPostingService(
             throw new InvalidOperationException(record.Status == FiscalisationStatus.RecoveryRequired
                 ? "The fiscal reversal response is uncertain. Recover it before posting the reversal."
                 : record.ErrorMessage ?? "The fiscal reversal was not accepted.");
+
+        await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+            db, organisationId, reversal.ReversalDate, cancellationToken);
 
         return await creditNoteService.PostDraftReversalAsync(
             userId, organisationId, reversal.Id, cancellationToken);

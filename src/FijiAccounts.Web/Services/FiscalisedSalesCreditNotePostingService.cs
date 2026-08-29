@@ -186,6 +186,12 @@ public sealed class FiscalisedSalesCreditNotePostingService(
             var record = await db.FiscalisationRecords.SingleOrDefaultAsync(x =>
                 x.SalesCreditNoteId == credit.Id && x.OrganisationId == organisationId,
                 cancellationToken);
+            if (record is null ||
+                record.Status is FiscalisationStatus.Prepared or FiscalisationStatus.Rejected)
+            {
+                await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+                    db, organisationId, credit.CreditDate, cancellationToken);
+            }
             if (record is null)
             {
                 var submission = submissionFactory.Create(
@@ -210,6 +216,9 @@ public sealed class FiscalisedSalesCreditNotePostingService(
                 throw new InvalidOperationException(record.Status == FiscalisationStatus.RecoveryRequired
                     ? "The fiscal refund response is uncertain. Recover it before posting the credit note."
                     : record.ErrorMessage ?? "The fiscal refund was not accepted.");
+
+            await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+                db, organisationId, credit.CreditDate, cancellationToken);
         }
 
         return await PostAccountingAsync(userId, credit, cancellationToken);

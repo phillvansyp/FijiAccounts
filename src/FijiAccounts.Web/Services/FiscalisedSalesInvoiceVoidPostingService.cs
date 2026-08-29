@@ -83,6 +83,12 @@ public sealed class FiscalisedSalesInvoiceVoidPostingService(
             ?? throw new InvalidOperationException("The invoice does not have an accepted fiscal response.");
         var record = await db.FiscalisationRecords.SingleOrDefaultAsync(x =>
             x.SalesInvoiceVoidId == invoiceVoid.Id && x.OrganisationId == organisationId, cancellationToken);
+        if (record is null ||
+            record.Status is FiscalisationStatus.Prepared or FiscalisationStatus.Rejected)
+        {
+            await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+                db, organisationId, invoiceVoid.VoidDate, cancellationToken);
+        }
         if (record is null)
         {
             var submission = submissionFactory.Create(
@@ -104,6 +110,8 @@ public sealed class FiscalisedSalesInvoiceVoidPostingService(
             throw new InvalidOperationException(record.Status == FiscalisationStatus.RecoveryRequired
                 ? "The fiscal void response is uncertain. Recover it before posting the reversing journal."
                 : record.ErrorMessage ?? "The fiscal invoice void was not accepted.");
+        await FiscalAccountingPeriodGuard.EnsureOpenAsync(
+            db, organisationId, invoiceVoid.VoidDate, cancellationToken);
         return await invoiceService.PostDraftVoidAsync(userId, organisationId, invoiceVoid.Id, cancellationToken);
     }
 }

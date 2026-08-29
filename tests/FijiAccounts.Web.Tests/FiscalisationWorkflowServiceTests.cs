@@ -181,6 +181,61 @@ public sealed class FiscalisationWorkflowServiceTests
     }
 
     [Fact]
+    public async Task LockedPeriod_PreventsInvoiceGatewaySubmission()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Db.FiscalisationConfigurations.Add(new FiscalisationConfiguration
+        {
+            OrganisationId = test.Organisation.Id,
+            IsEnabled = true,
+            DefaultPaymentType = FiscalPaymentType.Card,
+            StandardTaxLabel = "VERIFIED-STANDARD",
+            ZeroRatedTaxLabel = "VERIFIED-ZERO",
+            ExemptTaxLabel = "VERIFIED-EXEMPT",
+            OutOfScopeTaxLabel = "VERIFIED-OUT",
+            UpdatedByUserId = test.UserId
+        });
+        test.Db.AccountingPeriods.Add(new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "August 2026",
+            StartsOn = new DateOnly(2026, 8, 1),
+            EndsOn = new DateOnly(2026, 8, 31),
+            IsLocked = true
+        });
+        await test.Db.SaveChangesAsync();
+        var draft = await test.SalesInvoices.CreateDraftAsync(
+            test.UserId,
+            new SalesInvoiceRequest(
+                test.Organisation.Id,
+                test.Customer.Id,
+                new DateOnly(2026, 8, 29),
+                new DateOnly(2026, 9, 28),
+                [new SalesInvoiceLineRequest(
+                    "Locked fiscal service",
+                    1m,
+                    100m,
+                    FijiAccounts.Domain.Tax.VatTreatment.Standard,
+                    test.Account("4000").Id)]));
+        var gateway = new CountingFiscalisationGateway();
+        var workflow = new FiscalisationWorkflowService(test.Db, test.Access);
+        var posting = new FiscalisedSalesInvoicePostingService(
+            test.Db,
+            test.SalesInvoices,
+            new FiscalisationSubmissionFactory(),
+            workflow,
+            new FiscalisationOrchestratorService(test.Db, workflow, gateway));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            posting.PostAsync(test.UserId, test.Organisation.Id, draft.Id));
+
+        Assert.Contains("accounting period is locked", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, gateway.SubmissionCount);
+        Assert.Equal(0, gateway.RecoveryCount);
+        Assert.False(await test.Db.FiscalisationRecords.AnyAsync(x => x.SalesInvoiceId == draft.Id));
+    }
+
+    [Fact]
     public async Task CreditRefundIsDurableIdempotentAndRecoverableThroughTheOrchestrator()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
