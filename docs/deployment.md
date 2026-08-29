@@ -4,7 +4,8 @@ The production application and its dedicated Caddy proxy run on the `hercules`
 Linux Docker host and are published at `https://app.accountisland.com`:
 
 - Docker host: `192.168.1.125` (`hercules`), application port `8188`.
-- App-owned Caddy: internal ports `8280` (HTTP) and `8443` (HTTPS).
+- App-owned Caddy: standard ports `80` (HTTP) and `443` (HTTPS), with legacy
+  listeners on `8280` and `8443` during the network transition.
 - Public address: `222.154.228.115`.
 
 Every push to `main` runs the test suite, builds an immutable image, backs up the
@@ -124,23 +125,25 @@ migrations.
 
 The application owns the Caddy service declared in `deploy/compose.yml`, its
 configuration, and its certificate storage. Other application deployments do
-not modify it. Configure the router with these translations on the Hercules
-public connection:
+not modify it. The Hercules public connection currently uses port-preserving
+NAT. Caddy binds the standard host ports so ordinary browser URLs work without
+a port suffix:
 
-- WAN port `80` to `192.168.1.125:8280`.
-- WAN port `443` to `192.168.1.125:8443`.
+- WAN port `80` to `192.168.1.125:80`.
+- WAN port `443` to `192.168.1.125:443`.
 
-Set the `app.accountisland.com` A record to `222.154.228.115`. Because the
-router exposes nonstandard public ports, the TLS certificate uses a manual DNS
-challenge and must be renewed before its expiry date. Caddy serves the issued
-certificate from `/etc/letsencrypt`.
+The legacy `8280` and `8443` bindings remain available temporarily for rollback
+and diagnosis. Set the `app.accountisland.com` A record to `222.154.228.115`.
+The TLS certificate uses a manual DNS challenge and must be renewed before its
+expiry date. Caddy serves the issued certificate from `/etc/letsencrypt`.
 
 ## Operations
 
 The deployment workflow has two distinct health checks:
 
-- The self-hosted deployment job checks `192.168.1.125:8188` and rolls the
-  application image back if that internal check fails.
+- The self-hosted deployment job checks the application on
+  `192.168.1.125:8188` and Caddy on standard HTTPS port `443`; it rolls the
+  application image back if either check fails.
 - A GitHub-hosted job then checks `https://app.accountisland.com/health` from
   outside the production network. If it fails, inspect public DNS, router port
   forwarding, Caddy, and the TLS certificate before considering an application
