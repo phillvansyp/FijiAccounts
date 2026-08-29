@@ -63,6 +63,7 @@ public sealed class VatTurnoverMonitorService(
                 db.SalesInvoiceVoids.Any(v =>
                     v.OrganisationId == organisationId &&
                     v.SalesInvoiceId == x.SalesInvoiceId &&
+                    v.Status == SalesInvoiceVoidStatus.Posted &&
                     v.VoidDate >= periodStart &&
                     v.VoidDate <= periodEnd))
             .SumAsync(x => (decimal?)x.NetAmount, ct) ?? 0m;
@@ -71,6 +72,7 @@ public sealed class VatTurnoverMonitorService(
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == organisationId &&
+                x.Status == SalesCreditNoteStatus.Posted &&
                 x.CreditDate >= periodStart &&
                 x.CreditDate <= periodEnd)
             .SumAsync(x => (decimal?)x.Subtotal, ct) ?? 0m;
@@ -79,6 +81,7 @@ public sealed class VatTurnoverMonitorService(
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == organisationId &&
+                x.Status == SalesCreditNoteReversalStatus.Posted &&
                 x.ReversalDate >= periodStart &&
                 x.ReversalDate <= periodEnd)
             .SumAsync(x => (decimal?)x.SalesCreditNote.Subtotal, ct) ?? 0m;

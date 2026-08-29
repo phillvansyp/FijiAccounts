@@ -9,6 +9,8 @@
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject FiscalisedSalesCreditNotePostingService FiscalisedCreditPosting
+@inject FiscalisedSalesCreditNoteReversalPostingService FiscalisedCreditReversalPosting
 
 <PageTitle>@(credit?.CreditNoteNumber ?? "Credit note") · Account Island</PageTitle>
 
@@ -20,12 +22,46 @@ else
 {
     <div class="detail-actions no-print">
         <a href="o/@OrganisationId/sales/@credit.SalesInvoiceId">← Invoice @credit.SalesInvoice.InvoiceNumber</a>
+        @if (credit.Status == SalesCreditNoteStatus.Draft && canPost)
+        {
+            <button class="btn btn-primary" @onclick="PostDraft">@PostButtonLabel</button>
+        }
+        @if (reversal?.Status == SalesCreditNoteReversalStatus.Draft && canPost)
+        {
+            <button class="btn btn-primary" @onclick="ResumeReversal">@ReversalButtonLabel</button>
+        }
         <button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button>
     </div>
+    @if (status is not null) { <div class="alert alert-danger no-print">@status</div> }
+    @if (refundReadiness is not null)
+    {
+        <div class="alert @refundReadinessClass no-print">
+            <strong>Fiscal refund readiness</strong>
+            <div>@refundReadiness</div>
+        </div>
+    }
+    @if (reversal?.Status == SalesCreditNoteReversalStatus.Draft)
+    {
+        <div class="alert @ReversalAlertClass no-print">
+            <strong>Fiscal reversal pending</strong>
+            <div>@ReversalReadiness</div>
+        </div>
+    }
+    @if (fiscalReceipt is not null)
+    {
+        <div class="alert @(fiscalReceipt.IsSimulated ? "alert-warning" : "alert-success")">
+            <strong>@(fiscalReceipt.IsSimulated ? "Simulated fiscal refund" : "Fiscal refund accepted")</strong>
+            <div>@fiscalReceipt.SdcInvoiceNumber · @fiscalReceipt.IssuedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</div>
+            @if (fiscalReceipt.IsSimulated)
+            {
+                <div class="small">Not connected to FRCS and not valid for customer issue.</div>
+            }
+        </div>
+    }
     <article class="credit-document">
         <header>
             <div><span class="document-brand">Account Island</span><h1>Credit Note</h1></div>
-            <div class="document-number"><strong>@credit.CreditNoteNumber</strong>@if (isReversed) { <span>Reversed</span> }</div>
+            <div class="document-number"><strong>@credit.CreditNoteNumber</strong>@if (isReversed) { <span>Reversed</span> } else if (credit.Status == SalesCreditNoteStatus.Draft) { <span>Draft</span> }</div>
         </header>
         <section class="credit-meta">
             <div><small>From</small><strong>@SupplierName</strong><span>@SupplierAddress</span>@if (!string.IsNullOrWhiteSpace(SupplierTin)) { <span>TIN: @SupplierTin</span> }</div>
@@ -37,6 +73,10 @@ else
             <strong>@credit.Reason</strong>
             <span>Adjustment to tax invoice @credit.SalesInvoice.InvoiceNumber dated @credit.SalesInvoice.IssueDate.ToString("dd MMM yyyy").</span>
         </section>
+        @if (credit.Lines.Count > 0)
+        {
+            <table class="document-lines"><thead><tr><th>Description</th><th>VAT treatment</th><th class="number">Net</th><th class="number">VAT</th><th class="number">Gross</th></tr></thead><tbody>@foreach (var line in credit.Lines) { <tr><td>@line.Description</td><td>@line.VatTreatment</td><td class="number">@credit.Currency @line.NetAmount.ToString("N2")</td><td class="number">@credit.Currency @line.VatAmount.ToString("N2")</td><td class="number">@credit.Currency @line.GrossAmount.ToString("N2")</td></tr> }</tbody></table>
+        }
         <section class="document-totals">
             <div><span>Credit excluding VAT</span><strong>$@credit.Subtotal.ToString("N2")</strong></div>
             <div><span>VAT adjustment</span><strong>$@credit.VatTotal.ToString("N2")</strong></div>
@@ -48,6 +88,7 @@ else
         {
             <footer>Legacy source invoice — the compliance profile was not captured when the invoice was issued.</footer>
         }
+        @if (credit.Status == SalesCreditNoteStatus.Draft) { <footer>DRAFT — Not posted to the ledger</footer> }
     </article>
 }
 
@@ -58,6 +99,44 @@ else
     private AccessibleOrganisation? access;
     private SalesCreditNote? credit;
     private bool isReversed;
+    private SalesCreditNoteReversal? reversal;
+    private FiscalisationRecord? reversalFiscalRecord;
+    private bool canPost;
+    private string? status;
+    private string userId = string.Empty;
+    private string? refundReadiness;
+    private string refundReadinessClass = "alert-info";
+    private FiscalReceiptView? fiscalReceipt;
+    private FiscalisationRecord? fiscalRecord;
+    private string ReversalButtonLabel => reversalFiscalRecord?.Status switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recover and post reversal",
+        FiscalisationStatus.Rejected => "Retry fiscal reversal",
+        FiscalisationStatus.Accepted => "Post accepted reversal",
+        _ => "Submit and post reversal"
+    };
+    private string ReversalReadiness => reversalFiscalRecord?.Status switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "The SDC response is uncertain. Recover it before posting accounting or removing returned stock.",
+        FiscalisationStatus.Rejected => $"The fiscal reversal was rejected{(string.IsNullOrWhiteSpace(reversalFiscalRecord.ErrorMessage) ? "." : $": {reversalFiscalRecord.ErrorMessage}")}",
+        FiscalisationStatus.Accepted => "The correction was accepted; the accounting and stock reversal is ready to post.",
+        FiscalisationStatus.Prepared => "The correction is durably prepared and ready to submit.",
+        _ => "The reversal draft is saved. No fiscal correction or accounting entry has posted yet."
+    };
+    private string ReversalAlertClass => reversalFiscalRecord?.Status switch
+    {
+        FiscalisationStatus.Rejected => "alert-danger",
+        FiscalisationStatus.Accepted => "alert-success",
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "alert-warning",
+        _ => "alert-info"
+    };
+    private string PostButtonLabel => fiscalRecord?.Status switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recover and post",
+        FiscalisationStatus.Rejected => "Retry fiscal refund",
+        FiscalisationStatus.Prepared => "Submit and post",
+        _ => "Fiscalise and post"
+    };
     private string SupplierName => credit?.SalesInvoice.SupplierNameSnapshot ?? access?.Organisation.LegalName ?? string.Empty;
     private string? SupplierAddress => credit?.SalesInvoice.SupplierAddressSnapshot ?? access?.Organisation.BusinessAddress;
     private string? SupplierTin => credit?.SalesInvoice.SupplierTinSnapshot ?? access?.Organisation.Tin;
@@ -68,24 +147,118 @@ else
     protected override async Task OnParametersSetAsync()
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var userId = UserManager.GetUserId(state.User);
-        if (userId is null) return;
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        if (string.IsNullOrEmpty(userId)) return;
 
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is null) return;
+        canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
 
         var divisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
         credit = await Db.SalesCreditNotes
             .AsNoTracking()
             .Include(x => x.SalesInvoice)
                 .ThenInclude(x => x.Customer)
+            .Include(x => x.SalesInvoice)
+                .ThenInclude(x => x.Lines)
+            .Include(x => x.Lines)
             .SingleOrDefaultAsync(x =>
                 x.Id == CreditNoteId &&
                 x.OrganisationId == OrganisationId &&
                 x.SalesInvoice.DivisionId != null &&
                 divisionIds.Contains(x.SalesInvoice.DivisionId.Value));
-        isReversed = credit is not null && await Db.SalesCreditNoteReversals
+        reversal = credit is null ? null : await Db.SalesCreditNoteReversals
             .AsNoTracking()
-            .AnyAsync(x => x.SalesCreditNoteId == credit.Id && x.OrganisationId == OrganisationId);
+            .SingleOrDefaultAsync(x => x.SalesCreditNoteId == credit.Id && x.OrganisationId == OrganisationId);
+        isReversed = reversal?.Status == SalesCreditNoteReversalStatus.Posted;
+
+        fiscalRecord = credit is null ? null : await Db.FiscalisationRecords
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x =>
+                x.SalesCreditNoteId == credit.Id &&
+                x.OrganisationId == OrganisationId);
+        fiscalReceipt = fiscalRecord?.Status == FiscalisationStatus.Accepted
+            ? FiscalReceiptPresenter.Create(fiscalRecord)
+            : null;
+        reversalFiscalRecord = reversal is null ? null : await Db.FiscalisationRecords
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x =>
+                x.SalesCreditNoteReversalId == reversal.Id &&
+                x.OrganisationId == OrganisationId);
+
+        if (credit is not null && await Db.FiscalisationConfigurations.AsNoTracking()
+                .AnyAsync(x => x.OrganisationId == OrganisationId && x.IsEnabled))
+        {
+            var originalAccepted = await Db.FiscalisationRecords.AsNoTracking()
+                .AnyAsync(x =>
+                    x.SalesInvoiceId == credit.SalesInvoiceId &&
+                    x.OrganisationId == OrganisationId &&
+                    x.Status == FiscalisationStatus.Accepted);
+            if (!originalAccepted)
+            {
+                refundReadiness = "Blocked until the original invoice has an accepted SDC response.";
+                refundReadinessClass = "alert-warning";
+            }
+            else if (fiscalRecord?.Status is FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting)
+            {
+                refundReadiness = "The prior response is uncertain. Recover its status before posting; do not create another refund.";
+                refundReadinessClass = "alert-warning";
+            }
+            else if (fiscalRecord?.Status == FiscalisationStatus.Rejected)
+            {
+                refundReadiness = $"The fiscal refund was rejected{(string.IsNullOrWhiteSpace(fiscalRecord.ErrorMessage) ? "." : $": {fiscalRecord.ErrorMessage}")}";
+                refundReadinessClass = "alert-danger";
+            }
+            else if (fiscalRecord?.Status == FiscalisationStatus.Prepared)
+            {
+                refundReadiness = "The refund is durably prepared and ready to submit. No accounting entry has been posted yet.";
+                refundReadinessClass = "alert-info";
+            }
+            else if (fiscalRecord?.Status == FiscalisationStatus.Accepted)
+            {
+                refundReadiness = credit.Status == SalesCreditNoteStatus.Posted
+                    ? "The fiscal refund was accepted and the accounting credit was posted."
+                    : "The fiscal refund was accepted. The accounting credit is ready to post.";
+                refundReadinessClass = "alert-success";
+            }
+            else
+            {
+                refundReadiness = credit.Status == SalesCreditNoteStatus.Draft
+                    ? "This line-allocated draft is ready for durable fiscal refund submission and accepted-response posting."
+                    : "The credit note has an accepted fiscal refund workflow available.";
+                refundReadinessClass = "alert-info";
+            }
+        }
+    }
+
+    private async Task PostDraft()
+    {
+        try
+        {
+            await FiscalisedCreditPosting.PostAsync(userId, OrganisationId, CreditNoteId);
+            status = null;
+            await OnParametersSetAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            await OnParametersSetAsync();
+        }
+    }
+
+    private async Task ResumeReversal()
+    {
+        if (reversal is null) return;
+        try
+        {
+            await FiscalisedCreditReversalPosting.PostAsync(userId, OrganisationId, reversal.Id);
+            status = null;
+            await OnParametersSetAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            status = ex.Message;
+            await OnParametersSetAsync();
+        }
     }
 }

@@ -5,6 +5,7 @@ namespace FijiAccounts.Web.Data;
 
 [Flags] public enum PartyType { Customer = 1, Supplier = 2 }
 public enum InvoiceStatus { Draft, Posted, PartPaid, Paid, Voided, Credited }
+public enum SalesCreditNoteStatus { Posted = 0, Draft = 1 }
 
 public sealed class BusinessParty
 {
@@ -289,7 +290,13 @@ public sealed class SalesInvoice
     public required string CreatedByUserId { get; set; }
 }
 
-    public sealed class SalesInvoiceVoid
+public enum SalesInvoiceVoidStatus
+{
+    Posted = 0,
+    Draft = 1
+}
+
+public sealed class SalesInvoiceVoid
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -300,8 +307,10 @@ public sealed class SalesInvoice
 
     public DateOnly VoidDate { get; set; }
 
-    public Guid PostedJournalId { get; set; }
-    public PostedJournal PostedJournal { get; set; } = null!;
+    public SalesInvoiceVoidStatus Status { get; set; } = SalesInvoiceVoidStatus.Posted;
+
+    public Guid? PostedJournalId { get; set; }
+    public PostedJournal? PostedJournal { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } =
         DateTimeOffset.UtcNow;
@@ -327,12 +336,36 @@ public sealed class SalesCreditNote
     public decimal Total { get; set; }
     public decimal OriginalInvoiceVatAmount { get; set; }
     public decimal AdjustedInvoiceVatAmount { get; set; }
-    public Guid PostedJournalId { get; set; }
+    public SalesCreditNoteStatus Status { get; set; } = SalesCreditNoteStatus.Posted;
+    public bool RestockTrackedItems { get; set; }
+    public Guid? PostedJournalId { get; set; }
+    public List<SalesCreditNoteLine> Lines { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public required string CreatedByUserId { get; set; }
 }
 
-    public sealed class SalesCreditNoteReversal
+public sealed class SalesCreditNoteLine
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid SalesCreditNoteId { get; set; }
+    public SalesCreditNote SalesCreditNote { get; set; } = null!;
+    public Guid SalesInvoiceLineId { get; set; }
+    public SalesInvoiceLine SalesInvoiceLine { get; set; } = null!;
+    [MaxLength(300)] public required string Description { get; set; }
+    public VatTreatment VatTreatment { get; set; }
+    public decimal VatRate { get; set; }
+    public decimal NetAmount { get; set; }
+    public decimal VatAmount { get; set; }
+    public decimal GrossAmount { get; set; }
+    public Guid RevenueAccountId { get; set; }
+    public Guid? ProductItemId { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Guid? ProjectCostCodeId { get; set; }
+}
+
+public enum SalesCreditNoteReversalStatus { Posted = 0, Draft = 1 }
+
+public sealed class SalesCreditNoteReversal
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
@@ -345,8 +378,9 @@ public sealed class SalesCreditNote
     [MaxLength(300)]
     public required string Reason { get; set; }
 
-    public Guid PostedJournalId { get; set; }
-    public PostedJournal PostedJournal { get; set; } = null!;
+    public SalesCreditNoteReversalStatus Status { get; set; } = SalesCreditNoteReversalStatus.Posted;
+    public Guid? PostedJournalId { get; set; }
+    public PostedJournal? PostedJournal { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

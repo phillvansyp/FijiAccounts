@@ -474,7 +474,7 @@ else
                 accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync();
                 contactCount = await Db.BusinessParties.CountAsync(x => x.OrganisationId == OrganisationId && x.IsActive);
                 await LoadFinancialInsightsAsync(Db, NotificationService, CashflowForecastService, FinancialRiskService, FinancialControlService, FinancialIntelligenceService, CashRunwayService);
-                var outputVat = (await Db.SalesInvoices.Where(x => x.OrganisationId == OrganisationId && x.Status != InvoiceStatus.Voided).SumAsync(x => (decimal?)x.VatTotal) ?? 0) - (await Db.SalesCreditNotes.Where(x => x.OrganisationId == OrganisationId).SumAsync(x => (decimal?)x.VatTotal) ?? 0);
+                var outputVat = (await Db.SalesInvoices.Where(x => x.OrganisationId == OrganisationId && x.Status != InvoiceStatus.Voided).SumAsync(x => (decimal?)x.VatTotal) ?? 0) - (await Db.SalesCreditNotes.Where(x => x.OrganisationId == OrganisationId && x.Status == SalesCreditNoteStatus.Posted).SumAsync(x => (decimal?)x.VatTotal) ?? 0);
                 var inputVat = (await Db.SupplierBills.Where(x => x.OrganisationId == OrganisationId && x.Status != BillStatus.Voided).SumAsync(x => (decimal?)x.VatTotal) ?? 0) - (await Db.SupplierCreditNotes.Where(x => x.OrganisationId == OrganisationId).SumAsync(x => (decimal?)x.VatTotal) ?? 0);
                 vatPosition = outputVat - inputVat;
             }

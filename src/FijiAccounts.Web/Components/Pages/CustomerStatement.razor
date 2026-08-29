@@ -62,6 +62,7 @@ else
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
+                x.Status == SalesInvoiceVoidStatus.Posted &&
                 x.SalesInvoice.CustomerId == CustomerId &&
                 x.VoidDate <= period.To)
             .Select(x =>
@@ -114,6 +115,7 @@ else
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
                 x.SalesInvoice.CustomerId == CustomerId &&
+                x.Status == SalesCreditNoteStatus.Posted &&
                 x.CreditDate <= period.To)
             .Select(x =>
                 new EventRow(
@@ -130,6 +132,7 @@ else
             .AsNoTracking()
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
+                x.Status == SalesCreditNoteReversalStatus.Posted &&
                 x.SalesCreditNote.SalesInvoice.CustomerId == CustomerId &&
                 x.ReversalDate <= period.To)
             .Select(x =>

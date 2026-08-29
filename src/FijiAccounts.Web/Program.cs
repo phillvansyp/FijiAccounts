@@ -1,4 +1,5 @@
 using FijiAccounts.Web.Components;
+using FijiAccounts.Domain.Fiscalisation;
 using FijiAccounts.Web.Components.Account;
 using FijiAccounts.Web.Api.Mobile.V1;
 using FijiAccounts.Web.Authentication;
@@ -202,6 +203,25 @@ builder.Services.AddScoped<OrganisationBrandingService>();
 builder.Services.AddScoped<BusinessPartyService>();
 builder.Services.AddScoped<JournalPostingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
+builder.Services.AddScoped<FiscalisationWorkflowService>();
+builder.Services.AddScoped<FiscalisationOrchestratorService>();
+builder.Services.AddSingleton<FiscalisationSubmissionFactory>();
+builder.Services.AddSingleton<FiscalCreditNoteSubmissionFactory>();
+builder.Services.AddScoped<FiscalisationConfigurationService>();
+builder.Services.AddScoped<FiscalisedSalesInvoicePostingService>();
+builder.Services.AddScoped<FiscalisedSalesCreditNotePostingService>();
+builder.Services.AddScoped<FiscalCreditNoteReversalSubmissionFactory>();
+builder.Services.AddScoped<FiscalisedSalesCreditNoteReversalPostingService>();
+builder.Services.AddScoped<FiscalSalesInvoiceVoidSubmissionFactory>();
+builder.Services.AddScoped<FiscalisedSalesInvoiceVoidPostingService>();
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddScoped<IFiscalisationGateway, DevelopmentFiscalisationGateway>();
+}
+else
+{
+    builder.Services.AddScoped<IFiscalisationGateway, UnconfiguredFiscalisationGateway>();
+}
 builder.Services.AddScoped<RecurringSalesInvoiceService>();
 builder.Services.AddScoped<RecurringInvoiceAutomationSettingsService>();
 builder.Services.AddHostedService<RecurringInvoiceGenerationWorker>();

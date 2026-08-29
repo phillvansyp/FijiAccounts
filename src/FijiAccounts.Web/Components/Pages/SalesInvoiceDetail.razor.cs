@@ -11,7 +11,9 @@ public partial class SalesInvoiceDetail
     private decimal creditAmount;
     private decimal? creditVatAmount;
     private bool restockTrackedItems;
+    private readonly Dictionary<Guid, decimal> creditLineAmounts = [];
     private decimal AvailableCredit => invoice is null ? 0 : invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
+    private decimal AllocatedCreditTotal => creditLineAmounts.Values.Sum();
     private bool IsTaxDocument => invoice?.IsTaxInvoice
         ?? invoice?.Lines.Any(x => x.VatTreatment is VatTreatment.Standard or VatTreatment.ZeroRated) == true;
     private string DocumentTitle => invoice?.Status == Data.InvoiceStatus.Draft
@@ -41,26 +43,58 @@ public partial class SalesInvoiceDetail
         showVoid = false;
         creditAmount = AvailableCredit;
         creditVatAmount = null;
+        creditLineAmounts.Clear();
+        if (invoice is not null && fiscalisationEnabled && invoice.TransactionTotal > 0m)
+        {
+            var remaining = AvailableCredit;
+            var allocated = 0m;
+            for (var index = 0; index < invoice.Lines.Count; index++)
+            {
+                var line = invoice.Lines[index];
+                var amount = index == invoice.Lines.Count - 1
+                    ? remaining - allocated
+                    : decimal.Round(remaining * line.TransactionGrossAmount / invoice.TransactionTotal, 2, MidpointRounding.AwayFromZero);
+                amount = Math.Max(0m, Math.Min(line.TransactionGrossAmount, amount));
+                creditLineAmounts[line.Id] = amount;
+                allocated += amount;
+            }
+        }
     }
 
     private async Task CreateCredit()
     {
         try
         {
-            await CreditNoteService.CreateAsync(userId, new(
-                OrganisationId,
-                InvoiceId,
-                creditDate,
-                creditReason,
-                creditAmount,
-                restockTrackedItems,
-                creditVatAmount));
+            if (fiscalisationEnabled)
+            {
+                var draft = await FiscalisedCreditPosting.CreateDraftAsync(userId, new(
+                    OrganisationId,
+                    InvoiceId,
+                    creditDate,
+                    creditReason,
+                    creditLineAmounts.Where(x => x.Value > 0m).Select(x => new SalesCreditNoteAllocation(x.Key, x.Value)).ToList(),
+                    restockTrackedItems));
+                showCredit = false;
+                await FiscalisedCreditPosting.PostAsync(userId, OrganisationId, draft.Id);
+            }
+            else
+            {
+                await CreditNoteService.CreateAsync(userId, new(
+                    OrganisationId,
+                    InvoiceId,
+                    creditDate,
+                    creditReason,
+                    creditAmount,
+                    restockTrackedItems,
+                    creditVatAmount));
+            }
             showCredit = false;
             await Reload();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {
             status = ex.Message;
+            await Reload();
         }
     }
 }

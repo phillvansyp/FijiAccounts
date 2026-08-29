@@ -120,6 +120,7 @@ else
         .AsNoTracking()
         .Where(x =>
             invoiceIds.Contains(x.SalesInvoiceId) &&
+            x.Status == SalesInvoiceVoidStatus.Posted &&
             x.VoidDate <= filter.AsAt)
         .Select(x => x.SalesInvoiceId)
         .ToListAsync();
@@ -169,6 +170,7 @@ var paid = receipts
         .AsNoTracking()
         .Where(x =>
             invoiceIds.Contains(x.SalesInvoiceId) &&
+            x.Status == SalesCreditNoteStatus.Posted &&
             x.CreditDate <= filter.AsAt)
         .Select(x => new
         {
@@ -186,6 +188,7 @@ var paid = receipts
         .AsNoTracking()
         .Where(x =>
             creditIds.Contains(x.SalesCreditNoteId) &&
+            x.Status == SalesCreditNoteReversalStatus.Posted &&
             x.ReversalDate <= filter.AsAt)
         .Select(x => x.SalesCreditNoteId)
         .ToListAsync();

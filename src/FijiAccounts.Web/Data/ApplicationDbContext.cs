@@ -36,6 +36,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<FiscalisationRecord> FiscalisationRecords =>
+        Set<FiscalisationRecord>();
+    public DbSet<FiscalisationConfiguration> FiscalisationConfigurations =>
+        Set<FiscalisationConfiguration>();
     public DbSet<MobileIdempotencyRecord> MobileIdempotencyRecords =>
         Set<MobileIdempotencyRecord>();
     public DbSet<MobileDeviceSession> MobileDeviceSessions =>
@@ -58,6 +62,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<RecurringSalesInvoiceGeneration> RecurringSalesInvoiceGenerations =>
         Set<RecurringSalesInvoiceGeneration>();
     public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
+    public DbSet<SalesCreditNoteLine> SalesCreditNoteLines => Set<SalesCreditNoteLine>();
     public DbSet<SalesCreditNoteReversal> SalesCreditNoteReversals =>
     Set<SalesCreditNoteReversal>();
     public DbSet<CustomerReceipt> CustomerReceipts => Set<CustomerReceipt>();
@@ -395,6 +400,10 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<SalesCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SalesCreditNote>().HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SalesCreditNote.Subtotal), nameof(SalesCreditNote.VatTotal), nameof(SalesCreditNote.Total), nameof(SalesCreditNote.OriginalInvoiceVatAmount), nameof(SalesCreditNote.AdjustedInvoiceVatAmount) }) builder.Entity<SalesCreditNote>().Property(property).HasPrecision(18, 2);
+        builder.Entity<SalesCreditNoteLine>().HasIndex(x => new { x.SalesCreditNoteId, x.SalesInvoiceLineId }).IsUnique();
+        builder.Entity<SalesCreditNoteLine>().HasOne(x => x.SalesCreditNote).WithMany(x => x.Lines).HasForeignKey(x => x.SalesCreditNoteId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<SalesCreditNoteLine>().HasOne(x => x.SalesInvoiceLine).WithMany().HasForeignKey(x => x.SalesInvoiceLineId).OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[] { nameof(SalesCreditNoteLine.VatRate), nameof(SalesCreditNoteLine.NetAmount), nameof(SalesCreditNoteLine.VatAmount), nameof(SalesCreditNoteLine.GrossAmount) }) builder.Entity<SalesCreditNoteLine>().Property(property).HasPrecision(18, 4);
         builder.Entity<SalesInvoiceVoid>()
     .HasIndex(x => x.SalesInvoiceId)
     .IsUnique();
@@ -1092,6 +1101,52 @@ builder.Entity<FixedAsset>()
         builder.Entity<PostedJournalLine>().HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasOne(x => x.ProjectCostCode).WithMany().HasForeignKey(x => x.ProjectCostCodeId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().HasIndex(x => new { x.ProjectId, x.ProjectCostCodeId });
+        builder.Entity<FiscalisationRecord>()
+            .HasIndex(x => x.SalesInvoiceId)
+            .IsUnique();
+        builder.Entity<FiscalisationRecord>()
+            .HasIndex(x => x.SalesCreditNoteId)
+            .IsUnique();
+        builder.Entity<FiscalisationRecord>()
+            .HasIndex(x => x.SalesCreditNoteReversalId)
+            .IsUnique();
+        builder.Entity<FiscalisationRecord>()
+            .HasIndex(x => x.SalesInvoiceVoidId)
+            .IsUnique();
+        builder.Entity<FiscalisationRecord>()
+            .HasIndex(x => new { x.OrganisationId, x.Status });
+        builder.Entity<FiscalisationRecord>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FiscalisationRecord>()
+            .HasOne(x => x.SalesInvoice)
+            .WithMany()
+            .HasForeignKey(x => x.SalesInvoiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FiscalisationRecord>()
+            .HasOne(x => x.SalesCreditNote)
+            .WithMany()
+            .HasForeignKey(x => x.SalesCreditNoteId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FiscalisationRecord>()
+            .HasOne(x => x.SalesCreditNoteReversal)
+            .WithMany()
+            .HasForeignKey(x => x.SalesCreditNoteReversalId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FiscalisationRecord>()
+            .HasOne(x => x.SalesInvoiceVoid)
+            .WithMany()
+            .HasForeignKey(x => x.SalesInvoiceVoidId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<FiscalisationConfiguration>()
+            .HasKey(x => x.OrganisationId);
+        builder.Entity<FiscalisationConfiguration>()
+            .HasOne(x => x.Organisation)
+            .WithOne()
+            .HasForeignKey<FiscalisationConfiguration>(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }
@@ -1110,6 +1165,8 @@ builder.Entity<FixedAsset>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<PlatformAuditEvent>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<FiscalisationRecord>()
+        .Any(x => x.State == EntityState.Deleted) ||
     ChangeTracker.Entries<SalesInvoice>()
         .Any(x =>
             x.State == EntityState.Deleted &&
@@ -1119,6 +1176,10 @@ builder.Entity<FixedAsset>()
         (x.State is EntityState.Modified or EntityState.Deleted) &&
         !IsDraftSalesInvoiceLine(x)) ||
     ChangeTracker.Entries<SalesCreditNote>()
+        .Any(x =>
+            (x.State == EntityState.Deleted && x.Entity.Status != SalesCreditNoteStatus.Draft) ||
+            (x.State == EntityState.Modified && x.Property(y => y.Status).OriginalValue != SalesCreditNoteStatus.Draft)) ||
+    ChangeTracker.Entries<SalesCreditNoteLine>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesQuote>()
         .Any(x =>
@@ -1153,11 +1214,15 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<SupplierPaymentReversal>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesInvoiceVoid>()
-        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+        .Any(x =>
+            (x.State == EntityState.Deleted && x.Entity.Status != SalesInvoiceVoidStatus.Draft) ||
+            (x.State == EntityState.Modified && x.Property(y => y.Status).OriginalValue != SalesInvoiceVoidStatus.Draft)) ||
     ChangeTracker.Entries<SupplierBillVoid>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesCreditNoteReversal>()
-        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+        .Any(x =>
+            (x.State == EntityState.Deleted && x.Entity.Status != SalesCreditNoteReversalStatus.Draft) ||
+            (x.State == EntityState.Modified && x.Property(y => y.Status).OriginalValue != SalesCreditNoteReversalStatus.Draft)) ||
     ChangeTracker.Entries<SupplierCreditNoteReversal>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
 {

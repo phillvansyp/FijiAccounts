@@ -74,6 +74,7 @@ public sealed class VatWorkpaperService(
                     db.SalesInvoiceVoids.Any(v =>
                         v.OrganisationId == organisationId &&
                         v.SalesInvoiceId == x.SalesInvoiceId &&
+                        v.Status == SalesInvoiceVoidStatus.Posted &&
                         v.VoidDate >= from &&
                         v.VoidDate <= to))
                 .Select(x =>
@@ -123,6 +124,7 @@ public sealed class VatWorkpaperService(
                 .AsNoTracking()
                 .Where(x =>
                     x.OrganisationId == organisationId &&
+                    x.Status == SalesCreditNoteStatus.Posted &&
                     x.CreditDate >= from &&
                     x.CreditDate <= to)
                 .Select(x =>
@@ -136,6 +138,7 @@ public sealed class VatWorkpaperService(
                 .AsNoTracking()
                 .Where(x =>
                     x.OrganisationId == organisationId &&
+                    x.Status == SalesCreditNoteReversalStatus.Posted &&
                     x.ReversalDate >= from &&
                     x.ReversalDate <= to)
                 .Select(x =>

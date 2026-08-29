@@ -8,7 +8,11 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject SalesInvoiceService InvoiceService
+@inject FiscalisedSalesInvoicePostingService FiscalisedPosting
 @inject SalesCreditNoteService CreditNoteService
+@inject FiscalisedSalesCreditNotePostingService FiscalisedCreditPosting
+@inject FiscalisedSalesCreditNoteReversalPostingService FiscalisedCreditReversalPosting
+@inject FiscalisedSalesInvoiceVoidPostingService FiscalisedInvoiceVoidPosting
 @inject OrganisationBrandingService BrandingService
 @inject SalesInvoiceEmailSender InvoiceEmailSender
 @inject UserManager<ApplicationUser> UserManager
@@ -20,7 +24,7 @@
 @if (invoice is null || access is null) { <div class="alert alert-danger">Invoice not found or access denied.</div> }
 else
 {
-    <div class="detail-actions no-print"><a href="o/@OrganisationId/sales">← Invoices</a><div>@if (invoice.Status == InvoiceStatus.Draft && canPost) { <a class="btn btn-outline-primary" href="o/@OrganisationId/sales/@InvoiceId/edit">Edit draft</a><button class="btn btn-primary" @onclick="PostDraft">Approve and post</button> }@if (canPost &&
+    <div class="detail-actions no-print"><a href="o/@OrganisationId/sales">← Invoices</a><div>@if (invoice.Status == InvoiceStatus.Draft && canPost) { <a class="btn btn-outline-primary" href="o/@OrganisationId/sales/@InvoiceId/edit">Edit draft</a><button class="btn btn-primary" @onclick="PostDraft">@(fiscalisationEnabled ? "Fiscalise and post" : "Approve and post")</button> }@if (canPost &&
     invoice.Status is InvoiceStatus.Posted or
         InvoiceStatus.PartPaid or
         InvoiceStatus.Paid)
@@ -43,13 +47,50 @@ else
 }<button class="btn btn-outline-secondary" @onclick="CopyInvoice">Copy invoice</button>@if (canPost && (invoice.Status is InvoiceStatus.Posted or InvoiceStatus.PartPaid or InvoiceStatus.Paid)) { <button class="btn btn-outline-primary" @onclick="OpenEmailInvoice">Email invoice</button> }<button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
     @if (showEmailInvoice) { <div class="void-panel no-print"><div><strong>Email @invoice.InvoiceNumber</strong><span>A PDF copy will be attached. The accounts email is used first, then the primary contact email.</span></div><input type="email" class="form-control reason" @bind="invoiceEmailRecipient" @bind:event="oninput" placeholder="Recipient email" /><button class="btn btn-primary" disabled="@sendingInvoiceEmail" @onclick="SendInvoiceEmail">@(sendingInvoiceEmail ? "Sending..." : "Send invoice")</button><button class="btn btn-outline-secondary" disabled="@sendingInvoiceEmail" @onclick="() => showEmailInvoice = false">Cancel</button></div> }
     @if (invoiceEmailStatus is not null) { <div class="alert @(invoiceEmailSucceeded ? "alert-success" : "alert-danger") no-print">@invoiceEmailStatus</div> }
-    @if (showVoid) { <div class="void-panel no-print"><div><strong>Void this invoice?</strong><span>A reversing journal will be posted and retained in the audit trail.</span></div><InputDate class="form-control" @bind-Value="voidDate" /><button class="btn btn-danger" @onclick="VoidInvoice">Post reversal</button><button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button></div> }
-    @if (showCredit) { <div class="void-panel credit-panel no-print"><div><strong>Issue credit note</strong><span>Maximum: $@AvailableCredit.ToString("N2")</span></div><InputDate class="form-control" @bind-Value="creditDate" /><InputText class="form-control reason" @bind-Value="creditReason" placeholder="Reason" /><InputNumber class="form-control" @bind-Value="creditAmount" />@if (HasMixedVatRates) { <div><label class="form-label">VAT adjustment</label><InputNumber TValue="decimal?" class="form-control" @bind-Value="creditVatAmount" /></div> }<label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="restockTrackedItems" /><span class="form-check-label">Return tracked items to stock</span></label><button class="btn btn-primary" @onclick="CreateCredit">Post credit</button><button class="btn btn-outline-secondary" @onclick="() => showCredit = false">Cancel</button></div> }
+    @if (showVoid) { <div class="void-panel no-print"><div><strong>Void this invoice?</strong><span>@(fiscalisationEnabled ? "The fiscal refund must be accepted before the reversing journal is posted or stock is restored." : "A reversing journal will be posted and retained in the audit trail.")</span>@if (invoiceVoid?.Status == SalesInvoiceVoidStatus.Draft) { <span class="badge @VoidStatusClass(voidFiscalRecord?.Status)">@VoidStatusText(voidFiscalRecord?.Status)</span> }</div><InputDate class="form-control" @bind-Value="voidDate" disabled="@(invoiceVoid is not null)" /><button class="btn btn-danger" @onclick="VoidInvoice">@(fiscalisationEnabled ? VoidButtonText(voidFiscalRecord?.Status) : "Post reversal")</button><button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button></div> }
+    @if (showCredit) { <div class="void-panel credit-panel no-print"><div><strong>@(fiscalisationEnabled ? "Allocate fiscal credit note" : "Issue credit note")</strong><span>Maximum: $@AvailableCredit.ToString("N2")</span></div><InputDate class="form-control" @bind-Value="creditDate" /><InputText class="form-control reason" @bind-Value="creditReason" placeholder="Reason" />@if (fiscalisationEnabled) { <div class="w-100"><div class="small text-muted mb-2">Allocate the VAT-inclusive credit to the original invoice lines.</div>@foreach (var line in invoice.Lines) { <div class="d-flex align-items-center gap-2 mb-2"><div class="flex-grow-1"><strong>@line.Description</strong><div class="small text-muted">@FijiTaxDocumentCompliance.TaxLabel(line) · maximum @invoice.Currency @line.TransactionGrossAmount.ToString("N2")</div></div><InputNumber class="form-control" style="max-width: 10rem" @bind-Value="creditLineAmounts[line.Id]" /></div> }<div><strong>Allocated total: @invoice.Currency @AllocatedCreditTotal.ToString("N2")</strong></div></div> } else { <InputNumber class="form-control" @bind-Value="creditAmount" />@if (HasMixedVatRates) { <div><label class="form-label">VAT adjustment</label><InputNumber TValue="decimal?" class="form-control" @bind-Value="creditVatAmount" /></div> } }<label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="restockTrackedItems" /><span class="form-check-label">Return tracked items to stock</span></label>@if (fiscalisationEnabled && restockTrackedItems) { <div class="small text-muted">Tracked items allocated to this credit will be returned to stock only after the fiscal refund is accepted.</div> }<button class="btn btn-primary" @onclick="CreateCredit">@(fiscalisationEnabled ? "Fiscalise and post credit" : "Post credit")</button><button class="btn btn-outline-secondary" @onclick="() => showCredit = false">Cancel</button></div> }
     @if (status is not null) { <div class="alert alert-danger no-print">@status</div> }
+    @if (fiscalRecord?.Status == FiscalisationStatus.Accepted)
+    {
+        <div class="alert alert-success">
+            <strong>Fiscal response accepted@(fiscalRecord.SdcInvoiceNumber?.StartsWith("SIMULATED-") == true ? " by the development simulator" : "").</strong>
+            <div>SDC invoice number: @fiscalRecord.SdcInvoiceNumber · @fiscalRecord.SdcIssuedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm")</div>
+            @if (fiscalRecord.SdcInvoiceNumber?.StartsWith("SIMULATED-") == true)
+            {
+                <div class="small">Not connected to FRCS and not valid for customer issue or accreditation evidence.</div>
+            }
+        </div>
+    }
     <article class="invoice-document"><header><div class="document-header-row"><div class="document-heading">@if (logoDataUrl is not null) { <img class="company-logo" src="@logoDataUrl" alt="@($"{SupplierName} logo")" /> } else { <span class="document-brand">Account Island</span> }</div><h1>@DocumentTitle</h1><div class="document-number"><strong>@invoice.InvoiceNumber</strong><span class="status-badge">@(invoice.Status == InvoiceStatus.PartPaid ? "Part paid" : invoice.Status.ToString())</span></div></div></header>
         <section class="invoice-meta"><div><small>From</small><strong>@SupplierName</strong><span>@SupplierAddress</span>@if (!string.IsNullOrWhiteSpace(SupplierTin)) { <span>TIN: @SupplierTin</span> }</div><div><small>Bill to</small><strong>@RecipientName</strong><span>@RecipientAddress</span>@if (!string.IsNullOrWhiteSpace(RecipientTin)) { <span>TIN: @RecipientTin</span> }</div><dl><dt>Issue date</dt><dd>@invoice.IssueDate.ToString("dd MMM yyyy")</dd><dt>Due date</dt><dd>@invoice.DueDate.ToString("dd MMM yyyy")</dd><dt>Currency</dt><dd>@invoice.Currency</dd><dt>Branch / division</dt><dd>@invoice.Branch?.Name / @invoice.Division?.Name</dd></dl></section>
         <table class="document-lines"><thead><tr><th>Description</th><th>Project</th><th>Customer PO</th><th class="number">Qty</th><th class="number">Unit price</th><th>Tax treatment</th><th class="number">VAT excl.</th></tr></thead><tbody>@foreach (var line in invoice.Lines) { <tr><td>@line.Description</td><td>@ProjectLabel(line)</td><td>@(string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber)</td><td class="number">@line.Quantity.ToString("N2")</td><td class="number">@invoice.Currency @line.TransactionUnitPrice.ToString("N2")</td><td>@FijiTaxDocumentCompliance.TaxLabel(line)</td><td class="number">@invoice.Currency @line.TransactionNetAmount.ToString("N2")</td></tr> }</tbody></table>
         <section class="document-totals"><div><span>VAT exclusive</span><strong>@invoice.Currency @invoice.TransactionSubtotal.ToString("N2")</strong></div>@foreach (var supplyTotal in SupplyTotals) { <div><span>@supplyTotal.Label</span><strong>@invoice.Currency @supplyTotal.Amount.ToString("N2")</strong></div> }<div><span>@access.Organisation.TaxLabel</span><strong>@invoice.Currency @invoice.TransactionVatTotal.ToString("N2")</strong></div><div class="grand-total"><span>VAT inclusive</span><strong>@invoice.Currency @invoice.TransactionTotal.ToString("N2")</strong></div>@if (!string.Equals(invoice.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase)) { <div><span>Exchange rate</span><strong>1 @invoice.Currency = @invoice.ExchangeRateToBase.ToString("0.########") @access.Organisation.BaseCurrency</strong></div><div><span>Posted value</span><strong>@access.Organisation.BaseCurrency @invoice.Total.ToString("N2")</strong></div> }<div><span>Credits (base)</span><strong>@access.Organisation.BaseCurrency @invoice.AmountCredited.ToString("N2")</strong></div><div><span>Paid (base)</span><strong>@access.Organisation.BaseCurrency @invoice.AmountPaid.ToString("N2")</strong></div><div><span>Amount due (base)</span><strong>@access.Organisation.BaseCurrency @AvailableCredit.ToString("N2")</strong></div></section>
+        @if (fiscalReceipt is not null)
+        {
+            <section class="fiscal-receipt @(fiscalReceipt.IsSimulated ? "simulated" : null)">
+                <div>
+                    <small>@(fiscalReceipt.IsSimulated ? "Development fiscal response" : "Fiscal verification")</small>
+                    <strong>@fiscalReceipt.SdcInvoiceNumber</strong>
+                    <span>@fiscalReceipt.IssuedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                    @if (fiscalReceipt.VerificationUrl is not null)
+                    {
+                        <a href="@fiscalReceipt.VerificationUrl">Verify fiscal invoice</a>
+                    }
+                    @if (fiscalReceipt.IsSimulated)
+                    {
+                        <span>SIMULATED — not connected to FRCS and not valid for customer issue.</span>
+                    }
+                </div>
+                @if (fiscalReceipt.QrImageSource is not null)
+                {
+                    <img src="@fiscalReceipt.QrImageSource" alt="Fiscal verification QR code" />
+                }
+                else
+                {
+                    <div class="fiscal-qr-placeholder">@(fiscalReceipt.IsSimulated ? "SIMULATED QR" : "QR unavailable")</div>
+                }
+            </section>
+        }
         @if (invoice.Status == InvoiceStatus.Draft) { <footer>DRAFT — Not posted to the ledger</footer> }
         else if (invoice.IsSimplifiedTaxInvoice) { <div class="alert alert-info mt-4">Price payable is inclusive of VAT.</div> }
         else if (invoice.IsTaxInvoice is null) { <div class="alert alert-secondary mt-4">Legacy document — the compliance profile was not captured when this invoice was issued.</div> }
@@ -99,7 +140,7 @@ else
 
                             @if (creditReversals.TryGetValue(
                                 credit.Id,
-                                out var reversal))
+                                out var reversal) && reversal.Status == SalesCreditNoteReversalStatus.Posted)
                             {
                                 <td>
                                     <span class="badge text-bg-secondary">
@@ -117,6 +158,25 @@ else
                                         @reversal.Reason
                                     </span>
                                 </td>
+                            }
+                            else if (reversal is not null)
+                            {
+                                var reversalRecord = ReversalFiscalRecord(reversal.Id);
+                                <td>
+                                    <span class="badge @ReversalStatusClass(reversalRecord?.Status)">@ReversalStatusText(reversalRecord?.Status)</span>
+                                    <div class="small text-muted mt-1">@reversal.ReversalDate.ToString("dd MMM yyyy")</div>
+                                </td>
+                                <td class="text-end">
+                                    @if (canPost)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenCreditReversal(credit.Id)">@ReversalButtonText(reversalRecord?.Status)</button>
+                                    }
+                                </td>
+                            }
+                            else if (credit.Status == SalesCreditNoteStatus.Draft)
+                            {
+                                <td><span class="badge text-bg-warning">Draft</span></td>
+                                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="o/@OrganisationId/sales/credits/@credit.Id">Resume</a></td>
                             }
                             else
                             {
@@ -160,9 +220,14 @@ else
                 </strong>
 
                 <span>
-                    A reversing journal will be posted and retained
-                    in the audit trail. Any tracked stock restored by
-                    this credit note will also be reversed.
+                    @if (fiscalisationEnabled)
+                    {
+                        <text>The correction will be submitted or recovered first. The reversing journal and tracked-stock removal post only after an accepted response.</text>
+                    }
+                    else
+                    {
+                        <text>A reversing journal will be posted and retained in the audit trail. Any tracked stock restored by this credit note will also be reversed.</text>
+                    }
                 </span>
             </div>
 
@@ -178,7 +243,7 @@ else
             <button
                 class="btn btn-danger"
                 @onclick="ReverseCredit">
-                Post reversal
+                @(fiscalisationEnabled ? ReversalButtonText(SelectedReversalFiscalStatus) : "Post reversal")
             </button>
 
             <button
@@ -203,10 +268,16 @@ else
 
     private List<SalesCreditNote> credits = [];
     private Dictionary<Guid, SalesCreditNoteReversal> creditReversals = [];
+    private Dictionary<Guid, FiscalisationRecord> reversalFiscalRecords = [];
 
     private string userId = "";
 
     private bool canPost;
+    private bool fiscalisationEnabled;
+    private FiscalisationRecord? fiscalRecord;
+    private FiscalReceiptView? fiscalReceipt;
+    private SalesInvoiceVoid? invoiceVoid;
+    private FiscalisationRecord? voidFiscalRecord;
     private bool showVoid;
     private bool showEmailInvoice;
     private bool sendingInvoiceEmail;
@@ -250,6 +321,9 @@ else
                 userId,
                 OrganisationId);
 
+        fiscalisationEnabled = await Db.FiscalisationConfigurations.AsNoTracking()
+            .AnyAsync(x => x.OrganisationId == OrganisationId && x.IsEnabled);
+
         var branding = await BrandingService.GetAsync(userId, OrganisationId);
         logoDataUrl = branding is null
             ? null
@@ -278,6 +352,24 @@ else
                         x.DivisionId != null &&
                         accessibleDivisionIds.Contains(x.DivisionId.Value));
 
+        fiscalRecord = await Db.FiscalisationRecords
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x =>
+                x.SalesInvoiceId == InvoiceId &&
+                x.OrganisationId == OrganisationId);
+        fiscalReceipt = fiscalRecord?.Status == FiscalisationStatus.Accepted
+            ? FiscalReceiptPresenter.Create(fiscalRecord)
+            : null;
+
+        invoiceVoid = await Db.SalesInvoiceVoids.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.SalesInvoiceId == InvoiceId && x.OrganisationId == OrganisationId);
+        voidFiscalRecord = invoiceVoid is null
+            ? null
+            : await Db.FiscalisationRecords.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.SalesInvoiceVoidId == invoiceVoid.Id && x.OrganisationId == OrganisationId);
+        if (invoiceVoid?.Status == SalesInvoiceVoidStatus.Draft)
+            voidDate = invoiceVoid.VoidDate;
+
         credits =
             await Db.SalesCreditNotes
                 .AsNoTracking()
@@ -300,6 +392,16 @@ else
                         creditIds.Contains(x.SalesCreditNoteId))
                 .ToListAsync())
             .ToDictionary(x => x.SalesCreditNoteId);
+
+        var reversalIds = creditReversals.Values.Select(x => x.Id).ToArray();
+        reversalFiscalRecords = (await Db.FiscalisationRecords
+                .AsNoTracking()
+                .Where(x =>
+                    x.OrganisationId == OrganisationId &&
+                    x.SalesCreditNoteReversalId != null &&
+                    reversalIds.Contains(x.SalesCreditNoteReversalId.Value))
+                .ToListAsync())
+            .ToDictionary(x => x.SalesCreditNoteReversalId!.Value);
     }
 
     private async Task CopyInvoice()
@@ -398,7 +500,7 @@ else
     {
         try
         {
-            await InvoiceService.PostDraftAsync(
+            await FiscalisedPosting.PostAsync(
                 userId,
                 OrganisationId,
                 InvoiceId);
@@ -417,11 +519,20 @@ else
     {
         try
         {
-            await InvoiceService.VoidAsync(
-                userId,
-                OrganisationId,
-                InvoiceId,
-                voidDate);
+            if (fiscalisationEnabled)
+            {
+                var draft = invoiceVoid ?? await FiscalisedInvoiceVoidPosting.CreateDraftAsync(
+                    userId, OrganisationId, InvoiceId, voidDate);
+                await FiscalisedInvoiceVoidPosting.PostAsync(userId, OrganisationId, draft.Id);
+            }
+            else
+            {
+                await InvoiceService.VoidAsync(
+                    userId,
+                    OrganisationId,
+                    InvoiceId,
+                    voidDate);
+            }
 
             showVoid = false;
 
@@ -432,8 +543,35 @@ else
                   or UnauthorizedAccessException)
         {
             status = ex.Message;
+            await Reload();
         }
     }
+
+    private static string VoidStatusText(FiscalisationStatus? fiscalStatus) => fiscalStatus switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recovery required",
+        FiscalisationStatus.Rejected => "Fiscal void rejected",
+        FiscalisationStatus.Accepted => "Accepted; accounting pending",
+        FiscalisationStatus.Prepared => "Prepared",
+        _ => "Void draft"
+    };
+
+    private static string VoidButtonText(FiscalisationStatus? fiscalStatus) => fiscalStatus switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recover and post",
+        FiscalisationStatus.Rejected => "Retry fiscal void",
+        FiscalisationStatus.Prepared => "Submit and post",
+        FiscalisationStatus.Accepted => "Post accepted void",
+        _ => "Fiscalise and void"
+    };
+
+    private static string VoidStatusClass(FiscalisationStatus? fiscalStatus) => fiscalStatus switch
+    {
+        FiscalisationStatus.Rejected => "text-bg-danger",
+        FiscalisationStatus.Accepted => "text-bg-success",
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "text-bg-warning",
+        _ => "text-bg-info"
+    };
 
     private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
         ? "—"
@@ -442,11 +580,17 @@ else
     private void OpenCreditReversal(Guid creditNoteId)
     {
         reversingCreditId = creditNoteId;
-
-        creditReversalDate =
-            DateOnly.FromDateTime(DateTime.Today);
-
-        creditReversalReason = "";
+        if (creditReversals.TryGetValue(creditNoteId, out var pending) &&
+            pending.Status == SalesCreditNoteReversalStatus.Draft)
+        {
+            creditReversalDate = pending.ReversalDate;
+            creditReversalReason = pending.Reason;
+        }
+        else
+        {
+            creditReversalDate = DateOnly.FromDateTime(DateTime.Today);
+            creditReversalReason = "";
+        }
 
         showCredit = false;
         showVoid = false;
@@ -471,12 +615,23 @@ else
                 credits.Single(
                     x => x.Id == reversingCreditId.Value);
 
-            await CreditNoteService.ReverseAsync(
-                userId,
-                OrganisationId,
-                reversingCreditId.Value,
-                creditReversalDate,
-                creditReversalReason);
+            if (fiscalisationEnabled)
+            {
+                var reversal = creditReversals.TryGetValue(credit.Id, out var existing)
+                    ? existing
+                    : await FiscalisedCreditReversalPosting.CreateDraftAsync(
+                        userId, OrganisationId, credit.Id, creditReversalDate, creditReversalReason);
+                await FiscalisedCreditReversalPosting.PostAsync(userId, OrganisationId, reversal.Id);
+            }
+            else
+            {
+                await CreditNoteService.ReverseAsync(
+                    userId,
+                    OrganisationId,
+                    reversingCreditId.Value,
+                    creditReversalDate,
+                    creditReversalReason);
+            }
 
             reversingCreditId = null;
             creditReversalReason = "";
@@ -491,6 +646,42 @@ else
                   or UnauthorizedAccessException)
         {
             status = ex.Message;
+            await Reload();
         }
     }
+
+    private FiscalisationRecord? ReversalFiscalRecord(Guid reversalId) =>
+        reversalFiscalRecords.GetValueOrDefault(reversalId);
+
+    private FiscalisationStatus? SelectedReversalFiscalStatus =>
+        reversingCreditId is Guid creditId &&
+        creditReversals.TryGetValue(creditId, out var reversal)
+            ? ReversalFiscalRecord(reversal.Id)?.Status
+            : null;
+
+    private static string ReversalStatusText(FiscalisationStatus? status) => status switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recovery required",
+        FiscalisationStatus.Rejected => "Fiscal reversal rejected",
+        FiscalisationStatus.Accepted => "Accepted; accounting pending",
+        FiscalisationStatus.Prepared => "Prepared",
+        _ => "Reversal draft"
+    };
+
+    private static string ReversalButtonText(FiscalisationStatus? status) => status switch
+    {
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "Recover and post",
+        FiscalisationStatus.Rejected => "Retry fiscal reversal",
+        FiscalisationStatus.Prepared => "Submit and post",
+        FiscalisationStatus.Accepted => "Post accepted reversal",
+        _ => "Fiscalise and reverse"
+    };
+
+    private static string ReversalStatusClass(FiscalisationStatus? status) => status switch
+    {
+        FiscalisationStatus.Rejected => "text-bg-danger",
+        FiscalisationStatus.Accepted => "text-bg-success",
+        FiscalisationStatus.RecoveryRequired or FiscalisationStatus.Submitting => "text-bg-warning",
+        _ => "text-bg-info"
+    };
 }

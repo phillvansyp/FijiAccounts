@@ -231,12 +231,256 @@ public sealed class DemoDataServiceTests
         Assert.All(journals, journal =>
             Assert.Equal(journal.Lines.Sum(x => x.Debit), journal.Lines.Sum(x => x.Credit)));
 
+        var fixedAssets = await db.FixedAssets
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .Include(x => x.DepreciationEntries)
+            .ToListAsync();
+        Assert.Equal(4, fixedAssets.Count);
+        Assert.All(fixedAssets, asset =>
+        {
+            Assert.True(asset.IsActive);
+            Assert.NotNull(asset.AcquisitionJournalId);
+            Assert.Single(asset.DepreciationEntries);
+            Assert.True(asset.DepreciationEntries[0].Amount > 0);
+        });
+
+        var trackedItems = await db.ProductItems
+            .Where(x =>
+                demoOrganisationIds.Contains(x.OrganisationId) &&
+                x.Kind == ProductKind.TrackedItem)
+            .ToListAsync();
+        Assert.Equal(6, trackedItems.Count);
+        Assert.All(trackedItems, item =>
+        {
+            Assert.True(item.QuantityOnHand > 0);
+            Assert.True(item.AverageCost > 0);
+            Assert.NotNull(item.InventoryAccountId);
+        });
+        Assert.Equal(
+            12,
+            await db.InventoryMovements.CountAsync(x =>
+                demoOrganisationIds.Contains(x.OrganisationId)));
+
+        var accountingPeriods = await db.AccountingPeriods
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .ToListAsync();
+        Assert.Equal(8, accountingPeriods.Count);
+        foreach (var organisationId in demoOrganisationIds)
+        {
+            var companyPeriods = accountingPeriods
+                .Where(x => x.OrganisationId == organisationId)
+                .OrderBy(x => x.StartsOn)
+                .ToList();
+            Assert.Equal(4, companyPeriods.Count);
+            Assert.Equal(3, companyPeriods.Count(x => x.IsLocked));
+            Assert.False(companyPeriods[^1].IsLocked);
+            Assert.Equal(new DateOnly(asOf.Year, asOf.Month, 1), companyPeriods[^1].StartsOn);
+            Assert.Null(companyPeriods[^1].LockedAt);
+            Assert.All(companyPeriods[..^1], period =>
+            {
+                Assert.NotNull(period.LockedAt);
+                Assert.Equal(administrator.Id, period.LockedByUserId);
+            });
+        }
+        Assert.Equal(
+            6,
+            await db.AuditEvents.CountAsync(x =>
+                demoOrganisationIds.Contains(x.OrganisationId) &&
+                x.EventType == "AccountingPeriodLocked"));
+
+        var notifications = await db.Notifications
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .ToListAsync();
+        Assert.NotEmpty(notifications);
+        Assert.All(notifications, notification =>
+        {
+            Assert.Equal(NotificationType.PaymentDueSoon, notification.Type);
+            Assert.Equal(NotificationStatus.Open, notification.Status);
+            Assert.False(notification.IsRead);
+            Assert.True(notification.Amount > 0);
+            Assert.Contains(
+                notification.RelatedEntityType,
+                new[] { nameof(SalesInvoice), nameof(SupplierBill) });
+        });
+        Assert.All(
+            demoOrganisationIds,
+            organisationId => Assert.Contains(
+                notifications,
+                notification => notification.OrganisationId == organisationId));
+
+        Assert.Equal(
+            6,
+            await db.TransactionExchangeRates.CountAsync(x =>
+                demoOrganisationIds.Contains(x.OrganisationId)));
+        Assert.Equal(
+            6,
+            await db.OrganisationCurrencies.CountAsync(x =>
+                demoOrganisationIds.Contains(x.OrganisationId) && x.IsActive));
+        var foreignInvoices = await db.SalesInvoices
+            .Where(x =>
+                demoOrganisationIds.Contains(x.OrganisationId) &&
+                x.Currency != "FJD")
+            .ToListAsync();
+        var foreignBills = await db.SupplierBills
+            .Where(x =>
+                demoOrganisationIds.Contains(x.OrganisationId) &&
+                x.Currency != "FJD")
+            .ToListAsync();
+        Assert.Equal(6, foreignInvoices.Count);
+        Assert.Equal(6, foreignBills.Count);
+        Assert.All(foreignInvoices, invoice =>
+        {
+            Assert.True(invoice.ExchangeRateToBase > 1m);
+            Assert.True(invoice.TransactionTotal > 0m);
+            Assert.Equal(0m, invoice.TransactionAmountPaid);
+        });
+        Assert.All(foreignBills, bill =>
+        {
+            Assert.True(bill.ExchangeRateToBase > 1m);
+            Assert.True(bill.TransactionTotal > 0m);
+            Assert.Equal(0m, bill.TransactionAmountPaid);
+        });
+        var specialistDivisionIds = await db.Divisions
+            .Where(x =>
+                demoOrganisationIds.Contains(x.Branch.OrganisationId) &&
+                !x.IsDefault)
+            .Select(x => x.Id)
+            .ToListAsync();
+        Assert.NotEmpty(specialistDivisionIds);
+        Assert.All(
+            specialistDivisionIds,
+            divisionId => Assert.Contains(
+                journals.SelectMany(x => x.Lines),
+                line => line.DivisionId == divisionId));
+
+        var elimination = await db.GroupEliminationJournals
+            .Include(x => x.Lines)
+            .SingleAsync(x => x.OrganisationGroupId == demoGroup.Id);
+        Assert.Equal($"ELIM-{asOf.Year}-001", elimination.Reference);
+        Assert.Equal("FJD", elimination.Currency);
+        Assert.Equal(4, elimination.Lines.Count);
+        Assert.Equal(
+            elimination.Lines.Sum(x => x.Debit),
+            elimination.Lines.Sum(x => x.Credit));
+        Assert.Contains(elimination.Lines, x =>
+            x.AccountCode == "4000" && x.Debit == 25_000m);
+        Assert.Contains(elimination.Lines, x =>
+            x.AccountCode == "5000" && x.Credit == 25_000m);
+        Assert.Contains(elimination.Lines, x =>
+            x.AccountCode == "2000" && x.Debit == 10_000m);
+        Assert.Contains(elimination.Lines, x =>
+            x.AccountCode == "1100" && x.Credit == 10_000m);
+
+        var statementLines = await db.BankStatementLines
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .ToListAsync();
+        Assert.Equal(
+            first.CustomerReceiptCount + first.SupplierPaymentCount,
+            statementLines.Count);
+        Assert.All(statementLines, line =>
+        {
+            Assert.NotEqual(0, line.Amount);
+            Assert.Equal("Demo", line.Source);
+            Assert.NotNull(line.ImportBatchId);
+            Assert.NotNull(line.SourceHash);
+        });
+
+        var reconciliationSessions = await db.BankReconciliationSessions
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .ToListAsync();
+        Assert.Equal(4, reconciliationSessions.Count);
+        Assert.Equal(2, reconciliationSessions.Count(x => x.IsCompleted));
+        Assert.Equal(2, reconciliationSessions.Count(x => !x.IsCompleted));
+        Assert.All(reconciliationSessions, session =>
+        {
+            Assert.Equal(0, session.Difference);
+            Assert.Equal(session.ClosingStatementBalance, session.LedgerBalance);
+        });
+        foreach (var organisationId in demoOrganisationIds)
+        {
+            Assert.Equal(
+                4,
+                statementLines.Count(x =>
+                    x.OrganisationId == organisationId &&
+                    x.ReconciledAt == null));
+            var completed = reconciliationSessions.Single(x =>
+                x.OrganisationId == organisationId && x.IsCompleted);
+            Assert.DoesNotContain(statementLines, x =>
+                x.OrganisationId == organisationId &&
+                x.TransactionDate >= completed.StatementStartDate &&
+                x.TransactionDate <= completed.StatementEndDate &&
+                x.ReconciledAt == null);
+        }
+
+        var budgets = await db.AccountBudgets
+            .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
+            .ToListAsync();
+        Assert.NotEmpty(budgets);
+        Assert.All(budgets, budget => Assert.True(budget.Amount > 0));
+        foreach (var organisationId in demoOrganisationIds)
+        {
+            var organisationBudgets = budgets
+                .Where(x => x.OrganisationId == organisationId)
+                .ToList();
+            Assert.Contains(organisationBudgets, x => x.ScopeKey == "organisation");
+            Assert.Contains(organisationBudgets, x => x.ScopeKey.StartsWith("branch:"));
+            Assert.Contains(organisationBudgets, x => x.ScopeKey.StartsWith("division:"));
+            Assert.All(
+                organisationBudgets.Where(x => x.ScopeKey.StartsWith("branch:")),
+                budget =>
+                {
+                    Assert.NotNull(budget.BranchId);
+                    Assert.Null(budget.DivisionId);
+                });
+            Assert.All(
+                organisationBudgets.Where(x => x.ScopeKey.StartsWith("division:")),
+                budget =>
+                {
+                    Assert.NotNull(budget.BranchId);
+                    Assert.NotNull(budget.DivisionId);
+                });
+        }
+
         var invoiceDates = await db.SalesInvoices
             .Where(x => demoOrganisationIds.Contains(x.OrganisationId))
             .Select(x => x.IssueDate)
             .ToListAsync();
         Assert.All(invoiceDates, date =>
             Assert.InRange(date, first.StartDate, first.AsOfDate));
+
+        var approvalBill = await db.SupplierBills
+            .FirstAsync(x => demoOrganisationIds.Contains(x.OrganisationId));
+        var approvalBank = await db.LedgerAccounts
+            .SingleAsync(x =>
+                x.OrganisationId == approvalBill.OrganisationId &&
+                x.Code == "1000");
+        db.SupplierPaymentApprovals.Add(new SupplierPaymentApproval
+        {
+            OrganisationId = approvalBill.OrganisationId,
+            BranchId = approvalBill.BranchId,
+            DivisionId = approvalBill.DivisionId,
+            SupplierId = approvalBill.SupplierId,
+            SupplierBillId = approvalBill.Id,
+            PaymentDate = asOf,
+            Reference = "DEMO-APPROVAL",
+            Amount = 1m,
+            BankAccountId = approvalBank.Id,
+            RequestedByUserId = demoOwner.Id
+        });
+        var projectBranch = await db.Branches
+            .Include(x => x.Divisions)
+            .FirstAsync(x => x.OrganisationId == approvalBill.OrganisationId);
+        db.Projects.Add(new Project
+        {
+            OrganisationId = approvalBill.OrganisationId,
+            BranchId = projectBranch.Id,
+            DivisionId = projectBranch.Divisions.First().Id,
+            ProjectNumber = "DEMO-PROJECT",
+            Name = "Legacy demo project",
+            StartDate = asOf.AddMonths(-1),
+            CreatedByUserId = demoOwner.Id
+        });
+        await db.SaveChangesAsync();
 
         var second = await service.ResetAndGenerateAsync(administrator.Id, asOf);
         Assert.Equal(first, second);
@@ -248,6 +492,10 @@ public sealed class DemoDataServiceTests
         Assert.True(await db.Organisations.AnyAsync(x => x.Id == unrelated.Id));
         Assert.Equal(1, await db.OrganisationGroups.CountAsync(x => x.Id == demoGroup.Id));
         Assert.False(await db.OrganisationGroups.AnyAsync(x => x.Id == legacyDemoGroup.Id));
+        Assert.Equal(
+            1,
+            await db.GroupEliminationJournals.CountAsync(x =>
+                x.OrganisationGroupId == demoGroup.Id));
     }
 
     private static ApplicationUser User(string id, string email) => new()

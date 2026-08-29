@@ -1,0 +1,300 @@
+@page "/o/{OrganisationId:guid}/tax/fiscalisation"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using FijiAccounts.Domain.Fiscalisation
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject FiscalisationConfigurationService ConfigurationService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Fiscalisation readiness · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Fiji VMS readiness</p>
+            <h1>Fiscalisation</h1>
+            <p class="page-intro">Track the controls required before customer invoices can be fiscalised through an accredited SDC.</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="@($"/o/{OrganisationId}/tax")">Back to tax centre</a>
+    </div>
+
+    @if (Environment.IsDevelopment())
+    {
+        <div class="alert alert-warning">
+            <strong>Development simulator only — not connected to FRCS and not accredited.</strong>
+            Any number, signature, verification link or QR value produced locally is clearly marked simulated and must never be issued to a customer.
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-info">
+            <strong>FRCS connection deferred.</strong> No accredited SDC connection is configured, so live submission is safely disabled.
+        </div>
+    }
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Connection</span>
+                <h2 class="h4 mt-2">@(Environment.IsDevelopment() ? "Local simulator" : "Not configured")</h2>
+                <p class="mb-0">FRCS certificates, environment discovery and accreditation are saved for the connection phase.</p>
+            </div></section>
+        </div>
+        <div class="col-md-4">
+            <section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Workflow controls</span>
+                <h2 class="h4 mt-2">Invoice and refund gates ready</h2>
+                <p class="mb-0">Number reservation, line-level refunds, response recovery, tracked-stock returns, credit reversals and invoice voids all require an accepted response before accounting posts.</p>
+            </div></section>
+        </div>
+        <div class="col-md-4">
+            <section class="card h-100"><div class="card-body">
+                <span class="text-secondary">Fiscal records</span>
+                <h2 class="h4 mt-2">@records.Count</h2>
+                <p class="mb-0">@records.Count(x => x.Status == FiscalisationStatus.Accepted) accepted · @records.Count(x => x.Status == FiscalisationStatus.RecoveryRequired) awaiting recovery</p>
+            </div></section>
+        </div>
+    </div>
+
+    @if (statusMessage is not null)
+    {
+        <div class="alert @statusClass">@statusMessage</div>
+    }
+
+    <section class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Invoice fiscalisation settings</strong>
+            <span class="badge @(configurationModel.IsEnabled ? "text-bg-success" : "text-bg-secondary")">
+                @(configurationModel.IsEnabled ? "Simulator gate enabled" : "Gate disabled")
+            </span>
+        </div>
+        <div class="card-body">
+            <p>
+                Enter labels copied from the active SDC environment. Account Island does not supply or guess these values.
+                Saving labels does not connect to FRCS.
+            </p>
+            <EditForm Model="configurationModel" OnValidSubmit="SaveConfiguration" FormName="fiscalisation-configuration">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Standard-rated SDC label</label>
+                        <InputText class="form-control" @bind-Value="configurationModel.StandardTaxLabel" disabled="@(!canManage)" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Zero-rated SDC label</label>
+                        <InputText class="form-control" @bind-Value="configurationModel.ZeroRatedTaxLabel" disabled="@(!canManage)" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Exempt SDC label</label>
+                        <InputText class="form-control" @bind-Value="configurationModel.ExemptTaxLabel" disabled="@(!canManage)" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Out-of-scope SDC label</label>
+                        <InputText class="form-control" @bind-Value="configurationModel.OutOfScopeTaxLabel" disabled="@(!canManage)" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Default payment type</label>
+                        <InputSelect class="form-select" @bind-Value="configurationModel.DefaultPaymentType" disabled="@(!canManage)">
+                            @foreach (var paymentType in Enum.GetValues<FiscalPaymentType>())
+                            {
+                                <option value="@paymentType">@PaymentTypeText(paymentType)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="form-check mb-2">
+                            <InputCheckbox class="form-check-input" @bind-Value="configurationModel.IsEnabled" disabled="@(!canManage || !Environment.IsDevelopment())" />
+                            <label class="form-check-label">Enable the development simulator invoice gate</label>
+                        </div>
+                    </div>
+                </div>
+                @if (canManage)
+                {
+                    <button class="btn btn-primary mt-3" disabled="@saving">
+                        @(saving ? "Saving…" : "Save fiscalisation settings")
+                    </button>
+                }
+                else
+                {
+                    <p class="text-secondary mb-0 mt-3">Only an organisation owner or administrator can change these settings.</p>
+                }
+            </EditForm>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-header"><strong>Submission register</strong></div>
+        @if (records.Count == 0)
+        {
+            <div class="card-body">
+                <h2 class="h5">No fiscal submissions yet</h2>
+                <p class="mb-0">The offline control layer and posting gate are ready. Activation is waiting for verified SDC tax labels; live connection remains disabled.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table mb-0 align-middle">
+                    <thead><tr><th>Document</th><th>Type</th><th>Status</th><th>Attempts</th><th>Last activity</th><th>SDC number</th></tr></thead>
+                    <tbody>
+                    @foreach (var record in records)
+                    {
+                        <tr>
+                            <td><a href="@DocumentUrl(record)">@DocumentNumber(record)</a></td>
+                            <td>@DocumentType(record)</td>
+                            <td><span class="badge @StatusClass(record.Status)">@StatusText(record.Status)</span></td>
+                            <td>@record.AttemptCount</td>
+                            <td>@(record.LastAttemptAt ?? record.CreatedAt).ToLocalTime().ToString("dd MMM yyyy HH:mm")</td>
+                            <td>@(record.SdcInvoiceNumber ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+
+    private AccessibleOrganisation? access;
+    private List<FiscalisationRecord> records = [];
+    private readonly ConfigurationModel configurationModel = new();
+    private string userId = "";
+    private bool canManage;
+    private bool saving;
+    private string? statusMessage;
+    private string statusClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null)
+        {
+            records = [];
+            return;
+        }
+
+        canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        var configuration = await ConfigurationService.GetAsync(userId, OrganisationId);
+        configurationModel.IsEnabled = configuration?.IsEnabled ?? false;
+        configurationModel.DefaultPaymentType = configuration?.DefaultPaymentType ?? FiscalPaymentType.Other;
+        configurationModel.StandardTaxLabel = configuration?.StandardTaxLabel;
+        configurationModel.ZeroRatedTaxLabel = configuration?.ZeroRatedTaxLabel;
+        configurationModel.ExemptTaxLabel = configuration?.ExemptTaxLabel;
+        configurationModel.OutOfScopeTaxLabel = configuration?.OutOfScopeTaxLabel;
+
+        var loadedRecords = await Db.FiscalisationRecords.AsNoTracking()
+            .Include(x => x.SalesInvoice)
+            .Include(x => x.SalesCreditNote)
+            .Include(x => x.SalesCreditNoteReversal)
+                .ThenInclude(x => x!.SalesCreditNote)
+            .Include(x => x.SalesInvoiceVoid)
+                .ThenInclude(x => x!.SalesInvoice)
+            .Where(x => x.OrganisationId == OrganisationId)
+            .ToListAsync();
+        records = loadedRecords.OrderByDescending(x => x.CreatedAt).ToList();
+    }
+
+    private async Task SaveConfiguration()
+    {
+        saving = true;
+        try
+        {
+            var saved = await ConfigurationService.UpdateAsync(
+                userId,
+                new UpdateFiscalisationConfigurationRequest(
+                    OrganisationId,
+                    configurationModel.IsEnabled,
+                    configurationModel.DefaultPaymentType,
+                    configurationModel.StandardTaxLabel,
+                    configurationModel.ZeroRatedTaxLabel,
+                    configurationModel.ExemptTaxLabel,
+                    configurationModel.OutOfScopeTaxLabel));
+            configurationModel.IsEnabled = saved.IsEnabled;
+            statusMessage = saved.IsEnabled
+                ? "Development simulator gate enabled. No FRCS connection was made."
+                : "Fiscalisation settings saved with the invoice gate disabled.";
+            statusClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusMessage = ex.Message;
+            statusClass = "alert-danger";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static string PaymentTypeText(FiscalPaymentType paymentType) => paymentType switch
+    {
+        FiscalPaymentType.WireTransfer => "Bank transfer",
+        FiscalPaymentType.MobileMoney => "Mobile money",
+        _ => paymentType.ToString()
+    };
+
+    private static string StatusText(FiscalisationStatus status) => status switch
+    {
+        FiscalisationStatus.RecoveryRequired => "Recovery required",
+        _ => status.ToString()
+    };
+
+    private string DocumentUrl(FiscalisationRecord record) => record.SourceDocumentKind switch
+    {
+        FiscalSourceDocumentKind.SalesCreditNote => $"/o/{OrganisationId}/sales/credits/{record.SalesCreditNoteId}",
+        FiscalSourceDocumentKind.SalesCreditNoteReversal => $"/o/{OrganisationId}/sales/credits/{record.SalesCreditNoteReversal?.SalesCreditNoteId}",
+        FiscalSourceDocumentKind.SalesInvoiceVoid => $"/o/{OrganisationId}/sales/{record.SalesInvoiceVoid?.SalesInvoiceId}",
+        _ => $"/o/{OrganisationId}/sales/{record.SalesInvoiceId}"
+    };
+
+    private static string DocumentNumber(FiscalisationRecord record) => record.SourceDocumentKind switch
+    {
+        FiscalSourceDocumentKind.SalesCreditNote => record.SalesCreditNote?.CreditNoteNumber ?? "Credit note",
+        FiscalSourceDocumentKind.SalesCreditNoteReversal => $"REV-{record.SalesCreditNoteReversal?.SalesCreditNote?.CreditNoteNumber ?? "Credit note"}",
+        FiscalSourceDocumentKind.SalesInvoiceVoid => $"VOID-{record.SalesInvoiceVoid?.SalesInvoice?.InvoiceNumber ?? "Sales invoice"}",
+        _ => record.SalesInvoice?.InvoiceNumber ?? "Sales invoice"
+    };
+
+    private static string DocumentType(FiscalisationRecord record) => record.SourceDocumentKind switch
+    {
+        FiscalSourceDocumentKind.SalesCreditNote => "Credit refund",
+        FiscalSourceDocumentKind.SalesCreditNoteReversal => "Credit reversal",
+        FiscalSourceDocumentKind.SalesInvoiceVoid => "Invoice void",
+        _ => "Sales invoice"
+    };
+
+    private static string StatusClass(FiscalisationStatus status) => status switch
+    {
+        FiscalisationStatus.Accepted => "text-bg-success",
+        FiscalisationStatus.Rejected => "text-bg-danger",
+        FiscalisationStatus.RecoveryRequired => "text-bg-warning",
+        FiscalisationStatus.Submitting => "text-bg-primary",
+        _ => "text-bg-secondary"
+    };
+
+    private sealed class ConfigurationModel
+    {
+        public bool IsEnabled { get; set; }
+        public FiscalPaymentType DefaultPaymentType { get; set; }
+        public string? StandardTaxLabel { get; set; }
+        public string? ZeroRatedTaxLabel { get; set; }
+        public string? ExemptTaxLabel { get; set; }
+        public string? OutOfScopeTaxLabel { get; set; }
+    }
+}

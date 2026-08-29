@@ -97,7 +97,14 @@ public static class MobileAuthenticationExtensions
         OpenIddictServerBuilder options,
         WebApplicationBuilder builder)
     {
-        if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
+        if (builder.Environment.IsEnvironment("Testing"))
+        {
+            options.AddEphemeralEncryptionKey()
+                .AddEphemeralSigningKey();
+            return;
+        }
+
+        if (builder.Environment.IsDevelopment())
         {
             options.AddDevelopmentEncryptionCertificate()
                 .AddDevelopmentSigningCertificate();

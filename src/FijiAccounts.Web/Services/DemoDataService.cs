@@ -188,6 +188,9 @@ public sealed class DemoDataService(
         var journalIds = await db.PostedJournals
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .Select(x => x.Id).ToArrayAsync(ct);
+        var projectIds = await db.Projects
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .Select(x => x.Id).ToArrayAsync(ct);
 
         await db.CashflowScenarioEvents
             .Where(x => organisationIds.Contains(x.CashflowScenario.OrganisationId))
@@ -233,6 +236,15 @@ public sealed class DemoDataService(
             .ExecuteDeleteAsync(ct);
         await db.RecurringInvoiceAutomationRuns
             .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.ProjectWipPostings
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.ProjectProgressClaims
+            .Where(x => projectIds.Contains(x.ProjectId))
+            .ExecuteDeleteAsync(ct);
+        await db.ProjectVariations
+            .Where(x => projectIds.Contains(x.ProjectId))
             .ExecuteDeleteAsync(ct);
         await db.CustomerReceiptAllocations
             .Where(x => receiptIds.Contains(x.CustomerReceiptId))
@@ -285,10 +297,16 @@ public sealed class DemoDataService(
         await db.SupplierCreditNotes
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
+        await db.SupplierPaymentApprovals
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
         await db.CustomerReceipts
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
         await db.SupplierPayments
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.FiscalisationRecords
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
         await db.SalesInvoices
@@ -327,6 +345,12 @@ public sealed class DemoDataService(
         await db.AccountBudgets
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
+        await db.TransactionExchangeRates
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.OrganisationCurrencies
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
         await db.BankRules
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
@@ -350,6 +374,12 @@ public sealed class DemoDataService(
             .ExecuteDeleteAsync(ct);
         await db.AccountantEngagements
             .Where(x => organisationIds.Contains(x.PracticeOrganisationId) || organisationIds.Contains(x.ClientOrganisationId))
+            .ExecuteDeleteAsync(ct);
+        await db.ProjectCostCodes
+            .Where(x => projectIds.Contains(x.ProjectId))
+            .ExecuteDeleteAsync(ct);
+        await db.Projects
+            .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
         await db.Divisions
             .Where(x => organisationIds.Contains(x.Branch.OrganisationId))
@@ -523,6 +553,25 @@ public sealed class DemoDataService(
         foreach (var company in companies)
         {
             var accounts = FijiStarterChart.For(company.Id).ToList();
+            accounts.AddRange(
+            [
+                new LedgerAccount
+                {
+                    OrganisationId = company.Id,
+                    Code = "1510",
+                    Name = "Accumulated Depreciation",
+                    Type = AccountType.Asset,
+                    IsSystemAccount = true
+                },
+                new LedgerAccount
+                {
+                    OrganisationId = company.Id,
+                    Code = "6700",
+                    Name = "Depreciation Expense",
+                    Type = AccountType.Expense,
+                    IsSystemAccount = true
+                }
+            ]);
             foreach (var account in accounts)
             {
                 account.Id = StableGuid($"{company.Id}:account:{account.Code}");
@@ -596,7 +645,9 @@ public sealed class DemoDataService(
             var companySalesTarget = companyIndex == 0 ? 875_000m : 375_000m;
             var invoiceNets = AllocateAmounts(random, invoiceCount, companySalesTarget, 0.45m, 1.9m);
             var invoices = new List<SalesInvoice>();
+            var bankJournals = new List<PostedJournal>();
             long journalSequence = 0;
+            AddCurrencyDemo(company, startDate, userId, generatedAt);
 
             for (var i = 0; i < invoiceCount; i++)
             {
@@ -606,19 +657,29 @@ public sealed class DemoDataService(
                         ? asOfDate
                         : RandomDate(random, startDate, asOfDate);
                 var branch = companyBranches[i % companyBranches.Length];
+                var division = SalesDivision(branch);
                 var net = invoiceNets[i];
                 var vat = Vat(net, issueDate);
+                var currency = SalesCurrency(i);
+                var exchangeRate = DemoExchangeRate(currency);
+                var transactionNet = ConvertToTransactionCurrency(net, exchangeRate);
+                var transactionVat = ConvertToTransactionCurrency(vat, exchangeRate);
                 var invoice = new SalesInvoice
                 {
                     Id = StableGuid($"{company.Id}:invoice:{i}"),
                     OrganisationId = company.Id,
                     BranchId = branch.Id,
-                    DivisionId = branch.Divisions.Single(x => x.IsDefault).Id,
+                    DivisionId = division.Id,
                     CustomerId = customers[WeightedIndex(random, customers.Count)].Id,
                     SequenceNumber = i + 1,
                     InvoiceNumber = $"INV-{i + 1:D6}",
                     IssueDate = issueDate,
                     DueDate = issueDate.AddDays(i % 7 == 0 ? 14 : 30),
+                    Currency = currency,
+                    ExchangeRateToBase = exchangeRate,
+                    TransactionSubtotal = transactionNet,
+                    TransactionVatTotal = transactionVat,
+                    TransactionTotal = transactionNet + transactionVat,
                     Status = InvoiceStatus.Posted,
                     Subtotal = net,
                     VatTotal = vat,
@@ -633,11 +694,15 @@ public sealed class DemoDataService(
                     CustomerPurchaseOrderNumber = i % 3 == 0 ? $"PO-{issueDate.Year}-{i + 4100}" : null,
                     Quantity = 1,
                     UnitPrice = net,
+                    TransactionUnitPrice = transactionNet,
                     VatTreatment = VatTreatment.Standard,
                     VatRate = vat == 0 ? 0 : vat / net,
                     NetAmount = net,
                     VatAmount = vat,
                     GrossAmount = net + vat,
+                    TransactionNetAmount = transactionNet,
+                    TransactionVatAmount = transactionVat,
+                    TransactionGrossAmount = transactionNet + transactionVat,
                     RevenueAccountId = accounts[i % 11 == 0 ? "4100" : "4000"].Id
                 });
                 var journal = SalesJournal(company, branch, invoice, accounts, ++journalSequence, userId);
@@ -655,21 +720,31 @@ public sealed class DemoDataService(
             {
                 var billDate = RandomDate(random, startDate, asOfDate);
                 var branch = companyBranches[(i + 1) % companyBranches.Length];
+                var division = PurchaseDivision(branch);
                 var net = billNets[i];
                 var vat = Vat(net, billDate);
+                var currency = PurchaseCurrency(i);
+                var exchangeRate = DemoExchangeRate(currency);
+                var transactionNet = ConvertToTransactionCurrency(net, exchangeRate);
+                var transactionVat = ConvertToTransactionCurrency(vat, exchangeRate);
                 var expenseCode = ExpenseCode(i);
                 var bill = new SupplierBill
                 {
                     Id = StableGuid($"{company.Id}:bill:{i}"),
                     OrganisationId = company.Id,
                     BranchId = branch.Id,
-                    DivisionId = branch.Divisions.Single(x => x.IsDefault).Id,
+                    DivisionId = division.Id,
                     SupplierId = suppliers[i % suppliers.Count].Id,
                     SequenceNumber = i + 1,
                     BillNumber = $"BILL-{i + 1:D6}",
                     SupplierReference = $"SUP-{billDate:yyMM}-{i + 1200}",
                     BillDate = billDate,
                     DueDate = billDate.AddDays(i % 5 == 0 ? 14 : 30),
+                    Currency = currency,
+                    ExchangeRateToBase = exchangeRate,
+                    TransactionSubtotal = transactionNet,
+                    TransactionVatTotal = transactionVat,
+                    TransactionTotal = transactionNet + transactionVat,
                     Status = BillStatus.Posted,
                     Subtotal = net,
                     VatTotal = vat,
@@ -683,11 +758,15 @@ public sealed class DemoDataService(
                     Description = PurchaseDescription(i),
                     Quantity = 1,
                     UnitPrice = net,
+                    TransactionUnitPrice = transactionNet,
                     VatTreatment = VatTreatment.Standard,
                     VatRate = vat == 0 ? 0 : vat / net,
                     NetAmount = net,
                     VatAmount = vat,
                     GrossAmount = net + vat,
+                    TransactionNetAmount = transactionNet,
+                    TransactionVatAmount = transactionVat,
+                    TransactionGrossAmount = transactionNet + transactionVat,
                     ExpenseAccountId = accounts[expenseCode].Id
                 });
                 var journal = BillJournal(company, branch, bill, accounts, ++journalSequence, userId);
@@ -737,6 +816,7 @@ public sealed class DemoDataService(
                 invoice.Status = amount == invoice.Total ? InvoiceStatus.Paid : InvoiceStatus.PartPaid;
                 db.CustomerReceipts.Add(receipt);
                 db.PostedJournals.Add(journal);
+                bankJournals.Add(journal);
             }
 
             foreach (var (bill, i) in bills.Select((value, index) => (value, index)))
@@ -768,6 +848,7 @@ public sealed class DemoDataService(
                 bill.AmountPaid = amount;
                 bill.Status = amount == bill.Total ? BillStatus.Paid : BillStatus.PartPaid;
                 db.PostedJournals.Add(journal);
+                bankJournals.Add(journal);
             }
 
             for (var i = 0; i < 3; i++)
@@ -806,10 +887,62 @@ public sealed class DemoDataService(
                 db.PostedJournals.Add(journal);
             }
 
+            AddNotificationDemo(
+                company,
+                invoices,
+                bills,
+                customers,
+                suppliers,
+                asOfDate,
+                generatedAt);
+
+            AddInventoryDemo(
+                company,
+                companyBranches,
+                accounts,
+                startDate,
+                asOfDate,
+                userId,
+                ref journalSequence);
+            AddFixedAssetDemo(
+                company,
+                companyBranches,
+                accounts,
+                startDate,
+                asOfDate,
+                userId,
+                generatedAt,
+                ref journalSequence);
+
+            AddBudgetDemo(
+                company,
+                invoices,
+                bills,
+                accounts,
+                userId,
+                generatedAt);
+
+            AddBankingDemo(
+                company,
+                accounts["1000"],
+                bankJournals,
+                startDate,
+                asOfDate,
+                userId);
+
+            AddAccountingPeriodDemo(
+                company,
+                startDate,
+                asOfDate,
+                userId,
+                generatedAt);
+
             company.NextSalesInvoiceNumber = invoiceCount + 1;
             company.NextSupplierBillNumber = billCount + 1;
             company.NextSalesCreditNoteNumber = 4;
         }
+
+        AddGroupEliminationDemo(group, asOfDate, userId, generatedAt);
 
         db.AuditEvents.AddRange(companies.Select(company => new AuditEvent
         {
@@ -834,6 +967,639 @@ public sealed class DemoDataService(
         await db.SaveChangesAsync(ct);
     }
 
+    private void AddNotificationDemo(
+        Organisation company,
+        IReadOnlyCollection<SalesInvoice> invoices,
+        IReadOnlyCollection<SupplierBill> bills,
+        IReadOnlyCollection<BusinessParty> customers,
+        IReadOnlyCollection<BusinessParty> suppliers,
+        DateOnly asOfDate,
+        DateTimeOffset generatedAt)
+    {
+        var reminderDate = asOfDate.AddDays(7);
+        var customerNames = customers.ToDictionary(x => x.Id, x => x.Name);
+        var supplierNames = suppliers.ToDictionary(x => x.Id, x => x.Name);
+
+        foreach (var invoice in invoices.Where(x =>
+                     x.DueDate > asOfDate &&
+                     x.DueDate <= reminderDate &&
+                     x.AmountPaid + x.AmountCredited < x.Total &&
+                     x.Status is not InvoiceStatus.Paid and
+                         not InvoiceStatus.Voided and
+                         not InvoiceStatus.Credited and
+                         not InvoiceStatus.Draft))
+        {
+            var daysUntilDue = invoice.DueDate.DayNumber - asOfDate.DayNumber;
+            db.Notifications.Add(new Notification
+            {
+                Id = StableGuid($"{company.Id}:notification:invoice:{invoice.Id}"),
+                OrganisationId = company.Id,
+                Title = "Invoice due soon",
+                Message = $"{invoice.InvoiceNumber} · {customerNames[invoice.CustomerId]} · due in {daysUntilDue} days.",
+                Type = NotificationType.PaymentDueSoon,
+                Severity = NotificationSeverity.Warning,
+                RelatedEntityType = nameof(SalesInvoice),
+                RelatedEntityId = invoice.Id.ToString(),
+                Amount = invoice.Total - invoice.AmountPaid - invoice.AmountCredited,
+                Currency = invoice.Currency,
+                CreatedAt = generatedAt,
+                CreatedAtTicks = generatedAt.UtcTicks
+            });
+        }
+
+        foreach (var bill in bills.Where(x =>
+                     x.DueDate > asOfDate &&
+                     x.DueDate <= reminderDate &&
+                     x.AmountPaid + x.AmountCredited < x.Total &&
+                     x.Status is not BillStatus.Paid and
+                         not BillStatus.Voided and
+                         not BillStatus.Credited))
+        {
+            var daysUntilDue = bill.DueDate.DayNumber - asOfDate.DayNumber;
+            db.Notifications.Add(new Notification
+            {
+                Id = StableGuid($"{company.Id}:notification:bill:{bill.Id}"),
+                OrganisationId = company.Id,
+                Title = "Supplier bill due soon",
+                Message = $"{bill.BillNumber} · {supplierNames[bill.SupplierId]} · due in {daysUntilDue} days.",
+                Type = NotificationType.PaymentDueSoon,
+                Severity = NotificationSeverity.Warning,
+                RelatedEntityType = nameof(SupplierBill),
+                RelatedEntityId = bill.Id.ToString(),
+                Amount = bill.Total - bill.AmountPaid - bill.AmountCredited,
+                Currency = bill.Currency,
+                CreatedAt = generatedAt,
+                CreatedAtTicks = generatedAt.UtcTicks
+            });
+        }
+    }
+
+    private void AddAccountingPeriodDemo(
+        Organisation company,
+        DateOnly startDate,
+        DateOnly asOfDate,
+        string userId,
+        DateTimeOffset generatedAt)
+    {
+        var month = new DateOnly(startDate.Year, startDate.Month, 1);
+        var currentMonth = new DateOnly(asOfDate.Year, asOfDate.Month, 1);
+
+        while (month <= currentMonth)
+        {
+            var end = month.AddMonths(1).AddDays(-1);
+            var isLocked = month < currentMonth;
+            var period = new AccountingPeriod
+            {
+                Id = StableGuid($"{company.Id}:accounting-period:{month:yyyy-MM}"),
+                OrganisationId = company.Id,
+                Name = month.ToString("MMMM yyyy"),
+                StartsOn = month,
+                EndsOn = end,
+                IsLocked = isLocked,
+                LockedAt = isLocked ? generatedAt : null,
+                LockedByUserId = isLocked ? userId : null
+            };
+            db.AccountingPeriods.Add(period);
+
+            if (isLocked)
+            {
+                db.AuditEvents.Add(new AuditEvent
+                {
+                    OrganisationId = company.Id,
+                    EventType = "AccountingPeriodLocked",
+                    EntityType = nameof(AccountingPeriod),
+                    EntityId = period.Id.ToString(),
+                    UserId = userId,
+                    OccurredAt = generatedAt,
+                    JsonData = JsonSerializer.Serialize(new
+                    {
+                        period.Name,
+                        period.StartsOn,
+                        period.EndsOn,
+                        Locked = true,
+                        UnreconciledBankStatementLines = 0,
+                        IncompleteBankReconciliations = 0,
+                        DraftSalesInvoices = 0,
+                        DraftSupplierBills = 0,
+                        FixedAssetsRequiringDepreciation = 0,
+                        InventoryIntegrityWarnings = 0,
+                        WarningsAcknowledged = false
+                    })
+                });
+            }
+
+            month = month.AddMonths(1);
+        }
+    }
+
+    private void AddCurrencyDemo(
+        Organisation company,
+        DateOnly effectiveDate,
+        string userId,
+        DateTimeOffset generatedAt)
+    {
+        foreach (var (code, name) in new[]
+        {
+            ("AUD", "Australian dollar"),
+            ("NZD", "New Zealand dollar"),
+            ("USD", "United States dollar")
+        })
+        {
+            db.OrganisationCurrencies.Add(new OrganisationCurrency
+            {
+                Id = StableGuid($"{company.Id}:currency:{code}"),
+                OrganisationId = company.Id,
+                Code = code,
+                Name = name,
+                IsActive = true,
+                CreatedAt = generatedAt,
+                CreatedByUserId = userId
+            });
+            db.TransactionExchangeRates.Add(new TransactionExchangeRate
+            {
+                Id = StableGuid($"{company.Id}:exchange-rate:{code}:{effectiveDate:yyyy-MM-dd}"),
+                OrganisationId = company.Id,
+                FromCurrency = code,
+                ToCurrency = company.BaseCurrency,
+                EffectiveDate = effectiveDate,
+                Rate = DemoExchangeRate(code),
+                Source = "Demo indicative rate",
+                CreatedAt = generatedAt,
+                CreatedByUserId = userId
+            });
+        }
+    }
+
+    private void AddInventoryDemo(
+        Organisation company,
+        IReadOnlyList<Branch> companyBranches,
+        IReadOnlyDictionary<string, LedgerAccount> accounts,
+        DateOnly startDate,
+        DateOnly asOfDate,
+        string userId,
+        ref long journalSequence)
+    {
+        var specifications = new[]
+        {
+            (Code: "INV-CHAIR", Name: "Commercial office chair", Opening: 150m, Closing: 120m, UnitCost: 45m, Reorder: 50m),
+            (Code: "INV-PUMP", Name: "Marine transfer pump", Opening: 30m, Closing: 18m, UnitCost: 220m, Reorder: 20m),
+            (Code: "INV-CHILL", Name: "Hospitality display chiller", Opening: 12m, Closing: 8m, UnitCost: 680m, Reorder: 10m)
+        };
+
+        foreach (var (specification, index) in specifications.Select((value, index) => (value, index)))
+        {
+            var branch = companyBranches[index % companyBranches.Count];
+            var division = SalesDivision(branch);
+            var itemId = StableGuid($"{company.Id}:inventory-item:{specification.Code}");
+            var openingValue = specification.Opening * specification.UnitCost;
+            var issueQuantity = specification.Opening - specification.Closing;
+            var issueValue = issueQuantity * specification.UnitCost;
+            var openingDate = startDate.AddDays(index + 1);
+            var issueDate = asOfDate.AddDays(-14 + index);
+            var openingJournal = Journal(
+                company,
+                branch,
+                openingDate,
+                $"OPEN-{specification.Code}",
+                $"Opening inventory · {specification.Name}",
+                ++journalSequence,
+                userId,
+                (accounts["1200"].Id, openingValue, 0),
+                (accounts["3200"].Id, 0, openingValue),
+                division.Id);
+            var issueJournal = Journal(
+                company,
+                branch,
+                issueDate,
+                $"ISSUE-{specification.Code}",
+                $"Inventory issue · {specification.Name}",
+                ++journalSequence,
+                userId,
+                (accounts["5000"].Id, issueValue, 0),
+                (accounts["1200"].Id, 0, issueValue),
+                division.Id);
+
+            db.ProductItems.Add(new ProductItem
+            {
+                Id = itemId,
+                OrganisationId = company.Id,
+                Code = specification.Code,
+                Name = specification.Name,
+                Description = "Tracked Demo inventory item",
+                Kind = ProductKind.TrackedItem,
+                SalePrice = decimal.Round(specification.UnitCost * 1.65m, 2),
+                PurchasePrice = specification.UnitCost,
+                RevenueAccountId = accounts["4000"].Id,
+                ExpenseAccountId = accounts["5000"].Id,
+                QuantityOnHand = specification.Closing,
+                AverageCost = specification.UnitCost,
+                ReorderLevel = specification.Reorder,
+                InventoryAccountId = accounts["1200"].Id,
+                CostAdjustmentAccountId = accounts["5000"].Id,
+                CreatedAt = At(openingDate)
+            });
+            db.InventoryMovements.AddRange(
+                CreateInventoryMovement(itemId, branch, division, openingJournal, openingDate,
+                    InventoryMovementType.OpeningBalance, specification.Opening, specification.UnitCost,
+                    openingValue, userId, "Opening stock for the Demo period"),
+                CreateInventoryMovement(itemId, branch, division, issueJournal, issueDate,
+                    InventoryMovementType.AdjustmentDecrease, -issueQuantity, specification.UnitCost,
+                    -issueValue, userId, "Demo stock issued to operations"));
+            db.PostedJournals.AddRange(openingJournal, issueJournal);
+        }
+    }
+
+    private static InventoryMovement CreateInventoryMovement(
+        Guid itemId,
+        Branch branch,
+        Division division,
+        PostedJournal journal,
+        DateOnly date,
+        InventoryMovementType type,
+        decimal quantity,
+        decimal unitCost,
+        decimal value,
+        string userId,
+        string note) => new()
+    {
+        Id = StableGuid($"{journal.Id}:inventory-movement"),
+        OrganisationId = branch.OrganisationId,
+        BranchId = branch.Id,
+        DivisionId = division.Id,
+        ProductItemId = itemId,
+        MovementDate = date,
+        Type = type,
+        QuantityChange = quantity,
+        UnitCost = unitCost,
+        ValueChange = value,
+        Reference = journal.Reference,
+        Note = note,
+        PostedJournalId = journal.Id,
+        PostedByUserId = userId,
+        PostedAt = At(date)
+    };
+
+    private void AddFixedAssetDemo(
+        Organisation company,
+        IReadOnlyList<Branch> companyBranches,
+        IReadOnlyDictionary<string, LedgerAccount> accounts,
+        DateOnly startDate,
+        DateOnly asOfDate,
+        string userId,
+        DateTimeOffset generatedAt,
+        ref long journalSequence)
+    {
+        var specifications = new[]
+        {
+            (Number: "FA-0001", Name: "Delivery van", Cost: 75_000m, Residual: 15_000m, LifeMonths: 60),
+            (Number: "FA-0002", Name: "Office and computer equipment", Cost: 24_000m, Residual: 4_000m, LifeMonths: 48)
+        };
+
+        foreach (var (specification, index) in specifications.Select((value, index) => (value, index)))
+        {
+            var branch = companyBranches[index % companyBranches.Count];
+            var division = PurchaseDivision(branch);
+            var acquisitionDate = startDate.AddDays(5 + index * 12);
+            var assetId = StableGuid($"{company.Id}:fixed-asset:{specification.Number}");
+            var acquisitionJournal = Journal(
+                company,
+                branch,
+                acquisitionDate,
+                $"ACQ-{specification.Number}",
+                $"Fixed asset acquisition · {specification.Name}",
+                ++journalSequence,
+                userId,
+                (accounts["1500"].Id, specification.Cost, 0),
+                (accounts["2000"].Id, 0, specification.Cost),
+                division.Id);
+            var months = Math.Min(
+                specification.LifeMonths,
+                (asOfDate.Year - acquisitionDate.Year) * 12 +
+                asOfDate.Month - acquisitionDate.Month + 1);
+            var depreciation = decimal.Round(
+                (specification.Cost - specification.Residual) * months / specification.LifeMonths,
+                2,
+                MidpointRounding.AwayFromZero);
+            var depreciationJournal = Journal(
+                company,
+                branch,
+                asOfDate,
+                $"DEP-{specification.Number}-{asOfDate:yyyyMM}",
+                $"Book depreciation through {asOfDate:dd MMM yyyy}",
+                ++journalSequence,
+                userId,
+                (accounts["6700"].Id, depreciation, 0),
+                (accounts["1510"].Id, 0, depreciation),
+                division.Id);
+            var asset = new FixedAsset
+            {
+                Id = assetId,
+                OrganisationId = company.Id,
+                AssetNumber = specification.Number,
+                Name = specification.Name,
+                AcquisitionDate = acquisitionDate,
+                Cost = specification.Cost,
+                ResidualValue = specification.Residual,
+                UsefulLifeMonths = specification.LifeMonths,
+                AssetAccountId = accounts["1500"].Id,
+                DepreciationExpenseAccountId = accounts["6700"].Id,
+                AccumulatedDepreciationAccountId = accounts["1510"].Id,
+                AcquisitionJournalId = acquisitionJournal.Id,
+                CreatedAt = generatedAt,
+                CreatedByUserId = userId,
+                DepreciationEntries =
+                [
+                    new FixedAssetDepreciation
+                    {
+                        Id = StableGuid($"{assetId}:depreciation:{asOfDate:yyyy-MM-dd}"),
+                        ThroughDate = asOfDate,
+                        Amount = depreciation,
+                        PostedJournalId = depreciationJournal.Id,
+                        PostedAt = generatedAt,
+                        PostedByUserId = userId
+                    }
+                ]
+            };
+            db.FixedAssets.Add(asset);
+            db.PostedJournals.AddRange(acquisitionJournal, depreciationJournal);
+        }
+    }
+
+    private void AddGroupEliminationDemo(
+        OrganisationGroup group,
+        DateOnly asOfDate,
+        string userId,
+        DateTimeOffset generatedAt)
+    {
+        var journalId = StableGuid($"{group.Id}:elimination:{asOfDate.Year}:intercompany-trading");
+        var journal = new GroupEliminationJournal
+        {
+            Id = journalId,
+            OrganisationGroupId = group.Id,
+            EntryDate = asOfDate.AddDays(-7),
+            Reference = $"ELIM-{asOfDate.Year}-001",
+            Description = "Eliminate Demo intercompany trading and settlement balances",
+            Currency = group.PresentationCurrency,
+            PostedByUserId = userId,
+            PostedAt = generatedAt,
+            Lines =
+            [
+                EliminationLine(journalId, 0, "4000", "Sales", AccountType.Revenue,
+                    "Eliminate intercompany revenue", 25_000m, 0m),
+                EliminationLine(journalId, 1, "5000", "Cost of Sales", AccountType.Expense,
+                    "Eliminate intercompany purchases", 0m, 25_000m),
+                EliminationLine(journalId, 2, "2000", "Accounts Payable", AccountType.Liability,
+                    "Eliminate intercompany payable", 10_000m, 0m),
+                EliminationLine(journalId, 3, "1100", "Accounts Receivable", AccountType.Asset,
+                    "Eliminate intercompany receivable", 0m, 10_000m)
+            ]
+        };
+        db.GroupEliminationJournals.Add(journal);
+    }
+
+    private static GroupEliminationJournalLine EliminationLine(
+        Guid journalId,
+        int index,
+        string accountCode,
+        string accountName,
+        AccountType accountType,
+        string description,
+        decimal debit,
+        decimal credit) => new()
+    {
+        Id = StableGuid($"{journalId}:line:{index}"),
+        AccountCode = accountCode,
+        AccountName = accountName,
+        AccountType = accountType,
+        Description = description,
+        Debit = debit,
+        Credit = credit
+    };
+
+    private void AddBudgetDemo(
+        Organisation company,
+        IReadOnlyCollection<SalesInvoice> invoices,
+        IReadOnlyCollection<SupplierBill> bills,
+        IReadOnlyDictionary<string, LedgerAccount> accounts,
+        string userId,
+        DateTimeOffset generatedAt)
+    {
+        var totals = new Dictionary<BudgetKey, decimal>();
+
+        foreach (var invoice in invoices)
+        {
+            foreach (var line in invoice.Lines)
+            {
+                AddBudgetAmounts(
+                    totals,
+                    line.RevenueAccountId,
+                    invoice.IssueDate,
+                    invoice.BranchId,
+                    invoice.DivisionId,
+                    line.NetAmount);
+            }
+        }
+
+        foreach (var bill in bills)
+        {
+            foreach (var line in bill.Lines)
+            {
+                AddBudgetAmounts(
+                    totals,
+                    line.ExpenseAccountId,
+                    bill.BillDate,
+                    bill.BranchId,
+                    bill.DivisionId,
+                    line.NetAmount);
+            }
+        }
+
+        var accountsById = accounts.Values.ToDictionary(x => x.Id);
+        db.AccountBudgets.AddRange(totals.Select(entry =>
+        {
+            var account = accountsById[entry.Key.AccountId];
+            var amount = decimal.Round(
+                entry.Value * DemoBudgetFactor(account.Code),
+                2,
+                MidpointRounding.AwayFromZero);
+            return new AccountBudget
+            {
+                Id = StableGuid(
+                    $"{company.Id}:budget:{entry.Key.ScopeKey}:{account.Code}:{entry.Key.Month:yyyy-MM}"),
+                OrganisationId = company.Id,
+                LedgerAccountId = account.Id,
+                ScopeKey = entry.Key.ScopeKey,
+                BranchId = entry.Key.BranchId,
+                DivisionId = entry.Key.DivisionId,
+                Month = entry.Key.Month,
+                Amount = amount,
+                UpdatedByUserId = userId,
+                UpdatedAt = generatedAt
+            };
+        }));
+    }
+
+    private static void AddBudgetAmounts(
+        IDictionary<BudgetKey, decimal> totals,
+        Guid accountId,
+        DateOnly transactionDate,
+        Guid? branchId,
+        Guid? divisionId,
+        decimal amount)
+    {
+        var month = new DateOnly(transactionDate.Year, transactionDate.Month, 1);
+        Add(new BudgetKey(accountId, month, "organisation", null, null));
+
+        if (branchId is Guid branch)
+        {
+            Add(new BudgetKey(
+                accountId,
+                month,
+                $"branch:{branch:N}",
+                branch,
+                null));
+        }
+
+        if (branchId is Guid divisionBranch && divisionId is Guid division)
+        {
+            Add(new BudgetKey(
+                accountId,
+                month,
+                $"division:{division:N}",
+                divisionBranch,
+                division));
+        }
+
+        void Add(BudgetKey key)
+        {
+            totals.TryGetValue(key, out var existingAmount);
+            totals[key] = existingAmount + amount;
+        }
+    }
+
+    private static decimal DemoBudgetFactor(string accountCode) => accountCode switch
+    {
+        "4000" => 1.04m,
+        "4100" => 0.96m,
+        "5000" => 0.90m,
+        "6100" => 1.03m,
+        "6200" => 0.94m,
+        "6300" => 1.05m,
+        "6500" => 0.88m,
+        "6600" => 1.08m,
+        "6900" => 0.97m,
+        _ => 1m
+    };
+
+    private sealed record BudgetKey(
+        Guid AccountId,
+        DateOnly Month,
+        string ScopeKey,
+        Guid? BranchId,
+        Guid? DivisionId);
+
+    private void AddBankingDemo(
+        Organisation company,
+        LedgerAccount bankAccount,
+        IReadOnlyCollection<PostedJournal> bankJournals,
+        DateOnly startDate,
+        DateOnly asOfDate,
+        string userId)
+    {
+        var historicalEndDate = asOfDate.AddMonths(-1);
+        var currentStartDate = historicalEndDate.AddDays(1);
+        var orderedJournals = bankJournals
+            .OrderBy(x => x.EntryDate)
+            .ThenBy(x => x.Reference)
+            .ToArray();
+        var currentJournalIds = orderedJournals
+            .Where(x => x.EntryDate >= currentStartDate)
+            .Select(x => x.Id)
+            .ToArray();
+        var unmatchedJournalIds = currentJournalIds
+            .TakeLast(Math.Min(4, currentJournalIds.Length))
+            .ToHashSet();
+        var historicalImportBatchId = StableGuid(
+            $"{company.Id}:bank-import:historical:{historicalEndDate:yyyy-MM-dd}");
+        var currentImportBatchId = StableGuid(
+            $"{company.Id}:bank-import:current:{asOfDate:yyyy-MM-dd}");
+
+        var statementLines = orderedJournals.Select(journal =>
+        {
+            var ledgerLine = journal.Lines.Single(x =>
+                x.LedgerAccountId == bankAccount.Id);
+            var isReconciled = !unmatchedJournalIds.Contains(journal.Id);
+            return new BankStatementLine
+            {
+                Id = StableGuid($"{company.Id}:bank-statement:{journal.Id}"),
+                OrganisationId = company.Id,
+                BankAccountId = bankAccount.Id,
+                TransactionDate = journal.EntryDate,
+                Description = journal.Description ?? journal.Reference,
+                Reference = journal.Reference,
+                Amount = ledgerLine.Debit - ledgerLine.Credit,
+                MatchedPostedJournalLineId = isReconciled ? ledgerLine.Id : null,
+                ReconciledAt = isReconciled
+                    ? At(journal.EntryDate).AddHours(2)
+                    : null,
+                ReconciledByUserId = isReconciled ? userId : null,
+                ImportedAt = At(journal.EntryDate).AddHours(1),
+                Source = "Demo",
+                ImportBatchId = journal.EntryDate <= historicalEndDate
+                    ? historicalImportBatchId
+                    : currentImportBatchId,
+                SourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                    $"{DemoSeed}:{company.Id}:bank-statement:{journal.Id}")))
+            };
+        }).ToArray();
+        db.BankStatementLines.AddRange(statementLines);
+
+        decimal BalanceAt(DateOnly date) => orderedJournals
+            .Where(x => x.EntryDate <= date)
+            .SelectMany(x => x.Lines)
+            .Where(x => x.LedgerAccountId == bankAccount.Id)
+            .Sum(x => x.Debit - x.Credit);
+
+        var openingBalance = BalanceAt(startDate.AddDays(-1));
+        var historicalClosingBalance = BalanceAt(historicalEndDate);
+        var currentClosingBalance = BalanceAt(asOfDate);
+        db.BankReconciliationSessions.AddRange(
+            new BankReconciliationSession
+            {
+                Id = StableGuid(
+                    $"{company.Id}:bank-reconciliation:historical:{historicalEndDate:yyyy-MM-dd}"),
+                OrganisationId = company.Id,
+                BankAccountId = bankAccount.Id,
+                StatementStartDate = startDate,
+                StatementEndDate = historicalEndDate,
+                OpeningStatementBalance = openingBalance,
+                ClosingStatementBalance = historicalClosingBalance,
+                LedgerBalance = historicalClosingBalance,
+                Difference = 0,
+                IsCompleted = true,
+                CreatedAt = At(historicalEndDate).AddHours(3),
+                CreatedByUserId = userId,
+                CompletedAt = At(historicalEndDate).AddHours(4),
+                CompletedByUserId = userId
+            },
+            new BankReconciliationSession
+            {
+                Id = StableGuid(
+                    $"{company.Id}:bank-reconciliation:current:{asOfDate:yyyy-MM-dd}"),
+                OrganisationId = company.Id,
+                BankAccountId = bankAccount.Id,
+                StatementStartDate = currentStartDate,
+                StatementEndDate = asOfDate,
+                OpeningStatementBalance = historicalClosingBalance,
+                ClosingStatementBalance = currentClosingBalance,
+                LedgerBalance = currentClosingBalance,
+                Difference = 0,
+                IsCompleted = false,
+                CreatedAt = At(asOfDate),
+                CreatedByUserId = userId
+            });
+    }
+
     private async Task<DemoDataSummary> BuildSummaryAsync(
         Guid demoGroupId,
         CancellationToken ct)
@@ -850,7 +1616,7 @@ public sealed class DemoDataService(
             .Where(x => organisationIds.Contains(x.OrganisationId) && x.Status != InvoiceStatus.Voided)
             .SumAsync(x => (decimal?)x.Subtotal, ct) ?? 0;
         var credits = await db.SalesCreditNotes
-            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .Where(x => organisationIds.Contains(x.OrganisationId) && x.Status == SalesCreditNoteStatus.Posted)
             .SumAsync(x => (decimal?)x.Subtotal, ct) ?? 0;
         var netSales = grossNetSales - credits;
 
@@ -865,7 +1631,7 @@ public sealed class DemoDataService(
             await db.SupplierBills.CountAsync(x => organisationIds.Contains(x.OrganisationId), ct),
             await db.CustomerReceipts.CountAsync(x => organisationIds.Contains(x.OrganisationId), ct),
             await db.SupplierPayments.CountAsync(x => organisationIds.Contains(x.OrganisationId), ct),
-            await db.SalesCreditNotes.CountAsync(x => organisationIds.Contains(x.OrganisationId), ct),
+            await db.SalesCreditNotes.CountAsync(x => organisationIds.Contains(x.OrganisationId) && x.Status == SalesCreditNoteStatus.Posted, ct),
             netSales,
             decimal.Round(netSales * 4, 2));
     }
@@ -938,13 +1704,25 @@ public sealed class DemoDataService(
     private static void AddDivision(Branch branch, string code, string name, DateTimeOffset createdAt) =>
         branch.Divisions.Add(new Division { Id = StableGuid($"{branch.Id}:division:{code}"), Code = code, Name = name, CreatedAt = createdAt });
 
+    private static Division SalesDivision(Branch branch) =>
+        PreferredDivision(branch, "SALES", "OPS", "FIN");
+
+    private static Division PurchaseDivision(Branch branch) =>
+        PreferredDivision(branch, "PURCH", "ADMIN", "OPS");
+
+    private static Division PreferredDivision(Branch branch, params string[] preferredCodes) =>
+        preferredCodes
+            .Select(code => branch.Divisions.FirstOrDefault(x => x.Code == code))
+            .FirstOrDefault(x => x is not null)
+        ?? branch.Divisions.Single(x => x.IsDefault);
+
     private static PostedJournal SalesJournal(Organisation company, Branch branch, SalesInvoice invoice, IReadOnlyDictionary<string, LedgerAccount> accounts, long sequence, string userId) =>
         Journal(company, branch, invoice.IssueDate, invoice.InvoiceNumber, $"Sales invoice {invoice.InvoiceNumber}", sequence, userId,
-            (accounts["1100"].Id, invoice.Total, 0), (invoice.Lines.Single().RevenueAccountId, 0, invoice.Subtotal), (accounts["2100"].Id, 0, invoice.VatTotal));
+            (accounts["1100"].Id, invoice.Total, 0), (invoice.Lines.Single().RevenueAccountId, 0, invoice.Subtotal), (accounts["2100"].Id, 0, invoice.VatTotal), invoice.DivisionId);
 
     private static PostedJournal BillJournal(Organisation company, Branch branch, SupplierBill bill, IReadOnlyDictionary<string, LedgerAccount> accounts, long sequence, string userId) =>
         Journal(company, branch, bill.BillDate, bill.BillNumber, $"Supplier bill {bill.SupplierReference}", sequence, userId,
-            (bill.Lines.Single().ExpenseAccountId, bill.Subtotal, 0), (accounts["1150"].Id, bill.VatTotal, 0), (accounts["2000"].Id, 0, bill.Total));
+            (bill.Lines.Single().ExpenseAccountId, bill.Subtotal, 0), (accounts["1150"].Id, bill.VatTotal, 0), (accounts["2000"].Id, 0, bill.Total), bill.DivisionId);
 
     private static PostedJournal ReceiptJournal(Organisation company, SalesInvoice invoice, IReadOnlyDictionary<string, LedgerAccount> accounts, decimal amount, DateOnly date, long sequence, string userId) =>
         Journal(company, new Branch { Id = invoice.BranchId!.Value, OrganisationId = company.Id, Code = "", Name = "" }, date, $"RCPT-{invoice.SequenceNumber:D6}", $"Receipt for {invoice.InvoiceNumber}", sequence, userId,
@@ -1009,6 +1787,11 @@ public sealed class DemoDataService(
             .Vat.Amount;
     private static DateTimeOffset At(DateOnly date) => new(date.ToDateTime(new TimeOnly(10, 0)), TimeSpan.Zero);
     private static string ExpenseCode(int index) => new[] { "5000", "6100", "6200", "6300", "6500", "6600", "6900" }[index % 7];
+    private static string SalesCurrency(int index) => index switch { 35 => "AUD", 42 => "NZD", 49 => "USD", _ => "FJD" };
+    private static string PurchaseCurrency(int index) => index switch { 0 => "AUD", 6 => "NZD", 12 => "USD", _ => "FJD" };
+    private static decimal DemoExchangeRate(string currency) => currency switch { "AUD" => 1.47m, "NZD" => 1.32m, "USD" => 2.22m, _ => 1m };
+    private static decimal ConvertToTransactionCurrency(decimal baseAmount, decimal exchangeRate) =>
+        decimal.Round(baseAmount / exchangeRate, 2, MidpointRounding.AwayFromZero);
     private static string SalesDescription(int index) => new[] { "Wholesale goods", "Project services", "Monthly service contract", "Equipment supply", "Hospitality supplies", "Distribution services" }[index % 6];
     private static string PurchaseDescription(int index) => new[] { "Inventory and materials", "Premises rental", "Utilities", "Professional services", "Office supplies", "Cloud software and IT", "Operating expenses" }[index % 7];
     private static string Slug(string value) => string.Concat(value.ToLowerInvariant().Where(char.IsLetterOrDigit));

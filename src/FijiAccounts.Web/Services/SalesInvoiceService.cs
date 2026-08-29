@@ -37,7 +37,95 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
         db.SalesInvoices.Add(invoice); db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoiceDraftCreated", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, Lines = lines.Count }) }); await db.SaveChangesAsync(cancellationToken); return invoice;
     }
 
-    public async Task<SalesInvoice> PostDraftAsync(string userId, Guid organisationId, Guid invoiceId, CancellationToken cancellationToken = default)
+    public async Task<SalesInvoice> PostDraftAsync(
+        string userId,
+        Guid organisationId,
+        Guid invoiceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (await db.FiscalisationConfigurations.AsNoTracking().AnyAsync(
+                x => x.OrganisationId == organisationId && x.IsEnabled,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "This organisation requires the fiscalisation posting workflow.");
+        }
+
+        return await PostDraftCoreAsync(userId, organisationId, invoiceId, cancellationToken);
+    }
+
+    internal async Task<SalesInvoice> PostAcceptedFiscalDraftAsync(
+        string userId,
+        Guid organisationId,
+        Guid invoiceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await db.FiscalisationRecords.AsNoTracking().AnyAsync(
+                x => x.OrganisationId == organisationId &&
+                     x.SalesInvoiceId == invoiceId &&
+                     x.Status == FiscalisationStatus.Accepted,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "The invoice cannot be posted until its fiscal response is accepted.");
+        }
+
+        return await PostDraftCoreAsync(userId, organisationId, invoiceId, cancellationToken);
+    }
+
+    public async Task<SalesInvoice> ReserveFinalNumberAsync(
+        string userId,
+        Guid organisationId,
+        Guid invoiceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot prepare invoices for this organisation.");
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        var invoice = await db.SalesInvoices.Include(x => x.Lines)
+            .SingleOrDefaultAsync(
+                x => x.Id == invoiceId && x.OrganisationId == organisationId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Invoice not found.");
+        if (invoice.Status != InvoiceStatus.Draft)
+        {
+            throw new InvalidOperationException("Only draft invoices can be prepared.");
+        }
+        if (!invoice.InvoiceNumber.StartsWith("DRAFT-", StringComparison.OrdinalIgnoreCase))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return invoice;
+        }
+
+        var organisation = await db.Organisations.SingleAsync(
+            x => x.Id == organisationId,
+            cancellationToken);
+        var customer = await db.BusinessParties.AsNoTracking().SingleAsync(
+            x => x.Id == invoice.CustomerId && x.OrganisationId == organisationId,
+            cancellationToken);
+        invoice.InvoiceNumber = AllocateSalesInvoiceNumber(organisation);
+        FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = organisationId,
+            EventType = "FiscalInvoiceNumberReserved",
+            EntityType = nameof(SalesInvoice),
+            EntityId = invoice.Id.ToString(),
+            UserId = userId,
+            JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber })
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return invoice;
+    }
+
+    private async Task<SalesInvoice> PostDraftCoreAsync(string userId, Guid organisationId, Guid invoiceId, CancellationToken cancellationToken = default)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot post invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
@@ -84,8 +172,10 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
 
         FijiTaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
 
-        invoice.InvoiceNumber =
-            AllocateSalesInvoiceNumber(organisation);
+        if (invoice.InvoiceNumber.StartsWith("DRAFT-", StringComparison.OrdinalIgnoreCase))
+        {
+            invoice.InvoiceNumber = AllocateSalesInvoiceNumber(organisation);
+        }
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(invoice.Lines.GroupBy(x => new { x.RevenueAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.RevenueAccountId, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount), ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)));
         if (invoice.VatTotal > 0) journalLines.Add(new(vatPayable.Id, invoice.InvoiceNumber, 0, invoice.VatTotal));
@@ -103,6 +193,13 @@ if (!controls.TryGetValue("2100", out var vatPayable) ||
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId)) throw new UnauthorizedAccessException("You cannot edit invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == request.OrganisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be edited.");
+        if (await db.FiscalisationRecords.AsNoTracking().AnyAsync(
+                x => x.SalesInvoiceId == invoiceId && x.OrganisationId == request.OrganisationId,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "This draft is locked because fiscalisation preparation has started.");
+        }
         var dimension = await structures.ResolveActiveDimensionAsync(request.OrganisationId, request.BranchId, request.DivisionId, cancellationToken);
         var organisation = await db.Organisations.SingleAsync(x => x.Id == request.OrganisationId, cancellationToken);
         var (currency, exchangeRateToBase) = await ResolveCurrencyAsync(organisation, request, cancellationToken);
@@ -140,40 +237,121 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
 
     public async Task<SalesInvoice> VoidAsync(string userId, Guid organisationId, Guid invoiceId, DateOnly voidDate, CancellationToken cancellationToken = default)
     {
-        if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot void invoices for this organisation.");
-        var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
-        if (invoice.AmountPaid > 0 ||
-    invoice.AmountCredited > 0 ||
-    invoice.Status is InvoiceStatus.Paid or
-        InvoiceStatus.PartPaid or
-        InvoiceStatus.Credited)
-{
-    throw new InvalidOperationException(
-        "A paid or credited invoice cannot be voided. Reverse payments first; sales credits remain permanent audit records.");
-}
-
-if (invoice.Status != InvoiceStatus.Posted ||
-    invoice.PostedJournalId is null)
-{
-    throw new InvalidOperationException(
-        "Only unpaid posted invoices can be voided.");
-}
+        if (await db.FiscalisationConfigurations.AsNoTracking().AnyAsync(
+                x => x.OrganisationId == organisationId && x.IsEnabled,
+                cancellationToken))
+            throw new InvalidOperationException("This organisation requires the fiscal invoice-void workflow.");
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("You cannot void invoices for this organisation.");
+        var invoice = await db.SalesInvoices
+            .Include(x => x.Lines).ThenInclude(x => x.ProductItem)
+            .SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken)
+            ?? throw new InvalidOperationException("Invoice not found.");
+        ValidateVoidable(invoice);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == invoice.PostedJournalId && x.OrganisationId == organisationId, cancellationToken);
-        var reversal = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList(); var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{invoice.InvoiceNumber}", $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
-        var issues = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(cancellationToken);
-        foreach (var issue in issues) { var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!; var quantity = -issue.QuantityChange; item.QuantityOnHand += quantity; db.InventoryMovements.Add(new InventoryMovement { OrganisationId = organisationId, BranchId = issue.BranchId, DivisionId = issue.DivisionId, ProductItemId = item.Id, MovementDate = voidDate, Type = InventoryMovementType.SalesReturn, QuantityChange = quantity, UnitCost = issue.UnitCost, ValueChange = -issue.ValueChange, Reference = $"VOID-{invoice.InvoiceNumber}", Note = "Stock restored by invoice void", PostedJournalId = journal.Id, PostedByUserId = userId }); }
         var invoiceVoid = new SalesInvoiceVoid
-{
-    OrganisationId = organisationId,
-    SalesInvoiceId = invoice.Id,
-    VoidDate = voidDate,
-    PostedJournalId = journal.Id,
-    CreatedByUserId = userId
-};
+        {
+            OrganisationId = organisationId,
+            SalesInvoiceId = invoice.Id,
+            VoidDate = voidDate,
+            Status = SalesInvoiceVoidStatus.Draft,
+            CreatedByUserId = userId
+        };
+        db.SalesInvoiceVoids.Add(invoiceVoid);
+        await PostVoidCoreAsync(userId, invoice, invoiceVoid, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return invoice;
+    }
 
-db.SalesInvoiceVoids.Add(invoiceVoid);
-        invoice.Status = InvoiceStatus.Voided; db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, EventType = "SalesInvoiceVoided", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, ReversalJournalId = journal.Id, voidDate, StockReturns = issues.Count }) }); await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return invoice;
+    public async Task<SalesInvoice> PostDraftVoidAsync(
+        string userId,
+        Guid organisationId,
+        Guid invoiceVoidId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("You cannot void invoices for this organisation.");
+        var invoiceVoid = await db.SalesInvoiceVoids
+            .Include(x => x.SalesInvoice).ThenInclude(x => x.Lines).ThenInclude(x => x.ProductItem)
+            .SingleOrDefaultAsync(x => x.Id == invoiceVoidId && x.OrganisationId == organisationId, cancellationToken)
+            ?? throw new InvalidOperationException("Invoice-void draft not found.");
+        if (invoiceVoid.Status == SalesInvoiceVoidStatus.Posted)
+            return invoiceVoid.SalesInvoice;
+        ValidateVoidable(invoiceVoid.SalesInvoice);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await PostVoidCoreAsync(userId, invoiceVoid.SalesInvoice, invoiceVoid, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return invoiceVoid.SalesInvoice;
+    }
+
+    private async Task PostVoidCoreAsync(
+        string userId,
+        SalesInvoice invoice,
+        SalesInvoiceVoid invoiceVoid,
+        CancellationToken cancellationToken)
+    {
+        var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines)
+            .SingleAsync(x => x.Id == invoice.PostedJournalId && x.OrganisationId == invoice.OrganisationId, cancellationToken);
+        var reversal = original.Lines.Select(x => new JournalLineInput(
+            x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit,
+            x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
+        var journal = await posting.PostAsync(userId, new(
+            invoice.OrganisationId, invoiceVoid.VoidDate, $"VOID-{invoice.InvoiceNumber}",
+            $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
+        var issues = await db.InventoryMovements.Where(x =>
+            x.OrganisationId == invoice.OrganisationId &&
+            x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(cancellationToken);
+        foreach (var issue in issues)
+        {
+            var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!;
+            var quantity = -issue.QuantityChange;
+            item.QuantityOnHand += quantity;
+            db.InventoryMovements.Add(new InventoryMovement
+            {
+                OrganisationId = invoice.OrganisationId,
+                BranchId = issue.BranchId,
+                DivisionId = issue.DivisionId,
+                ProductItemId = item.Id,
+                MovementDate = invoiceVoid.VoidDate,
+                Type = InventoryMovementType.SalesReturn,
+                QuantityChange = quantity,
+                UnitCost = issue.UnitCost,
+                ValueChange = -issue.ValueChange,
+                Reference = $"VOID-{invoice.InvoiceNumber}",
+                Note = "Stock restored by invoice void",
+                PostedJournalId = journal.Id,
+                PostedByUserId = userId
+            });
+        }
+        invoiceVoid.Status = SalesInvoiceVoidStatus.Posted;
+        invoiceVoid.PostedJournalId = journal.Id;
+        invoice.Status = InvoiceStatus.Voided;
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = invoice.OrganisationId,
+            EventType = "SalesInvoiceVoided",
+            EntityType = nameof(SalesInvoice),
+            EntityId = invoice.Id.ToString(),
+            UserId = userId,
+            JsonData = JsonSerializer.Serialize(new
+            {
+                invoice.InvoiceNumber,
+                ReversalJournalId = journal.Id,
+                invoiceVoid.VoidDate,
+                StockReturns = issues.Count
+            })
+        });
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static void ValidateVoidable(SalesInvoice invoice)
+    {
+        if (invoice.AmountPaid > 0 || invoice.AmountCredited > 0 ||
+            invoice.Status is InvoiceStatus.Paid or InvoiceStatus.PartPaid or InvoiceStatus.Credited)
+            throw new InvalidOperationException(
+                "A paid or credited invoice cannot be voided. Reverse payments first; sales credits remain permanent audit records.");
+        if (invoice.Status != InvoiceStatus.Posted || invoice.PostedJournalId is null)
+            throw new InvalidOperationException("Only unpaid posted invoices can be voided.");
     }
 
     private async Task<List<SalesInvoiceLine>> PrepareLinesAsync(Organisation organisation, SalesInvoiceRequest request, string currency, decimal exchangeRateToBase, CancellationToken cancellationToken)

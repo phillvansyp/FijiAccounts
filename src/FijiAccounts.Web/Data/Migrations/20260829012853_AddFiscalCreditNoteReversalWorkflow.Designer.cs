@@ -3,16 +3,19 @@ using System;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace FijiAccounts.Web.Migrations
+namespace FijiAccounts.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260829012853_AddFiscalCreditNoteReversalWorkflow")]
+    partial class AddFiscalCreditNoteReversalWorkflow
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -1142,9 +1145,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<Guid?>("SalesInvoiceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SalesInvoiceVoidId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("SdcInvoiceNumber")
                         .HasMaxLength(160)
                         .HasColumnType("TEXT");
@@ -1177,9 +1177,6 @@ namespace FijiAccounts.Web.Migrations
                         .IsUnique();
 
                     b.HasIndex("SalesInvoiceId")
-                        .IsUnique();
-
-                    b.HasIndex("SalesInvoiceVoidId")
                         .IsUnique();
 
                     b.HasIndex("OrganisationId", "Status");
@@ -4002,14 +3999,11 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("PostedJournalId")
+                    b.Property<Guid>("PostedJournalId")
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("SalesInvoiceId")
                         .HasColumnType("TEXT");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
 
                     b.Property<DateOnly>("VoidDate")
                         .HasColumnType("TEXT");
@@ -5833,11 +5827,6 @@ namespace FijiAccounts.Web.Migrations
                         .HasForeignKey("SalesInvoiceId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("FijiAccounts.Web.Data.SalesInvoiceVoid", "SalesInvoiceVoid")
-                        .WithMany()
-                        .HasForeignKey("SalesInvoiceVoidId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Organisation");
 
                     b.Navigation("SalesCreditNote");
@@ -5845,8 +5834,6 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("SalesCreditNoteReversal");
 
                     b.Navigation("SalesInvoice");
-
-                    b.Navigation("SalesInvoiceVoid");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.FixedAsset", b =>
@@ -6907,7 +6894,8 @@ namespace FijiAccounts.Web.Migrations
                     b.HasOne("FijiAccounts.Web.Data.PostedJournal", "PostedJournal")
                         .WithMany()
                         .HasForeignKey("PostedJournalId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("FijiAccounts.Web.Data.SalesInvoice", "SalesInvoice")
                         .WithMany()
