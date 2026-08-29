@@ -53,6 +53,33 @@ Email__Smtp__Username=example-user
 Email__Smtp__Password=replace-me
 ```
 
+## Off-host backups and operations alerts
+
+Off-host replication is disabled until all destination secrets are configured
+in the GitHub `production` environment. The destination must be a separate,
+owner-controlled SSH host with enough protected storage for the required backup
+history. Create a dedicated account that can write only to its backup directory,
+install its public key, and configure:
+
+- `BACKUP_REMOTE_HOST`: verified DNS name or IP address.
+- `BACKUP_REMOTE_PORT`: SSH port, or leave empty for port 22.
+- `BACKUP_REMOTE_USER`: dedicated remote backup account.
+- `BACKUP_REMOTE_PATH`: absolute destination directory.
+- `BACKUP_REMOTE_SSH_PRIVATE_KEY`: private key used only for backup replication.
+- `BACKUP_REMOTE_HOST_KEY`: pinned `known_hosts` entry obtained through a trusted channel.
+
+When configured, each deployment copies the archive and checksum only after the
+local restore test succeeds, then runs `sha256sum --check` on the remote host.
+A partial configuration fails the workflow rather than silently leaving backups
+on one machine. Remote retention and capacity monitoring remain the destination
+host administrator's responsibility.
+
+Set `OPERATIONS_ALERT_EMAIL` in the same environment to receive a redacted email
+when deployment, backup replication, or the external public-health verification
+fails. Alerts use the already configured production email provider and contain
+only the commit identifier and protected GitHub Actions run link; secrets and
+application logs are not included.
+
 ## Mobile OAuth activation
 
 Mobile OAuth is disabled by default. Before enabling it, create separate RSA

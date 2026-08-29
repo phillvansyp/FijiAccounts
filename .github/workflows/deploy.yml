@@ -205,6 +205,7 @@ jobs:
           echo "Production email settings provisioned."
 
       - name: Back up and deploy
+        id: deployment
         shell: bash
         env:
           APP_IMAGE: account-island:${{ github.sha }}
@@ -269,10 +270,110 @@ jobs:
             http://192.168.1.125:8188/health >/dev/null
 
           trap - ERR
+          echo "backup_name=$backup_name" >> "$GITHUB_OUTPUT"
           find "$DEPLOY_DIR/backups" -type f \
             \( -name 'account-island-*.tar.gz' -o -name 'account-island-*.tar.gz.sha256' \) \
             -mtime +30 -delete
           docker image prune --force --filter "until=168h"
+
+      - name: Replicate verified backup off host
+        shell: bash
+        env:
+          BACKUP_NAME: ${{ steps.deployment.outputs.backup_name }}
+          BACKUP_REMOTE_HOST: ${{ secrets.BACKUP_REMOTE_HOST }}
+          BACKUP_REMOTE_PORT: ${{ secrets.BACKUP_REMOTE_PORT }}
+          BACKUP_REMOTE_USER: ${{ secrets.BACKUP_REMOTE_USER }}
+          BACKUP_REMOTE_PATH: ${{ secrets.BACKUP_REMOTE_PATH }}
+          BACKUP_REMOTE_SSH_PRIVATE_KEY: ${{ secrets.BACKUP_REMOTE_SSH_PRIVATE_KEY }}
+          BACKUP_REMOTE_HOST_KEY: ${{ secrets.BACKUP_REMOTE_HOST_KEY }}
+        run: |
+          set -Eeuo pipefail
+          required=(
+            "$BACKUP_REMOTE_HOST"
+            "$BACKUP_REMOTE_USER"
+            "$BACKUP_REMOTE_PATH"
+            "$BACKUP_REMOTE_SSH_PRIVATE_KEY"
+            "$BACKUP_REMOTE_HOST_KEY"
+          )
+          configured=0
+          for value in "${required[@]}"; do
+            if [ -n "$value" ]; then
+              configured=$((configured + 1))
+            fi
+          done
+          if [ "$configured" -eq 0 ]; then
+            echo "Off-host backup replication is not configured; the verified local backup was retained."
+            exit 0
+          fi
+          if [ "$configured" -ne "${#required[@]}" ]; then
+            echo "Off-host backup replication secrets are incomplete." >&2
+            exit 1
+          fi
+
+          port="${BACKUP_REMOTE_PORT:-22}"
+          [[ "$BACKUP_REMOTE_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid backup host." >&2; exit 1; }
+          [[ "$BACKUP_REMOTE_USER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid backup user." >&2; exit 1; }
+          [[ "$BACKUP_REMOTE_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Invalid backup path." >&2; exit 1; }
+          [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo "Invalid backup SSH port." >&2; exit 1; }
+          [[ "$BACKUP_NAME" =~ ^account-island-[0-9]{8}T[0-9]{6}Z.tar.gz$ ]] || { echo "Invalid backup filename." >&2; exit 1; }
+
+          ssh_dir="$(mktemp -d)"
+          cleanup() {
+            rm -f -- "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
+            rmdir -- "$ssh_dir"
+          }
+          trap cleanup EXIT
+          printf '%s\n' "$BACKUP_REMOTE_SSH_PRIVATE_KEY" > "$ssh_dir/id_ed25519"
+          printf '%s\n' "$BACKUP_REMOTE_HOST_KEY" > "$ssh_dir/known_hosts"
+          chmod 0600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
+
+          ssh_common=(
+            -i "$ssh_dir/id_ed25519"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
+          )
+          ssh -p "$port" "${ssh_common[@]}" \
+            "$BACKUP_REMOTE_USER@$BACKUP_REMOTE_HOST" \
+            "install -d -m 0700 '$BACKUP_REMOTE_PATH'"
+          scp -P "$port" "${ssh_common[@]}" \
+            "$DEPLOY_DIR/backups/$BACKUP_NAME" \
+            "$DEPLOY_DIR/backups/$BACKUP_NAME.sha256" \
+            "$BACKUP_REMOTE_USER@$BACKUP_REMOTE_HOST:$BACKUP_REMOTE_PATH/"
+          ssh -p "$port" "${ssh_common[@]}" \
+            "$BACKUP_REMOTE_USER@$BACKUP_REMOTE_HOST" \
+            "cd '$BACKUP_REMOTE_PATH' && sha256sum --check '$BACKUP_NAME.sha256'"
+
+      - name: Send deployment failure alert
+        if: ${{ failure() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          OPERATIONS_ALERT_EMAIL: ${{ secrets.OPERATIONS_ALERT_EMAIL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPERATIONS_ALERT_EMAIL" ]; then
+            echo "Operations alert email is not configured."
+            exit 0
+          fi
+
+          image="account-island:${GITHUB_SHA}"
+          if ! docker image inspect "$image" >/dev/null 2>&1; then
+            image="$(docker inspect --format '{{.Config.Image}}' account-island-app 2>/dev/null || true)"
+          fi
+          if [ -z "$image" ]; then
+            echo "No Account Island image is available to send the operations alert." >&2
+            exit 1
+          fi
+
+          docker run --rm --network host \
+            --env-file "$DEPLOY_DIR/config/app.env" \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Maintenance__OperationsAlert__Recipient="$OPERATIONS_ALERT_EMAIL" \
+            --env Maintenance__OperationsAlert__Subject="Account Island production deployment failed" \
+            --env Maintenance__OperationsAlert__Body="Deployment ${GITHUB_SHA} failed. Review the protected workflow logs at ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+            "$image" send-operations-alert
 
   verify-public:
     name: Verify public HTTPS
@@ -300,3 +401,30 @@ jobs:
             echo "Public health endpoint did not report healthy." >&2
             exit 1
           fi
+
+  notify-public-failure:
+    name: Alert on public health failure
+    needs: [deploy, verify-public]
+    if: ${{ always() && needs.deploy.result == 'success' && needs.verify-public.result == 'failure' }}
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 5
+    environment:
+      name: production
+    env:
+      DEPLOY_DIR: /mnt/data/account-island
+      OPERATIONS_ALERT_EMAIL: ${{ secrets.OPERATIONS_ALERT_EMAIL }}
+    steps:
+      - name: Send public health failure alert
+        if: ${{ env.OPERATIONS_ALERT_EMAIL != '' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(docker inspect --format '{{.Config.Image}}' account-island-app)"
+          docker run --rm --network host \
+            --env-file "$DEPLOY_DIR/config/app.env" \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Maintenance__OperationsAlert__Recipient="$OPERATIONS_ALERT_EMAIL" \
+            --env Maintenance__OperationsAlert__Subject="Account Island public health check failed" \
+            --env Maintenance__OperationsAlert__Body="The deployed application passed its internal readiness check, but the public HTTPS check failed. Review DNS, router forwarding, Caddy and TLS, then inspect ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+            "$image" send-operations-alert

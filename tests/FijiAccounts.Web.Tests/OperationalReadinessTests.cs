@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FijiAccounts.Web.Data;
+using FijiAccounts.Web.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -51,7 +52,44 @@ public sealed class OperationalReadinessTests
         Assert.Contains("no-store", ready.Headers.CacheControl!.ToString());
     }
 
+    [Fact]
+    public async Task Operations_alert_uses_configured_recipient_and_redacted_message()
+    {
+        var delivery = new CapturingEmailDelivery();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Maintenance:OperationsAlert:Recipient"] = "owner@example.com",
+                ["Maintenance:OperationsAlert:Subject"] = "Deployment failed",
+                ["Maintenance:OperationsAlert:Body"] = "Review the protected workflow logs."
+            })
+            .Build();
+
+        await AccountMaintenanceCommand.SendOperationsAlertAsync(
+            delivery,
+            configuration);
+
+        Assert.NotNull(delivery.Message);
+        Assert.Equal("owner@example.com", delivery.Message.Recipient);
+        Assert.Equal("Deployment failed", delivery.Message.Subject);
+        Assert.Equal("Review the protected workflow logs.", delivery.Message.TextBody);
+    }
+
     private sealed record HealthResponse(string Status);
+
+    private sealed class CapturingEmailDelivery : IEmailDeliveryService
+    {
+        public bool IsConfigured => true;
+        public TransactionalEmail? Message { get; private set; }
+
+        public Task SendAsync(
+            TransactionalEmail email,
+            CancellationToken cancellationToken = default)
+        {
+            Message = email;
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class OperationalReadinessFactory : WebApplicationFactory<Program>
     {

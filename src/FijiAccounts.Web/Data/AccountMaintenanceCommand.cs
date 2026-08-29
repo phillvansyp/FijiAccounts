@@ -1,4 +1,5 @@
 using FijiAccounts.Web.Components.Account;
+using FijiAccounts.Web.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +9,7 @@ public static class AccountMaintenanceCommand
 {
     private const string ResetPasswordCommand = "reset-password";
     private const string VerifyDatabaseCommand = "verify-database";
+    private const string SendOperationsAlertCommand = "send-operations-alert";
 
     public static async Task<bool> TryRunAsync(
         WebApplication app,
@@ -30,6 +32,19 @@ public static class AccountMaintenanceCommand
                 true);
             await VerifyDatabaseAsync(database, requireCurrentMigrations);
             Console.WriteLine("Database integrity and migration verification completed.");
+            return true;
+        }
+
+        if (string.Equals(
+                arguments[0],
+                SendOperationsAlertCommand,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            await using var alertScope = app.Services.CreateAsyncScope();
+            var delivery = alertScope.ServiceProvider
+                .GetRequiredService<IEmailDeliveryService>();
+            await SendOperationsAlertAsync(delivery, app.Configuration);
+            Console.WriteLine("Operations alert sent.");
             return true;
         }
 
@@ -119,5 +134,34 @@ public static class AccountMaintenanceCommand
                     $"The database has {pending.Length} pending migration(s): {string.Join(", ", pending)}.");
             }
         }
+    }
+
+    public static async Task SendOperationsAlertAsync(
+        IEmailDeliveryService delivery,
+        IConfiguration configuration,
+        CancellationToken cancellationToken = default)
+    {
+        var recipient = configuration["Maintenance:OperationsAlert:Recipient"];
+        var subject = configuration["Maintenance:OperationsAlert:Subject"];
+        var body = configuration["Maintenance:OperationsAlert:Body"];
+        if (string.IsNullOrWhiteSpace(recipient) ||
+            string.IsNullOrWhiteSpace(subject) ||
+            string.IsNullOrWhiteSpace(body))
+        {
+            throw new InvalidOperationException(
+                "Operations alert delivery requires a recipient, subject and body through configuration.");
+        }
+
+        if (!delivery.IsConfigured)
+        {
+            throw new InvalidOperationException("Email delivery is not configured.");
+        }
+
+        await delivery.SendAsync(
+            new TransactionalEmail(
+                recipient.Trim(),
+                subject.Trim(),
+                body.Trim()),
+            cancellationToken);
     }
 }
