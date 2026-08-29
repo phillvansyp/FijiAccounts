@@ -35,7 +35,10 @@ public sealed record BankStatementImportBatch(
     DateOnly? RetainUntil);
 public sealed record BankStatementImportDeleteResult(Guid BatchId, int Deleted);
 
-public sealed class BankStatementImportService(ApplicationDbContext db, TenantAccessService access)
+public sealed class BankStatementImportService(
+    ApplicationDbContext db,
+    TenantAccessService access,
+    IImmutableDocumentStore? storage = null)
 {
     public async Task<StatementPreview> ReadAsync(
     Stream stream,
@@ -134,6 +137,10 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
         {
             if (storedDocument is not null)
             {
+                storedDocument.ImmutableDocumentObjectId = DocumentStore.Stage(
+                    organisationId,
+                    userId,
+                    storedDocument.Content).Id;
                 storedDocument.ImportBatchId = batchId;
                 db.BankStatementImportDocuments.Add(storedDocument);
             }
@@ -158,7 +165,8 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                             storedDocument.Id,
                             storedDocument.FileName,
                             storedDocument.ContentType,
-                            storedDocument.OriginalSize
+                            storedDocument.OriginalSize,
+                            storedDocument.ImmutableDocumentObjectId
                         }
                 })
             });
@@ -360,12 +368,22 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
             return null;
         }
 
-        return await db.BankStatementImportDocuments
+        var document = await db.BankStatementImportDocuments
             .AsNoTracking()
             .SingleOrDefaultAsync(x =>
                 x.OrganisationId == organisationId &&
                 x.ImportBatchId == batchId,
                 ct);
+
+        if (document?.ImmutableDocumentObjectId is { } objectId)
+        {
+            document.Content = await DocumentStore.ReadVerifiedAsync(
+                organisationId,
+                objectId,
+                ct);
+        }
+
+        return document;
     }
 
     public async Task RecordDocumentExportAsync(
@@ -395,7 +413,8 @@ public sealed class BankStatementImportService(ApplicationDbContext db, TenantAc
                 document.BankAccountId,
                 document.FileName,
                 document.ContentType,
-                document.OriginalSize
+                document.OriginalSize,
+                document.ImmutableDocumentObjectId
             })
         });
         await db.SaveChangesAsync(ct);
@@ -835,4 +854,7 @@ if (amounts.Count == 1 &&
             UploadedByUserId = userId
         };
     }
+
+    private IImmutableDocumentStore DocumentStore =>
+        storage ?? new DatabaseImmutableDocumentStore(db);
 }

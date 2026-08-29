@@ -6,7 +6,8 @@ namespace FijiAccounts.Web.Services;
 
 public sealed class SupplierBillAttachmentService(
     ApplicationDbContext db,
-    TenantAccessService access)
+    TenantAccessService access,
+    IImmutableDocumentStore? storage = null)
 {
     public const int MaximumAttachmentBytes = 10 * 1024 * 1024;
 
@@ -32,6 +33,10 @@ public sealed class SupplierBillAttachmentService(
             bill.Id,
             userId,
             request);
+        attachment.ImmutableDocumentObjectId = DocumentStore.Stage(
+            organisationId,
+            userId,
+            attachment.Content).Id;
 
         db.SupplierBillAttachments.Add(attachment);
         db.AuditEvents.Add(AddedAudit(
@@ -56,7 +61,7 @@ public sealed class SupplierBillAttachmentService(
             return null;
         }
 
-        return await db.SupplierBillAttachments
+        var attachment = await db.SupplierBillAttachments
             .AsNoTracking()
             .SingleOrDefaultAsync(
                 x =>
@@ -64,6 +69,16 @@ public sealed class SupplierBillAttachmentService(
                     x.SupplierBillId == supplierBillId &&
                     x.OrganisationId == organisationId,
                 cancellationToken);
+
+        if (attachment?.ImmutableDocumentObjectId is { } objectId)
+        {
+            attachment.Content = await DocumentStore.ReadVerifiedAsync(
+                organisationId,
+                objectId,
+                cancellationToken);
+        }
+
+        return attachment;
     }
 
     public async Task<bool> DeleteAsync(
@@ -246,7 +261,11 @@ public sealed class SupplierBillAttachmentService(
                 attachment.ContentType,
                 attachment.OriginalSize,
                 attachment.StoredSize,
-                attachment.IsCompressed
+                attachment.IsCompressed,
+                attachment.ImmutableDocumentObjectId
             })
         };
+
+    private IImmutableDocumentStore DocumentStore =>
+        storage ?? new DatabaseImmutableDocumentStore(db);
 }

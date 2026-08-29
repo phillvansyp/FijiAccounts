@@ -28,7 +28,8 @@ public sealed class PurchasingService(
     NotificationService notifications,
     EnterpriseStructureService structures,
     PurchaseApprovalPolicyService approvalPolicies,
-    TransactionCurrencyService currencies)
+    TransactionCurrencyService currencies,
+    IImmutableDocumentStore? documentStorage = null)
 {
     public Task<SupplierBill> PostBillAsync(
         string userId,
@@ -399,6 +400,10 @@ public sealed class PurchasingService(
 
         if (validatedAttachment is not null)
         {
+            validatedAttachment.ImmutableDocumentObjectId = DocumentStore.Stage(
+                request.OrganisationId,
+                userId,
+                validatedAttachment.Content).Id;
             validatedAttachment.SupplierBillId = bill.Id;
             db.SupplierBillAttachments.Add(validatedAttachment);
             db.AuditEvents.Add(SupplierBillAttachmentService.AddedAudit(
@@ -940,6 +945,9 @@ public sealed class PurchasingService(
     }
 
     private static AuditEvent Audit(Guid organisationId, string userId, string eventType, string entityType, Guid entityId, object data) => new() { OrganisationId = organisationId, UserId = userId, EventType = eventType, EntityType = entityType, EntityId = entityId.ToString(), JsonData = JsonSerializer.Serialize(data) };
+
+    private IImmutableDocumentStore DocumentStore =>
+        documentStorage ?? new DatabaseImmutableDocumentStore(db);
 
     private static object ApprovalEvidence(SupplierPaymentApproval approval) => new
     {

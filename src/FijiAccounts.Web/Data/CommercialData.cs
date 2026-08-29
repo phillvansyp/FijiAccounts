@@ -122,6 +122,10 @@ public sealed class BusinessPartyDocument
 
     public required byte[] Content { get; set; }
 
+    public Guid? ImmutableDocumentObjectId { get; set; }
+
+    public ImmutableDocumentObject? ImmutableDocumentObject { get; set; }
+
     public DateOnly? ExpiryDate { get; set; }
 
     public DateTimeOffset UploadedAtUtc { get; set; }

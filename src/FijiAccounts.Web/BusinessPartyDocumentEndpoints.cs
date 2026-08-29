@@ -66,12 +66,6 @@ public static class BusinessPartyDocumentEndpoints
                         document.Content;
                 }
 
-                await documents.RecordExportAsync(
-                    userId!,
-                    organisationId,
-                    document,
-                    cancellationToken);
-
                 return Results.File(
                     content,
                     document.ContentType,

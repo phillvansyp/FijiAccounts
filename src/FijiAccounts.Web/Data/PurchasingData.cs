@@ -109,6 +109,8 @@ public sealed class SupplierBillAttachment
     public long StoredSize { get; set; }
     public bool IsCompressed { get; set; }
     public required byte[] Content { get; set; }
+    public Guid? ImmutableDocumentObjectId { get; set; }
+    public ImmutableDocumentObject? ImmutableDocumentObject { get; set; }
     public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string UploadedByUserId { get; set; }
 }

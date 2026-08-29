@@ -35,6 +35,8 @@ public sealed class BankStatementImportDocument
     [MaxLength(100)] public required string ContentType { get; set; }
     public long OriginalSize { get; set; }
     public required byte[] Content { get; set; }
+    public Guid? ImmutableDocumentObjectId { get; set; }
+    public ImmutableDocumentObject? ImmutableDocumentObject { get; set; }
     public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string UploadedByUserId { get; set; }
 }

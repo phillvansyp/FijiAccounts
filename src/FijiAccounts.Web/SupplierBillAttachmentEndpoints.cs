@@ -90,13 +90,6 @@ public static class SupplierBillAttachmentEndpoints
                     }
                 }
 
-                await attachments.RecordExportAsync(
-                    userId!,
-                    organisationId,
-                    billId,
-                    attachment,
-                    cancellationToken);
-
                 return Results.File(
                     content,
                     attachment.ContentType,

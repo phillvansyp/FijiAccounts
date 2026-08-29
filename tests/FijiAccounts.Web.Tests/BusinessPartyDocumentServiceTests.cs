@@ -27,6 +27,10 @@ public sealed class BusinessPartyDocumentServiceTests
         Assert.Equal("Annual terms", document.Description);
         Assert.Equal("contract.pdf", document.FileName);
         Assert.Equal("application/pdf", document.ContentType);
+        Assert.NotNull(document.ImmutableDocumentObjectId);
+        Assert.True(await test.Db.ImmutableDocumentObjects.AnyAsync(x =>
+            x.Id == document.ImmutableDocumentObjectId &&
+            x.OrganisationId == test.Organisation.Id));
         var protectedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.DeleteAsync(test.UserId, test.Organisation.Id, document.Id));
         Assert.Contains("seven-year", protectedError.Message, StringComparison.OrdinalIgnoreCase);

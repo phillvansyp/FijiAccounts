@@ -30,6 +30,10 @@ public sealed class SupplierBillAttachmentServiceTests
         Assert.Equal(4, stored.StoredSize);
         Assert.False(stored.IsCompressed);
         Assert.Equal([1, 2, 3, 4], stored.Content);
+        Assert.NotNull(stored.ImmutableDocumentObjectId);
+        Assert.True(await test.Db.ImmutableDocumentObjects.AnyAsync(x =>
+            x.Id == stored.ImmutableDocumentObjectId &&
+            x.OrganisationId == test.Organisation.Id));
 
         var protectedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.DeleteAsync(

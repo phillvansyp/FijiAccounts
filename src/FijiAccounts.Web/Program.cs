@@ -233,6 +233,7 @@ builder.Services.AddHostedService<UpcomingSupplierBillWorker>();
 builder.Services.AddHostedService<VatTurnoverMonitorWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
+builder.Services.AddScoped<IImmutableDocumentStore, DatabaseImmutableDocumentStore>();
 builder.Services.AddSingleton<OrganisationUpdateBroker>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<CashflowForecastService>();

@@ -19,7 +19,8 @@ public sealed record BusinessPartyDocumentUploadRequest(
 
 public sealed class BusinessPartyDocumentService(
     ApplicationDbContext db,
-    TenantAccessService access)
+    TenantAccessService access,
+    IImmutableDocumentStore? storage = null)
 {
     public const int MaximumDocumentBytes = 10 * 1024 * 1024;
 
@@ -98,6 +99,12 @@ public sealed class BusinessPartyDocumentService(
                 ExpiryDate = request.ExpiryDate,
                 UploadedByUserId = userId
             };
+
+        var storedObject = DocumentStore.Stage(
+            request.OrganisationId,
+            userId,
+            request.Content);
+        document.ImmutableDocumentObjectId = storedObject.Id;
 
         db.BusinessPartyDocuments.Add(document);
         db.AuditEvents.Add(Audit(request.OrganisationId, userId, "BusinessPartyDocumentAdded", document, party.Name));
@@ -193,7 +200,7 @@ public sealed class BusinessPartyDocumentService(
             return null;
         }
 
-        return await db.BusinessPartyDocuments
+        var document = await db.BusinessPartyDocuments
             .AsNoTracking()
             .SingleOrDefaultAsync(
                 x =>
@@ -201,6 +208,16 @@ public sealed class BusinessPartyDocumentService(
                     x.BusinessPartyId == businessPartyId &&
                     x.OrganisationId == organisationId,
                 ct);
+
+        if (document?.ImmutableDocumentObjectId is { } objectId)
+        {
+            document.Content = await DocumentStore.ReadVerifiedAsync(
+                organisationId,
+                objectId,
+                ct);
+        }
+
+        return document;
     }
 
 
@@ -250,7 +267,11 @@ public sealed class BusinessPartyDocumentService(
             document.OriginalSize,
             document.StoredSize,
             document.IsCompressed,
+            document.ImmutableDocumentObjectId,
             document.ExpiryDate
         })
     };
+
+    private IImmutableDocumentStore DocumentStore =>
+        storage ?? new DatabaseImmutableDocumentStore(db);
 }

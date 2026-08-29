@@ -35,6 +35,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PostedJournal> PostedJournals => Set<PostedJournal>();
     public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<ImmutableDocumentObject> ImmutableDocumentObjects =>
+        Set<ImmutableDocumentObject>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<FiscalisationRecord> FiscalisationRecords =>
         Set<FiscalisationRecord>();
@@ -123,6 +125,11 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     {
         base.OnModelCreating(builder);
         builder.UseOpenIddict();
+        builder.Entity<ImmutableDocumentObject>()
+            .HasIndex(x => new { x.OrganisationId, x.Provider, x.ObjectKey })
+            .IsUnique();
+        builder.Entity<ImmutableDocumentObject>()
+            .HasIndex(x => new { x.OrganisationId, x.Sha256 });
         builder.Entity<Organisation>()
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.Companies)
@@ -923,6 +930,21 @@ builder.Entity<SupplierCreditNoteReversal>()
             .WithMany()
             .HasForeignKey(x => x.BankAccountId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementImportDocument>()
+            .HasOne(x => x.ImmutableDocumentObject)
+            .WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BusinessPartyDocument>()
+            .HasOne(x => x.ImmutableDocumentObject)
+            .WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillAttachment>()
+            .HasOne(x => x.ImmutableDocumentObject)
+            .WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankReconciliationSession>()
     .HasIndex(x => new
     {
@@ -1227,10 +1249,12 @@ builder.Entity<FixedAsset>()
             (x.State == EntityState.Deleted && x.Entity.Status != SalesCreditNoteReversalStatus.Draft) ||
             (x.State == EntityState.Modified && x.Property(y => y.Status).OriginalValue != SalesCreditNoteReversalStatus.Draft)) ||
     ChangeTracker.Entries<SupplierCreditNoteReversal>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<ImmutableDocumentObject>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
 {
     throw new InvalidOperationException(
-        "Posted journals and audit events are append-only.");
+        "Posted journals, audit events, and retained document objects are append-only.");
 }
     }
 

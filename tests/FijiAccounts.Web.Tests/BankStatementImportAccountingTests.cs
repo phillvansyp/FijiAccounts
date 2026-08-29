@@ -584,6 +584,10 @@ public sealed class BankStatementImportAccountingTests
         Assert.NotNull(document);
         Assert.Equal("application/pdf", document.ContentType);
         Assert.Equal(content, document.Content);
+        Assert.NotNull(document.ImmutableDocumentObjectId);
+        Assert.True(await test.Db.ImmutableDocumentObjects.AnyAsync(x =>
+            x.Id == document.ImmutableDocumentObjectId &&
+            x.OrganisationId == test.Organisation.Id));
         Assert.Null(await service.GetDocumentAsync(
             "not-a-member",
             test.Organisation.Id,
