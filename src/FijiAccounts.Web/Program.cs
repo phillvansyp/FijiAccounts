@@ -281,6 +281,7 @@ builder.Services.AddScoped<BudgetReportingService>();
 builder.Services.AddScoped<BudgetScopeService>();
 builder.Services.AddScoped<BankStatementImportService>();
 builder.Services.AddScoped<AccountingPeriodService>();
+builder.Services.AddScoped<YearEndHandoverPackService>();
 builder.Services.AddScoped<SalesCreditNoteService>();
 builder.Services.AddScoped<SalesQuoteService>();
 builder.Services.AddScoped<ChartOfAccountsService>();
@@ -355,6 +356,7 @@ app.MapAdditionalIdentityEndpoints();
 app.MapSupplierBillAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
 app.MapBankStatementDocumentEndpoints();
+app.MapYearEndHandoverPackEndpoints();
 
 app.MapGet(
         "/health/live",

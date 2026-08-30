@@ -134,6 +134,14 @@ else
                     @if (canManage)
                     {
                         <div class="period-row-actions">
+                            @if (item.IsLocked)
+                            {
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="@($"/api/o/{OrganisationId}/periods/{item.Id}/handover-pack")">
+                                    Handover pack
+                                </a>
+                            }
+
                             <button type="button"
                                     class="btn btn-sm @(item.IsLocked ? "btn-outline-secondary" : "btn-outline-danger")"
                                     @onclick="() => OpenConfirmation(item)">
