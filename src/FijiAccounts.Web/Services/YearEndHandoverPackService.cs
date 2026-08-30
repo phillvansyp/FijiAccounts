@@ -119,6 +119,15 @@ public sealed class YearEndHandoverPackService(
             .OrderBy(x => x.OccurredAt)
             .ToList();
 
+        var receivables = await GetReceivablesAsync(
+            organisationId, period.EndsOn, cancellationToken);
+        var payables = await GetPayablesAsync(
+            organisationId, period.EndsOn, cancellationToken);
+        var fixedAssets = await GetFixedAssetsAsync(
+            organisationId, period.EndsOn, cancellationToken);
+        var inventory = await GetInventoryAsync(
+            organisationId, period.EndsOn, cancellationToken);
+
         var files = new List<PackFile>
         {
             Csv(
@@ -179,7 +188,58 @@ public sealed class YearEndHandoverPackService(
             Csv(
                 "period-control-audit.csv",
                 "Occurred At,Event,User,Evidence JSON",
-                periodAudit.Select(x => Row(x.OccurredAt, x.EventType, x.UserId, x.JsonData)))
+                periodAudit.Select(x => Row(x.OccurredAt, x.EventType, x.UserId, x.JsonData))),
+            Csv(
+                "aged-receivables.csv",
+                "Customer,Invoice,Issue Date,Due Date,Original Amount,Paid Through Cutoff,Credits Through Cutoff,Outstanding,Age Bucket",
+                receivables.Select(x => Row(
+                    x.Contact,
+                    x.DocumentNumber,
+                    x.DocumentDate,
+                    x.DueDate,
+                    x.OriginalAmount,
+                    x.SettledAmount,
+                    x.CreditedAmount,
+                    x.OutstandingAmount,
+                    x.AgeBucket))),
+            Csv(
+                "aged-payables.csv",
+                "Supplier,Bill,Issue Date,Due Date,Original Amount,Paid Through Cutoff,Credits Through Cutoff,Outstanding,Age Bucket",
+                payables.Select(x => Row(
+                    x.Contact,
+                    x.DocumentNumber,
+                    x.DocumentDate,
+                    x.DueDate,
+                    x.OriginalAmount,
+                    x.SettledAmount,
+                    x.CreditedAmount,
+                    x.OutstandingAmount,
+                    x.AgeBucket))),
+            Csv(
+                "fixed-assets.csv",
+                "Asset Number,Name,Acquisition Date,Cost,Residual Value,Useful Life Months,Accumulated Depreciation,Carrying Value,Status,Disposal Date,Proceeds,Gain Loss",
+                fixedAssets.Select(x => Row(
+                    x.AssetNumber,
+                    x.Name,
+                    x.AcquisitionDate,
+                    x.Cost,
+                    x.ResidualValue,
+                    x.UsefulLifeMonths,
+                    x.AccumulatedDepreciation,
+                    x.CarryingValue,
+                    x.Status,
+                    x.DisposalDate,
+                    x.Proceeds,
+                    x.GainLoss))),
+            Csv(
+                "inventory-valuation.csv",
+                "Item Code,Item Name,Quantity On Hand,Average Unit Cost,Carrying Value",
+                inventory.Select(x => Row(
+                    x.Code,
+                    x.Name,
+                    x.Quantity,
+                    x.AverageUnitCost,
+                    x.Value)))
         };
 
         var generatedAt = DateTimeOffset.UtcNow;
@@ -284,5 +344,256 @@ public sealed class YearEndHandoverPackService(
         return $"\"{text.Replace("\"", "\"\"")}\"";
     }
 
+    private async Task<List<AgeingDocument>> GetReceivablesAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        CancellationToken cancellationToken)
+    {
+        var invoices = await db.SalesInvoices.AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.IssueDate <= asAt &&
+                x.Status != InvoiceStatus.Draft)
+            .Select(x => new
+            {
+                x.Id,
+                Contact = x.Customer.Name,
+                DocumentNumber = x.InvoiceNumber,
+                x.IssueDate,
+                x.DueDate,
+                x.Total
+            })
+            .ToListAsync(cancellationToken);
+        var invoiceIds = invoices.Select(x => x.Id).ToArray();
+        var voided = await db.SalesInvoiceVoids.AsNoTracking()
+            .Where(x =>
+                invoiceIds.Contains(x.SalesInvoiceId) &&
+                x.Status == SalesInvoiceVoidStatus.Posted &&
+                x.VoidDate <= asAt)
+            .Select(x => x.SalesInvoiceId)
+            .ToListAsync(cancellationToken);
+        invoices = invoices.Where(x => !voided.Contains(x.Id)).ToList();
+        invoiceIds = invoices.Select(x => x.Id).ToArray();
+
+        var receipts = await db.CustomerReceiptAllocations.AsNoTracking()
+            .Where(x =>
+                invoiceIds.Contains(x.SalesInvoiceId) &&
+                x.CustomerReceipt.ReceiptDate <= asAt)
+            .Select(x => new { x.CustomerReceiptId, x.SalesInvoiceId, x.Amount })
+            .ToListAsync(cancellationToken);
+        var receiptIds = receipts.Select(x => x.CustomerReceiptId).Distinct().ToArray();
+        var reversedReceipts = await db.CustomerReceiptReversals.AsNoTracking()
+            .Where(x => receiptIds.Contains(x.CustomerReceiptId) && x.ReversalDate <= asAt)
+            .Select(x => x.CustomerReceiptId)
+            .ToListAsync(cancellationToken);
+        var paid = receipts
+            .Where(x => !reversedReceipts.Contains(x.CustomerReceiptId))
+            .GroupBy(x => x.SalesInvoiceId)
+            .ToDictionary(x => x.Key, x => x.Sum(y => y.Amount));
+
+        var credits = await db.SalesCreditNotes.AsNoTracking()
+            .Where(x =>
+                invoiceIds.Contains(x.SalesInvoiceId) &&
+                x.Status == SalesCreditNoteStatus.Posted &&
+                x.CreditDate <= asAt)
+            .Select(x => new { x.Id, x.SalesInvoiceId, x.Total })
+            .ToListAsync(cancellationToken);
+        var creditIds = credits.Select(x => x.Id).ToArray();
+        var reversedCredits = await db.SalesCreditNoteReversals.AsNoTracking()
+            .Where(x =>
+                creditIds.Contains(x.SalesCreditNoteId) &&
+                x.Status == SalesCreditNoteReversalStatus.Posted &&
+                x.ReversalDate <= asAt)
+            .Select(x => x.SalesCreditNoteId)
+            .ToListAsync(cancellationToken);
+        var credited = credits
+            .Where(x => !reversedCredits.Contains(x.Id))
+            .GroupBy(x => x.SalesInvoiceId)
+            .ToDictionary(x => x.Key, x => x.Sum(y => y.Total));
+
+        return invoices.Select(x => new AgeingDocument(
+                x.Contact,
+                x.DocumentNumber,
+                x.IssueDate,
+                x.DueDate,
+                x.Total,
+                paid.GetValueOrDefault(x.Id),
+                credited.GetValueOrDefault(x.Id),
+                Math.Max(0m, x.Total - paid.GetValueOrDefault(x.Id) - credited.GetValueOrDefault(x.Id)),
+                AgeBucket(asAt, x.DueDate)))
+            .Where(x => x.OutstandingAmount > 0m)
+            .OrderBy(x => x.Contact)
+            .ThenBy(x => x.DueDate)
+            .ToList();
+    }
+
+    private async Task<List<AgeingDocument>> GetPayablesAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        CancellationToken cancellationToken)
+    {
+        var bills = await db.SupplierBills.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.BillDate <= asAt)
+            .Select(x => new
+            {
+                x.Id,
+                Contact = x.Supplier.Name,
+                DocumentNumber = x.BillNumber,
+                x.BillDate,
+                x.DueDate,
+                x.Total
+            })
+            .ToListAsync(cancellationToken);
+        var billIds = bills.Select(x => x.Id).ToArray();
+        var voided = await db.SupplierBillVoids.AsNoTracking()
+            .Where(x => billIds.Contains(x.SupplierBillId) && x.VoidDate <= asAt)
+            .Select(x => x.SupplierBillId)
+            .ToListAsync(cancellationToken);
+        bills = bills.Where(x => !voided.Contains(x.Id)).ToList();
+        billIds = bills.Select(x => x.Id).ToArray();
+
+        var payments = await db.SupplierPayments.AsNoTracking()
+            .Where(x => billIds.Contains(x.SupplierBillId) && x.PaymentDate <= asAt)
+            .Select(x => new { x.Id, x.SupplierBillId, x.Amount })
+            .ToListAsync(cancellationToken);
+        var paymentIds = payments.Select(x => x.Id).ToArray();
+        var reversedPayments = await db.SupplierPaymentReversals.AsNoTracking()
+            .Where(x => paymentIds.Contains(x.SupplierPaymentId) && x.ReversalDate <= asAt)
+            .Select(x => x.SupplierPaymentId)
+            .ToListAsync(cancellationToken);
+        var paid = payments
+            .Where(x => !reversedPayments.Contains(x.Id))
+            .GroupBy(x => x.SupplierBillId)
+            .ToDictionary(x => x.Key, x => x.Sum(y => y.Amount));
+
+        var credits = await db.SupplierCreditNotes.AsNoTracking()
+            .Where(x => billIds.Contains(x.SupplierBillId) && x.CreditDate <= asAt)
+            .Select(x => new { x.Id, x.SupplierBillId, x.Total })
+            .ToListAsync(cancellationToken);
+        var creditIds = credits.Select(x => x.Id).ToArray();
+        var reversedCredits = await db.SupplierCreditNoteReversals.AsNoTracking()
+            .Where(x => creditIds.Contains(x.SupplierCreditNoteId) && x.ReversalDate <= asAt)
+            .Select(x => x.SupplierCreditNoteId)
+            .ToListAsync(cancellationToken);
+        var credited = credits
+            .Where(x => !reversedCredits.Contains(x.Id))
+            .GroupBy(x => x.SupplierBillId)
+            .ToDictionary(x => x.Key, x => x.Sum(y => y.Total));
+
+        return bills.Select(x => new AgeingDocument(
+                x.Contact,
+                x.DocumentNumber,
+                x.BillDate,
+                x.DueDate,
+                x.Total,
+                paid.GetValueOrDefault(x.Id),
+                credited.GetValueOrDefault(x.Id),
+                Math.Max(0m, x.Total - paid.GetValueOrDefault(x.Id) - credited.GetValueOrDefault(x.Id)),
+                AgeBucket(asAt, x.DueDate)))
+            .Where(x => x.OutstandingAmount > 0m)
+            .OrderBy(x => x.Contact)
+            .ThenBy(x => x.DueDate)
+            .ToList();
+    }
+
+    private async Task<List<FixedAssetScheduleRow>> GetFixedAssetsAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        CancellationToken cancellationToken)
+    {
+        var assets = await db.FixedAssets.AsNoTracking()
+            .Include(x => x.DepreciationEntries)
+            .Include(x => x.Disposal)
+            .Where(x => x.OrganisationId == organisationId && x.AcquisitionDate <= asAt)
+            .OrderBy(x => x.AssetNumber)
+            .ToListAsync(cancellationToken);
+
+        return assets.Select(asset =>
+        {
+            var depreciation = asset.DepreciationEntries
+                .Where(x => x.ThroughDate <= asAt)
+                .Sum(x => x.Amount);
+            var disposed = asset.Disposal is not null && asset.Disposal.DisposalDate <= asAt;
+            return new FixedAssetScheduleRow(
+                asset.AssetNumber,
+                asset.Name,
+                asset.AcquisitionDate,
+                asset.Cost,
+                asset.ResidualValue,
+                asset.UsefulLifeMonths,
+                depreciation,
+                disposed ? 0m : Math.Max(0m, asset.Cost - depreciation),
+                disposed ? "Disposed" : "Held",
+                disposed ? asset.Disposal!.DisposalDate : null,
+                disposed ? asset.Disposal!.Proceeds : null,
+                disposed ? asset.Disposal!.GainLoss : null);
+        }).ToList();
+    }
+
+    private async Task<List<InventoryScheduleRow>> GetInventoryAsync(
+        Guid organisationId,
+        DateOnly asAt,
+        CancellationToken cancellationToken)
+    {
+        var positions = await db.InventoryMovements.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.MovementDate <= asAt)
+            .GroupBy(x => new { x.ProductItemId, x.ProductItem.Code, x.ProductItem.Name })
+            .Select(x => new
+            {
+                x.Key.Code,
+                x.Key.Name,
+                Quantity = x.Sum(y => y.QuantityChange),
+                Value = x.Sum(y => y.ValueChange)
+            })
+            .OrderBy(x => x.Code)
+            .ToListAsync(cancellationToken);
+
+        return positions.Select(x => new InventoryScheduleRow(
+            x.Code,
+            x.Name,
+            x.Quantity,
+            x.Quantity == 0m ? 0m : x.Value / x.Quantity,
+            x.Value)).ToList();
+    }
+
+    private static string AgeBucket(DateOnly asAt, DateOnly dueDate)
+    {
+        var days = asAt.DayNumber - dueDate.DayNumber;
+        return days <= 0 ? "Current"
+            : days <= 30 ? "1-30 days"
+            : days <= 60 ? "31-60 days"
+            : days <= 90 ? "61-90 days"
+            : "90+ days";
+    }
+
     private sealed record PackFile(string Name, byte[] Content, int RowCount);
+    private sealed record AgeingDocument(
+        string Contact,
+        string DocumentNumber,
+        DateOnly DocumentDate,
+        DateOnly DueDate,
+        decimal OriginalAmount,
+        decimal SettledAmount,
+        decimal CreditedAmount,
+        decimal OutstandingAmount,
+        string AgeBucket);
+    private sealed record FixedAssetScheduleRow(
+        string AssetNumber,
+        string Name,
+        DateOnly AcquisitionDate,
+        decimal Cost,
+        decimal ResidualValue,
+        int UsefulLifeMonths,
+        decimal AccumulatedDepreciation,
+        decimal CarryingValue,
+        string Status,
+        DateOnly? DisposalDate,
+        decimal? Proceeds,
+        decimal? GainLoss);
+    private sealed record InventoryScheduleRow(
+        string Code,
+        string Name,
+        decimal Quantity,
+        decimal AverageUnitCost,
+        decimal Value);
 }
