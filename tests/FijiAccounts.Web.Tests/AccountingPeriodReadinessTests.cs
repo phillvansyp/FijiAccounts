@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
@@ -1305,5 +1306,126 @@ public async Task UnlockPeriod_WhenAlreadyUnlocked_IsIdempotent()
     Assert.Null(reloaded.LockedAt);
     Assert.Null(reloaded.LockedByUserId);
     Assert.Equal(beforeAuditCount, afterAuditCount);
+}
+
+[Fact]
+public async Task UnlockPeriod_RequiresReopeningReason()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true);
+
+    var error =
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.SetLockedAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id,
+                false));
+
+    Assert.Equal(
+        "Enter a reason for reopening the accounting period.",
+        error.Message);
+    Assert.True(
+        (await test.Db.AccountingPeriods.AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id))
+        .IsLocked);
+}
+
+[Fact]
+public async Task UnlockPeriod_PreservesReasonAndOriginalLockEvidence()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true);
+
+    var locked =
+        await test.Db.AccountingPeriods.AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        false,
+        reopeningReason: "  Post approved year-end adjustment  ");
+
+    var audit =
+        await test.Db.AuditEvents.AsNoTracking()
+            .SingleAsync(x =>
+                x.EntityType == nameof(AccountingPeriod) &&
+                x.EntityId == period.Id.ToString() &&
+                x.EventType == "AccountingPeriodUnlocked");
+    using var evidence = JsonDocument.Parse(audit.JsonData);
+
+    Assert.Equal(
+        "Post approved year-end adjustment",
+        evidence.RootElement.GetProperty("ReopeningReason").GetString());
+    Assert.Equal(
+        locked.LockedByUserId,
+        evidence.RootElement.GetProperty("PreviousLockedByUserId").GetString());
+    Assert.Equal(
+        locked.LockedAt,
+        evidence.RootElement.GetProperty("PreviousLockedAt").GetDateTimeOffset());
+}
+
+[Fact]
+public async Task NonManager_CannotUnlockPeriod()
+{
+    await using var test =
+        await AccountingTestDatabase.CreateAsync();
+
+    var period =
+        await CreatePeriodAsync(test);
+
+    var service =
+        new AccountingPeriodService(
+            test.Db,
+            test.Access);
+
+    await service.SetLockedAsync(
+        test.UserId,
+        test.Organisation.Id,
+        period.Id,
+        true);
+
+    await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        () => service.SetLockedAsync(
+            "not-a-member",
+            test.Organisation.Id,
+            period.Id,
+            false,
+            reopeningReason: "Attempt unauthorized reopening"));
+
+    Assert.True(
+        (await test.Db.AccountingPeriods.AsNoTracking()
+            .SingleAsync(x => x.Id == period.Id))
+        .IsLocked);
 }
 }

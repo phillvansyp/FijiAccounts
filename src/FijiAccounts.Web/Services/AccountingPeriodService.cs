@@ -369,6 +369,7 @@ var inventoryIntegrityWarnings =
     Guid periodId,
     bool locked,
     bool acknowledgeWarnings = false,
+    string? reopeningReason = null,
     CancellationToken ct = default)
     {
         if (!await access.CanManageTeamAsync(
@@ -393,6 +394,25 @@ var inventoryIntegrityWarnings =
         {
             return;
         }
+
+        var trimmedReopeningReason = reopeningReason?.Trim();
+        if (!locked)
+        {
+            if (string.IsNullOrWhiteSpace(trimmedReopeningReason))
+            {
+                throw new InvalidOperationException(
+                    "Enter a reason for reopening the accounting period.");
+            }
+
+            if (trimmedReopeningReason.Length > 500)
+            {
+                throw new InvalidOperationException(
+                    "The reopening reason cannot exceed 500 characters.");
+            }
+        }
+
+        var previousLockedAt = period.LockedAt;
+        var previousLockedByUserId = period.LockedByUserId;
 
         AccountingPeriodReadiness? readiness = null;
 
@@ -438,7 +458,10 @@ if (locked)
         period,
         locked,
         readiness,
-        locked && !readiness!.IsReady && acknowledgeWarnings));
+        locked && !readiness!.IsReady && acknowledgeWarnings,
+        locked ? null : trimmedReopeningReason,
+        locked ? null : previousLockedAt,
+        locked ? null : previousLockedByUserId));
 
         await db.SaveChangesAsync(ct);
     }
@@ -450,7 +473,10 @@ if (locked)
     AccountingPeriod period,
     bool locked,
     AccountingPeriodReadiness? readiness = null,
-    bool warningsAcknowledged = false) =>
+    bool warningsAcknowledged = false,
+    string? reopeningReason = null,
+    DateTimeOffset? previousLockedAt = null,
+    string? previousLockedByUserId = null) =>
     new()
     {
         OrganisationId = organisationId,
@@ -481,7 +507,13 @@ FixedAssetsRequiringDepreciation =
 PendingFiscalDocuments =
     readiness?.PendingFiscalDocuments ?? 0,
 WarningsAcknowledged =
-    warningsAcknowledged
+    warningsAcknowledged,
+ReopeningReason =
+    reopeningReason,
+PreviousLockedAt =
+    previousLockedAt,
+PreviousLockedByUserId =
+    previousLockedByUserId
                 })
     };
 }

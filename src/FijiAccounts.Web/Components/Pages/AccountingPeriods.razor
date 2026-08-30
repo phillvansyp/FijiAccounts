@@ -216,6 +216,21 @@ else
                                 <strong>@item.EndsOn.ToString("dd MMM yyyy")</strong>.
                                 The unlock will be recorded in the audit trail.
                             </p>
+
+                            <div class="mb-3">
+                                <label class="form-label" for="reopening-reason-@item.Id">
+                                    Reason for reopening
+                                </label>
+                                <textarea id="reopening-reason-@item.Id"
+                                          class="form-control"
+                                          rows="3"
+                                          maxlength="500"
+                                          placeholder="Explain why entries must be posted or corrected in this closed period."
+                                          @bind="reopeningReason"></textarea>
+                                <div class="form-text">
+                                    Required. This reason is preserved with the original lock details in the audit trail.
+                                </div>
+                            </div>
                         }
                         else
                         {
@@ -351,8 +366,9 @@ else
                         <div class="d-flex gap-2">
                             <button class="btn @(item.IsLocked ? "btn-warning" : "btn-danger")"
                                     disabled="@(
-    !item.IsLocked &&
-    (
+    item.IsLocked
+        ? string.IsNullOrWhiteSpace(reopeningReason)
+        : (
         loadingReadiness ||
         periodReadiness is null ||
         periodReadiness.HasBlockingItems ||
@@ -428,6 +444,7 @@ else
     private bool loadingReadiness;
 
     private bool warningsAcknowledged;
+    private string reopeningReason = "";
 
     private string FinancialYearEnd =>
         new DateOnly(
@@ -612,6 +629,7 @@ else
         confirmingPeriodId = item.Id;
         periodReadiness = null;
         warningsAcknowledged = false;
+        reopeningReason = "";
         status = null;
 
         if (item.IsLocked)
@@ -647,6 +665,7 @@ else
     confirmingPeriodId = null;
     periodReadiness = null;
     warningsAcknowledged = false;
+    reopeningReason = "";
 }
 
     private async Task ConfirmToggle(AccountingPeriod item)
@@ -664,7 +683,11 @@ else
         !wasLocked &&
         periodReadiness is not null &&
         !periodReadiness.IsReady &&
-        warningsAcknowledged);
+        warningsAcknowledged,
+    reopeningReason:
+        wasLocked
+            ? reopeningReason
+            : null);
 
             statusClass = "alert-success";
             status =
@@ -675,6 +698,7 @@ else
             confirmingPeriodId = null;
 periodReadiness = null;
 warningsAcknowledged = false;
+reopeningReason = "";
 
             await Reload();
         }
