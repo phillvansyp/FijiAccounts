@@ -1,6 +1,7 @@
 @page "/o/{OrganisationId:guid}/periods"
 @attribute [Authorize]
 @using System.ComponentModel.DataAnnotations
+@using System.IO.Compression
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
@@ -10,6 +11,7 @@
 @inject TenantAccessService TenantAccess
 @inject AccountingPeriodService PeriodService
 @inject YearEndReviewService ReviewService
+@inject YearEndReviewAttachmentService ReviewAttachments
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -304,6 +306,39 @@ else
                                                             </small>
                                                         }
                                                     }
+                                                    <div class="mt-3 pt-2 border-top">
+                                                        <strong class="small">Supporting documents</strong>
+                                                        @if (reviewItem.Attachments.Count == 0)
+                                                        {
+                                                            <small class="d-block text-secondary">No documents attached.</small>
+                                                        }
+                                                        else
+                                                        {
+                                                            <ul class="list-unstyled mb-2">
+                                                                @foreach (var attachment in reviewItem.Attachments.OrderBy(x => x.UploadedAt))
+                                                                {
+                                                                    <li>
+                                                                        <a href="@($"/api/o/{OrganisationId}/periods/{item.Id}/review-attachments/{attachment.Id}")">
+                                                                            @attachment.FileName
+                                                                        </a>
+                                                                        <small class="text-secondary">
+                                                                            · @FormatFileSize(attachment.OriginalSize)
+                                                                            · @attachment.UploadedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                                                                        </small>
+                                                                    </li>
+                                                                }
+                                                            </ul>
+                                                        }
+                                                        @if (CanAddReviewAttachment(reviewItem, item))
+                                                        {
+                                                            <InputFile class="form-control form-control-sm"
+                                                                       multiple
+                                                                       accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                                                                       disabled="@(uploadingReviewArea is not null)"
+                                                                       OnChange="@((InputFileChangeEventArgs e) => UploadReviewAttachments(reviewItem.Area, e))" />
+                                                            <small class="text-secondary">Up to five files per upload, 10 MB each.</small>
+                                                        }
+                                                    </div>
                                                 </td>
                                                 <td>
                                                     @(reviewItem.ReviewedByUserId ?? "—")
@@ -655,6 +690,7 @@ else
     private string finalApprovalReference = "";
     private Dictionary<YearEndReviewArea, ReviewItemModel> reviewModels = [];
     private List<YearEndReviewAssignee> reviewAssignees = [];
+    private YearEndReviewArea? uploadingReviewArea;
 
     private IEnumerable<YearEndReviewItem> VisibleReviewItems => activeReview is null
         ? []
@@ -902,6 +938,105 @@ else
             LoadReviewModels();
             status = $"{ReviewAreaLabel(area)} query resolved.";
         });
+    }
+
+    private async Task UploadReviewAttachments(
+        YearEndReviewArea area,
+        InputFileChangeEventArgs args)
+    {
+        if (reviewingPeriodId is null) return;
+        uploadingReviewArea = area;
+        try
+        {
+            var files = args.GetMultipleFiles(5);
+            foreach (var file in files)
+            {
+                if (file.Size <= 0 || file.Size > YearEndReviewAttachmentService.MaximumAttachmentBytes)
+                {
+                    throw new InvalidOperationException(
+                        $"{file.Name} must be a non-empty file no larger than 10 MB.");
+                }
+
+                await using var stream = file.OpenReadStream(
+                    YearEndReviewAttachmentService.MaximumAttachmentBytes);
+                using var input = new MemoryStream();
+                await stream.CopyToAsync(input);
+                var original = input.ToArray();
+                using var compressed = new MemoryStream();
+                using (var brotli = new BrotliStream(
+                           compressed,
+                           CompressionLevel.Optimal,
+                           leaveOpen: true))
+                {
+                    await brotli.WriteAsync(original);
+                }
+
+                var useCompression = compressed.Length < original.Length;
+                var stored = useCompression ? compressed.ToArray() : original;
+                await ReviewAttachments.AddAsync(
+                    userId,
+                    OrganisationId,
+                    reviewingPeriodId.Value,
+                    area,
+                    new YearEndReviewAttachmentRequest(
+                        file.Name,
+                        ReviewAttachmentContentType(file),
+                        original.LongLength,
+                        stored,
+                        useCompression));
+            }
+
+            activeReview = await ReviewService.GetAsync(
+                userId,
+                OrganisationId,
+                reviewingPeriodId.Value);
+            LoadReviewModels();
+            await Reload();
+            statusClass = "alert-success";
+            status = $"{files.Count} supporting document(s) added to {ReviewAreaLabel(area)}.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or InvalidDataException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+        finally
+        {
+            uploadingReviewArea = null;
+        }
+    }
+
+    private bool CanAddReviewAttachment(
+        YearEndReviewItem reviewItem,
+        AccountingPeriod period) =>
+        !period.IsLocked &&
+        activeReview?.ApprovedAt is null &&
+        (canManage ||
+         (reviewItem.Status == YearEndReviewStatus.QueryRaised &&
+          reviewItem.QueryAssignedToUserId == userId));
+
+    private static string FormatFileSize(long size) => size < 1024 * 1024
+        ? $"{Math.Ceiling(size / 1024m):0} KB"
+        : $"{size / (1024m * 1024m):0.0} MB";
+
+    private static string ReviewAttachmentContentType(IBrowserFile file)
+    {
+        if (!string.IsNullOrWhiteSpace(file.ContentType))
+        {
+            return file.ContentType;
+        }
+
+        return Path.GetExtension(file.Name).ToLowerInvariant() switch
+        {
+            ".pdf" => "application/pdf",
+            ".doc" => "application/msword",
+            ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".xls" => "application/vnd.ms-excel",
+            ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            _ => "application/octet-stream"
+        };
     }
 
     private async Task ApproveReview()

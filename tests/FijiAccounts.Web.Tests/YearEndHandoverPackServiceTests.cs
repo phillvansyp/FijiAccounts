@@ -182,6 +182,22 @@ public sealed class YearEndHandoverPackServiceTests
         await test.Db.SaveChangesAsync();
         var reviewService = new YearEndReviewService(test.Db, test.Access);
         await reviewService.StartAsync(test.UserId, test.Organisation.Id, period.Id);
+        var reviewEvidence = Encoding.UTF8.GetBytes("%PDF-1.7\nyear-end receipt evidence");
+        var reviewAttachment = await new YearEndReviewAttachmentService(
+                test.Db,
+                test.Access,
+                new DatabaseImmutableDocumentStore(test.Db))
+            .AddAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id,
+                YearEndReviewArea.AgedReceivables,
+                new YearEndReviewAttachmentRequest(
+                    "year-end-receipt.pdf",
+                    "application/pdf",
+                    reviewEvidence.LongLength,
+                    reviewEvidence,
+                    false));
         foreach (var area in Enum.GetValues<YearEndReviewArea>()
                      .Where(x => x != YearEndReviewArea.AgedReceivables))
         {
@@ -253,7 +269,8 @@ public sealed class YearEndHandoverPackServiceTests
             "aged-receivables.csv",
             "aged-payables.csv",
             "fixed-assets.csv",
-            "inventory-valuation.csv"
+            "inventory-valuation.csv",
+            $"review-evidence/agedreceivables/{reviewAttachment.Id:N}-year-end-receipt.pdf"
         };
         Assert.Equal(expected, archive.Entries.Select(x => x.FullName));
 
@@ -296,6 +313,12 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Contains("Reviewed", review);
         Assert.Contains("Confirm collection of the year-end customer balance.", review);
         Assert.Contains("Collected after year end and matched to the bank receipt.", review);
+        Assert.Contains("year-end-receipt.pdf", review);
+        Assert.Equal(
+            reviewEvidence,
+            await ReadBytesAsync(
+                archive,
+                $"review-evidence/agedreceivables/{reviewAttachment.Id:N}-year-end-receipt.pdf"));
         var inventory = await ReadAsync(archive, "inventory-valuation.csv");
         Assert.Contains(
             "\"STOCK-CUT-OFF\",\"Year-end stock\",\"10.00\",\"10.00\",\"100.00\"",
@@ -357,7 +380,7 @@ public sealed class YearEndHandoverPackServiceTests
             test.Access,
             test.Updates).ScanAsync(test.UserId, test.Organisation.Id);
         Assert.Equal(ImmutableDocumentIntegrityStatus.Healthy, integrity.Status);
-        Assert.Equal(2, integrity.LinkedDocumentCount);
+        Assert.Equal(3, integrity.LinkedDocumentCount);
         Assert.Equal(0, integrity.UnreferencedObjectCount);
 
         firstSnapshot.FileName = "tampered.zip";

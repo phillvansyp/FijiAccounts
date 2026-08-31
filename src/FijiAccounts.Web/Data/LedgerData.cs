@@ -50,6 +50,24 @@ public sealed class YearEndReviewItem
     [MaxLength(450)] public string? QueryResolvedByUserId { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public string? ReviewedByUserId { get; set; }
+    public List<YearEndReviewAttachment> Attachments { get; set; } = [];
+}
+
+public sealed class YearEndReviewAttachment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid YearEndReviewItemId { get; set; }
+    public YearEndReviewItem YearEndReviewItem { get; set; } = null!;
+    [MaxLength(255)] public required string FileName { get; set; }
+    [MaxLength(100)] public required string ContentType { get; set; }
+    public long OriginalSize { get; set; }
+    public long StoredSize { get; set; }
+    public bool IsCompressed { get; set; }
+    public Guid ImmutableDocumentObjectId { get; set; }
+    public ImmutableDocumentObject ImmutableDocumentObject { get; set; } = null!;
+    public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string UploadedByUserId { get; set; }
 }
 
 public enum YearEndReviewArea

@@ -144,6 +144,7 @@ public sealed class YearEndHandoverPackService(
             .ToListAsync(cancellationToken);
         var yearEndReview = await db.YearEndReviews.AsNoTracking()
             .Include(x => x.Items)
+            .ThenInclude(x => x.Attachments)
             .SingleOrDefaultAsync(
                 x => x.OrganisationId == organisationId &&
                      x.AccountingPeriodId == period.Id,
@@ -204,7 +205,7 @@ public sealed class YearEndHandoverPackService(
                     x.PostedByUserId))),
             Csv(
                 "year-end-review.csv",
-                "Area,Status,Notes,Query Assigned To,Query Due Date,Query Raised At,Query Raised By,Query Response,Query Responded At,Query Responded By,Query Resolved At,Query Resolved By,Reviewed At,Reviewed By,Final Approval Reference,Final Approved At,Final Approved By",
+                "Area,Status,Notes,Query Assigned To,Query Due Date,Query Raised At,Query Raised By,Query Response,Query Responded At,Query Responded By,Query Resolved At,Query Resolved By,Attachment Count,Attachment Files,Reviewed At,Reviewed By,Final Approval Reference,Final Approved At,Final Approved By",
                 yearEndReview?.Items
                     .OrderBy(x => x.Area)
                     .Select(x => Row(
@@ -220,6 +221,10 @@ public sealed class YearEndHandoverPackService(
                         x.QueryRespondedByUserId,
                         x.QueryResolvedAt,
                         x.QueryResolvedByUserId,
+                        x.Attachments.Count,
+                        string.Join("; ", x.Attachments
+                            .OrderBy(a => a.UploadedAt)
+                            .Select(a => AttachmentPackPath(x.Area, a))),
                         x.ReviewedAt,
                         x.ReviewedByUserId,
                         yearEndReview.ApprovalReference,
@@ -306,6 +311,29 @@ public sealed class YearEndHandoverPackService(
                     x.AverageUnitCost,
                     x.Value)))
         };
+
+        if (yearEndReview is not null)
+        {
+            foreach (var item in yearEndReview.Items.OrderBy(x => x.Area))
+            {
+                foreach (var attachment in item.Attachments.OrderBy(x => x.UploadedAt))
+                {
+                    var stored = await storage.ReadVerifiedAsync(
+                        organisationId,
+                        attachment.ImmutableDocumentObjectId,
+                        cancellationToken);
+                    var original = YearEndReviewAttachmentService.RestoreAndValidate(
+                        stored,
+                        attachment.IsCompressed,
+                        attachment.OriginalSize,
+                        attachment.ContentType);
+                    files.Add(new PackFile(
+                        AttachmentPackPath(item.Area, attachment),
+                        original,
+                        1));
+                }
+            }
+        }
 
         var generatedAt = DateTimeOffset.UtcNow;
         var snapshotId = Guid.NewGuid();
@@ -761,6 +789,11 @@ public sealed class YearEndHandoverPackService(
         YearEndReviewArea.YearEndAdjustments => "Year-end adjustments",
         _ => area.ToString()
     };
+
+    private static string AttachmentPackPath(
+        YearEndReviewArea area,
+        YearEndReviewAttachment attachment) =>
+        $"review-evidence/{area.ToString().ToLowerInvariant()}/{attachment.Id:N}-{attachment.FileName}";
 
     private sealed record PackFile(string Name, byte[] Content, int RowCount);
     private sealed record AgeingDocument(

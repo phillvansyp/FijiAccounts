@@ -24,6 +24,7 @@ public sealed class YearEndReviewService(
 
         return await db.YearEndReviews.AsNoTracking()
             .Include(x => x.Items)
+            .ThenInclude(x => x.Attachments)
             .SingleOrDefaultAsync(
                 x => x.OrganisationId == organisationId &&
                      x.AccountingPeriodId == periodId,
