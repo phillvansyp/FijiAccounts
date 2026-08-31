@@ -93,6 +93,11 @@ public sealed class ProjectRevenueRecognitionServiceTests
         await claims.SubmitAsync(test.UserId, test.Organisation.Id, claim.Id);
         await claims.DecideAsync(
             test.UserId, test.Organisation.Id, claim.Id, true, "Certified");
+        var approvedClaim = await test.Db.ProjectProgressClaims
+            .SingleAsync(x => x.Id == claim.Id);
+        approvedClaim.DecidedAt = new DateTimeOffset(
+            2026, 8, 25, 0, 0, 0, TimeSpan.Zero);
+        await test.Db.SaveChangesAsync();
         var invoice = await claims.GenerateDraftInvoiceAsync(
             test.UserId,
             test.Organisation.Id,
