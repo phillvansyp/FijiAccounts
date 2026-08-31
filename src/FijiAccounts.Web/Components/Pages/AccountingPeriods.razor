@@ -265,13 +265,13 @@ else
                                                     </select>
                                                 </td>
                                                 <td>
-                                                    <textarea class="form-control" rows="2" maxlength="500" @bind="reviewModel.Notes" disabled="@(!canManage || item.IsLocked || activeReview.ApprovedAt is not null)"></textarea>
+                                                    <textarea class="form-control" rows="2" maxlength="500" @bind="reviewModel.Notes" @bind:event="oninput" disabled="@(!canManage || item.IsLocked || activeReview.ApprovedAt is not null)"></textarea>
                                                     @if (reviewModel.Status == YearEndReviewStatus.QueryRaised || reviewItem.QueryRaisedAt is not null)
                                                     {
                                                         <div class="row g-2 mt-1">
                                                             <div class="col-md-7">
                                                                 <label class="form-label small mb-1">Assigned to</label>
-                                                                <select class="form-select form-select-sm" @bind="reviewModel.AssignedToUserId" disabled="@(!canManage || reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)">
+                                                                <select class="form-select form-select-sm" @bind="reviewModel.AssignedToUserId" disabled="@(!canManage || reviewModel.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)">
                                                                     <option value="">Choose a person</option>
                                                                     @foreach (var assignee in reviewAssignees)
                                                                     {
@@ -281,7 +281,7 @@ else
                                                             </div>
                                                             <div class="col-md-5">
                                                                 <label class="form-label small mb-1">Due date</label>
-                                                                <InputDate class="form-control form-control-sm" @bind-Value="reviewModel.DueDate" disabled="@(!canManage || reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)" />
+                                                                <InputDate class="form-control form-control-sm" @bind-Value="reviewModel.DueDate" disabled="@(!canManage || reviewModel.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)" />
                                                             </div>
                                                         </div>
                                                         @if (reviewItem.QueryRaisedAt is not null)
