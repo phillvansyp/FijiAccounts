@@ -144,7 +144,7 @@ else
                             {
                                 <a class="btn btn-sm btn-outline-primary"
                                    href="@($"/api/o/{OrganisationId}/periods/{item.Id}/handover-pack")">
-                                    Handover pack
+                                    Create handover pack
                                 </a>
                             }
 
@@ -167,6 +167,23 @@ else
                         </div>
                     }
                 </div>
+
+                @if (canManage && item.HandoverPackSnapshots.Count > 0)
+                {
+                    <div class="border-top py-2 px-3 mb-2 bg-light">
+                        <strong class="d-block mb-2">Saved handover packs</strong>
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var snapshot in item.HandoverPackSnapshots.OrderByDescending(x => x.Version))
+                            {
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   title="SHA-256 @snapshot.Sha256"
+                                   href="@($"/api/o/{OrganisationId}/periods/{item.Id}/handover-pack/{snapshot.Id}")">
+                                    Version @snapshot.Version · @snapshot.CreatedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                                </a>
+                            }
+                        </div>
+                    </div>
+                }
 
                 @if (reviewingPeriodId == item.Id)
                 {
@@ -628,6 +645,7 @@ else
                 .AsNoTracking()
                 .Include(x => x.YearEndReview)
                 .ThenInclude(x => x!.Items)
+                .Include(x => x.HandoverPackSnapshots)
                 .Where(x => x.OrganisationId == OrganisationId)
                 .OrderByDescending(x => x.EndsOn)
                 .ToListAsync();

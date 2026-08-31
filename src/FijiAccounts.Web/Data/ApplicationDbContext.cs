@@ -50,6 +50,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         Set<ImmutableDocumentObject>();
     public DbSet<ImmutableDocumentIntegrityScan> ImmutableDocumentIntegrityScans =>
         Set<ImmutableDocumentIntegrityScan>();
+    public DbSet<YearEndHandoverPackSnapshot> YearEndHandoverPackSnapshots =>
+        Set<YearEndHandoverPackSnapshot>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<FiscalisationRecord> FiscalisationRecords =>
         Set<FiscalisationRecord>();
@@ -145,6 +147,19 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasIndex(x => new { x.OrganisationId, x.Sha256 });
         builder.Entity<ImmutableDocumentIntegrityScan>()
             .HasIndex(x => new { x.OrganisationId, x.CompletedAtTicks });
+        builder.Entity<YearEndHandoverPackSnapshot>()
+            .HasIndex(x => new { x.AccountingPeriodId, x.Version })
+            .IsUnique();
+        builder.Entity<YearEndHandoverPackSnapshot>()
+            .HasOne(x => x.AccountingPeriod)
+            .WithMany(x => x.HandoverPackSnapshots)
+            .HasForeignKey(x => x.AccountingPeriodId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<YearEndHandoverPackSnapshot>()
+            .HasOne(x => x.ImmutableDocumentObject)
+            .WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Organisation>()
             .HasOne(x => x.OrganisationGroup)
             .WithMany(x => x.Companies)
@@ -1394,6 +1409,8 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<ImmutableDocumentObject>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<ImmutableDocumentIntegrityScan>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<YearEndHandoverPackSnapshot>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
 {
     throw new InvalidOperationException(

@@ -14,6 +14,7 @@ public sealed class AccountingPeriod
     public DateTimeOffset? LockedAt { get; set; }
     public string? LockedByUserId { get; set; }
     public YearEndReview? YearEndReview { get; set; }
+    public List<YearEndHandoverPackSnapshot> HandoverPackSnapshots { get; set; } = [];
 }
 
 public sealed class YearEndReview

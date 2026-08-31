@@ -11,13 +11,17 @@ namespace FijiAccounts.Web.Services;
 
 public sealed record YearEndHandoverPack(
     byte[] Content,
-    string FileName);
+    string FileName,
+    Guid SnapshotId,
+    int Version,
+    string Sha256);
 
 public sealed class YearEndHandoverPackService(
     ApplicationDbContext db,
     TenantAccessService access,
     FinancialReportService financialReports,
-    VatWorkpaperService vatWorkpapers)
+    VatWorkpaperService vatWorkpapers,
+    IImmutableDocumentStore storage)
 {
     public async Task<YearEndHandoverPack> CreateAsync(
         string userId,
@@ -295,10 +299,16 @@ public sealed class YearEndHandoverPackService(
         };
 
         var generatedAt = DateTimeOffset.UtcNow;
+        var snapshotId = Guid.NewGuid();
+        var version = (await db.YearEndHandoverPackSnapshots
+            .Where(x => x.AccountingPeriodId == period.Id)
+            .MaxAsync(x => (int?)x.Version, cancellationToken) ?? 0) + 1;
         var manifest = new
         {
             Format = "Account Island year-end handover pack",
             Version = 2,
+            SnapshotId = snapshotId,
+            SnapshotVersion = version,
             OrganisationId = organisation.Id,
             organisation.LegalName,
             organisation.CountryCode,
@@ -333,6 +343,7 @@ public sealed class YearEndHandoverPackService(
         };
         var manifestContent = Encoding.UTF8.GetBytes(
             JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+        var manifestSha256 = Convert.ToHexString(SHA256.HashData(manifestContent)).ToLowerInvariant();
         files.Insert(0, new PackFile("manifest.json", manifestContent, 1));
 
         byte[] content;
@@ -352,6 +363,28 @@ public sealed class YearEndHandoverPackService(
             content = output.ToArray();
         }
 
+        var contentSha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+        var fileName =
+            $"account-island-handover-{period.StartsOn:yyyyMMdd}-{period.EndsOn:yyyyMMdd}-v{version}.zip";
+        var storedObject = storage.Stage(organisationId, userId, content);
+        db.YearEndHandoverPackSnapshots.Add(new YearEndHandoverPackSnapshot
+        {
+            Id = snapshotId,
+            OrganisationId = organisationId,
+            AccountingPeriodId = period.Id,
+            Version = version,
+            FileName = fileName,
+            ImmutableDocumentObjectId = storedObject.Id,
+            Sha256 = contentSha256,
+            ContentLength = content.LongLength,
+            ManifestSha256 = manifestSha256,
+            CreatedAt = generatedAt,
+            CreatedByUserId = userId,
+            ReviewApprovalReference = yearEndReview?.ApprovalReference,
+            ReviewApprovedAt = yearEndReview?.ApprovedAt,
+            ReviewApprovedByUserId = yearEndReview?.ApprovedByUserId
+        });
+
         db.AuditEvents.Add(new AuditEvent
         {
             OrganisationId = organisationId,
@@ -364,16 +397,91 @@ public sealed class YearEndHandoverPackService(
                 period.Name,
                 period.StartsOn,
                 period.EndsOn,
+                SnapshotId = snapshotId,
+                Version = version,
                 FileCount = files.Count,
                 Size = content.Length,
-                ManifestSha256 = Convert.ToHexString(SHA256.HashData(manifestContent)).ToLowerInvariant()
+                Sha256 = contentSha256,
+                ManifestSha256 = manifestSha256
             })
         });
         await db.SaveChangesAsync(cancellationToken);
 
         return new YearEndHandoverPack(
             content,
-            $"account-island-handover-{period.StartsOn:yyyyMMdd}-{period.EndsOn:yyyyMMdd}.zip");
+            fileName,
+            snapshotId,
+            version,
+            contentSha256);
+    }
+
+    public async Task<List<YearEndHandoverPackSnapshot>> ListAsync(
+        string userId,
+        Guid organisationId,
+        Guid periodId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCanExportAsync(userId, organisationId);
+        return await db.YearEndHandoverPackSnapshots.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.AccountingPeriodId == periodId)
+            .OrderByDescending(x => x.Version)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<YearEndHandoverPack> DownloadAsync(
+        string userId,
+        Guid organisationId,
+        Guid periodId,
+        Guid snapshotId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCanExportAsync(userId, organisationId);
+        var snapshot = await db.YearEndHandoverPackSnapshots.AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == snapshotId &&
+                     x.OrganisationId == organisationId &&
+                     x.AccountingPeriodId == periodId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("Handover pack version not found.");
+        var content = await storage.ReadVerifiedAsync(
+            organisationId,
+            snapshot.ImmutableDocumentObjectId,
+            cancellationToken);
+        var actualHash = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+        if (content.LongLength != snapshot.ContentLength ||
+            !actualHash.Equals(snapshot.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "The retained handover pack failed its integrity check.");
+        }
+
+        db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = organisationId,
+            UserId = userId,
+            EventType = "YearEndHandoverPackVersionDownloaded",
+            EntityType = nameof(AccountingPeriod),
+            EntityId = periodId.ToString(),
+            JsonData = JsonSerializer.Serialize(new
+            {
+                SnapshotId = snapshot.Id,
+                snapshot.Version,
+                snapshot.Sha256,
+                snapshot.ContentLength
+            })
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        return new(content, snapshot.FileName, snapshot.Id, snapshot.Version, snapshot.Sha256);
+    }
+
+    private async Task EnsureCanExportAsync(string userId, Guid organisationId)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "Only owners and administrators can access year-end handover packs.");
+        }
     }
 
     private static PackFile Csv(

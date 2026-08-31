@@ -212,8 +212,9 @@ public sealed class YearEndHandoverPackServiceTests
             period.Id);
 
         Assert.Equal(
-            "account-island-handover-20260701-20260731.zip",
+            "account-island-handover-20260701-20260731-v1.zip",
             pack.FileName);
+        Assert.Equal(1, pack.Version);
         using var stream = new MemoryStream(pack.Content);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
         var expected = new[]
@@ -241,6 +242,8 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Equal(period.Id, root.GetProperty("PeriodId").GetGuid());
         Assert.Equal("FJD", root.GetProperty("Currency").GetString());
         Assert.Equal(2, root.GetProperty("Version").GetInt32());
+        Assert.Equal(pack.SnapshotId, root.GetProperty("SnapshotId").GetGuid());
+        Assert.Equal(1, root.GetProperty("SnapshotVersion").GetInt32());
         Assert.NotEqual(JsonValueKind.Null, root.GetProperty("LockedAt").ValueKind);
         Assert.Equal(
             "PARTNER-YE-2026",
@@ -292,6 +295,52 @@ public sealed class YearEndHandoverPackServiceTests
             x.OrganisationId == test.Organisation.Id &&
             x.EntityId == period.Id.ToString() &&
             x.EventType == "YearEndHandoverPackExported"));
+
+        var firstSnapshot = await test.Db.YearEndHandoverPackSnapshots
+            .SingleAsync(x => x.Id == pack.SnapshotId);
+        Assert.Equal(pack.Sha256, firstSnapshot.Sha256);
+        Assert.Equal(pack.Content.LongLength, firstSnapshot.ContentLength);
+        Assert.Equal("PARTNER-YE-2026", firstSnapshot.ReviewApprovalReference);
+        Assert.True(await test.Db.ImmutableDocumentObjects.AnyAsync(x =>
+            x.Id == firstSnapshot.ImmutableDocumentObjectId));
+
+        var secondPack = await service.CreateAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id);
+        Assert.Equal(2, secondPack.Version);
+        Assert.Equal(
+            "account-island-handover-20260701-20260731-v2.zip",
+            secondPack.FileName);
+        Assert.NotEqual(pack.SnapshotId, secondPack.SnapshotId);
+        Assert.Equal(2, (await service.ListAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id)).Count);
+
+        var retainedFirst = await service.DownloadAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            pack.SnapshotId);
+        Assert.Equal(pack.Content, retainedFirst.Content);
+        Assert.Equal(pack.Sha256, retainedFirst.Sha256);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == period.Id.ToString() &&
+            x.EventType == "YearEndHandoverPackVersionDownloaded"));
+
+        var integrity = await new ImmutableDocumentIntegrityService(
+            test.Db,
+            test.Access,
+            test.Updates).ScanAsync(test.UserId, test.Organisation.Id);
+        Assert.Equal(ImmutableDocumentIntegrityStatus.Healthy, integrity.Status);
+        Assert.Equal(2, integrity.LinkedDocumentCount);
+        Assert.Equal(0, integrity.UnreferencedObjectCount);
+
+        firstSnapshot.FileName = "tampered.zip";
+        var immutableError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Db.SaveChangesAsync());
+        Assert.Contains("append-only", immutableError.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -322,6 +371,17 @@ public sealed class YearEndHandoverPackServiceTests
                 "not-a-member",
                 test.Organisation.Id,
                 period.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            CreateService(test).ListAsync(
+                "not-a-member",
+                test.Organisation.Id,
+                period.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            CreateService(test).DownloadAsync(
+                "not-a-member",
+                test.Organisation.Id,
+                period.Id,
+                Guid.NewGuid()));
     }
 
     private static YearEndHandoverPackService CreateService(
@@ -330,7 +390,8 @@ public sealed class YearEndHandoverPackServiceTests
             test.Db,
             test.Access,
             new FinancialReportService(test.Db),
-            new VatWorkpaperService(test.Db));
+            new VatWorkpaperService(test.Db),
+            new DatabaseImmutableDocumentStore(test.Db));
 
     private static async Task<AccountingPeriod> CreatePeriodAsync(
         AccountingTestDatabase test,
