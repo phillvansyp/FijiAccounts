@@ -250,7 +250,8 @@ jobs:
           tar -C "$restore_dir" -xzf "$backup_path"
           docker run --rm \
             --volume "$restore_dir:/restore" \
-            alpine:3.22 sh -c 'chown -R 1654:1654 /restore'
+            alpine:3.22 sh -c \
+              'find /restore -mindepth 1 -exec chown -R 1654:1654 {} \; && chmod 0755 /restore'
           docker run --rm \
             --network none \
             --env ASPNETCORE_ENVIRONMENT=Production \
