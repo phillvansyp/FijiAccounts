@@ -180,6 +180,23 @@ public sealed class YearEndHandoverPackServiceTests
         };
         test.Db.AddRange(invoice, receipt, bill, payment, asset);
         await test.Db.SaveChangesAsync();
+        var reviewService = new YearEndReviewService(test.Db, test.Access);
+        await reviewService.StartAsync(test.UserId, test.Organisation.Id, period.Id);
+        foreach (var area in Enum.GetValues<YearEndReviewArea>())
+        {
+            await reviewService.UpdateItemAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id,
+                area,
+                YearEndReviewStatus.Reviewed,
+                $"Reviewed {area}");
+        }
+        await reviewService.ApproveAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            "PARTNER-YE-2026");
         var periodService = new AccountingPeriodService(test.Db, test.Access);
         await periodService.SetLockedAsync(
             test.UserId,
@@ -207,6 +224,7 @@ public sealed class YearEndHandoverPackServiceTests
             "balance-sheet.csv",
             "general-ledger.csv",
             "year-end-adjustments.csv",
+            "year-end-review.csv",
             "vat-workpaper.csv",
             "bank-reconciliations.csv",
             "period-control-audit.csv",
@@ -224,6 +242,12 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Equal("FJD", root.GetProperty("Currency").GetString());
         Assert.Equal(2, root.GetProperty("Version").GetInt32());
         Assert.NotEqual(JsonValueKind.Null, root.GetProperty("LockedAt").ValueKind);
+        Assert.Equal(
+            "PARTNER-YE-2026",
+            root.GetProperty("YearEndReview").GetProperty("ApprovalReference").GetString());
+        Assert.Equal(
+            Enum.GetValues<YearEndReviewArea>().Length,
+            root.GetProperty("YearEndReview").GetProperty("ReviewedSchedules").GetInt32());
 
         foreach (var file in root.GetProperty("Files").EnumerateArray())
         {
@@ -242,6 +266,10 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Contains("Accountant WP-AJE-04", adjustments);
         Assert.Contains("250.00", adjustments);
         Assert.DoesNotContain("AFTER-YEAR-END", adjustments);
+        var review = await ReadAsync(archive, "year-end-review.csv");
+        Assert.Contains("Trial balance", review);
+        Assert.Contains("PARTNER-YE-2026", review);
+        Assert.Contains("Reviewed", review);
         var inventory = await ReadAsync(archive, "inventory-valuation.csv");
         Assert.Contains(
             "\"STOCK-CUT-OFF\",\"Year-end stock\",\"10.00\",\"10.00\",\"100.00\"",

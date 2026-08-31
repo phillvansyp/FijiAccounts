@@ -138,6 +138,12 @@ public sealed class YearEndHandoverPackService(
                 Amount = x.Lines.Sum(line => line.Debit)
             })
             .ToListAsync(cancellationToken);
+        var yearEndReview = await db.YearEndReviews.AsNoTracking()
+            .Include(x => x.Items)
+            .SingleOrDefaultAsync(
+                x => x.OrganisationId == organisationId &&
+                     x.AccountingPeriodId == period.Id,
+                cancellationToken);
 
         var receivables = await GetReceivablesAsync(
             organisationId, period.EndsOn, cancellationToken);
@@ -192,6 +198,20 @@ public sealed class YearEndHandoverPackService(
                     x.Amount,
                     x.PostedAt,
                     x.PostedByUserId))),
+            Csv(
+                "year-end-review.csv",
+                "Area,Status,Notes,Reviewed At,Reviewed By,Final Approval Reference,Final Approved At,Final Approved By",
+                yearEndReview?.Items
+                    .OrderBy(x => x.Area)
+                    .Select(x => Row(
+                        ReviewAreaLabel(x.Area),
+                        x.Status,
+                        x.Notes,
+                        x.ReviewedAt,
+                        x.ReviewedByUserId,
+                        yearEndReview.ApprovalReference,
+                        yearEndReview.ApprovedAt,
+                        yearEndReview.ApprovedByUserId)) ?? []),
             Csv(
                 "vat-workpaper.csv",
                 "Section,Standard Net,Tax,Zero Rated Net,Exempt Net,Out Of Scope Net",
@@ -289,6 +309,19 @@ public sealed class YearEndHandoverPackService(
             period.EndsOn,
             period.LockedAt,
             period.LockedByUserId,
+            YearEndReview = yearEndReview is null
+                ? null
+                : new
+                {
+                    yearEndReview.StartedAt,
+                    yearEndReview.StartedByUserId,
+                    yearEndReview.ApprovedAt,
+                    yearEndReview.ApprovedByUserId,
+                    yearEndReview.ApprovalReference,
+                    ReviewedSchedules = yearEndReview.Items.Count(x =>
+                        x.Status == YearEndReviewStatus.Reviewed),
+                    TotalSchedules = yearEndReview.Items.Count
+                },
             GeneratedAt = generatedAt,
             GeneratedByUserId = userId,
             Files = files.Select(x => new
@@ -597,6 +630,20 @@ public sealed class YearEndHandoverPackService(
             : days <= 90 ? "61-90 days"
             : "90+ days";
     }
+
+    private static string ReviewAreaLabel(YearEndReviewArea area) => area switch
+    {
+        YearEndReviewArea.TrialBalance => "Trial balance",
+        YearEndReviewArea.FinancialStatements => "Financial statements",
+        YearEndReviewArea.VatWorkpaper => "VAT workpaper",
+        YearEndReviewArea.BankReconciliations => "Bank reconciliations",
+        YearEndReviewArea.AgedReceivables => "Aged receivables",
+        YearEndReviewArea.AgedPayables => "Aged payables",
+        YearEndReviewArea.FixedAssets => "Fixed assets",
+        YearEndReviewArea.InventoryValuation => "Inventory valuation",
+        YearEndReviewArea.YearEndAdjustments => "Year-end adjustments",
+        _ => area.ToString()
+    };
 
     private sealed record PackFile(string Name, byte[] Content, int RowCount);
     private sealed record AgeingDocument(

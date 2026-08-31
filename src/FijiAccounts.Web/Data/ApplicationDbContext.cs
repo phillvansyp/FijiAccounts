@@ -41,6 +41,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<LedgerAccount> LedgerAccounts => Set<LedgerAccount>();
     public DbSet<OrganisationInvitation> OrganisationInvitations => Set<OrganisationInvitation>();
     public DbSet<AccountingPeriod> AccountingPeriods => Set<AccountingPeriod>();
+    public DbSet<YearEndReview> YearEndReviews => Set<YearEndReview>();
+    public DbSet<YearEndReviewItem> YearEndReviewItems => Set<YearEndReviewItem>();
     public DbSet<PostedJournal> PostedJournals => Set<PostedJournal>();
     public DbSet<PostedJournalLine> PostedJournalLines => Set<PostedJournalLine>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
@@ -454,6 +456,10 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<LedgerAccount>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique();
         builder.Entity<OrganisationInvitation>().HasIndex(x => x.TokenHash).IsUnique();
         builder.Entity<AccountingPeriod>().HasIndex(x => new { x.OrganisationId, x.StartsOn, x.EndsOn }).IsUnique();
+        builder.Entity<YearEndReview>().HasIndex(x => x.AccountingPeriodId).IsUnique();
+        builder.Entity<YearEndReview>().HasOne(x => x.AccountingPeriod).WithOne(x => x.YearEndReview).HasForeignKey<YearEndReview>(x => x.AccountingPeriodId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<YearEndReviewItem>().HasIndex(x => new { x.YearEndReviewId, x.Area }).IsUnique();
+        builder.Entity<YearEndReviewItem>().HasOne(x => x.YearEndReview).WithMany(x => x.Items).HasForeignKey(x => x.YearEndReviewId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<PostedJournal>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<PostedJournal>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournal>().HasOne(x => x.AdjustmentPeriod).WithMany().HasForeignKey(x => x.AdjustmentPeriodId).OnDelete(DeleteBehavior.Restrict);

@@ -382,6 +382,8 @@ var inventoryIntegrityWarnings =
 
         var period =
             await db.AccountingPeriods
+                .Include(x => x.YearEndReview)
+                .ThenInclude(x => x!.Items)
                 .SingleOrDefaultAsync(
                     x =>
                         x.Id == periodId &&
@@ -431,12 +433,51 @@ if (locked)
             "Complete or recover every pending fiscal document before locking the period.");
     }
 
+
+    if (period.YearEndReview is not null &&
+        period.YearEndReview.ApprovedAt is null)
+    {
+        throw new InvalidOperationException(
+            "Complete and approve the started year-end review before locking the period.");
+    }
+
     if (!readiness.IsReady && !acknowledgeWarnings)
     {
         throw new InvalidOperationException(
             "Review and acknowledge the outstanding period items before locking.");
     }
 }
+
+        if (!locked && period.YearEndReview?.ApprovedAt is not null)
+        {
+            var review = period.YearEndReview;
+            var previousApproval = new
+            {
+                review.ApprovedAt,
+                review.ApprovedByUserId,
+                review.ApprovalReference,
+                ReopeningReason = trimmedReopeningReason
+            };
+            review.ApprovedAt = null;
+            review.ApprovedByUserId = null;
+            review.ApprovalReference = null;
+            foreach (var item in review.Items)
+            {
+                item.Status = YearEndReviewStatus.Pending;
+                item.ReviewedAt = null;
+                item.ReviewedByUserId = null;
+            }
+
+            db.AuditEvents.Add(new AuditEvent
+            {
+                OrganisationId = organisationId,
+                UserId = userId,
+                EventType = "YearEndReviewApprovalInvalidated",
+                EntityType = nameof(AccountingPeriod),
+                EntityId = period.Id.ToString(),
+                JsonData = JsonSerializer.Serialize(previousApproval)
+            });
+        }
 
         period.IsLocked = locked;
         period.LockedAt =

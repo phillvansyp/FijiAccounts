@@ -13,6 +13,53 @@ public sealed class AccountingPeriod
     public bool IsLocked { get; set; }
     public DateTimeOffset? LockedAt { get; set; }
     public string? LockedByUserId { get; set; }
+    public YearEndReview? YearEndReview { get; set; }
+}
+
+public sealed class YearEndReview
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid AccountingPeriodId { get; set; }
+    public AccountingPeriod AccountingPeriod { get; set; } = null!;
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
+    public required string StartedByUserId { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public string? ApprovedByUserId { get; set; }
+    [MaxLength(80)] public string? ApprovalReference { get; set; }
+    public List<YearEndReviewItem> Items { get; set; } = [];
+}
+
+public sealed class YearEndReviewItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid YearEndReviewId { get; set; }
+    public YearEndReview YearEndReview { get; set; } = null!;
+    public YearEndReviewArea Area { get; set; }
+    public YearEndReviewStatus Status { get; set; }
+    [MaxLength(500)] public string? Notes { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    public string? ReviewedByUserId { get; set; }
+}
+
+public enum YearEndReviewArea
+{
+    TrialBalance,
+    FinancialStatements,
+    VatWorkpaper,
+    BankReconciliations,
+    AgedReceivables,
+    AgedPayables,
+    FixedAssets,
+    InventoryValuation,
+    YearEndAdjustments
+}
+
+public enum YearEndReviewStatus
+{
+    Pending,
+    Reviewed,
+    QueryRaised
 }
 
 public sealed class PostedJournal

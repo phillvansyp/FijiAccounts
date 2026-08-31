@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject AccountingPeriodService PeriodService
+@inject YearEndReviewService ReviewService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -134,6 +135,11 @@ else
                     @if (canManage)
                     {
                         <div class="period-row-actions">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    @onclick="() => OpenReview(item)">
+                                Year-end review
+                            </button>
                             @if (item.IsLocked)
                             {
                                 <a class="btn btn-sm btn-outline-primary"
@@ -161,6 +167,111 @@ else
                         </div>
                     }
                 </div>
+
+                @if (reviewingPeriodId == item.Id)
+                {
+                    <div class="border-top border-bottom py-3 px-3 mb-2">
+                        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                            <div>
+                                <h3 class="h5 mb-1">Year-end review — @item.Name</h3>
+                                <p class="text-secondary mb-0">
+                                    Clear each supporting schedule, resolve every query, then record final approval before locking.
+                                </p>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseReview">Close</button>
+                        </div>
+
+                        @if (loadingReview)
+                        {
+                            <div class="alert alert-secondary">Loading the review checklist...</div>
+                        }
+                        else if (activeReview is null)
+                        {
+                            @if (item.IsLocked)
+                            {
+                                <div class="alert alert-secondary">No year-end review was started for this locked period.</div>
+                            }
+                            else
+                            {
+                                <div class="alert alert-info">
+                                    Starting this workflow makes final approval mandatory before this period can be locked.
+                                </div>
+                                <button type="button" class="btn btn-primary" @onclick="() => StartReview(item)">
+                                    Start year-end review
+                                </button>
+                            }
+                        }
+                        else
+                        {
+                            <div class="alert @(activeReview.ApprovedAt is null ? "alert-info" : "alert-success")">
+                                <strong>@ReviewProgress</strong>
+                                @if (activeReview.ApprovedAt is not null)
+                                {
+                                    <span>
+                                        Final approval @activeReview.ApprovalReference recorded
+                                        @activeReview.ApprovedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm").
+                                    </span>
+                                }
+                            </div>
+
+                            <div class="table-responsive">
+                                <table class="table align-middle">
+                                    <thead>
+                                        <tr><th>Schedule</th><th>Status</th><th>Notes or outstanding query</th><th>Reviewed by</th><th></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var reviewItem in activeReview.Items.OrderBy(x => x.Area))
+                                        {
+                                            var reviewModel = reviewModels[reviewItem.Area];
+                                            <tr>
+                                                <td><strong>@ReviewAreaLabel(reviewItem.Area)</strong></td>
+                                                <td>
+                                                    <select class="form-select" @bind="reviewModel.Status" disabled="@(item.IsLocked || activeReview.ApprovedAt is not null)">
+                                                        @foreach (var option in Enum.GetValues<YearEndReviewStatus>())
+                                                        {
+                                                            <option value="@option">@ReviewStatusLabel(option)</option>
+                                                        }
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <textarea class="form-control" rows="2" maxlength="500" @bind="reviewModel.Notes" disabled="@(item.IsLocked || activeReview.ApprovedAt is not null)"></textarea>
+                                                </td>
+                                                <td>
+                                                    @(reviewItem.ReviewedByUserId ?? "—")
+                                                    @if (reviewItem.ReviewedAt is not null)
+                                                    {
+                                                        <small class="d-block text-secondary">@reviewItem.ReviewedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm")</small>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (!item.IsLocked && activeReview.ApprovedAt is null)
+                                                    {
+                                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => SaveReviewItem(reviewItem.Area)">Save</button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            @if (!item.IsLocked && activeReview.ApprovedAt is null)
+                            {
+                                <div class="row align-items-end mt-2">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Final approval reference</label>
+                                        <InputText class="form-control" @bind-Value="finalApprovalReference" placeholder="e.g. Partner sign-off YE-2026" />
+                                    </div>
+                                    <div class="col-md-4 mt-3 mt-md-0">
+                                        <button type="button" class="btn btn-success w-100" disabled="@(!AllReviewItemsCleared || string.IsNullOrWhiteSpace(finalApprovalReference))" @onclick="ApproveReview">
+                                            Record final approval
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                }
 
                 @if (editingPeriodId == item.Id)
                 {
@@ -261,6 +372,12 @@ else
                             }
                             else if (periodReadiness is not null)
                             {
+                                @if (item.YearEndReview is not null && item.YearEndReview.ApprovedAt is null)
+                                {
+                                    <div class="alert alert-danger mb-3">
+                                        Complete every year-end review item and record final approval before locking this period.
+                                    </div>
+                                }
                                 if (periodReadiness.IsReady)
                                 {
                                     <div class="alert alert-success mb-3">
@@ -380,6 +497,7 @@ else
         loadingReadiness ||
         periodReadiness is null ||
         periodReadiness.HasBlockingItems ||
+        (item.YearEndReview is not null && item.YearEndReview.ApprovedAt is null) ||
         (!periodReadiness.IsReady && !warningsAcknowledged)
     ))"
                                     @onclick="() => ConfirmToggle(item)">
@@ -453,6 +571,21 @@ else
 
     private bool warningsAcknowledged;
     private string reopeningReason = "";
+    private Guid? reviewingPeriodId;
+    private YearEndReview? activeReview;
+    private bool loadingReview;
+    private string finalApprovalReference = "";
+    private Dictionary<YearEndReviewArea, ReviewItemModel> reviewModels = [];
+
+    private bool AllReviewItemsCleared =>
+        activeReview is not null &&
+        activeReview.Items.All(x => x.Status == YearEndReviewStatus.Reviewed);
+
+    private string ReviewProgress => activeReview is null
+        ? "Not started"
+        : activeReview.ApprovedAt is not null
+            ? "Review complete."
+            : $"{activeReview.Items.Count(x => x.Status == YearEndReviewStatus.Reviewed)} of {activeReview.Items.Count} schedules cleared.";
 
     private string FinancialYearEnd =>
         new DateOnly(
@@ -493,6 +626,8 @@ else
         periods =
             await Db.AccountingPeriods
                 .AsNoTracking()
+                .Include(x => x.YearEndReview)
+                .ThenInclude(x => x!.Items)
                 .Where(x => x.OrganisationId == OrganisationId)
                 .OrderByDescending(x => x.EndsOn)
                 .ToListAsync();
@@ -582,6 +717,126 @@ else
         periodReadiness = null;
         status = null;
     }
+
+    private async Task OpenReview(AccountingPeriod item)
+    {
+        reviewingPeriodId = item.Id;
+        editingPeriodId = null;
+        confirmingPeriodId = null;
+        loadingReview = true;
+        status = null;
+        try
+        {
+            activeReview = await ReviewService.GetAsync(userId, OrganisationId, item.Id);
+            LoadReviewModels();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+            reviewingPeriodId = null;
+        }
+        finally
+        {
+            loadingReview = false;
+        }
+    }
+
+    private void CloseReview()
+    {
+        reviewingPeriodId = null;
+        activeReview = null;
+        reviewModels = [];
+        finalApprovalReference = "";
+    }
+
+    private async Task StartReview(AccountingPeriod item)
+    {
+        await RunReviewAction(async () =>
+        {
+            activeReview = await ReviewService.StartAsync(userId, OrganisationId, item.Id);
+            LoadReviewModels();
+            status = "Year-end review started.";
+        });
+    }
+
+    private async Task SaveReviewItem(YearEndReviewArea area)
+    {
+        if (reviewingPeriodId is null) return;
+        var reviewModel = reviewModels[area];
+        await RunReviewAction(async () =>
+        {
+            activeReview = await ReviewService.UpdateItemAsync(
+                userId,
+                OrganisationId,
+                reviewingPeriodId.Value,
+                area,
+                reviewModel.Status,
+                reviewModel.Notes);
+            LoadReviewModels();
+            status = $"{ReviewAreaLabel(area)} review saved.";
+        });
+    }
+
+    private async Task ApproveReview()
+    {
+        if (reviewingPeriodId is null) return;
+        await RunReviewAction(async () =>
+        {
+            activeReview = await ReviewService.ApproveAsync(
+                userId,
+                OrganisationId,
+                reviewingPeriodId.Value,
+                finalApprovalReference);
+            LoadReviewModels();
+            status = "Final year-end approval recorded. The period can now be locked.";
+        });
+    }
+
+    private async Task RunReviewAction(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            statusClass = "alert-success";
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
+    private void LoadReviewModels()
+    {
+        reviewModels = activeReview?.Items.ToDictionary(
+            x => x.Area,
+            x => new ReviewItemModel { Status = x.Status, Notes = x.Notes ?? "" }) ?? [];
+        finalApprovalReference = activeReview?.ApprovalReference ?? "";
+    }
+
+    private static string ReviewAreaLabel(YearEndReviewArea area) => area switch
+    {
+        YearEndReviewArea.TrialBalance => "Trial balance",
+        YearEndReviewArea.FinancialStatements => "Financial statements",
+        YearEndReviewArea.VatWorkpaper => "VAT workpaper",
+        YearEndReviewArea.BankReconciliations => "Bank reconciliations",
+        YearEndReviewArea.AgedReceivables => "Aged receivables",
+        YearEndReviewArea.AgedPayables => "Aged payables",
+        YearEndReviewArea.FixedAssets => "Fixed assets",
+        YearEndReviewArea.InventoryValuation => "Inventory valuation",
+        YearEndReviewArea.YearEndAdjustments => "Year-end adjustments",
+        _ => area.ToString()
+    };
+
+    private static string ReviewStatusLabel(YearEndReviewStatus reviewStatus) => reviewStatus switch
+    {
+        YearEndReviewStatus.Pending => "Pending",
+        YearEndReviewStatus.Reviewed => "Reviewed",
+        YearEndReviewStatus.QueryRaised => "Query raised",
+        _ => reviewStatus.ToString()
+    };
 
     private void CancelEdit()
     {
@@ -726,5 +981,11 @@ reopeningReason = "";
         public DateOnly StartsOn { get; set; }
 
         public DateOnly EndsOn { get; set; }
+    }
+
+    private sealed class ReviewItemModel
+    {
+        public YearEndReviewStatus Status { get; set; }
+        public string Notes { get; set; } = "";
     }
 }
