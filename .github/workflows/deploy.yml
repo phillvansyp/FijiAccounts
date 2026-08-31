@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production
-      url: https://app.accountisland.com
+      url: https://app.accountisland.com:8443
     env:
       DEPLOY_DIR: /mnt/data/account-island
       DOTNET_ROOT: /mnt/data/account-island/dotnet
@@ -394,7 +394,7 @@ jobs:
             --retry 12 --retry-delay 10 --retry-all-errors \
             --connect-timeout 10 --max-time 20 \
             --output "$response_file" \
-            https://app.accountisland.com/health
+            https://app.accountisland.com:8443/health
 
           if ! grep --extended-regexp --quiet \
             '"status"[[:space:]]*:[[:space:]]*"healthy"' \
