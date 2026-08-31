@@ -455,6 +455,112 @@ public sealed class JournalPostingAccountingTests
         Assert.Contains("belong", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task PostAsync_YearEndAdjustment_PersistsPeriodAndApprovalEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var period = new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "Year ended 31 July 2026",
+            StartsOn = new DateOnly(2025, 8, 1),
+            EndsOn = new DateOnly(2026, 7, 31)
+        };
+        test.Db.AccountingPeriods.Add(period);
+        await test.Db.SaveChangesAsync();
+
+        var journal = await test.Posting.PostAsync(
+            test.UserId,
+            new JournalPostRequest(
+                test.Organisation.Id,
+                new DateOnly(2026, 7, 31),
+                "AJE-04",
+                "Accrual adjustment",
+                [
+                    new(test.Account("6000").Id, "Accrual", 250m, 0m),
+                    new(test.Account("2000").Id, "Accrual", 0m, 250m)
+                ],
+                Purpose: JournalPurpose.YearEndAdjustment,
+                AdjustmentPeriodId: period.Id,
+                ApprovalReference: "  Accountant WP-AJE-04  "));
+
+        var stored = await test.Db.PostedJournals.AsNoTracking()
+            .SingleAsync(x => x.Id == journal.Id);
+        Assert.Equal(JournalPurpose.YearEndAdjustment, stored.Purpose);
+        Assert.Equal(period.Id, stored.AdjustmentPeriodId);
+        Assert.Equal("Accountant WP-AJE-04", stored.ApprovalReference);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == journal.Id.ToString() &&
+            x.EventType == "YearEndAdjustmentPosted" &&
+            x.JsonData.Contains("Accountant WP-AJE-04")));
+    }
+
+    [Fact]
+    public async Task PostAsync_YearEndAdjustment_RequiresApprovalEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var period = new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "July 2026",
+            StartsOn = new DateOnly(2026, 7, 1),
+            EndsOn = new DateOnly(2026, 7, 31)
+        };
+        test.Db.AccountingPeriods.Add(period);
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Posting.PostAsync(
+                test.UserId,
+                new JournalPostRequest(
+                    test.Organisation.Id,
+                    new DateOnly(2026, 7, 31),
+                    "AJE-MISSING",
+                    "Missing approval evidence",
+                    [
+                        new(test.Account("6000").Id, "Debit", 100m, 0m),
+                        new(test.Account("2000").Id, "Credit", 0m, 100m)
+                    ],
+                    Purpose: JournalPurpose.YearEndAdjustment,
+                    AdjustmentPeriodId: period.Id)));
+
+        Assert.Contains("approval", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(await test.Db.PostedJournals.AnyAsync(x => x.Reference == "AJE-MISSING"));
+    }
+
+    [Fact]
+    public async Task PostAsync_YearEndAdjustment_DateMustMatchSelectedPeriod()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var period = new AccountingPeriod
+        {
+            OrganisationId = test.Organisation.Id,
+            Name = "July 2026",
+            StartsOn = new DateOnly(2026, 7, 1),
+            EndsOn = new DateOnly(2026, 7, 31)
+        };
+        test.Db.AccountingPeriods.Add(period);
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            test.Posting.PostAsync(
+                test.UserId,
+                new JournalPostRequest(
+                    test.Organisation.Id,
+                    new DateOnly(2026, 8, 1),
+                    "AJE-WRONG-PERIOD",
+                    "Wrong period",
+                    [
+                        new(test.Account("6000").Id, "Debit", 100m, 0m),
+                        new(test.Account("2000").Id, "Credit", 0m, 100m)
+                    ],
+                    Purpose: JournalPurpose.YearEndAdjustment,
+                    AdjustmentPeriodId: period.Id,
+                    ApprovalReference: "WP-01")));
+
+        Assert.Contains("inside", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Task<PostedJournal> PostSimpleAsync(
         AccountingTestDatabase test,
         string reference)

@@ -34,6 +34,32 @@ else
                     <div class="col-md-8 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
                 </div>
                 <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                <div class="form-check mb-3">
+                    <InputCheckbox class="form-check-input" @bind-Value="model.IsYearEndAdjustment" />
+                    <label class="form-check-label">Accountant-approved year-end adjustment</label>
+                </div>
+                @if (model.IsYearEndAdjustment)
+                {
+                    <div class="alert alert-info">
+                        This permanently identifies the journal as a year-end adjustment and includes it in the accountant handover pack.
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Accounting period</label>
+                            <InputSelect class="form-select" @bind-Value="model.AdjustmentPeriodId">
+                                <option value="">Select an open period</option>
+                                @foreach (var period in openPeriods)
+                                {
+                                    <option value="@period.Id">@period.Name (@period.StartsOn.ToString("dd MMM yyyy") – @period.EndsOn.ToString("dd MMM yyyy"))</option>
+                                }
+                            </InputSelect>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Approval or working-paper reference</label>
+                            <InputText class="form-control" @bind-Value="model.ApprovalReference" placeholder="e.g. Accountant WP-AJE-04" />
+                        </div>
+                    </div>
+                }
                 <div class="mb-3">
                     <label class="form-label">Branch and division</label>
                     <InputSelect class="form-select" @bind-Value="model.DivisionId" @bind-Value:after="DimensionChanged">
@@ -83,11 +109,11 @@ else
     <h2>Posted journals</h2>
     <div class="table-responsive">
         <table class="table">
-            <thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Branch / division</th><th>Project</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
+            <thead><tr><th>No.</th><th>Date</th><th>Reference</th><th>Type</th><th>Branch / division</th><th>Project</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
             <tbody>
                 @foreach (var journal in journals)
                 {
-                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@DimensionLabel(journal)</td><td>@ProjectLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
+                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@(journal.Purpose == JournalPurpose.YearEndAdjustment ? "Year-end adjustment" : "Standard")</td><td>@DimensionLabel(journal)</td><td>@ProjectLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
                 }
             </tbody>
         </table>
@@ -102,6 +128,7 @@ else
     private List<LedgerAccount> accounts = [];
     private List<Branch> branches = [];
     private List<Project> projects = [];
+    private List<AccountingPeriod> openPeriods = [];
     private List<PostedJournal> journals = [];
     private JournalModel model = new();
     private string? status;
@@ -117,6 +144,10 @@ else
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive).OrderBy(x => x.Code).ToListAsync();
         branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
         projects = await ProjectService.ListAsync(userId, OrganisationId);
+        openPeriods = await Db.AccountingPeriods.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && !x.IsLocked)
+            .OrderByDescending(x => x.EndsOn)
+            .ToListAsync();
         ResetModel();
         await Reload();
     }
@@ -152,7 +183,7 @@ else
         try
         {
             var dimension = branches.SelectMany(branch => branch.Divisions.Select(division => new { Branch = branch, Division = division })).Single(x => x.Division.Id == model.DivisionId);
-            var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId), new(model.CreditAccountId, model.Description, 0, model.Amount, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId)], dimension.Branch.Id, dimension.Division.Id));
+            var result = await Posting.PostAsync(userId, new JournalPostRequest(OrganisationId, model.Date, model.Reference, model.Description, [new(model.DebitAccountId, model.Description, model.Amount, 0, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId), new(model.CreditAccountId, model.Description, 0, model.Amount, ProjectId: model.ProjectId, ProjectCostCodeId: model.ProjectCostCodeId)], dimension.Branch.Id, dimension.Division.Id, model.IsYearEndAdjustment ? JournalPurpose.YearEndAdjustment : JournalPurpose.Standard, model.IsYearEndAdjustment ? model.AdjustmentPeriodId : null, model.IsYearEndAdjustment ? model.ApprovalReference : null));
             statusClass = "alert-success";
             status = $"Journal J-{result.SequenceNumber:D6} posted.";
             ResetModel();
@@ -209,6 +240,9 @@ else
         [Required] public Guid DivisionId { get; set; }
         public Guid? ProjectId { get; set; }
         public Guid? ProjectCostCodeId { get; set; }
+        public bool IsYearEndAdjustment { get; set; }
+        public Guid? AdjustmentPeriodId { get; set; }
+        [StringLength(80)] public string? ApprovalReference { get; set; }
         public Guid DebitAccountId { get; set; }
         public Guid CreditAccountId { get; set; }
         [Range(0.01, 999999999999)] public decimal Amount { get; set; }

@@ -82,7 +82,8 @@ off-host workflow and restore drill have been verified.
 ### Phase 1 — Fiji accounting core
 
 1. Tenant context, invitations, permissions and accountant client switching
-2. Chart of accounts, immutable posting, periods and audit events
+2. Chart of accounts, immutable posting, period close, accountant handover packs,
+   approval-linked year-end adjustments and audit events
 3. Customers, suppliers, invoices, bills, credit notes and payments
 4. VAT workpapers and return preparation
 5. Bank imports and reconciliation

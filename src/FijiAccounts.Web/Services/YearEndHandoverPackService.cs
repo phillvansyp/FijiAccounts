@@ -119,6 +119,26 @@ public sealed class YearEndHandoverPackService(
             .OrderBy(x => x.OccurredAt)
             .ToList();
 
+        var adjustments = await db.PostedJournals.AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.Purpose == JournalPurpose.YearEndAdjustment &&
+                x.AdjustmentPeriodId == period.Id)
+            .OrderBy(x => x.EntryDate)
+            .ThenBy(x => x.SequenceNumber)
+            .Select(x => new
+            {
+                x.EntryDate,
+                x.SequenceNumber,
+                x.Reference,
+                x.Description,
+                x.ApprovalReference,
+                x.PostedAt,
+                x.PostedByUserId,
+                Amount = x.Lines.Sum(line => line.Debit)
+            })
+            .ToListAsync(cancellationToken);
+
         var receivables = await GetReceivablesAsync(
             organisationId, period.EndsOn, cancellationToken);
         var payables = await GetPayablesAsync(
@@ -160,6 +180,18 @@ public sealed class YearEndHandoverPackService(
                     x.Credit,
                     x.BranchCode,
                     x.DivisionCode))),
+            Csv(
+                "year-end-adjustments.csv",
+                "Date,Journal,Reference,Description,Approval Reference,Amount,Posted At,Posted By",
+                adjustments.Select(x => Row(
+                    x.EntryDate,
+                    $"J-{x.SequenceNumber:D6}",
+                    x.Reference,
+                    x.Description,
+                    x.ApprovalReference,
+                    x.Amount,
+                    x.PostedAt,
+                    x.PostedByUserId))),
             Csv(
                 "vat-workpaper.csv",
                 "Section,Standard Net,Tax,Zero Rated Net,Exempt Net,Out Of Scope Net",
@@ -246,7 +278,7 @@ public sealed class YearEndHandoverPackService(
         var manifest = new
         {
             Format = "Account Island year-end handover pack",
-            Version = 1,
+            Version = 2,
             OrganisationId = organisation.Id,
             organisation.LegalName,
             organisation.CountryCode,

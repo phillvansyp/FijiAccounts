@@ -24,10 +24,20 @@ public sealed class PostedJournal
     public DateOnly EntryDate { get; set; }
     [MaxLength(80)] public required string Reference { get; set; }
     [MaxLength(500)] public string? Description { get; set; }
+    public JournalPurpose Purpose { get; set; }
+    public Guid? AdjustmentPeriodId { get; set; }
+    public AccountingPeriod? AdjustmentPeriod { get; set; }
+    [MaxLength(80)] public string? ApprovalReference { get; set; }
     [MaxLength(3)] public string Currency { get; set; } = "FJD";
     public DateTimeOffset PostedAt { get; set; }
     public required string PostedByUserId { get; set; }
     public List<PostedJournalLine> Lines { get; set; } = [];
+}
+
+public enum JournalPurpose
+{
+    Standard,
+    YearEndAdjustment
 }
 
 public sealed class PostedJournalLine

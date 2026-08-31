@@ -23,7 +23,10 @@ public sealed record JournalPostRequest(
     string? Description,
     IReadOnlyList<JournalLineInput> Lines,
     Guid? BranchId = null,
-    Guid? DivisionId = null);
+    Guid? DivisionId = null,
+    JournalPurpose Purpose = JournalPurpose.Standard,
+    Guid? AdjustmentPeriodId = null,
+    string? ApprovalReference = null);
 
 public sealed class JournalPostingService(
     ApplicationDbContext db,
@@ -76,6 +79,54 @@ public sealed class JournalPostingService(
                 "You cannot post journals for this organisation.");
         }
         if (await db.AccountingPeriods.AnyAsync(x => x.OrganisationId == request.OrganisationId && x.IsLocked && request.Date >= x.StartsOn && request.Date <= x.EndsOn, cancellationToken)) throw new InvalidOperationException("The accounting period is locked.");
+
+        AccountingPeriod? adjustmentPeriod = null;
+        string? approvalReference = null;
+        if (request.Purpose == JournalPurpose.YearEndAdjustment)
+        {
+            if (request.AdjustmentPeriodId is not Guid adjustmentPeriodId)
+            {
+                throw new InvalidOperationException(
+                    "Select the accounting period for the year-end adjustment.");
+            }
+
+            approvalReference = request.ApprovalReference?.Trim();
+            if (string.IsNullOrWhiteSpace(approvalReference))
+            {
+                throw new InvalidOperationException(
+                    "Enter the accountant approval or working-paper reference.");
+            }
+
+            if (approvalReference.Length > 80)
+            {
+                throw new InvalidOperationException(
+                    "The approval reference cannot exceed 80 characters.");
+            }
+
+            adjustmentPeriod = await db.AccountingPeriods.SingleOrDefaultAsync(
+                x => x.Id == adjustmentPeriodId &&
+                     x.OrganisationId == request.OrganisationId,
+                cancellationToken)
+                ?? throw new InvalidOperationException("Accounting period not found.");
+            if (adjustmentPeriod.IsLocked)
+            {
+                throw new InvalidOperationException(
+                    "Reopen the accounting period before posting a year-end adjustment.");
+            }
+
+            if (request.Date < adjustmentPeriod.StartsOn ||
+                request.Date > adjustmentPeriod.EndsOn)
+            {
+                throw new InvalidOperationException(
+                    "The adjustment date must be inside the selected accounting period.");
+            }
+        }
+        else if (request.AdjustmentPeriodId is not null ||
+                 !string.IsNullOrWhiteSpace(request.ApprovalReference))
+        {
+            throw new InvalidOperationException(
+                "Adjustment evidence can only be attached to a year-end adjustment journal.");
+        }
 
         var accountIds = request.Lines.Select(x => x.AccountId).Distinct().ToArray();
         // SQLite persists Guid values as text. Older seeded data used lower-case values,
@@ -196,10 +247,13 @@ foreach (var bankAccountId in bankAccountIds)
         {
             OrganisationId = request.OrganisationId, SequenceNumber = sequence, EntryDate = request.Date,
             Reference = request.Reference.Trim(), Description = request.Description?.Trim(), PostedAt = DateTimeOffset.UtcNow, PostedByUserId = userId,
+            Purpose = request.Purpose,
+            AdjustmentPeriodId = adjustmentPeriod?.Id,
+            ApprovalReference = approvalReference,
             Lines = request.Lines.Select((x, index) => new PostedJournalLine { LedgerAccountId = x.AccountId, BranchId = dimensions[index].BranchId, DivisionId = dimensions[index].DivisionId, ProjectId = x.ProjectId, ProjectCostCodeId = x.ProjectCostCodeId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
         };
         db.PostedJournals.Add(journal);
-        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "JournalPosted", EntityType = nameof(PostedJournal), EntityId = journal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { journal.SequenceNumber, journal.EntryDate, journal.Reference }) });
+        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = request.Purpose == JournalPurpose.YearEndAdjustment ? "YearEndAdjustmentPosted" : "JournalPosted", EntityType = nameof(PostedJournal), EntityId = journal.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { journal.SequenceNumber, journal.EntryDate, journal.Reference, journal.Purpose, journal.AdjustmentPeriodId, journal.ApprovalReference }) });
         await db.SaveChangesAsync(cancellationToken);
         if (transaction is not null) { await transaction.CommitAsync(cancellationToken); await transaction.DisposeAsync(); }
         return journal;

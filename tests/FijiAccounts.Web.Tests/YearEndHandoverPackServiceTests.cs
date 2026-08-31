@@ -15,6 +15,7 @@ public sealed class YearEndHandoverPackServiceTests
     public async Task LockedPeriod_ExportsSelfVerifyingAccountingBundle()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
+        var period = await CreatePeriodAsync(test, locked: false);
         var julyJournal = await test.Posting.PostAsync(
             test.UserId,
             new JournalPostRequest(
@@ -33,7 +34,10 @@ public sealed class YearEndHandoverPackServiceTests
                         "Year-end accrual",
                         0m,
                         250m)
-                ]));
+                ],
+                Purpose: JournalPurpose.YearEndAdjustment,
+                AdjustmentPeriodId: period.Id,
+                ApprovalReference: "Accountant WP-AJE-04"));
         var augustJournal = await test.Posting.PostAsync(
             test.UserId,
             new JournalPostRequest(
@@ -176,7 +180,6 @@ public sealed class YearEndHandoverPackServiceTests
         };
         test.Db.AddRange(invoice, receipt, bill, payment, asset);
         await test.Db.SaveChangesAsync();
-        var period = await CreatePeriodAsync(test, locked: false);
         var periodService = new AccountingPeriodService(test.Db, test.Access);
         await periodService.SetLockedAsync(
             test.UserId,
@@ -203,6 +206,7 @@ public sealed class YearEndHandoverPackServiceTests
             "profit-and-loss.csv",
             "balance-sheet.csv",
             "general-ledger.csv",
+            "year-end-adjustments.csv",
             "vat-workpaper.csv",
             "bank-reconciliations.csv",
             "period-control-audit.csv",
@@ -218,6 +222,7 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Equal(test.Organisation.Id, root.GetProperty("OrganisationId").GetGuid());
         Assert.Equal(period.Id, root.GetProperty("PeriodId").GetGuid());
         Assert.Equal("FJD", root.GetProperty("Currency").GetString());
+        Assert.Equal(2, root.GetProperty("Version").GetInt32());
         Assert.NotEqual(JsonValueKind.Null, root.GetProperty("LockedAt").ValueKind);
 
         foreach (var file in root.GetProperty("Files").EnumerateArray())
@@ -232,6 +237,11 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Contains("YEAR-END-ADJ", ledger);
         Assert.Contains("250.00", ledger);
         Assert.DoesNotContain("AFTER-YEAR-END", ledger);
+        var adjustments = await ReadAsync(archive, "year-end-adjustments.csv");
+        Assert.Contains("YEAR-END-ADJ", adjustments);
+        Assert.Contains("Accountant WP-AJE-04", adjustments);
+        Assert.Contains("250.00", adjustments);
+        Assert.DoesNotContain("AFTER-YEAR-END", adjustments);
         var inventory = await ReadAsync(archive, "inventory-valuation.csv");
         Assert.Contains(
             "\"STOCK-CUT-OFF\",\"Year-end stock\",\"10.00\",\"10.00\",\"100.00\"",

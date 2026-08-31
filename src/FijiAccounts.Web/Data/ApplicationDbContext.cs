@@ -456,6 +456,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<AccountingPeriod>().HasIndex(x => new { x.OrganisationId, x.StartsOn, x.EndsOn }).IsUnique();
         builder.Entity<PostedJournal>().HasIndex(x => new { x.OrganisationId, x.SequenceNumber }).IsUnique();
         builder.Entity<PostedJournal>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PostedJournal>().HasOne(x => x.AdjustmentPeriod).WithMany().HasForeignKey(x => x.AdjustmentPeriodId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PostedJournalLine>().Property(x => x.Debit).HasPrecision(18, 2);
         builder.Entity<PostedJournalLine>().Property(x => x.Credit).HasPrecision(18, 2);
         builder.Entity<PostedJournalLine>().HasOne(x => x.LedgerAccount).WithMany().HasForeignKey(x => x.LedgerAccountId).OnDelete(DeleteBehavior.Restrict);

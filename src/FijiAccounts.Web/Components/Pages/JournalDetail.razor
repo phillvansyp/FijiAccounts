@@ -58,7 +58,9 @@ else
                     </strong>
 
                     <span class="status-badge">
-                        Posted
+                        @(journal.Purpose == JournalPurpose.YearEndAdjustment
+                            ? "Year-end adjustment"
+                            : "Posted")
                     </span>
 
                 </div>
@@ -136,6 +138,15 @@ else
                 </strong>
 
             </section>
+
+            @if (journal.Purpose == JournalPurpose.YearEndAdjustment)
+            {
+                <section class="journal-description">
+                    <span class="meta-label">Accountant adjustment evidence</span>
+                    <strong>@journal.AdjustmentPeriod?.Name</strong>
+                    <div>Approval/reference: @journal.ApprovalReference</div>
+                </section>
+            }
 
             <section class="journal-lines-section">
 
@@ -653,6 +664,7 @@ else
         audit.EventType switch
         {
             "JournalPosted" => "Journal posted",
+            "YearEndAdjustmentPosted" => "Year-end adjustment posted",
             _ => audit.EventType
         };
 
@@ -698,6 +710,12 @@ else
                     $"Journal: J-{sequence.GetInt64():D6}");
             }
 
+            if (root.TryGetProperty("ApprovalReference", out var approvalReference) &&
+                approvalReference.ValueKind == JsonValueKind.String)
+            {
+                parts.Add($"Approval: {approvalReference.GetString()}");
+            }
+
             return parts.Count == 0
                 ? "Audit record"
                 : string.Join(" | ", parts);
@@ -735,6 +753,7 @@ else
         journal =
             await Db.PostedJournals
                 .AsNoTracking()
+                .Include(x => x.AdjustmentPeriod)
                 .Include(x => x.Lines)
                 .ThenInclude(x => x.LedgerAccount)
                 .SingleOrDefaultAsync(
