@@ -39,6 +39,15 @@ public sealed class YearEndReviewItem
     public YearEndReviewArea Area { get; set; }
     public YearEndReviewStatus Status { get; set; }
     [MaxLength(500)] public string? Notes { get; set; }
+    [MaxLength(450)] public string? QueryAssignedToUserId { get; set; }
+    public DateOnly? QueryDueDate { get; set; }
+    public DateTimeOffset? QueryRaisedAt { get; set; }
+    [MaxLength(450)] public string? QueryRaisedByUserId { get; set; }
+    [MaxLength(1000)] public string? QueryResponse { get; set; }
+    public DateTimeOffset? QueryRespondedAt { get; set; }
+    [MaxLength(450)] public string? QueryRespondedByUserId { get; set; }
+    public DateTimeOffset? QueryResolvedAt { get; set; }
+    [MaxLength(450)] public string? QueryResolvedByUserId { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public string? ReviewedByUserId { get; set; }
 }

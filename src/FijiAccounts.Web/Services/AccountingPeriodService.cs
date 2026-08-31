@@ -464,6 +464,16 @@ if (locked)
             foreach (var item in review.Items)
             {
                 item.Status = YearEndReviewStatus.Pending;
+                item.Notes = null;
+                item.QueryAssignedToUserId = null;
+                item.QueryDueDate = null;
+                item.QueryRaisedAt = null;
+                item.QueryRaisedByUserId = null;
+                item.QueryResponse = null;
+                item.QueryRespondedAt = null;
+                item.QueryRespondedByUserId = null;
+                item.QueryResolvedAt = null;
+                item.QueryResolvedByUserId = null;
                 item.ReviewedAt = null;
                 item.ReviewedByUserId = null;
             }

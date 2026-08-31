@@ -182,7 +182,8 @@ public sealed class YearEndHandoverPackServiceTests
         await test.Db.SaveChangesAsync();
         var reviewService = new YearEndReviewService(test.Db, test.Access);
         await reviewService.StartAsync(test.UserId, test.Organisation.Id, period.Id);
-        foreach (var area in Enum.GetValues<YearEndReviewArea>())
+        foreach (var area in Enum.GetValues<YearEndReviewArea>()
+                     .Where(x => x != YearEndReviewArea.AgedReceivables))
         {
             await reviewService.UpdateItemAsync(
                 test.UserId,
@@ -192,6 +193,26 @@ public sealed class YearEndHandoverPackServiceTests
                 YearEndReviewStatus.Reviewed,
                 $"Reviewed {area}");
         }
+        await reviewService.UpdateItemAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables,
+            YearEndReviewStatus.QueryRaised,
+            "Confirm collection of the year-end customer balance.",
+            test.UserId,
+            new DateOnly(2026, 8, 14));
+        await reviewService.RespondAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables,
+            "Collected after year end and matched to the bank receipt.");
+        await reviewService.ResolveQueryAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables);
         await reviewService.ApproveAsync(
             test.UserId,
             test.Organisation.Id,
@@ -273,6 +294,8 @@ public sealed class YearEndHandoverPackServiceTests
         Assert.Contains("Trial balance", review);
         Assert.Contains("PARTNER-YE-2026", review);
         Assert.Contains("Reviewed", review);
+        Assert.Contains("Confirm collection of the year-end customer balance.", review);
+        Assert.Contains("Collected after year end and matched to the bank receipt.", review);
         var inventory = await ReadAsync(archive, "inventory-valuation.csv");
         Assert.Contains(
             "\"STOCK-CUT-OFF\",\"Year-end stock\",\"10.00\",\"10.00\",\"100.00\"",

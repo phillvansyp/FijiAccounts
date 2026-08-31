@@ -166,6 +166,18 @@ else
                             }
                         </div>
                     }
+                    else if (item.YearEndReview?.Items.Any(x =>
+                        x.Status == YearEndReviewStatus.QueryRaised &&
+                        x.QueryAssignedToUserId == userId) == true)
+                    {
+                        <div class="period-row-actions">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    @onclick="() => OpenReview(item)">
+                                Answer review query
+                            </button>
+                        </div>
+                    }
                 </div>
 
                 @if (canManage && item.HandoverPackSnapshots.Count > 0)
@@ -234,16 +246,16 @@ else
                             <div class="table-responsive">
                                 <table class="table align-middle">
                                     <thead>
-                                        <tr><th>Schedule</th><th>Status</th><th>Notes or outstanding query</th><th>Reviewed by</th><th></th></tr>
+                                        <tr><th>Schedule</th><th>Status</th><th>Review evidence</th><th>Reviewed by</th><th></th></tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (var reviewItem in activeReview.Items.OrderBy(x => x.Area))
+                                        @foreach (var reviewItem in VisibleReviewItems)
                                         {
                                             var reviewModel = reviewModels[reviewItem.Area];
                                             <tr>
                                                 <td><strong>@ReviewAreaLabel(reviewItem.Area)</strong></td>
                                                 <td>
-                                                    <select class="form-select" @bind="reviewModel.Status" disabled="@(item.IsLocked || activeReview.ApprovedAt is not null)">
+                                                    <select class="form-select" @bind="reviewModel.Status" disabled="@(!canManage || item.IsLocked || activeReview.ApprovedAt is not null)">
                                                         @foreach (var option in Enum.GetValues<YearEndReviewStatus>())
                                                         {
                                                             <option value="@option">@ReviewStatusLabel(option)</option>
@@ -251,7 +263,47 @@ else
                                                     </select>
                                                 </td>
                                                 <td>
-                                                    <textarea class="form-control" rows="2" maxlength="500" @bind="reviewModel.Notes" disabled="@(item.IsLocked || activeReview.ApprovedAt is not null)"></textarea>
+                                                    <textarea class="form-control" rows="2" maxlength="500" @bind="reviewModel.Notes" disabled="@(!canManage || item.IsLocked || activeReview.ApprovedAt is not null)"></textarea>
+                                                    @if (reviewModel.Status == YearEndReviewStatus.QueryRaised || reviewItem.QueryRaisedAt is not null)
+                                                    {
+                                                        <div class="row g-2 mt-1">
+                                                            <div class="col-md-7">
+                                                                <label class="form-label small mb-1">Assigned to</label>
+                                                                <select class="form-select form-select-sm" @bind="reviewModel.AssignedToUserId" disabled="@(!canManage || reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)">
+                                                                    <option value="">Choose a person</option>
+                                                                    @foreach (var assignee in reviewAssignees)
+                                                                    {
+                                                                        <option value="@assignee.UserId">@assignee.Label</option>
+                                                                    }
+                                                                </select>
+                                                            </div>
+                                                            <div class="col-md-5">
+                                                                <label class="form-label small mb-1">Due date</label>
+                                                                <InputDate class="form-control form-control-sm" @bind-Value="reviewModel.DueDate" disabled="@(!canManage || reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null)" />
+                                                            </div>
+                                                        </div>
+                                                        @if (reviewItem.QueryRaisedAt is not null)
+                                                        {
+                                                            <small class="d-block text-secondary mt-2">
+                                                                Raised @reviewItem.QueryRaisedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                                                                for @AssigneeLabel(reviewItem.QueryAssignedToUserId).
+                                                            </small>
+                                                        }
+                                                        <label class="form-label small mt-2 mb-1">Response</label>
+                                                        <textarea class="form-control" rows="2" maxlength="1000" @bind="reviewModel.Response" disabled="@(reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null || (!canManage && reviewItem.QueryAssignedToUserId != userId))"></textarea>
+                                                        @if (reviewItem.QueryRespondedAt is not null)
+                                                        {
+                                                            <small class="d-block text-secondary mt-1">
+                                                                Responded @reviewItem.QueryRespondedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm") by @reviewItem.QueryRespondedByUserId.
+                                                            </small>
+                                                        }
+                                                        @if (reviewItem.QueryResolvedAt is not null)
+                                                        {
+                                                            <small class="d-block text-success mt-1">
+                                                                Resolved @reviewItem.QueryResolvedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm") by @reviewItem.QueryResolvedByUserId.
+                                                            </small>
+                                                        }
+                                                    }
                                                 </td>
                                                 <td>
                                                     @(reviewItem.ReviewedByUserId ?? "—")
@@ -261,9 +313,18 @@ else
                                                     }
                                                 </td>
                                                 <td>
-                                                    @if (!item.IsLocked && activeReview.ApprovedAt is null)
+                                                    @if (canManage && !item.IsLocked && activeReview.ApprovedAt is null)
                                                     {
                                                         <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => SaveReviewItem(reviewItem.Area)">Save</button>
+                                                        @if (reviewItem.Status == YearEndReviewStatus.QueryRaised)
+                                                        {
+                                                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" @onclick="() => RespondToQuery(reviewItem.Area)">Save response</button>
+                                                            <button type="button" class="btn btn-sm btn-success mt-2" disabled="@(string.IsNullOrWhiteSpace(reviewItem.QueryResponse))" @onclick="() => ResolveQuery(reviewItem.Area)">Resolve</button>
+                                                        }
+                                                    }
+                                                    else if (!item.IsLocked && activeReview.ApprovedAt is null && reviewItem.QueryAssignedToUserId == userId)
+                                                    {
+                                                        <button type="button" class="btn btn-sm btn-primary" @onclick="() => RespondToQuery(reviewItem.Area)">Send response</button>
                                                     }
                                                 </td>
                                             </tr>
@@ -272,7 +333,7 @@ else
                                 </table>
                             </div>
 
-                            @if (!item.IsLocked && activeReview.ApprovedAt is null)
+                            @if (canManage && !item.IsLocked && activeReview.ApprovedAt is null)
                             {
                                 <div class="row align-items-end mt-2">
                                     <div class="col-md-8">
@@ -593,6 +654,15 @@ else
     private bool loadingReview;
     private string finalApprovalReference = "";
     private Dictionary<YearEndReviewArea, ReviewItemModel> reviewModels = [];
+    private List<YearEndReviewAssignee> reviewAssignees = [];
+
+    private IEnumerable<YearEndReviewItem> VisibleReviewItems => activeReview is null
+        ? []
+        : canManage
+            ? activeReview.Items.OrderBy(x => x.Area)
+            : activeReview.Items
+                .Where(x => x.Status == YearEndReviewStatus.QueryRaised && x.QueryAssignedToUserId == userId)
+                .OrderBy(x => x.Area);
 
     private bool AllReviewItemsCleared =>
         activeReview is not null &&
@@ -633,6 +703,10 @@ else
             await TenantAccess.CanManageTeamAsync(
                 userId,
                 OrganisationId);
+
+        reviewAssignees = canManage
+            ? await ReviewService.ListAssigneesAsync(userId, OrganisationId)
+            : [];
 
         Reset();
         await Reload();
@@ -790,9 +864,43 @@ else
                 reviewingPeriodId.Value,
                 area,
                 reviewModel.Status,
-                reviewModel.Notes);
+                reviewModel.Notes,
+                reviewModel.AssignedToUserId,
+                reviewModel.DueDate);
             LoadReviewModels();
             status = $"{ReviewAreaLabel(area)} review saved.";
+        });
+    }
+
+    private async Task RespondToQuery(YearEndReviewArea area)
+    {
+        if (reviewingPeriodId is null) return;
+        var reviewModel = reviewModels[area];
+        await RunReviewAction(async () =>
+        {
+            activeReview = await ReviewService.RespondAsync(
+                userId,
+                OrganisationId,
+                reviewingPeriodId.Value,
+                area,
+                reviewModel.Response);
+            LoadReviewModels();
+            status = $"Response saved for {ReviewAreaLabel(area)}.";
+        });
+    }
+
+    private async Task ResolveQuery(YearEndReviewArea area)
+    {
+        if (reviewingPeriodId is null) return;
+        await RunReviewAction(async () =>
+        {
+            activeReview = await ReviewService.ResolveQueryAsync(
+                userId,
+                OrganisationId,
+                reviewingPeriodId.Value,
+                area);
+            LoadReviewModels();
+            status = $"{ReviewAreaLabel(area)} query resolved.";
         });
     }
 
@@ -830,9 +938,21 @@ else
     {
         reviewModels = activeReview?.Items.ToDictionary(
             x => x.Area,
-            x => new ReviewItemModel { Status = x.Status, Notes = x.Notes ?? "" }) ?? [];
+            x => new ReviewItemModel
+            {
+                Status = x.Status,
+                Notes = x.Notes ?? "",
+                AssignedToUserId = x.QueryAssignedToUserId,
+                DueDate = x.QueryDueDate,
+                Response = x.QueryResponse ?? ""
+            }) ?? [];
         finalApprovalReference = activeReview?.ApprovalReference ?? "";
     }
+
+    private string AssigneeLabel(string? assigneeUserId) =>
+        reviewAssignees.FirstOrDefault(x => x.UserId == assigneeUserId)?.Label ??
+        assigneeUserId ??
+        "unassigned";
 
     private static string ReviewAreaLabel(YearEndReviewArea area) => area switch
     {
@@ -1005,5 +1125,8 @@ reopeningReason = "";
     {
         public YearEndReviewStatus Status { get; set; }
         public string Notes { get; set; } = "";
+        public string? AssignedToUserId { get; set; }
+        public DateOnly? DueDate { get; set; }
+        public string Response { get; set; } = "";
     }
 }

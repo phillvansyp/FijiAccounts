@@ -71,6 +71,116 @@ public sealed class YearEndReviewServiceTests
     }
 
     [Fact]
+    public async Task QueryWorkflow_AssignsRespondsAndResolvesWithAuditEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var period = await CreatePeriodAsync(test);
+        var assignee = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "year-end-query@example.com",
+            NormalizedUserName = "YEAR-END-QUERY@EXAMPLE.COM",
+            Email = "year-end-query@example.com",
+            NormalizedEmail = "YEAR-END-QUERY@EXAMPLE.COM",
+            EmailConfirmed = true
+        };
+        test.Db.Users.Add(assignee);
+        test.Db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            OrganisationId = test.Organisation.Id,
+            UserId = assignee.Id,
+            User = assignee,
+            Role = OrganisationRole.Bookkeeper
+        });
+        await test.Db.SaveChangesAsync();
+        var service = new YearEndReviewService(test.Db, test.Access);
+        await service.StartAsync(test.UserId, test.Organisation.Id, period.Id);
+
+        var availableAssignees = await service.ListAssigneesAsync(
+            test.UserId,
+            test.Organisation.Id);
+        Assert.Contains(availableAssignees, x =>
+            x.UserId == assignee.Id && x.Label == assignee.Email);
+
+        var dueDate = new DateOnly(2026, 8, 14);
+        await service.UpdateItemAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables,
+            YearEndReviewStatus.QueryRaised,
+            "Explain the overdue customer balance.",
+            assignee.Id,
+            dueDate);
+
+        var assignedView = await service.GetAsync(
+            assignee.Id,
+            test.Organisation.Id,
+            period.Id);
+        var query = Assert.Single(assignedView!.Items, x =>
+            x.Area == YearEndReviewArea.AgedReceivables);
+        Assert.Equal(assignee.Id, query.QueryAssignedToUserId);
+        Assert.Equal(dueDate, query.QueryDueDate);
+
+        var resolveBeforeResponse = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ResolveQueryAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id,
+                YearEndReviewArea.AgedReceivables));
+        Assert.Contains("response", resolveBeforeResponse.Message, StringComparison.OrdinalIgnoreCase);
+
+        var clearDirectly = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateItemAsync(
+                test.UserId,
+                test.Organisation.Id,
+                period.Id,
+                YearEndReviewArea.AgedReceivables,
+                YearEndReviewStatus.Reviewed,
+                "Cleared"));
+        Assert.Contains("resolve", clearDirectly.Message, StringComparison.OrdinalIgnoreCase);
+
+        await service.RespondAsync(
+            assignee.Id,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables,
+            "The customer paid after year end; receipt attached to the workpaper.");
+        var resolved = await service.ResolveQueryAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables);
+
+        query = resolved.Items.Single(x => x.Area == YearEndReviewArea.AgedReceivables);
+        Assert.Equal(YearEndReviewStatus.Reviewed, query.Status);
+        Assert.NotNull(query.QueryRespondedAt);
+        Assert.Equal(assignee.Id, query.QueryRespondedByUserId);
+        Assert.NotNull(query.QueryResolvedAt);
+        Assert.Equal(test.UserId, query.QueryResolvedByUserId);
+
+        var savedAgain = await service.UpdateItemAsync(
+            test.UserId,
+            test.Organisation.Id,
+            period.Id,
+            YearEndReviewArea.AgedReceivables,
+            YearEndReviewStatus.Reviewed,
+            "Cleared after the response was reviewed.");
+        query = savedAgain.Items.Single(x => x.Area == YearEndReviewArea.AgedReceivables);
+        Assert.NotNull(query.QueryResolvedAt);
+        Assert.Equal(
+            "The customer paid after year end; receipt attached to the workpaper.",
+            query.QueryResponse);
+
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == period.Id.ToString() &&
+            x.EventType == "YearEndReviewQueryResponded"));
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == period.Id.ToString() &&
+            x.EventType == "YearEndReviewQueryResolved"));
+    }
+
+    [Fact]
     public async Task StartedReview_MustBeApprovedBeforeLock_AndReopeningInvalidatesApproval()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

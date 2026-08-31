@@ -204,13 +204,22 @@ public sealed class YearEndHandoverPackService(
                     x.PostedByUserId))),
             Csv(
                 "year-end-review.csv",
-                "Area,Status,Notes,Reviewed At,Reviewed By,Final Approval Reference,Final Approved At,Final Approved By",
+                "Area,Status,Notes,Query Assigned To,Query Due Date,Query Raised At,Query Raised By,Query Response,Query Responded At,Query Responded By,Query Resolved At,Query Resolved By,Reviewed At,Reviewed By,Final Approval Reference,Final Approved At,Final Approved By",
                 yearEndReview?.Items
                     .OrderBy(x => x.Area)
                     .Select(x => Row(
                         ReviewAreaLabel(x.Area),
                         x.Status,
                         x.Notes,
+                        x.QueryAssignedToUserId,
+                        x.QueryDueDate,
+                        x.QueryRaisedAt,
+                        x.QueryRaisedByUserId,
+                        x.QueryResponse,
+                        x.QueryRespondedAt,
+                        x.QueryRespondedByUserId,
+                        x.QueryResolvedAt,
+                        x.QueryResolvedByUserId,
                         x.ReviewedAt,
                         x.ReviewedByUserId,
                         yearEndReview.ApprovalReference,
