@@ -1,0 +1,157 @@
+@page "/accountant/work"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject AccountantReviewWorklistService Worklist
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Review work - Account Island</PageTitle>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <p class="eyebrow">Accountant workspace</p>
+        <h1>Year-end review work</h1>
+        <p class="text-secondary mb-0">Track questions, responses and deadlines across every organisation you can access.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="organisations">Organisations</a>
+</div>
+
+@if (loading)
+{
+    <div class="alert alert-secondary">Loading review work...</div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><small class="text-secondary">Open</small><div class="display-6">@OpenCount</div></div></div></div>
+        <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><small class="text-secondary">Overdue</small><div class="display-6 text-danger">@OverdueCount</div></div></div></div>
+        <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><small class="text-secondary">Answered</small><div class="display-6 text-primary">@AnsweredCount</div></div></div></div>
+        <div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body"><small class="text-secondary">Resolved</small><div class="display-6 text-success">@ResolvedCount</div></div></div></div>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Review work filters">
+        @foreach (var option in FilterOptions)
+        {
+            <button type="button"
+                    class="btn @(filter == option.Value ? "btn-primary" : "btn-outline-secondary")"
+                    @onclick="() => filter = option.Value">
+                @option.Label
+            </button>
+        }
+    </div>
+
+    @if (!FilteredItems.Any())
+    {
+        <div class="alert alert-success">There is no review work in this view.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr><th>Organisation</th><th>Review item</th><th>Query</th><th>Owner</th><th>Due</th><th>Status</th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in FilteredItems)
+                    {
+                        <tr>
+                            <td><strong>@item.OrganisationName</strong><small class="d-block text-secondary">@item.PeriodName</small></td>
+                            <td>@ReviewAreaLabel(item.Area)</td>
+                            <td>
+                                @item.Query
+                                @if (item.HasResponse)
+                                {
+                                    <small class="d-block text-secondary mt-1">Response: @item.Response</small>
+                                }
+                                @if (item.AttachmentCount > 0)
+                                {
+                                    <small class="d-block text-secondary">@item.AttachmentCount supporting document(s)</small>
+                                }
+                            </td>
+                            <td>@item.AssignedToLabel</td>
+                            <td class="@(item.IsOverdue(Today) ? "text-danger fw-semibold" : "")">@(item.DueDate?.ToString("dd MMM yyyy") ?? "—")</td>
+                            <td><span class="badge @StatusClass(item)">@StatusLabel(item)</span></td>
+                            <td>
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="@($"o/{item.OrganisationId}/periods?review={item.PeriodId}")">
+                                    Open review
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private static readonly (string Value, string Label)[] FilterOptions =
+    [
+        ("open", "Open"),
+        ("overdue", "Overdue"),
+        ("answered", "Answered"),
+        ("mine", "Assigned to me"),
+        ("resolved", "Resolved"),
+        ("all", "All")
+    ];
+
+    private List<AccountantReviewWorkItem> items = [];
+    private bool loading = true;
+    private string filter = "open";
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private int OpenCount => items.Count(x => !x.IsResolved);
+    private int OverdueCount => items.Count(x => x.IsOverdue(Today));
+    private int AnsweredCount => items.Count(x => !x.IsResolved && x.HasResponse);
+    private int ResolvedCount => items.Count(x => x.IsResolved);
+    private IEnumerable<AccountantReviewWorkItem> FilteredItems => filter switch
+    {
+        "overdue" => items.Where(x => x.IsOverdue(Today)),
+        "answered" => items.Where(x => !x.IsResolved && x.HasResponse),
+        "mine" => items.Where(x => x.IsAssignedToCurrentUser && !x.IsResolved),
+        "resolved" => items.Where(x => x.IsResolved),
+        "all" => items,
+        _ => items.Where(x => !x.IsResolved)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User);
+        items = userId is null ? [] : await Worklist.GetAsync(userId);
+        loading = false;
+    }
+
+    private static string StatusLabel(AccountantReviewWorkItem item) => item switch
+    {
+        { IsResolved: true } => "Resolved",
+        _ when item.IsOverdue(DateOnly.FromDateTime(DateTime.Today)) => "Overdue",
+        { HasResponse: true } => "Answered",
+        _ => "Awaiting response"
+    };
+
+    private static string StatusClass(AccountantReviewWorkItem item) => item switch
+    {
+        { IsResolved: true } => "text-bg-success",
+        _ when item.IsOverdue(DateOnly.FromDateTime(DateTime.Today)) => "text-bg-danger",
+        { HasResponse: true } => "text-bg-primary",
+        _ => "text-bg-warning"
+    };
+
+    private static string ReviewAreaLabel(YearEndReviewArea area) => area switch
+    {
+        YearEndReviewArea.TrialBalance => "Trial balance",
+        YearEndReviewArea.FinancialStatements => "Financial statements",
+        YearEndReviewArea.VatWorkpaper => "VAT workpaper",
+        YearEndReviewArea.BankReconciliations => "Bank reconciliations",
+        YearEndReviewArea.AgedReceivables => "Aged receivables",
+        YearEndReviewArea.AgedPayables => "Aged payables",
+        YearEndReviewArea.FixedAssets => "Fixed assets",
+        YearEndReviewArea.InventoryValuation => "Inventory valuation",
+        YearEndReviewArea.YearEndAdjustments => "Year-end adjustments",
+        _ => area.ToString()
+    };
+}

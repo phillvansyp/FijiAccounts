@@ -283,6 +283,7 @@ builder.Services.AddScoped<BankStatementImportService>();
 builder.Services.AddScoped<AccountingPeriodService>();
 builder.Services.AddScoped<YearEndReviewService>();
 builder.Services.AddScoped<YearEndReviewAttachmentService>();
+builder.Services.AddScoped<AccountantReviewWorklistService>();
 builder.Services.AddScoped<YearEndHandoverPackService>();
 builder.Services.AddScoped<SalesCreditNoteService>();
 builder.Services.AddScoped<SalesQuoteService>();

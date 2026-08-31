@@ -659,6 +659,9 @@ else
     }
 </style>
 @code {
+    [SupplyParameterFromQuery(Name = "review")]
+    public Guid? RequestedReviewPeriodId { get; set; }
+
     [Parameter]
     public Guid OrganisationId { get; set; }
 
@@ -746,6 +749,11 @@ else
 
         Reset();
         await Reload();
+        if (RequestedReviewPeriodId is { } reviewPeriodId &&
+            periods.FirstOrDefault(x => x.Id == reviewPeriodId) is { } requestedPeriod)
+        {
+            await OpenReview(requestedPeriod);
+        }
     }
 
     private async Task Reload()
