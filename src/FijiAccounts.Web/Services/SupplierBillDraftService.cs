@@ -224,6 +224,12 @@ public sealed class SupplierBillDraftService(
             ?? throw new InvalidOperationException(
                 "The purchase order was not found for this organisation.");
 
+        if (order.SupplierBillId is not null)
+        {
+            throw new InvalidOperationException(
+                "This purchase order has already been converted to a supplier bill.");
+        }
+
         if (order.Status != PurchaseOrderStatus.Received || order.Lines.Count == 0)
         {
             throw new InvalidOperationException(

@@ -153,6 +153,7 @@ public sealed class SupplierBillDraftServiceTests
             .SingleAsync(x => x.Id == order.Id);
         Assert.Equal(bill.Id, storedOrder.SupplierBillId);
         Assert.Null(storedOrder.SupplierBillDraftId);
+        Assert.Equal(PurchaseOrderStatus.Closed, storedOrder.Status);
         Assert.False(await test.Db.SupplierBillDrafts.AnyAsync(x => x.Id == draft.Id));
         var audit = await test.Db.AuditEvents
             .AsNoTracking()
@@ -163,6 +164,12 @@ public sealed class SupplierBillDraftServiceTests
         Assert.Equal(
             bill.Id.ToString(),
             evidence.RootElement.GetProperty("SupplierBillId").GetString());
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateFromPurchaseOrderAsync(
+                test.UserId,
+                test.Organisation.Id,
+                order.Id));
+        Assert.Contains("already been converted", error.Message);
     }
 
     [Fact]

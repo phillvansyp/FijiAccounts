@@ -65,7 +65,7 @@ else
     </button>
 }
 
-@if (order.Status == PurchaseOrderStatus.Received)
+@if (order.Status == PurchaseOrderStatus.Received && order.SupplierBillId is null)
 {
     <button type="button"
             class="btn btn-primary"
@@ -74,8 +74,17 @@ else
     </button>
 }
 
+@if (order.SupplierBillId is Guid supplierBillId)
+{
+    <a class="btn btn-primary"
+       href="/o/@OrganisationId/purchases/@supplierBillId">
+        View supplier bill
+    </a>
+}
+
 @if (order.Status != PurchaseOrderStatus.Closed &&
-    order.Status != PurchaseOrderStatus.Cancelled)
+    order.Status != PurchaseOrderStatus.Cancelled &&
+    order.Status != PurchaseOrderStatus.Received)
 {
     <button type="button"
             class="btn btn-outline-danger"

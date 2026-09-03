@@ -433,6 +433,7 @@ public sealed class PurchasingService(
             {
                 sourcePurchaseOrder.SupplierBillId = bill.Id;
                 sourcePurchaseOrder.SupplierBillDraftId = null;
+                sourcePurchaseOrder.Status = PurchaseOrderStatus.Closed;
                 sourcePurchaseOrder.UpdatedAt = DateTimeOffset.UtcNow;
                 db.AuditEvents.Add(Audit(
                     request.OrganisationId,
