@@ -203,6 +203,9 @@ public sealed class RecurringSalesInvoiceLine
     public Guid? ProductItemId { get; set; }
     public ProductItem? ProductItem { get; set; }
 
+    [MaxLength(80)]
+    public string? CustomerPurchaseOrderNumber { get; set; }
+
     public Guid? ProjectId { get; set; }
     public Project? Project { get; set; }
 

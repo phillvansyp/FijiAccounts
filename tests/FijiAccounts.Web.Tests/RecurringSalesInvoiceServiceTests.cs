@@ -35,7 +35,8 @@ public sealed class RecurringSalesInvoiceServiceTests
                             Quantity: 1m,
                             UnitPrice: 250m,
                             VatTreatment: VatTreatment.Standard,
-                            RevenueAccountId: test.Account("4000").Id)
+                            RevenueAccountId: test.Account("4000").Id,
+                            CustomerPurchaseOrderNumber: "PO-RECUR-001")
                     ]));
 
         var reloaded =
@@ -84,6 +85,10 @@ public sealed class RecurringSalesInvoiceServiceTests
         Assert.Equal(
             test.Account("4000").Id,
             line.RevenueAccountId);
+
+        Assert.Equal(
+            "PO-RECUR-001",
+            line.CustomerPurchaseOrderNumber);
     }
 
     [Fact]
@@ -219,7 +224,8 @@ public sealed class RecurringSalesInvoiceServiceTests
                             Quantity: 1m,
                             UnitPrice: 250m,
                             VatTreatment: VatTreatment.Standard,
-                            RevenueAccountId: test.Account("4000").Id)
+                            RevenueAccountId: test.Account("4000").Id,
+                            CustomerPurchaseOrderNumber: "PO-RECUR-002")
                     ],
                     DivisionId: division.Id));
 
@@ -252,6 +258,13 @@ public sealed class RecurringSalesInvoiceServiceTests
         Assert.Equal(division.Id, recurring.DivisionId);
         Assert.Equal(branch.Id, invoice.BranchId);
         Assert.Equal(division.Id, invoice.DivisionId);
+
+        var generatedLine = await test.Db.SalesInvoiceLines
+            .AsNoTracking()
+            .SingleAsync(x => x.SalesInvoiceId == invoice.Id);
+        Assert.Equal(
+            "PO-RECUR-002",
+            generatedLine.CustomerPurchaseOrderNumber);
 
         var journalLines =
             await test.Db.PostedJournalLines
@@ -712,7 +725,8 @@ public sealed class RecurringSalesInvoiceServiceTests
                         Quantity: 2m,
                         UnitPrice: 175m,
                         VatTreatment: VatTreatment.Standard,
-                        RevenueAccountId: test.Account("4000").Id),
+                        RevenueAccountId: test.Account("4000").Id,
+                        CustomerPurchaseOrderNumber: "PO-UPDATED-001"),
                     new RecurringSalesInvoiceLineRequest(
                         Description: "Additional service",
                         Quantity: 1m,
@@ -752,7 +766,8 @@ public sealed class RecurringSalesInvoiceServiceTests
             x =>
                 x.Description == "Updated service" &&
                 x.Quantity == 2m &&
-                x.UnitPrice == 175m);
+                x.UnitPrice == 175m &&
+                x.CustomerPurchaseOrderNumber == "PO-UPDATED-001");
 
         Assert.Contains(
             reloaded.Lines,

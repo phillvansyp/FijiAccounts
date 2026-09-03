@@ -242,6 +242,8 @@ else
                                 {
                                     Description =
                                         x.Description,
+                                    CustomerPurchaseOrderNumber =
+                                        x.CustomerPurchaseOrderNumber,
                                     Quantity =
                                         x.Quantity,
                                     UnitPrice =
@@ -355,7 +357,9 @@ else
                                 x.RevenueAccountId,
                                 x.ProductItemId,
                                 x.ProjectId,
-                                x.ProjectCostCodeId))
+                                x.ProjectCostCodeId,
+                                CustomerPurchaseOrderNumber:
+                                    x.CustomerPurchaseOrderNumber))
                         .ToList(),
                     DivisionId: model.DivisionId,
                     Currency: model.Currency);

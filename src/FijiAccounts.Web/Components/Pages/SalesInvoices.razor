@@ -193,6 +193,10 @@ else
                                 <tr>
                                     <td>@item.Customer.Name</td>
 
+                                    <td class="customer-po-summary">
+                                        @FormatCustomerPurchaseOrders(item)
+                                    </td>
+
                                     <td>
                                         @if (item.Status == RecurringSalesInvoiceStatus.Active)
                                         {
@@ -693,10 +697,20 @@ else
 
     private static string FormatCustomerPurchaseOrders(
         SalesInvoice invoice)
+        => FormatCustomerPurchaseOrders(
+            invoice.Lines.Select(x => x.CustomerPurchaseOrderNumber));
+
+    private static string FormatCustomerPurchaseOrders(
+        RecurringSalesInvoice invoice)
+        => FormatCustomerPurchaseOrders(
+            invoice.Lines.Select(x => x.CustomerPurchaseOrderNumber));
+
+    private static string FormatCustomerPurchaseOrders(
+        IEnumerable<string?> customerPurchaseOrderNumbers)
     {
         var purchaseOrders =
-            invoice.Lines
-                .Select(x => x.CustomerPurchaseOrderNumber?.Trim())
+            customerPurchaseOrderNumbers
+                .Select(x => x?.Trim())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Cast<string>()

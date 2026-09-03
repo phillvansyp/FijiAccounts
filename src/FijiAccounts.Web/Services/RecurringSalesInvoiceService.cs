@@ -15,7 +15,8 @@ public sealed record RecurringSalesInvoiceLineRequest(
     Guid RevenueAccountId,
     Guid? ProductItemId = null,
     Guid? ProjectId = null,
-    Guid? ProjectCostCodeId = null);
+    Guid? ProjectCostCodeId = null,
+    string? CustomerPurchaseOrderNumber = null);
 
 public sealed record RecurringSalesInvoiceRequest(
     Guid OrganisationId,
@@ -104,6 +105,12 @@ public sealed class RecurringSalesInvoiceService(
                 throw new InvalidOperationException(
                     "Every recurring invoice line needs a description, positive quantity and non-negative price.");
             }
+
+            if (line.CustomerPurchaseOrderNumber?.Trim().Length > 80)
+            {
+                throw new InvalidOperationException(
+                    "Customer PO numbers cannot exceed 80 characters.");
+            }
         }
 
         var revenueAccountIds =
@@ -171,6 +178,7 @@ public sealed class RecurringSalesInvoiceService(
                             VatTreatment = x.VatTreatment,
                             RevenueAccountId = x.RevenueAccountId,
                             ProductItemId = x.ProductItemId,
+                            CustomerPurchaseOrderNumber = NormalizeCustomerPurchaseOrderNumber(x.CustomerPurchaseOrderNumber),
                             ProjectId = x.ProjectId,
                             ProjectCostCodeId = x.ProjectCostCodeId
                         })
@@ -274,6 +282,12 @@ public sealed class RecurringSalesInvoiceService(
             {
                 throw new InvalidOperationException(
                     "Every recurring invoice line needs a description, positive quantity and non-negative price.");
+            }
+
+            if (line.CustomerPurchaseOrderNumber?.Trim().Length > 80)
+            {
+                throw new InvalidOperationException(
+                    "Customer PO numbers cannot exceed 80 characters.");
             }
         }
 
@@ -386,6 +400,8 @@ public sealed class RecurringSalesInvoiceService(
                             x.RevenueAccountId,
                         ProductItemId =
                             x.ProductItemId,
+                        CustomerPurchaseOrderNumber =
+                            NormalizeCustomerPurchaseOrderNumber(x.CustomerPurchaseOrderNumber),
                         ProjectId =
                             x.ProjectId,
                         ProjectCostCodeId =
@@ -636,6 +652,7 @@ public sealed class RecurringSalesInvoiceService(
                                             x.VatTreatment,
                                             x.RevenueAccountId,
                                             x.ProductItemId,
+                                            CustomerPurchaseOrderNumber: x.CustomerPurchaseOrderNumber,
                                             ProjectId: x.ProjectId,
                                             ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
@@ -765,6 +782,7 @@ public sealed class RecurringSalesInvoiceService(
                                             x.VatTreatment,
                                             x.RevenueAccountId,
                                             x.ProductItemId,
+                                            CustomerPurchaseOrderNumber: x.CustomerPurchaseOrderNumber,
                                             ProjectId: x.ProjectId,
                                             ProjectCostCodeId: x.ProjectCostCodeId))
                                     .ToList(),
@@ -866,6 +884,9 @@ public sealed class RecurringSalesInvoiceService(
 
         return new EnterprisePostingDimension(branch.Id, division.Id);
     }
+
+    private static string? NormalizeCustomerPurchaseOrderNumber(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     internal static DateOnly GetNextDate(
         DateOnly date,
