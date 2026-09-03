@@ -1288,7 +1288,7 @@ builder.Entity<FixedAsset>()
         }) builder.Entity<ProjectProgressClaim>().Property(property).HasPrecision(18, 2);
         builder.Entity<ProjectProgressClaim>().Property(x => x.RetentionRate).HasPrecision(8, 4);
         builder.Entity<ProjectCostCode>().HasOne(x => x.Project).WithMany(x => x.CostCodes).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
-        builder.Entity<ProjectWipPosting>().HasIndex(x => new { x.ProjectId, x.AsAt }).IsUnique();
+        builder.Entity<ProjectWipPosting>().HasIndex(x => new { x.ProjectId, x.AsAt });
         builder.Entity<ProjectWipPosting>().HasIndex(x => x.PostedJournalId).IsUnique();
         foreach (var property in new[]
         {

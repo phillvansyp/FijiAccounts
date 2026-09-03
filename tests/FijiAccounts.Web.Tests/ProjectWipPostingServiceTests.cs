@@ -7,7 +7,7 @@ namespace FijiAccounts.Web.Tests;
 public sealed class ProjectWipPostingServiceTests
 {
     [Fact]
-    public async Task PostAsync_PostsContractAssetTrueUpAndPreventsDuplicateDate()
+    public async Task PostAsync_PostsContractAssetTrueUpAndAllowsIncrementalSameDateAdjustment()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var (branch, division) = await DefaultDimensionAsync(test);
@@ -51,13 +51,29 @@ public sealed class ProjectWipPostingServiceTests
         Assert.Contains("cannot be changed", accountChange.Message,
             StringComparison.OrdinalIgnoreCase);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.PostAsync(
-                test.UserId, test.Organisation.Id, project.Id, new(2026, 8, 31)));
-        Assert.Contains("already been posted", exception.Message,
-            StringComparison.OrdinalIgnoreCase);
+        await PostRevenueAsync(
+            test, branch, division, project, 10_000m, new(2026, 8, 31));
+        var adjustment = await service.PostAsync(
+            test.UserId, test.Organisation.Id, project.Id, new(2026, 8, 31));
+        Assert.Equal(20_000m, adjustment.PreviousWipAmount);
+        Assert.Equal(10_000m, adjustment.RequiredWipAmount);
+        Assert.Equal(-10_000m, adjustment.MovementAmount);
+        var adjustmentJournal = await test.Db.PostedJournals.AsNoTracking()
+            .Include(x => x.Lines)
+            .SingleAsync(x => x.Id == adjustment.PostedJournalId);
+        Assert.Equal(10_000m, adjustmentJournal.Lines.Single(
+            x => x.LedgerAccountId == test.Account("1100").Id).Credit);
+        Assert.Equal(10_000m, adjustmentJournal.Lines.Single(
+            x => x.LedgerAccountId == test.Account("4000").Id).Debit);
 
-        test.Db.ProjectWipPostings.Remove(posting);
+        recognition = Assert.Single(await new ProjectRevenueRecognitionService(
+            test.Db, new ProjectService(test.Db, test.Access)).GetAsync(
+                test.UserId, test.Organisation.Id, new(2026, 8, 31)));
+        Assert.Equal(10_000m, recognition.PostedWipAmount);
+        Assert.Equal(0m, recognition.WipMovementRequired);
+        Assert.True(recognition.IsPostedForAsAt);
+
+        test.Db.ProjectWipPostings.Remove(adjustment);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             test.Db.SaveChangesAsync());
     }

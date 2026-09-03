@@ -34,13 +34,6 @@ public sealed class ProjectWipPostingService(
             ?? throw new UnauthorizedAccessException(
                 "You cannot post WIP for this project.");
         if (await db.ProjectWipPostings.AnyAsync(x =>
-                x.ProjectId == projectId && x.AsAt == asAt,
-                cancellationToken))
-        {
-            throw new InvalidOperationException(
-                "WIP has already been posted for this project and date.");
-        }
-        if (await db.ProjectWipPostings.AnyAsync(x =>
                 x.ProjectId == projectId && x.AsAt > asAt,
                 cancellationToken))
         {

@@ -149,7 +149,8 @@ public sealed class ProjectRevenueRecognitionService(
                 Currency(outstandingRetention),
                 Currency(postedWipAmount),
                 wipMovementRequired,
-                projectWipPostings.Any(x => x.AsAt == asAt),
+                projectWipPostings.Any(x => x.AsAt == asAt) &&
+                    wipMovementRequired == 0m,
                 organisation.ProjectContractAssetAccountId is not null &&
                     organisation.ProjectContractLiabilityAccountId is not null &&
                     organisation.ProjectRevenueRecognitionAccountId is not null);
