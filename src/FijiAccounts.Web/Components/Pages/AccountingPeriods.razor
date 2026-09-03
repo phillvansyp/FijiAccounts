@@ -60,9 +60,10 @@ else
                 <div class="period-fields">
                     <div>
                         <label class="form-label">Period name</label>
-                        <InputText class="form-control"
-                                   @bind-Value="model.Name"
-                                   @oninput="MarkPeriodNameEdited" />
+                        <input class="form-control"
+                                   @bind="model.Name"
+                                   @bind:event="oninput"
+                                   @bind:after="MarkPeriodNameEdited" />
                     </div>
 
                     <div>
@@ -373,7 +374,7 @@ else
                                 <div class="row align-items-end mt-2">
                                     <div class="col-md-8">
                                         <label class="form-label">Final approval reference</label>
-                                        <InputText class="form-control" @bind-Value="finalApprovalReference" placeholder="e.g. Partner sign-off YE-2026" />
+                                        <input class="form-control" @bind="finalApprovalReference" @bind:event="oninput" placeholder="e.g. Partner sign-off YE-2026" />
                                     </div>
                                     <div class="col-md-4 mt-3 mt-md-0">
                                         <button type="button" class="btn btn-success w-100" disabled="@(!AllReviewItemsCleared || string.IsNullOrWhiteSpace(finalApprovalReference))" @onclick="ApproveReview">
@@ -400,8 +401,9 @@ else
                             <div class="period-fields">
                                 <div>
                                     <label class="form-label">Period name</label>
-                                    <InputText class="form-control"
-                                               @bind-Value="editModel.Name" />
+                                    <input class="form-control"
+                                           @bind="editModel.Name"
+                                           @bind:event="oninput" />
                                 </div>
 
                                 <div>
@@ -787,7 +789,7 @@ else
         periodNameEdited = false;
     }
 
-    private void MarkPeriodNameEdited(ChangeEventArgs _)
+    private void MarkPeriodNameEdited()
     {
         periodNameEdited = true;
     }

@@ -43,21 +43,21 @@ else
             <EditForm Model="model" OnValidSubmit="SaveProject" FormName="project-register" class="mt-3">
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row">
-                    <div class="col-md-2 mb-3"><label class="form-label">Project number</label><InputText class="form-control" @bind-Value="model.ProjectNumber" /></div>
-                    <div class="col-md-4 mb-3"><label class="form-label">Project name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Project number</label><input class="form-control" @bind="model.ProjectNumber" @bind:event="oninput" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Project name</label><input class="form-control" @bind="model.Name" @bind:event="oninput" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Branch and division</label><InputSelect class="form-select" @bind-Value="model.DivisionId">@foreach (var item in divisions) { <option value="@item.DivisionId">@item.Label</option> }</InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Customer</label><InputSelect class="form-select" @bind-Value="model.CustomerId"><option value="">No customer selected</option>@foreach (var customer in customers) { <option value="@customer.Id">@customer.Name</option> }</InputSelect></div>
                 </div>
                 <div class="row">
                     <div class="col-md-3 mb-3"><label class="form-label">Start date</label><InputDate class="form-control" @bind-Value="model.StartDate" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Expected completion</label><InputDate class="form-control" @bind-Value="model.ExpectedCompletionDate" /></div>
-                    <div class="col-md-6 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">Description</label><input class="form-control" @bind="model.Description" @bind:event="oninput" /></div>
                 </div>
                 <div class="row">
-                    <div class="col-md-2 mb-3"><label class="form-label">Original contract</label><InputNumber class="form-control" @bind-Value="model.OriginalContractValue" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Opening variations</label><InputNumber class="form-control" @bind-Value="model.ApprovedVariationValue" /><div class="form-text">Existing approvals.</div></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Forecast cost</label><InputNumber class="form-control" @bind-Value="model.ForecastCost" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Retention %</label><InputNumber class="form-control" @bind-Value="model.RetentionPercent" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Original contract</label><input type="number" step="0.01" class="form-control" @bind="model.OriginalContractValue" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Opening variations</label><input type="number" step="0.01" class="form-control" @bind="model.ApprovedVariationValue" @bind:event="oninput" /><div class="form-text">Existing approvals.</div></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Forecast cost</label><input type="number" step="0.01" class="form-control" @bind="model.ForecastCost" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Retention %</label><input type="number" step="0.01" class="form-control" @bind="model.RetentionPercent" @bind:event="oninput" /></div>
                     <div class="col-md-4 mb-3"><label class="form-label">Revenue recognition</label><InputSelect class="form-select" @bind-Value="model.RevenueRecognitionMethod">@foreach (var method in Enum.GetValues<ProjectRevenueRecognitionMethod>()) { <option value="@method">@RecognitionMethodLabel(method)</option> }</InputSelect><div class="form-text">Cost-to-cost uses actual cost / forecast cost. Certified claims uses approved work.</div></div>
                 </div>
                 <button class="btn btn-primary">Create project</button>
@@ -73,10 +73,10 @@ else
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row">
                     <div class="col-md-3 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="costCodeModel.ProjectId">@foreach (var project in projects.Where(x => x.Status is not ProjectStatus.Completed and not ProjectStatus.Cancelled)) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="costCodeModel.Code" /></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="costCodeModel.Name" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Code</label><input class="form-control" @bind="costCodeModel.Code" @bind:event="oninput" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Name</label><input class="form-control" @bind="costCodeModel.Name" @bind:event="oninput" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Category</label><InputSelect class="form-select" @bind-Value="costCodeModel.Category">@foreach (var category in CostCategories) { <option value="@category">@CostCategoryLabel(category)</option> }</InputSelect></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Budget</label><InputNumber class="form-control" @bind-Value="costCodeModel.BudgetAmount" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Budget</label><input type="number" step="0.01" class="form-control" @bind="costCodeModel.BudgetAmount" @bind:event="oninput" /></div>
                 </div>
                 <button class="btn btn-primary">Add cost code</button>
             </EditForm>
@@ -91,13 +91,13 @@ else
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row">
                     <div class="col-md-4 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="variationModel.ProjectId">@foreach (var project in projects.Where(x => x.Status is ProjectStatus.Active or ProjectStatus.OnHold)) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Variation number</label><InputText class="form-control" @bind-Value="variationModel.VariationNumber" /></div>
-                    <div class="col-md-4 mb-3"><label class="form-label">Title</label><InputText class="form-control" @bind-Value="variationModel.Title" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="variationModel.Amount" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Variation number</label><input class="form-control" @bind="variationModel.VariationNumber" @bind:event="oninput" /></div>
+                    <div class="col-md-4 mb-3"><label class="form-label">Title</label><input class="form-control" @bind="variationModel.Title" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Amount</label><input type="number" step="0.01" class="form-control" @bind="variationModel.Amount" @bind:event="oninput" /></div>
                 </div>
                 <div class="row">
                     <div class="col-md-3 mb-3"><label class="form-label">Requested date</label><InputDate class="form-control" @bind-Value="variationModel.RequestedDate" /></div>
-                    <div class="col-md-9 mb-3"><label class="form-label">Description</label><InputTextArea class="form-control" @bind-Value="variationModel.Description" /></div>
+                    <div class="col-md-9 mb-3"><label class="form-label">Description</label><textarea class="form-control" @bind="variationModel.Description" @bind:event="oninput"></textarea></div>
                 </div>
                 <button class="btn btn-primary">Save draft variation</button>
             </EditForm>
@@ -112,13 +112,13 @@ else
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row">
                     <div class="col-md-4 mb-3"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="claimModel.ProjectId" @bind-Value:after="ApplyClaimProjectDefaults">@foreach (var project in EligibleClaimProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Claim number</label><InputText class="form-control" @bind-Value="claimModel.ClaimNumber" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Claim number</label><input class="form-control" @bind="claimModel.ClaimNumber" @bind:event="oninput" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Period end</label><InputDate class="form-control" @bind-Value="claimModel.ClaimPeriodEnd" /></div>
-                    <div class="col-md-3 mb-3"><label class="form-label">Work completed excl. VAT</label><InputNumber class="form-control" @bind-Value="claimModel.WorkCompletedAmount" /><div class="form-text">Retention held: $@ClaimRetentionHeld.ToString("N2")</div></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Work completed excl. VAT</label><input type="number" step="0.01" class="form-control" @bind="claimModel.WorkCompletedAmount" @bind:event="oninput" /><div class="form-text">Retention held: $@ClaimRetentionHeld.ToString("N2")</div></div>
                 </div>
                 <div class="row">
-                    <div class="col-md-5 mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="claimModel.Description" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Retention released</label><InputNumber class="form-control" @bind-Value="claimModel.RetentionReleasedAmount" /></div>
+                    <div class="col-md-5 mb-3"><label class="form-label">Description</label><input class="form-control" @bind="claimModel.Description" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Retention released</label><input type="number" step="0.01" class="form-control" @bind="claimModel.RetentionReleasedAmount" @bind:event="oninput" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Revenue account</label><InputSelect class="form-select" @bind-Value="claimModel.RevenueAccountId">@foreach (var account in revenueAccounts) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
                     <div class="col-md-2 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="claimModel.VatTreatment">@foreach (var treatment in Enum.GetValues<VatTreatment>()) { <option value="@treatment">@VatLabel(treatment)</option> }</InputSelect></div>
                 </div>
@@ -313,7 +313,7 @@ else
                                         @if (canApproveVariations)
                                         {
                                             <button class="btn btn-sm btn-success" @onclick="() => DecideClaim(claim, true)">Approve</button>
-                                            <InputText class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind-Value="claimDecisionReasons[claim.Id]" />
+                                            <input class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind="claimDecisionReasons[claim.Id]" @bind:event="oninput" />
                                             <button class="btn btn-sm btn-outline-danger" @onclick="() => DecideClaim(claim, false)">Reject</button>
                                         }
                                         @if (canManage)
@@ -371,7 +371,7 @@ else
                                         @if (canApproveVariations)
                                         {
                                             <button class="btn btn-sm btn-success" @onclick="() => DecideVariation(variation, true)">Approve</button>
-                                            <InputText class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind-Value="variationDecisionReasons[variation.Id]" />
+                                            <input class="form-control form-control-sm" style="width: 12rem" placeholder="Rejection reason" @bind="variationDecisionReasons[variation.Id]" @bind:event="oninput" />
                                             <button class="btn btn-sm btn-outline-danger" @onclick="() => DecideVariation(variation, false)">Reject</button>
                                         }
                                         @if (canManage)

@@ -58,14 +58,16 @@ else
 
                     <div class="col-md-2 mb-3">
                         <label class="form-label">Code</label>
-                        <InputText class="form-control"
-                                   @bind-Value="model.Code" />
+                        <input class="form-control"
+                               @bind="model.Code"
+                               @bind:event="oninput" />
                     </div>
 
                     <div class="col-md-3 mb-3">
                         <label class="form-label">Account name</label>
-                        <InputText class="form-control"
-                                   @bind-Value="model.Name" />
+                        <input class="form-control"
+                               @bind="model.Name"
+                               @bind:event="oninput" />
                     </div>
 
                     <div class="col-md-2 mb-3">
@@ -126,8 +128,9 @@ else
                                 Account / card number
                             </label>
 
-                            <InputText class="form-control"
-                                       @bind-Value="model.BankAccountNumber" />
+                            <input class="form-control"
+                                   @bind="model.BankAccountNumber"
+                                   @bind:event="oninput" />
                         </div>
                     }
 
@@ -194,8 +197,9 @@ else
 
                     <div class="col-md-3 mb-3">
                         <label class="form-label">Account name</label>
-                        <InputText class="form-control"
-                                   @bind-Value="editModel.Name" />
+                        <input class="form-control"
+                               @bind="editModel.Name"
+                               @bind:event="oninput" />
                     </div>
 
                     <div class="col-md-2 mb-3">
@@ -256,8 +260,9 @@ else
                                 Account / card number
                             </label>
 
-                            <InputText class="form-control"
-                                       @bind-Value="editModel.BankAccountNumber" />
+                            <input class="form-control"
+                                   @bind="editModel.BankAccountNumber"
+                                   @bind:event="oninput" />
                         </div>
                     }
 

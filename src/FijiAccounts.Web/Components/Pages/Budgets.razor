@@ -28,9 +28,9 @@ else
         <EditForm Model="filter" OnValidSubmit="Reload" FormName="budget-report-filter">
             <DataAnnotationsValidator />
             <div><label class="form-label">Reporting scope</label><InputSelect class="form-select" @bind-Value="filter.Scope">@foreach (var scope in scopeOptions) { <option value="@scope.Value">@scope.Label</option> }</InputSelect></div>
-            <div><label class="form-label">Calendar year</label><InputNumber class="form-control" @bind-Value="filter.Year" /></div>
-            <div><label class="form-label">Alert variance %</label><InputNumber class="form-control" @bind-Value="filter.AlertPercent" /></div>
-            <div><label class="form-label">Minimum alert amount</label><InputNumber class="form-control" @bind-Value="filter.AlertAmount" /></div>
+            <div><label class="form-label">Calendar year</label><input type="number" step="1" class="form-control" @bind="filter.Year" @bind:event="oninput" /></div>
+            <div><label class="form-label">Alert variance %</label><input type="number" step="0.01" class="form-control" @bind="filter.AlertPercent" @bind:event="oninput" /></div>
+            <div><label class="form-label">Minimum alert amount</label><input type="number" step="0.01" class="form-control" @bind="filter.AlertAmount" @bind:event="oninput" /></div>
             <button class="btn btn-primary">Update report</button>
         </EditForm>
     </section>
@@ -52,7 +52,7 @@ else
                         <div class="col-md-4 mb-3"><label class="form-label">Revenue or expense account</label><InputSelect class="form-select" @bind-Value="model.AccountId">@foreach (var account in report.Accounts.Where(x => x.IsActive)) { <option value="@account.Id">@account.Code &mdash; @account.Name</option> }</InputSelect></div>
                         <div class="col-md-3 mb-3"><label class="form-label">Budget scope</label><InputSelect class="form-select" @bind-Value="model.Scope">@foreach (var scope in scopeOptions) { <option value="@scope.Value">@scope.Label</option> }</InputSelect></div>
                         <div class="col-md-2 mb-3"><label class="form-label">Month</label><InputDate class="form-control" @bind-Value="model.Month" /></div>
-                        <div class="col-md-2 mb-3"><label class="form-label">Budget amount</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
+                        <div class="col-md-2 mb-3"><label class="form-label">Budget amount</label><input type="number" step="0.01" class="form-control" @bind="model.Amount" @bind:event="oninput" /></div>
                         <div class="col-md-1 d-flex align-items-end mb-3"><button class="btn btn-primary w-100">Save</button></div>
                     </div>
                 </EditForm>

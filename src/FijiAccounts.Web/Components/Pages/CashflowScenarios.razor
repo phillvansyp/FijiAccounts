@@ -38,8 +38,8 @@ else
             <EditForm Model="createModel" OnValidSubmit="CreateScenario" FormName="create-cashflow-scenario" class="mt-3">
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row g-3">
-                    <div class="col-md-4"><label class="form-label">Scenario name</label><InputText class="form-control" @bind-Value="createModel.Name" @bind-Value:event="oninput" placeholder="Slower customer payments" /></div>
-                    <div class="col-md-6"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="createModel.Description" @bind-Value:event="oninput" placeholder="What decision or risk are you testing?" /></div>
+                    <div class="col-md-4"><label class="form-label">Scenario name</label><input class="form-control" @bind="createModel.Name" @bind:event="oninput" placeholder="Slower customer payments" /></div>
+                    <div class="col-md-6"><label class="form-label">Description</label><input class="form-control" @bind="createModel.Description" @bind:event="oninput" placeholder="What decision or risk are you testing?" /></div>
                     <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" disabled="@saving">Create</button></div>
                 </div>
             </EditForm>
@@ -85,8 +85,8 @@ else
                             }
                             else
                             {
-                                <div class="col-md-3"><label class="form-label">Title</label><InputText class="form-control" @bind-Value="eventModel.Title" @bind-Value:event="oninput" /></div>
-                                <div class="col-md-2"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="eventModel.Amount" /></div>
+                                <div class="col-md-3"><label class="form-label">Title</label><input class="form-control" @bind="eventModel.Title" @bind:event="oninput" /></div>
+                                <div class="col-md-2"><label class="form-label">Amount</label><input type="number" step="0.01" class="form-control" @bind="eventModel.Amount" @bind:event="oninput" /></div>
                                 <div class="col-md-2"><label class="form-label">First date</label><InputDate class="form-control" @bind-Value="eventModel.EventDate" /></div>
                                 <div class="col-md-2"><label class="form-label">Frequency</label><InputSelect class="form-select" @bind-Value="eventModel.Frequency"><option value="@CashflowScenarioFrequency.OneOff">One-off</option><option value="@CashflowScenarioFrequency.Monthly">Monthly</option></InputSelect></div>
                                 @if (eventModel.Frequency == CashflowScenarioFrequency.Monthly) { <div class="col-md-2"><label class="form-label">End date</label><InputDate class="form-control" @bind-Value="eventModel.EndDate" /></div> }

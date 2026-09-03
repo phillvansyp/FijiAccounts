@@ -31,9 +31,9 @@ else
                 <ValidationSummary />
                 <div class="row">
                     <div class="col-md-4 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div>
-                    <div class="col-md-8 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
+                    <div class="col-md-8 mb-3"><label class="form-label">Reference</label><input class="form-control" @bind="model.Reference" @bind:event="oninput" /></div>
                 </div>
-                <div class="mb-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="model.Description" /></div>
+                <div class="mb-3"><label class="form-label">Description</label><input class="form-control" @bind="model.Description" @bind:event="oninput" /></div>
                 <div class="form-check mb-3">
                     <InputCheckbox class="form-check-input" @bind-Value="model.IsYearEndAdjustment" />
                     <label class="form-check-label">Accountant-approved year-end adjustment</label>
@@ -56,7 +56,7 @@ else
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Approval or working-paper reference</label>
-                            <InputText class="form-control" @bind-Value="model.ApprovalReference" placeholder="e.g. Accountant WP-AJE-04" />
+                            <input class="form-control" @bind="model.ApprovalReference" @bind:event="oninput" placeholder="e.g. Accountant WP-AJE-04" />
                         </div>
                     </div>
                 }
@@ -100,7 +100,7 @@ else
                     <div class="col-md-6 mb-3"><label class="form-label">Debit account</label><InputSelect class="form-select" @bind-Value="model.DebitAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div>
                     <div class="col-md-6 mb-3"><label class="form-label">Credit account</label><InputSelect class="form-select" @bind-Value="model.CreditAccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div>
                 </div>
-                <div class="mb-3"><label class="form-label">Amount (@access.Organisation.BaseCurrency)</label><InputNumber class="form-control" @bind-Value="model.Amount" /></div>
+                <div class="mb-3"><label class="form-label">Amount (@access.Organisation.BaseCurrency)</label><input type="number" step="0.01" class="form-control" @bind="model.Amount" @bind:event="oninput" /></div>
                 <button class="btn btn-primary">Post journal</button>
             </EditForm>
             @if (status is not null) { <div class="alert @statusClass mt-3">@status</div> }
