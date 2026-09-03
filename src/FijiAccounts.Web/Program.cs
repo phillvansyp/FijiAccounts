@@ -213,6 +213,12 @@ builder.Services.AddScoped<OrganisationSettingsService>();
 builder.Services.AddScoped<OrganisationBrandingService>();
 builder.Services.AddScoped<BusinessPartyService>();
 builder.Services.AddScoped<JournalPostingService>();
+builder.Services.AddHttpClient<IPayrollIslandClient, PayrollIslandHttpClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.MaxResponseContentBufferSize = 5 * 1024 * 1024;
+});
+builder.Services.AddScoped<PayrollIslandIntegrationService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<FiscalisationWorkflowService>();
 builder.Services.AddScoped<FiscalisationOrchestratorService>();

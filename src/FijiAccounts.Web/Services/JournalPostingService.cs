@@ -26,7 +26,8 @@ public sealed record JournalPostRequest(
     Guid? DivisionId = null,
     JournalPurpose Purpose = JournalPurpose.Standard,
     Guid? AdjustmentPeriodId = null,
-    string? ApprovalReference = null);
+    string? ApprovalReference = null,
+    string? Currency = null);
 
 public sealed class JournalPostingService(
     ApplicationDbContext db,
@@ -129,6 +130,13 @@ public sealed class JournalPostingService(
         }
 
         var accountIds = request.Lines.Select(x => x.AccountId).Distinct().ToArray();
+        var currency = string.IsNullOrWhiteSpace(request.Currency)
+            ? "FJD"
+            : request.Currency.Trim().ToUpperInvariant();
+        if (currency.Length != 3 || currency.Any(x => x is < 'A' or > 'Z'))
+        {
+            throw new InvalidOperationException("Journal currency must be a three-letter code.");
+        }
         // SQLite persists Guid values as text. Older seeded data used lower-case values,
         // while EF parameters use upper-case values, making SQL IN comparisons reject
         // otherwise identical IDs. Keep the database query tenant-scoped, then match the
@@ -250,6 +258,7 @@ foreach (var bankAccountId in bankAccountIds)
             Purpose = request.Purpose,
             AdjustmentPeriodId = adjustmentPeriod?.Id,
             ApprovalReference = approvalReference,
+            Currency = currency,
             Lines = request.Lines.Select((x, index) => new PostedJournalLine { LedgerAccountId = x.AccountId, BranchId = dimensions[index].BranchId, DivisionId = dimensions[index].DivisionId, ProjectId = x.ProjectId, ProjectCostCodeId = x.ProjectCostCodeId, Description = x.Description.Trim(), Debit = x.Debit, Credit = x.Credit }).ToList()
         };
         db.PostedJournals.Add(journal);

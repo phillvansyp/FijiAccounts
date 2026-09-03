@@ -113,7 +113,7 @@ else
             <tbody>
                 @foreach (var journal in journals)
                 {
-                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@(journal.Purpose == JournalPurpose.YearEndAdjustment ? "Year-end adjustment" : "Standard")</td><td>@DimensionLabel(journal)</td><td>@ProjectLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
+                    <tr><td><a href="o/@OrganisationId/journals/@journal.Id">J-@journal.SequenceNumber.ToString("D6")</a></td><td>@journal.EntryDate.ToString("dd MMM yyyy")</td><td>@journal.Reference</td><td>@PurposeLabel(journal.Purpose)</td><td>@DimensionLabel(journal)</td><td>@ProjectLabel(journal)</td><td>@journal.Description</td><td class="text-end">$@journal.Lines.Sum(x => x.Debit).ToString("N2")</td></tr>
                 }
             </tbody>
         </table>
@@ -206,6 +206,13 @@ else
             ? $"{dimensions[0].Branch} / {dimensions[0].Division}"
             : "Multiple allocations";
     }
+
+    private static string PurposeLabel(JournalPurpose purpose) => purpose switch
+    {
+        JournalPurpose.YearEndAdjustment => "Year-end adjustment",
+        JournalPurpose.Payroll => "Payroll",
+        _ => "Standard"
+    };
 
     private IEnumerable<Project> EligibleProjects => projects.Where(x =>
         x.DivisionId == model.DivisionId &&

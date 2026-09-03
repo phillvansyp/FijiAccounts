@@ -137,6 +137,12 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectCostCode> ProjectCostCodes => Set<ProjectCostCode>();
     public DbSet<ProjectWipPosting> ProjectWipPostings => Set<ProjectWipPosting>();
+    public DbSet<PayrollIslandConnection> PayrollIslandConnections =>
+        Set<PayrollIslandConnection>();
+    public DbSet<PayrollIslandPayRunImport> PayrollIslandPayRunImports =>
+        Set<PayrollIslandPayRunImport>();
+    public DbSet<PayrollIslandPaymentRecord> PayrollIslandPaymentRecords =>
+        Set<PayrollIslandPaymentRecord>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -1342,7 +1348,75 @@ builder.Entity<FixedAsset>()
             .WithOne()
             .HasForeignKey<FiscalisationConfiguration>(x => x.OrganisationId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<PayrollIslandConnection>()
+            .HasIndex(x => x.OrganisationId)
+            .IsUnique();
+        builder.Entity<PayrollIslandConnection>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        ConfigurePayrollAccount(builder, x => x.WagesExpenseAccountId);
+        ConfigurePayrollAccount(builder, x => x.EmployerContributionsExpenseAccountId);
+        ConfigurePayrollAccount(builder, x => x.NetWagesPayableAccountId);
+        ConfigurePayrollAccount(builder, x => x.PayePayableAccountId);
+        ConfigurePayrollAccount(builder, x => x.FnpfPayableAccountId);
+        ConfigurePayrollAccount(builder, x => x.OtherDeductionsPayableAccountId);
+        builder.Entity<PayrollIslandPayRunImport>()
+            .HasIndex(x => new { x.ConnectionId, x.ExternalPayRunId, x.Revision })
+            .IsUnique();
+        builder.Entity<PayrollIslandPayRunImport>()
+            .HasIndex(x => new { x.OrganisationId, x.Status, x.PaymentDate });
+        builder.Entity<PayrollIslandPayRunImport>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PayrollIslandPayRunImport>()
+            .HasOne(x => x.Connection)
+            .WithMany(x => x.PayRuns)
+            .HasForeignKey(x => x.ConnectionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PayrollIslandPayRunImport>()
+            .HasOne(x => x.PostedJournal)
+            .WithMany()
+            .HasForeignKey(x => x.PostedJournalId)
+            .OnDelete(DeleteBehavior.Restrict);
+        foreach (var property in new[]
+        {
+            nameof(PayrollIslandPayRunImport.GrossEarnings),
+            nameof(PayrollIslandPayRunImport.EmployeePaye),
+            nameof(PayrollIslandPayRunImport.EmployeeFnpf),
+            nameof(PayrollIslandPayRunImport.EmployerFnpf),
+            nameof(PayrollIslandPayRunImport.OtherDeductions),
+            nameof(PayrollIslandPayRunImport.NetPay)
+        })
+        {
+            builder.Entity<PayrollIslandPayRunImport>()
+                .Property(property)
+                .HasPrecision(18, 2);
+        }
+        builder.Entity<PayrollIslandPaymentRecord>()
+            .HasIndex(x => new { x.PayRunImportId, x.ExternalPaymentId })
+            .IsUnique();
+        builder.Entity<PayrollIslandPaymentRecord>()
+            .Property(x => x.Amount)
+            .HasPrecision(18, 2);
+        builder.Entity<PayrollIslandPaymentRecord>()
+            .HasOne(x => x.PayRunImport)
+            .WithMany(x => x.Payments)
+            .HasForeignKey(x => x.PayRunImportId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
+
+    private static void ConfigurePayrollAccount(
+        ModelBuilder builder,
+        System.Linq.Expressions.Expression<Func<PayrollIslandConnection, object?>> foreignKey) =>
+        builder.Entity<PayrollIslandConnection>()
+            .HasOne<LedgerAccount>()
+            .WithMany()
+            .HasForeignKey(foreignKey)
+            .OnDelete(DeleteBehavior.Restrict);
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default) { ProtectAppendOnlyRecords(); return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
@@ -1427,10 +1501,19 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<YearEndHandoverPackSnapshot>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<YearEndReviewAttachment>()
-        .Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<PayrollIslandPaymentRecord>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<PayrollIslandPayRunImport>()
+        .Any(x =>
+            x.State == EntityState.Deleted ||
+            (x.State == EntityState.Modified && x.Properties.Any(property =>
+                property.IsModified &&
+                property.Metadata.Name != nameof(PayrollIslandPayRunImport.Status) &&
+                property.Metadata.Name != nameof(PayrollIslandPayRunImport.PostedJournalId)))))
 {
     throw new InvalidOperationException(
-        "Posted journals, audit events, and retained document objects are append-only.");
+        "Posted journals, audit events, payroll source records, and retained document objects are append-only.");
 }
     }
 

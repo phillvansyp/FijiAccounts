@@ -112,7 +112,8 @@ public sealed class PostedJournal
 public enum JournalPurpose
 {
     Standard,
-    YearEndAdjustment
+    YearEndAdjustment,
+    Payroll
 }
 
 public sealed class PostedJournalLine

@@ -1,0 +1,369 @@
+@page "/o/{OrganisationId:guid}/integrations/payroll-island"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject PayrollIslandIntegrationService PayrollIntegration
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Payroll Island integration · Account Island</PageTitle>
+
+@if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="settings-heading">
+        <div>
+            <p class="eyebrow">Connected services</p>
+            <h1>Payroll Island</h1>
+            <p>Import finalised pay runs as controlled accounting journals and track wage, PAYE and FNPF payments.</p>
+        </div>
+        <span class="tax-pack @(connection?.IsActive == true ? "enabled" : "pending")">
+            @(connection?.IsActive == true ? "Connected" : "Not connected")
+        </span>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass">@message</div>
+    }
+
+    <section class="settings-card mb-3">
+        <h2>Connection and account mapping</h2>
+        <p>
+            Account Island retrieves aggregate totals only. Employee bank details and individual payslips remain in Payroll Island.
+        </p>
+        <EditForm Model="model" OnValidSubmit="SaveConnection" FormName="payroll-island-connection">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Payroll Island address</label>
+                    <InputText class="form-control" @bind-Value="model.BaseUrl" disabled="@(!canManageConnections)" placeholder="https://payroll.example.com" />
+                    <div class="form-text">The HTTPS address of the Payroll Island server.</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Payroll organisation ID</label>
+                    <InputText class="form-control" @bind-Value="model.PayrollOrganisationId" disabled="@(!canManageConnections)" />
+                    <div class="form-text">Copy this identifier from the business settings in Payroll Island.</div>
+                </div>
+                <div class="col-12 mb-3">
+                    <label class="form-label">Read-only integration token</label>
+                    <input class="form-control" type="password" autocomplete="new-password" @bind="model.AccessToken" @bind:event="oninput" disabled="@(!canManageConnections)" placeholder="@(connection is null ? "Paste the token from Payroll Island" : "Leave blank to keep the current token")" />
+                    <div class="form-text">Stored encrypted. The token should only allow reading finalised pay runs and payment summaries.</div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Gross wages expense</label>
+                    <InputSelect class="form-select" @bind-Value="model.WagesExpenseAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in expenseAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Employer FNPF expense</label>
+                    <InputSelect class="form-select" @bind-Value="model.EmployerContributionsExpenseAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in expenseAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Net wages payable</label>
+                    <InputSelect class="form-select" @bind-Value="model.NetWagesPayableAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in liabilityAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">PAYE payable</label>
+                    <InputSelect class="form-select" @bind-Value="model.PayePayableAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in liabilityAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">FNPF payable</label>
+                    <InputSelect class="form-select" @bind-Value="model.FnpfPayableAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in liabilityAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Other deductions payable</label>
+                    <InputSelect class="form-select" @bind-Value="model.OtherDeductionsPayableAccountId" disabled="@(!canManageConnections)">
+                        @foreach (var account in liabilityAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
+                    </InputSelect>
+                </div>
+            </div>
+            @if (canManageConnections)
+            {
+                <button class="btn btn-primary" disabled="@busy">@(connection is null ? "Connect Payroll Island" : "Save connection")</button>
+            }
+        </EditForm>
+    </section>
+
+    @if (connection is not null)
+    {
+        <section class="settings-card mb-3">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h2>Payroll imports</h2>
+                    <p class="mb-1">Finalised runs arrive as drafts. Posting remains a deliberate Account Island action.</p>
+                    <small class="text-secondary">
+                        Last sync: @(connection.LastSyncedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm") ?? "Not yet synchronised")
+                    </small>
+                </div>
+                @if (canPost)
+                {
+                    <button class="btn btn-outline-primary" @onclick="Sync" disabled="@busy">Sync now</button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(connection.LastSyncError))
+            {
+                <div class="alert alert-warning mt-3 mb-0">The last sync failed. Check the Payroll Island address and token.</div>
+            }
+
+            @if (imports.Count == 0)
+            {
+                <div class="empty-state mt-3">
+                    <strong>No payroll runs imported</strong>
+                    <span>Use Sync now after Payroll Island implements the handover API.</span>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive mt-3">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr><th>Pay run</th><th>Payment date</th><th class="text-end">Gross wages</th><th class="text-end">Net pay</th><th>Payments</th><th>Status</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in imports)
+                            {
+                                <tr>
+                                    <td>
+                                        <strong>@item.PayRunNumber</strong>
+                                        <small class="d-block text-secondary">Revision @item.Revision · @item.EmployeeCount employees</small>
+                                        <details class="mt-2">
+                                            <summary>Review breakdown</summary>
+                                            <dl class="mt-2 mb-2">
+                                                <div><dt>Period</dt><dd>@item.PeriodStart.ToString("dd MMM") – @item.PeriodEnd.ToString("dd MMM yyyy")</dd></div>
+                                                <div><dt>Employer FNPF</dt><dd>@Money(item.EmployerFnpf)</dd></div>
+                                                <div><dt>Employee PAYE</dt><dd>@Money(item.EmployeePaye)</dd></div>
+                                                <div><dt>Employee FNPF</dt><dd>@Money(item.EmployeeFnpf)</dd></div>
+                                                <div><dt>Other deductions</dt><dd>@Money(item.OtherDeductions)</dd></div>
+                                            </dl>
+                                            @foreach (var payment in item.Payments.OrderBy(x => x.DueDate).ThenBy(x => x.Kind))
+                                            {
+                                                <small class="d-block text-secondary">
+                                                    @PaymentKindLabel(payment.Kind) · @Money(payment.Amount) · due @payment.DueDate.ToString("dd MMM yyyy") · @payment.Status
+                                                </small>
+                                            }
+                                        </details>
+                                    </td>
+                                    <td>@item.PaymentDate.ToString("dd MMM yyyy")</td>
+                                    <td class="text-end">@Money(item.GrossEarnings)</td>
+                                    <td class="text-end">@Money(item.NetPay)</td>
+                                    <td>@item.Payments.Count<small class="d-block text-secondary">PAYE, FNPF and wage records</small></td>
+                                    <td>@StatusLabel(item)</td>
+                                    <td class="text-end">
+                                        @if (item.Status == PayrollIslandImportStatus.ReadyToPost && canPost)
+                                        {
+                                            @if (confirmingImportId == item.Id)
+                                            {
+                                                <div class="alert alert-warning p-2 text-start">
+                                                    This creates an immutable payroll journal.
+                                                    <div class="mt-2 d-flex gap-2">
+                                                        <button class="btn btn-sm btn-primary" @onclick="() => Post(item.Id)" disabled="@busy">Confirm post</button>
+                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPost" disabled="@busy">Cancel</button>
+                                                    </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-primary" @onclick="() => PreparePost(item.Id)" disabled="@busy">Review and post</button>
+                                            }
+                                        }
+                                        else if (item.PostedJournal is not null)
+                                        {
+                                            <a class="btn btn-sm btn-outline-secondary" href="o/@OrganisationId/journals">Journal @item.PostedJournal.SequenceNumber</a>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private PayrollIslandConnection? connection;
+    private IReadOnlyList<PayrollIslandPayRunImport> imports = [];
+    private List<LedgerAccount> expenseAccounts = [];
+    private List<LedgerAccount> liabilityAccounts = [];
+    private ConnectionModel model = new();
+    private string userId = "";
+    private bool canManageConnections;
+    private bool canPost;
+    private bool busy;
+    private Guid? confirmingImportId;
+    private string? message;
+    private string messageClass = "alert-success";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canManageConnections = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        expenseAccounts = await Db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Expense)
+            .OrderBy(x => x.Code).ToListAsync();
+        liabilityAccounts = await Db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.Type == AccountType.Liability)
+            .OrderBy(x => x.Code).ToListAsync();
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        connection = await PayrollIntegration.GetConnectionAsync(userId, OrganisationId);
+        imports = await PayrollIntegration.ListImportsAsync(userId, OrganisationId);
+        model = connection is null ? DefaultModel() : new ConnectionModel
+        {
+            BaseUrl = connection.BaseUrl,
+            PayrollOrganisationId = connection.PayrollOrganisationId,
+            WagesExpenseAccountId = connection.WagesExpenseAccountId,
+            EmployerContributionsExpenseAccountId = connection.EmployerContributionsExpenseAccountId,
+            NetWagesPayableAccountId = connection.NetWagesPayableAccountId,
+            PayePayableAccountId = connection.PayePayableAccountId,
+            FnpfPayableAccountId = connection.FnpfPayableAccountId,
+            OtherDeductionsPayableAccountId = connection.OtherDeductionsPayableAccountId
+        };
+    }
+
+    private ConnectionModel DefaultModel()
+    {
+        var wages = expenseAccounts.FirstOrDefault(x => x.Code == "6000")?.Id ?? expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty;
+        var payrollLiability = liabilityAccounts.FirstOrDefault(x => x.Code == "2200")?.Id ?? liabilityAccounts.FirstOrDefault()?.Id ?? Guid.Empty;
+        return new ConnectionModel
+        {
+            WagesExpenseAccountId = wages,
+            EmployerContributionsExpenseAccountId = wages,
+            NetWagesPayableAccountId = payrollLiability,
+            PayePayableAccountId = payrollLiability,
+            FnpfPayableAccountId = payrollLiability,
+            OtherDeductionsPayableAccountId = payrollLiability
+        };
+    }
+
+    private async Task SaveConnection()
+    {
+        await Run(async () =>
+        {
+            await PayrollIntegration.SaveConnectionAsync(
+                userId,
+                OrganisationId,
+                new PayrollIslandConnectionRequest(
+                    model.BaseUrl,
+                    model.PayrollOrganisationId,
+                    model.AccessToken,
+                    model.WagesExpenseAccountId,
+                    model.EmployerContributionsExpenseAccountId,
+                    model.NetWagesPayableAccountId,
+                    model.PayePayableAccountId,
+                    model.FnpfPayableAccountId,
+                    model.OtherDeductionsPayableAccountId));
+            message = "Payroll Island connection saved.";
+            await Reload();
+        });
+    }
+
+    private async Task Sync()
+    {
+        await Run(async () =>
+        {
+            var result = await PayrollIntegration.SyncAsync(userId, OrganisationId);
+            message = $"Payroll sync complete: {result.Imported} imported, {result.Skipped} already present.";
+            await Reload();
+        });
+    }
+
+    private async Task Post(Guid importId)
+    {
+        await Run(async () =>
+        {
+            var journal = await PayrollIntegration.PostPayRunAsync(userId, OrganisationId, importId);
+            message = $"Payroll journal {journal.SequenceNumber} posted.";
+            confirmingImportId = null;
+            await Reload();
+        });
+    }
+
+    private void PreparePost(Guid importId) => confirmingImportId = importId;
+    private void CancelPost() => confirmingImportId = null;
+
+    private async Task Run(Func<Task> action)
+    {
+        busy = true;
+        message = null;
+        try
+        {
+            await action();
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            messageClass = "alert-danger";
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private string Money(decimal value) => $"{access!.Organisation.BaseCurrency} {value:N2}";
+    private static string AccountLabel(LedgerAccount account) => $"{account.Code} · {account.Name}";
+    private static string PaymentKindLabel(PayrollPaymentKind kind) => kind switch
+    {
+        PayrollPaymentKind.NetWages => "Net wages",
+        PayrollPaymentKind.Paye => "PAYE",
+        PayrollPaymentKind.Fnpf => "FNPF",
+        _ => "Other deduction"
+    };
+    private static string StatusLabel(PayrollIslandPayRunImport item) => item.Status switch
+    {
+        PayrollIslandImportStatus.ReadyToPost => "Ready to post",
+        PayrollIslandImportStatus.Posted => "Posted",
+        PayrollIslandImportStatus.Superseded => "Superseded",
+        PayrollIslandImportStatus.CorrectionRequired => "Correction requires review",
+        _ => item.Status.ToString()
+    };
+
+    private sealed class ConnectionModel
+    {
+        [Required, StringLength(500)] public string BaseUrl { get; set; } = "";
+        [Required, StringLength(120)] public string PayrollOrganisationId { get; set; } = "";
+        [StringLength(4000)] public string? AccessToken { get; set; }
+        public Guid WagesExpenseAccountId { get; set; }
+        public Guid EmployerContributionsExpenseAccountId { get; set; }
+        public Guid NetWagesPayableAccountId { get; set; }
+        public Guid PayePayableAccountId { get; set; }
+        public Guid FnpfPayableAccountId { get; set; }
+        public Guid OtherDeductionsPayableAccountId { get; set; }
+    }
+}

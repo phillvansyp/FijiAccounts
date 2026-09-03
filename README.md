@@ -104,10 +104,15 @@ primary sources and signed off by a qualified practitioner.
 - Complete required FRCS testing and accreditation before representing the
   product as approved.
 
-### Phase 3 — Fiji payroll
+### Phase 3 — Payroll Island integration
 
-- Build effective-dated PAYE, statutory deductions, payroll liabilities,
-  journals and compliance reporting from a practitioner-approved specification.
+- Keep employee records, effective-dated PAYE/FNPF calculations, payslips and
+  finalised pay runs in Payroll Island.
+- Pull aggregate finalised pay runs and payment summaries into Account Island,
+  map them to payroll liabilities, and post controlled payroll journals.
+- Complete the versioned interface described in
+  [docs/PAYROLL-ISLAND-INTEGRATION.md](docs/PAYROLL-ISLAND-INTEGRATION.md), then
+  add approval-controlled correction reversals and bank-payment matching.
 
 ### Phase 4 — Time, attendance and rostering
 
