@@ -12,7 +12,9 @@ public partial class SalesInvoiceDetail
     private decimal? creditVatAmount;
     private bool restockTrackedItems;
     private readonly Dictionary<Guid, decimal> creditLineAmounts = [];
-    private decimal AvailableCredit => invoice is null ? 0 : invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
+    private decimal AvailableCredit => invoice is null || invoice.Status == Data.InvoiceStatus.Voided
+        ? 0
+        : invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
     private decimal AllocatedCreditTotal => creditLineAmounts.Values.Sum();
     private bool IsTaxDocument => invoice?.IsTaxInvoice
         ?? invoice?.Lines.Any(x => x.VatTreatment is VatTreatment.Standard or VatTreatment.ZeroRated) == true;

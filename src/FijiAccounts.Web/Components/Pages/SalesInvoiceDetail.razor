@@ -536,6 +536,9 @@ else
             }
 
             showVoid = false;
+            status = invoice is null
+                ? "Invoice voided."
+                : $"Invoice {invoice.InvoiceNumber} voided.";
 
             await Reload();
         }
