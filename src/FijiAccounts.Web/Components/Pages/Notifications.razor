@@ -293,7 +293,7 @@ else
         db ??= Db;
 
         notifications =
-            await notificationService.GetUnreadAsync(
+            await notificationService.GetAllAsync(
                 userId,
                 OrganisationId);
 

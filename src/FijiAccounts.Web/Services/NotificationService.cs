@@ -76,6 +76,19 @@ public sealed class NotificationService(
             .ToList();
     }
 
+    public async Task<List<Notification>> GetAllAsync(
+        string userId,
+        Guid organisationId,
+        CancellationToken ct = default)
+    {
+        await RequireAccessAsync(userId, organisationId);
+        return await db.Notifications
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId)
+            .OrderByDescending(x => x.CreatedAtTicks)
+            .ToListAsync(ct);
+    }
+
     public async Task<List<Notification>> GetUnreadPageAsync(
         string userId,
         Guid organisationId,

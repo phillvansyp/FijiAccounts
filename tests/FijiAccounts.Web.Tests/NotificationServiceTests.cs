@@ -117,6 +117,26 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task GetAll_IncludesResolvedAndReadNotificationsForHistory()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var notification = await CreateNotificationAsync(test.Notifications, test);
+
+        await test.Notifications.ResolveAsync(
+            test.UserId,
+            test.Organisation.Id,
+            notification.Id);
+
+        var saved = Assert.Single(await test.Notifications.GetAllAsync(
+            test.UserId,
+            test.Organisation.Id));
+
+        Assert.Equal(notification.Id, saved.Id);
+        Assert.Equal(NotificationStatus.Resolved, saved.Status);
+        Assert.True(saved.IsRead);
+    }
+
+    [Fact]
     public async Task Create_PublishesOrganisationUpdate()
     {
         await using var test =

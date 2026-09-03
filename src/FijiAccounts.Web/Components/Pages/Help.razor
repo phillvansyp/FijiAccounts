@@ -23,7 +23,10 @@
     [SupplyParameterFromQuery(Name="from")] public string? From { get; set; }
     private string query = string.Empty;
     private IEnumerable<HelpArticle> Filtered => string.IsNullOrWhiteSpace(query) ? articles : articles.Where(x => $"{x.Category} {x.Title} {x.Summary} {string.Join(' ',x.Steps)}".Contains(query, StringComparison.OrdinalIgnoreCase));
-    private HelpArticle? ContextArticle => articles.FirstOrDefault(x => MatchesRoute(x.Route, From));
+    private HelpArticle? ContextArticle => articles
+        .Where(x => MatchesRoute(x.Route, From))
+        .OrderByDescending(x => x.Route.Length)
+        .FirstOrDefault();
     private static bool MatchesRoute(string route, string? from)
     {
         if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(route)) return false;
