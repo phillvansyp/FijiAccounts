@@ -43,14 +43,16 @@ else
             <div class="bank-fields">
                 <div>
                     <label class="form-label">Ledger code</label>
-                    <InputText class="form-control"
-                               @bind-Value="model.Code" />
+                    <input class="form-control"
+                           @bind="model.Code"
+                           @bind:event="oninput" />
                 </div>
 
                 <div>
                     <label class="form-label">Account name</label>
-                    <InputText class="form-control"
-                               @bind-Value="model.Name" />
+                    <input class="form-control"
+                           @bind="model.Name"
+                           @bind:event="oninput" />
                 </div>
 
                 <div>
@@ -67,14 +69,18 @@ else
 
                 <div>
                     <label class="form-label">Account number</label>
-                    <InputText class="form-control"
-                               @bind-Value="model.AccountNumber" />
+                    <input class="form-control"
+                           @bind="model.AccountNumber"
+                           @bind:event="oninput" />
                 </div>
 
                 <div>
                     <label class="form-label">Opening balance</label>
-                    <InputNumber class="form-control"
-                                 @bind-Value="model.OpeningBalance" />
+                    <input type="number"
+                           step="0.01"
+                           class="form-control"
+                           @bind="model.OpeningBalance"
+                           @bind:event="oninput" />
                     <small class="text-muted">
                         Enter the bank balance when you begin using Account Island.
                     </small>
