@@ -74,8 +74,8 @@ else
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <div class="row align-items-end">
-                    <div class="col-md-2 mb-2"><label class="form-label">Code</label><InputText class="form-control" @bind-Value="accountModel.Code" /></div>
-                    <div class="col-md-3 mb-2"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="accountModel.Name" /></div>
+                    <div class="col-md-2 mb-2"><label class="form-label">Code</label><input class="form-control" @bind="accountModel.Code" @bind:event="oninput" /></div>
+                    <div class="col-md-3 mb-2"><label class="form-label">Name</label><input class="form-control" @bind="accountModel.Name" @bind:event="oninput" /></div>
                     <div class="col-md-2 mb-2"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="accountModel.Type">@foreach (var type in Enum.GetValues<AccountType>()) { <option value="@type">@type</option> }</InputSelect></div>
                     <div class="col-md-3 mb-2"><label class="form-label">Purpose</label><InputSelect class="form-select" @bind-Value="accountModel.Purpose">@foreach (var purpose in Enum.GetValues<GroupAccountPurpose>()) { <option value="@purpose">@PurposeLabel(purpose)</option> }</InputSelect></div>
                     <div class="col-md-2 mb-2"><button class="btn btn-outline-primary">Add account</button></div>

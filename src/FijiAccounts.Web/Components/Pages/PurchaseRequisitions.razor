@@ -120,9 +120,9 @@ else
             <EditForm Model="policyModel" OnValidSubmit="CreatePolicy" FormName="create-purchase-approval-policy">
                 <DataAnnotationsValidator /><ValidationSummary />
                 <div class="row align-items-end">
-                    <div class="col-md-3 mb-3"><label class="form-label">Policy name</label><InputText class="form-control" @bind-Value="policyModel.Name" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Minimum amount</label><InputNumber class="form-control" @bind-Value="policyModel.MinimumAmount" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Maximum amount</label><InputNumber class="form-control" @bind-Value="policyModel.MaximumAmount" /></div>
+                    <div class="col-md-3 mb-3"><label class="form-label">Policy name</label><input class="form-control" @bind="policyModel.Name" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Minimum amount</label><input type="number" step="0.01" class="form-control" @bind="policyModel.MinimumAmount" @bind:event="oninput" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Maximum amount</label><input type="number" step="0.01" class="form-control" @bind="policyModel.MaximumAmount" @bind:event="oninput" /></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Required approver</label><InputSelect class="form-select" @bind-Value="policyModel.Requirement"><option value="@PurchaseApprovalRequirement.OwnerOrAdministrator">Owner, administrator or approver</option><option value="@PurchaseApprovalRequirement.OwnerOnly">Owner only</option></InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Branch scope</label><InputSelect class="form-select" @bind-Value="policyModel.BranchId"><option value="">All branches</option>@foreach (var branch in branches) { <option value="@branch.Id">@branch.Name</option> }</InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Division scope</label><InputSelect class="form-select" @bind-Value="policyModel.DivisionId"><option value="">All divisions</option>@foreach (var option in dimensions) { <option value="@option.DivisionId">@option.BranchName · @option.DivisionName</option> }</InputSelect></div>

@@ -35,10 +35,10 @@ else
         @if (creationError is not null) { <div class="alert alert-danger">@creationError</div> }
         <EditForm Model="model" OnValidSubmit="CreateOrganisation" FormName="create-organisation">
             <DataAnnotationsValidator /><ValidationSummary />
-            <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" /></div>
-            <div class="mb-3"><label class="form-label">Trading name (optional)</label><InputText class="form-control" @bind-Value="model.TradingName" /></div>
+            <div class="mb-3"><label class="form-label">Legal name</label><input class="form-control" @bind="model.LegalName" @bind:event="oninput" /></div>
+            <div class="mb-3"><label class="form-label">Trading name (optional)</label><input class="form-control" @bind="model.TradingName" @bind:event="oninput" /></div>
             <div class="mb-3"><label class="form-label">Country or island jurisdiction</label><InputSelect class="form-select" @bind-Value="model.CountryCode">@foreach (var jurisdiction in IslandJurisdictions.All) { <option value="@jurisdiction.CountryCode">@jurisdiction.CountryName — @jurisdiction.CurrencyCode</option> }</InputSelect><div class="form-text">Country settings determine currency, time zone, financial year and the applicable tax pack.</div></div>
-            <div class="mb-3"><label class="form-label">Tax identification number (optional during setup)</label><InputText class="form-control" @bind-Value="model.Tin" /></div>
+            <div class="mb-3"><label class="form-label">Tax identification number (optional during setup)</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div>
             <div class="mb-3"><label class="form-label">Organisation type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
             <button class="btn btn-primary" type="submit">Create organisation</button>
         </EditForm>

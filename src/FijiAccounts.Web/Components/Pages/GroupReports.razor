@@ -53,7 +53,7 @@ else
                             <div class="col-md-2 mb-3"><label class="form-label">Source currency</label><InputSelect class="form-select" @bind-Value="rateModel.FromCurrency">@foreach (var currency in ForeignCurrencies) { <option value="@currency">@currency</option> }</InputSelect></div>
                             <div class="col-md-3 mb-3"><label class="form-label">Rate type</label><InputSelect class="form-select" @bind-Value="rateModel.Type"><option value="@GroupExchangeRateType.PeriodAverage">Period average</option><option value="@GroupExchangeRateType.Closing">Closing</option></InputSelect></div>
                             <div class="col-md-3 mb-3"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="rateModel.EffectiveDate" /></div>
-                            <div class="col-md-2 mb-3"><label class="form-label">Rate</label><InputNumber class="form-control" @bind-Value="rateModel.Rate" step="0.00000001" /></div>
+                            <div class="col-md-2 mb-3"><label class="form-label">Rate</label><input type="number" class="form-control" @bind="rateModel.Rate" @bind:event="oninput" step="0.00000001" /></div>
                             <div class="col-md-2 mb-3"><button class="btn btn-primary">Save rate</button></div>
                         </div>
                     </EditForm>

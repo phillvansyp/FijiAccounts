@@ -89,19 +89,19 @@ else
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label">Standard-rated SDC label</label>
-                        <InputText class="form-control" @bind-Value="configurationModel.StandardTaxLabel" disabled="@(!canManage)" />
+                        <input class="form-control" @bind="configurationModel.StandardTaxLabel" @bind:event="oninput" disabled="@(!canManage)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Zero-rated SDC label</label>
-                        <InputText class="form-control" @bind-Value="configurationModel.ZeroRatedTaxLabel" disabled="@(!canManage)" />
+                        <input class="form-control" @bind="configurationModel.ZeroRatedTaxLabel" @bind:event="oninput" disabled="@(!canManage)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Exempt SDC label</label>
-                        <InputText class="form-control" @bind-Value="configurationModel.ExemptTaxLabel" disabled="@(!canManage)" />
+                        <input class="form-control" @bind="configurationModel.ExemptTaxLabel" @bind:event="oninput" disabled="@(!canManage)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Out-of-scope SDC label</label>
-                        <InputText class="form-control" @bind-Value="configurationModel.OutOfScopeTaxLabel" disabled="@(!canManage)" />
+                        <input class="form-control" @bind="configurationModel.OutOfScopeTaxLabel" @bind:event="oninput" disabled="@(!canManage)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Default payment type</label>

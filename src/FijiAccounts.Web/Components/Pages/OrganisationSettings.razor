@@ -95,10 +95,10 @@ else
                     <DataAnnotationsValidator />
                     <ValidationSummary />
                     <div class="row">
-                        <div class="col-md-6 mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="companyModel.LegalName" /></div>
-                        <div class="col-md-6 mb-3"><label class="form-label">Trading name (optional)</label><InputText class="form-control" @bind-Value="companyModel.TradingName" /></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Legal name</label><input class="form-control" @bind="companyModel.LegalName" @bind:event="oninput" /></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Trading name (optional)</label><input class="form-control" @bind="companyModel.TradingName" @bind:event="oninput" /></div>
                         <div class="col-md-4 mb-3"><label class="form-label">Jurisdiction</label><InputSelect class="form-select" @bind-Value="companyModel.CountryCode">@foreach (var item in IslandJurisdictions.All) { <option value="@item.CountryCode">@item.CountryName — @item.CurrencyCode</option> }</InputSelect></div>
-                        <div class="col-md-4 mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="companyModel.Tin" /></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Tax identification number</label><input class="form-control" @bind="companyModel.Tin" @bind:event="oninput" /></div>
                         <div class="col-md-4 mb-3"><label class="form-label">Company type</label><InputSelect class="form-select" @bind-Value="companyModel.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
                     </div>
                     <button class="btn btn-primary">Create company</button>
@@ -130,10 +130,10 @@ else
                         }
                     </div>
                 </div>
-                <div class="mb-3"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="model.LegalName" disabled="@(!canManage)" /></div>
-                <div class="mb-3"><label class="form-label">Trading name</label><InputText class="form-control" @bind-Value="model.TradingName" disabled="@(!canManage)" /></div>
-                <div class="mb-3"><label class="form-label">Tax identification number</label><InputText class="form-control" @bind-Value="model.Tin" disabled="@(!canManage)" /></div>
-                <div class="mb-3"><label class="form-label">Business address</label><InputTextArea class="form-control" @bind-Value="model.BusinessAddress" disabled="@(!canManage)" /><div class="form-text">Printed on customer documents where required.</div></div>
+                <div class="mb-3"><label class="form-label">Legal name</label><input class="form-control" @bind="model.LegalName" @bind:event="oninput" disabled="@(!canManage)" /></div>
+                <div class="mb-3"><label class="form-label">Trading name</label><input class="form-control" @bind="model.TradingName" @bind:event="oninput" disabled="@(!canManage)" /></div>
+                <div class="mb-3"><label class="form-label">Tax identification number</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" disabled="@(!canManage)" /></div>
+                <div class="mb-3"><label class="form-label">Business address</label><textarea class="form-control" @bind="model.BusinessAddress" @bind:event="oninput" disabled="@(!canManage)"></textarea><div class="form-text">Printed on customer documents where required.</div></div>
                 @if (string.Equals(access.Organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase))
                 {
                     <div class="border rounded p-3 mb-3">
@@ -326,7 +326,7 @@ else
                     <div class="row align-items-end">
                         <div class="col-md-4 mb-3"><label class="form-label">Foreign currency</label><InputSelect class="form-select" @bind-Value="rateModel.Currency">@foreach (var currency in currencies.Where(x => x.IsActive && !x.IsBaseCurrency)) { <option value="@currency.Code">@currency.Code</option> }</InputSelect></div>
                         <div class="col-md-4 mb-3"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="rateModel.EffectiveDate" /></div>
-                        <div class="col-md-4 mb-3"><label class="form-label">Rate to @access.Organisation.BaseCurrency</label><InputNumber class="form-control" @bind-Value="rateModel.Rate" step="0.00000001" /><div class="form-text">1 @rateModel.Currency equals this amount in @access.Organisation.BaseCurrency.</div></div>
+                        <div class="col-md-4 mb-3"><label class="form-label">Rate to @access.Organisation.BaseCurrency</label><input type="number" class="form-control" @bind="rateModel.Rate" @bind:event="oninput" step="0.00000001" /><div class="form-text">1 @rateModel.Currency equals this amount in @access.Organisation.BaseCurrency.</div></div>
                     </div>
                     <button class="btn btn-primary mb-4">Save exchange rate</button>
                 </EditForm>
@@ -334,7 +334,7 @@ else
                     <summary><strong>Add another currency</strong></summary>
                     <EditForm Model="currencyModel" OnValidSubmit="AddCurrency" FormName="add-transaction-currency" class="mt-3">
                         <DataAnnotationsValidator />
-                        <div class="row align-items-end"><div class="col-md-4 mb-3"><label class="form-label">Three-letter code</label><InputText class="form-control text-uppercase" @bind-Value="currencyModel.Code" /></div><div class="col-md-5 mb-3"><label class="form-label">Currency name</label><InputText class="form-control" @bind-Value="currencyModel.Name" /></div><div class="col-md-3 mb-3"><button class="btn btn-outline-primary">Add currency</button></div></div>
+                        <div class="row align-items-end"><div class="col-md-4 mb-3"><label class="form-label">Three-letter code</label><input class="form-control text-uppercase" @bind="currencyModel.Code" @bind:event="oninput" /></div><div class="col-md-5 mb-3"><label class="form-label">Currency name</label><input class="form-control" @bind="currencyModel.Name" @bind:event="oninput" /></div><div class="col-md-3 mb-3"><button class="btn btn-outline-primary">Add currency</button></div></div>
                     </EditForm>
                 </details>
             }

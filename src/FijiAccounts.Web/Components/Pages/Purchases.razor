@@ -117,7 +117,7 @@ else
                 {
                     <div class="col-md-4 mb-3">
                         <label class="form-label">Exchange rate</label>
-                        <InputNumber class="form-control" @bind-Value="bill.ExchangeRateToBase" step="0.00000001" />
+                        <input type="number" class="form-control" @bind="bill.ExchangeRateToBase" @bind:event="oninput" step="0.00000001" />
                         <div class="form-text">1 @bill.Currency = @bill.ExchangeRateToBase.ToString("0.########") @access.Organisation.BaseCurrency</div>
                     </div>
                 }
