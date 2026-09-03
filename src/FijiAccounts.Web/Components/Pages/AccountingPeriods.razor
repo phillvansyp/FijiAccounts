@@ -292,7 +292,7 @@ else
                                                             </small>
                                                         }
                                                         <label class="form-label small mt-2 mb-1">Response</label>
-                                                        <textarea class="form-control" rows="2" maxlength="1000" @bind="reviewModel.Response" disabled="@(reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null || (!canManage && reviewItem.QueryAssignedToUserId != userId))"></textarea>
+                                                        <textarea class="form-control" rows="2" maxlength="1000" @bind="reviewModel.Response" @bind:event="oninput" disabled="@(reviewItem.Status != YearEndReviewStatus.QueryRaised || item.IsLocked || activeReview.ApprovedAt is not null || (!canManage && reviewItem.QueryAssignedToUserId != userId))"></textarea>
                                                         @if (reviewItem.QueryRespondedAt is not null)
                                                         {
                                                             <small class="d-block text-secondary mt-1">
