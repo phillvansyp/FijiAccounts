@@ -35,7 +35,7 @@ else
                     <InputSelect class="form-select" @bind-Value="model.InvoiceId" @bind-Value:after="SetOutstanding">
                         @foreach (var invoice in openInvoices)
                         {
-                            <option value="@invoice.Id">@invoice.InvoiceNumber - @invoice.Customer.Name - @invoice.Currency @((invoice.Total - invoice.AmountPaid - invoice.AmountCredited) / invoice.ExchangeRateToBase).ToString("N2") due</option>
+                            <option value="@invoice.Id">@invoice.InvoiceNumber - @invoice.Customer.Name - @invoice.Currency @(((invoice.Total - invoice.AmountPaid - invoice.AmountCredited) / invoice.ExchangeRateToBase).ToString("N2")) due</option>
                         }
                     </InputSelect>
                 </div>

@@ -235,9 +235,10 @@ else
                 class="form-control"
                 @bind-Value="creditReversalDate" />
 
-            <InputText
+            <input
                 class="form-control reason"
-                @bind-Value="creditReversalReason"
+                @bind="creditReversalReason"
+                @bind:event="oninput"
                 placeholder="Reason for reversal" />
 
             <button

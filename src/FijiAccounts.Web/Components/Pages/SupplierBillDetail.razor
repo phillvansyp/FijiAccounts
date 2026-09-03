@@ -644,8 +644,9 @@ else
 
                 <div class="col-md-5">
                     <label class="form-label">Reason</label>
-                    <InputText class="form-control"
-                               @bind-Value="creditReversalReason" />
+                    <input class="form-control"
+                           @bind="creditReversalReason"
+                           @bind:event="oninput" />
                 </div>
 
                 <div class="col-md-4 d-flex align-items-end gap-2">
