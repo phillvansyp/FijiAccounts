@@ -134,7 +134,7 @@ else
                 <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Name</th><th>Scope</th><th>Amount band</th><th>Requirement</th><th></th></tr></thead><tbody>
                     @foreach (var policy in policies)
                     {
-                        <tr><td>@policy.Name</td><td>@PolicyScope(policy)</td><td>@policy.MinimumAmount.ToString("C2") – @(policy.MaximumAmount?.ToString("C2") ?? "No maximum")</td><td>@ApprovalLabel(policy.Requirement)</td><td class="text-end"><button class="btn btn-sm btn-outline-danger" @onclick="() => DeletePolicy(policy.Id)">Delete</button></td></tr>
+                        <tr><td>@policy.Name</td><td>@PolicyScope(policy)</td><td>@Money(policy.MinimumAmount) – @(policy.MaximumAmount is decimal maximum ? Money(maximum) : "No maximum")</td><td>@ApprovalLabel(policy.Requirement)</td><td class="text-end"><button class="btn btn-sm btn-outline-danger" @onclick="() => DeletePolicy(policy.Id)">Delete</button></td></tr>
                     }
                 </tbody></table></div>
             }
@@ -160,7 +160,7 @@ else
                                 <td>@item.Branch.Name · @item.Division.Name</td>
                                 <td>@item.Supplier.Name</td>
                                 <td><span class="badge text-bg-secondary">@item.Status</span></td>
-                                <td class="text-end">@item.Total.ToString("C2")</td>
+                                <td class="text-end">@Money(item.Total)</td>
                                 <td>
                                     @if (item.Status == PurchaseRequisitionStatus.Draft && item.CreatedByUserId == userId)
                                     {
@@ -213,6 +213,7 @@ else
     private bool canCreate;
     private bool canManagePolicies;
     private OrganisationRole? currentRole;
+    private string baseCurrency = "FJD";
     private bool showForm;
     private bool busy;
 
@@ -220,8 +221,12 @@ else
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User) ?? string.Empty;
-        accessDenied = userId.Length == 0 || await TenantAccess.FindAsync(userId, OrganisationId) is null;
+        var accessibleOrganisation = userId.Length == 0
+            ? null
+            : await TenantAccess.FindAsync(userId, OrganisationId);
+        accessDenied = accessibleOrganisation is null;
         if (accessDenied) return;
+        baseCurrency = accessibleOrganisation!.Organisation.BaseCurrency;
         canCreate = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         canManagePolicies = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
         currentRole = await Db.OrganisationMemberships.AsNoTracking().Where(x => x.UserId == userId && x.OrganisationId == OrganisationId).Select(x => (OrganisationRole?)x.Role).SingleOrDefaultAsync();
@@ -347,6 +352,7 @@ else
             ? "owner approval"
             : "owner, administrator or approver approval";
     private static string PolicyScope(PurchaseApprovalPolicy policy) => policy.Division?.Name ?? policy.Branch?.Name ?? "All branches and divisions";
+    private string Money(decimal value) => $"{baseCurrency} {value:N2}";
 
     private sealed class PolicyModel
     {

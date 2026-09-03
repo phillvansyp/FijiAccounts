@@ -42,6 +42,15 @@ else
         </div>
     </div>
 
+    @if (error is not null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+    @if (message is not null)
+    {
+        <div class="alert alert-success">@message</div>
+    }
+
     @if (showOrderForm)
 {
     <section class="setup-card mb-5">
@@ -123,8 +132,9 @@ else
                     Supplier reference
                 </label>
 
-                <InputText class="form-control"
-                           @bind-Value="orderModel.SupplierReference" />
+                <input class="form-control"
+                       @bind="orderModel.SupplierReference"
+                       @bind:event="oninput" />
             </div>
 
         </div>
@@ -134,8 +144,9 @@ else
                 Notes
             </label>
 
-            <InputTextArea class="form-control"
-                           @bind-Value="orderModel.Notes" />
+            <textarea class="form-control"
+                      @bind="orderModel.Notes"
+                      @bind:event="oninput"></textarea>
         </div>
 
         <div class="border rounded p-3 mb-3">
@@ -149,8 +160,9 @@ else
                     Description
                 </label>
 
-                <InputText class="form-control"
-                           @bind-Value="lineModel.Description" />
+                <input class="form-control"
+                       @bind="lineModel.Description"
+                       @bind:event="oninput" />
             </div>
 
             <div class="row">
@@ -160,8 +172,12 @@ else
                         Quantity
                     </label>
 
-                    <InputNumber class="form-control"
-                                 @bind-Value="lineModel.Quantity" />
+                    <input type="number"
+                           min="0.0001"
+                           step="0.0001"
+                           class="form-control"
+                           @bind="lineModel.Quantity"
+                           @bind:event="oninput" />
                 </div>
 
                 <div class="col-md-3 mb-3">
@@ -169,8 +185,12 @@ else
                         Unit price
                     </label>
 
-                    <InputNumber class="form-control"
-                                 @bind-Value="lineModel.UnitPrice" />
+                    <input type="number"
+                           min="0"
+                           step="0.0001"
+                           class="form-control"
+                           @bind="lineModel.UnitPrice"
+                           @bind:event="oninput" />
                 </div>
 
                 <div class="col-md-6 mb-3">
@@ -355,6 +375,10 @@ private PurchaseOrderLineModel lineModel = new();
 
     private bool showOrderForm;
 
+    private string? error;
+
+    private string? message;
+
     private sealed class PurchaseOrderLineModel
 {
     public string Description { get; set; } = "";
@@ -382,6 +406,8 @@ private PurchaseOrderLineModel lineModel = new();
 
     private async Task SavePurchaseOrder()
 {
+    error = message = null;
+
     if (access is null)
     {
         return;
@@ -389,11 +415,13 @@ private PurchaseOrderLineModel lineModel = new();
 
     if (orderModel.SupplierId == Guid.Empty)
     {
+        error = "Choose a supplier.";
         return;
     }
 
     if (lineModel.ExpenseAccountId == Guid.Empty)
     {
+        error = "Choose an expense or asset account.";
         return;
     }
 
@@ -416,9 +444,18 @@ private PurchaseOrderLineModel lineModel = new();
             ],
             DivisionId: orderModel.DivisionId);
 
-    await PurchaseOrderService.CreateDraftAsync(
-        userId,
-        request);
+    try
+    {
+        var created = await PurchaseOrderService.CreateDraftAsync(
+            userId,
+            request);
+        message = $"Purchase order {created.PurchaseOrderNumber} saved as a draft.";
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+    {
+        error = ex.Message;
+        return;
+    }
 
     orders =
         await Db.PurchaseOrders
