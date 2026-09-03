@@ -551,6 +551,38 @@ public sealed class BusinessPartyServiceTests
     }
 
     [Fact]
+    public async Task ContactAddress_IsSavedUpdatedAndAudited()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var request = CreateRequest(
+            test.Organisation.Id,
+            test.Account("4000").Id,
+            test.Account("6000").Id) with
+        {
+            Address = " 1 Demo Street, Suva "
+        };
+
+        var party = await service.CreateAsync(test.UserId, request);
+        Assert.Equal("1 Demo Street, Suva", party.Address);
+
+        await service.UpdateContactDetailsAsync(
+            test.UserId,
+            new UpdateBusinessPartyContactDetailsRequest(
+                test.Organisation.Id,
+                party.Id,
+                party.Email,
+                party.AccountsEmail,
+                " 2 Test Road, Nadi "));
+
+        var stored = await test.Db.BusinessParties.AsNoTracking().SingleAsync(x => x.Id == party.Id);
+        Assert.Equal("2 Test Road, Nadi", stored.Address);
+        Assert.Contains(
+            await test.Db.AuditEvents.AsNoTracking().ToListAsync(),
+            x => x.EventType == "BusinessPartyContactDetailsUpdated" && x.EntityId == party.Id.ToString());
+    }
+
+    [Fact]
     public async Task Create_RejectsPurchaseAccountOutsideOrganisation()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

@@ -48,6 +48,7 @@ else
     @if (canEdit && showAddContact) { <div class="setup-card"><h2>Add contact</h2><EditForm Model="model" OnValidSubmit="Create" FormName="add-contact"><DataAnnotationsValidator /><ValidationSummary />
         <div class="mb-3"><label class="form-label">Name</label><input class="form-control" @bind="model.Name" @bind:event="oninput" /></div>
         <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Primary email</label><input class="form-control" @bind="model.Email" @bind:event="oninput" /></div><div class="col-md-4 mb-3"><label class="form-label">Accounts email</label><input class="form-control" @bind="model.AccountsEmail" @bind:event="oninput" /><div class="form-text">Invoices and account documents are sent here when provided.</div></div><div class="col-md-4 mb-3"><label class="form-label">TIN</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div></div>
+        <div class="mb-3"><label class="form-label">Address</label><textarea class="form-control" rows="2" @bind="model.Address" @bind:event="oninput"></textarea><div class="form-text">Required when issuing a full Fiji tax invoice.</div></div>
         <div class="mb-3"><label class="form-label">Type</label><select class="form-select" @bind="contactTypeSelection"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="Both">Customer and supplier</option></select></div>
         @if ((model.Type & PartyType.Customer) != 0) { <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Default sales account</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesAccountId"><option value="">Choose when entering an invoice</option>@foreach (var account in salesAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default sales VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesVatTreatment"><option value="">Choose when entering an invoice</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default invoice currency</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesCurrency">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code - @currency.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Sales invoice payment terms</label><div class="input-group"><InputNumber class="form-control" @bind-Value="model.DefaultSalesInvoiceDueDays" /><span class="input-group-text">days</span></div><div class="form-text">Due date will default to this many days after the invoice date.</div></div></div> }
         @if ((model.Type & PartyType.Supplier) != 0)
@@ -148,7 +149,7 @@ else
                                 <button type="button"
                                         class="btn btn-sm btn-outline-secondary me-2"
                                         @onclick="() => EditEmails(party)">
-                                    Contact emails
+                                    Contact details
                                 </button>
                             }
                             @if ((party.Type & PartyType.Customer) != 0)
@@ -233,7 +234,7 @@ else
                         <tr>
                             <td colspan="10">
                                 <div class="setup-card">
-                                    <h3>@party.Name contact emails</h3>
+                                    <h3>@party.Name contact details</h3>
                                     <div class="row">
                                         <div class="col-md-6 mb-3">
                                             <label class="form-label">Primary email</label>
@@ -245,7 +246,12 @@ else
                                             <div class="form-text">Used first for invoices and account documents.</div>
                                         </div>
                                     </div>
-                                    <button type="button" class="btn btn-primary me-2" @onclick="SaveEmails">Save contact emails</button>
+                                    <div class="mb-3">
+                                        <label class="form-label">Address</label>
+                                        <textarea class="form-control" rows="2" @bind="editingAddress" @bind:event="oninput"></textarea>
+                                        <div class="form-text">Required when issuing a full Fiji tax invoice.</div>
+                                    </div>
+                                    <button type="button" class="btn btn-primary me-2" @onclick="SaveContactDetails">Save contact details</button>
                                     <button type="button" class="btn btn-outline-secondary" @onclick="CancelEmails">Cancel</button>
                                 </div>
                             </td>
@@ -621,6 +627,7 @@ else
     private Guid? editingEmailPartyId;
     private string? editingEmail;
     private string? editingAccountsEmail;
+    private string? editingAddress;
     private Guid? editingPartyId;
     private Guid? editingCustomerPartyId;
     private Guid? editingCustomerAccountId;
@@ -786,7 +793,8 @@ else
                     model.VatRegistrationNumber,
                     model.DefaultSalesCurrency,
                     model.DefaultPurchaseCurrency,
-                    model.AccountsEmail));
+                    model.AccountsEmail,
+                    model.Address));
             model = new ContactModel
             {
                 Type = NormalizedView == "suppliers"
@@ -913,6 +921,7 @@ else
         editingEmailPartyId = party.Id;
         editingEmail = party.Email;
         editingAccountsEmail = party.AccountsEmail;
+        editingAddress = party.Address;
     }
 
     private void CancelEmails()
@@ -920,27 +929,29 @@ else
         editingEmailPartyId = null;
         editingEmail = null;
         editingAccountsEmail = null;
+        editingAddress = null;
     }
 
-    private async Task SaveEmails()
+    private async Task SaveContactDetails()
     {
         if (editingEmailPartyId is not Guid id || !canEdit) return;
         try
         {
-            await BusinessParties.UpdateEmailsAsync(
+            await BusinessParties.UpdateContactDetailsAsync(
                 userId,
-                new UpdateBusinessPartyEmailsRequest(
+                new UpdateBusinessPartyContactDetailsRequest(
                     OrganisationId,
                     id,
                     editingEmail,
-                    editingAccountsEmail));
+                    editingAccountsEmail,
+                    editingAddress));
             CancelEmails();
-            ShowStatus("Contact emails saved.", "alert-success");
+            ShowStatus("Contact details saved.", "alert-success");
             await Reload();
         }
         catch (Exception ex)
         {
-            ShowStatus($"Contact emails were not saved: {ex.Message}", "alert-danger");
+            ShowStatus($"Contact details were not saved: {ex.Message}", "alert-danger");
         }
     }
 
@@ -1096,6 +1107,7 @@ else
         [Required, StringLength(160)] public string Name { get; set; } = string.Empty;
         [EmailAddress, StringLength(320)] public string? Email { get; set; }
         [EmailAddress, StringLength(320)] public string? AccountsEmail { get; set; }
+        [StringLength(500)] public string? Address { get; set; }
         [StringLength(32)] public string? Tin { get; set; }
         [StringLength(80)] public string? SupplierAccountNumber { get; set; }
         public PartyType Type { get; set; } = PartyType.Customer;
