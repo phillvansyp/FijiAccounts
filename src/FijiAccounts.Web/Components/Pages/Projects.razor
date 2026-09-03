@@ -288,7 +288,13 @@ else
                             <td><strong>@project.ProjectNumber</strong><small class="d-block text-muted">@project.Name</small></td>
                             <td><strong>@claim.ClaimNumber</strong><small class="d-block text-muted">@claim.ClaimPeriodEnd.ToString("dd MMM yyyy") &middot; @claim.Description</small></td>
                             <td class="text-end">$@claim.WorkCompletedAmount.ToString("N2")</td>
-                            <td class="text-end">$@claim.RetentionHeldAmount.ToString("N2") held@if (claim.RetentionReleasedAmount > 0) { <small class="d-block text-success">$@claim.RetentionReleasedAmount.ToString("N2") released</small> }</td>
+                            <td class="text-end">
+                                $@claim.RetentionHeldAmount.ToString("N2") held
+                                @if (claim.RetentionReleasedAmount > 0)
+                                {
+                                    <small class="d-block text-success">$@claim.RetentionReleasedAmount.ToString("N2") released</small>
+                                }
+                            </td>
                             <td class="text-end">$@claim.CertifiedAmount.ToString("N2")</td>
                             <td><span class="badge @ClaimStatusClass(claim.Status)">@claim.Status</span></td>
                             <td>
@@ -460,12 +466,15 @@ else
         if (claimModel.ProjectId == Guid.Empty || !EligibleClaimProjects.Any(x => x.Id == claimModel.ProjectId))
             claimModel.ProjectId = EligibleClaimProjects.FirstOrDefault()?.Id ?? Guid.Empty;
         ApplyClaimProjectDefaults();
-        foreach (var claim in projects.SelectMany(x => x.ProgressClaims))
+        foreach (var project in projects)
         {
-            if (claim.Status == ProjectProgressClaimStatus.Submitted)
-                claimDecisionReasons.TryAdd(claim.Id, string.Empty);
-            if (claim.Status == ProjectProgressClaimStatus.Approved)
-                claimInvoiceModels.TryAdd(claim.Id, NewClaimInvoiceModel(claim.Project));
+            foreach (var claim in project.ProgressClaims)
+            {
+                if (claim.Status == ProjectProgressClaimStatus.Submitted)
+                    claimDecisionReasons.TryAdd(claim.Id, string.Empty);
+                if (claim.Status == ProjectProgressClaimStatus.Approved)
+                    claimInvoiceModels.TryAdd(claim.Id, NewClaimInvoiceModel(project));
+            }
         }
     }
 
