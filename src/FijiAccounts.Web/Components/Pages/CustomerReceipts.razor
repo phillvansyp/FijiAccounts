@@ -41,18 +41,18 @@ else
                 </div>
                 <div class="row">
                     <div class="col-md-6 mb-3"><label class="form-label">Receipt date</label><InputDate class="form-control" @bind-Value="model.Date" @bind-Value:after="RefreshSettlementRate" /></div>
-                    <div class="col-md-6 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" @bind-Value:event="oninput" /></div>
                 </div>
                 <div class="row">
                     <div class="col-md-6 mb-3"><label class="form-label">Deposit account</label><InputSelect class="form-select" @bind-Value="model.BankAccountId">@foreach (var account in bankAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
                     @if (SelectedInvoice is not null && IsForeignInvoice)
                     {
-                        <div class="col-md-3 mb-3"><label class="form-label">Amount received (@SelectedInvoice.Currency)</label><InputNumber class="form-control" @bind-Value="model.TransactionAmount" @bind-Value:after="TransactionAmountChanged" /></div>
-                        <div class="col-md-3 mb-3"><label class="form-label">Actual bank amount (@access.Organisation.BaseCurrency)</label><InputNumber class="form-control" @bind-Value="model.Amount" /><div class="form-text">Reference rate: 1 @SelectedInvoice.Currency = @model.SettlementRate.ToString("0.########") @access.Organisation.BaseCurrency. Enter the actual banked amount when known.</div></div>
+                        <div class="col-md-3 mb-3"><label class="form-label">Amount received (@SelectedInvoice.Currency)</label><input type="number" step="0.01" class="form-control" @bind="model.TransactionAmount" @bind:event="oninput" @bind:after="TransactionAmountChanged" /></div>
+                        <div class="col-md-3 mb-3"><label class="form-label">Actual bank amount (@access.Organisation.BaseCurrency)</label><InputNumber class="form-control" @bind-Value="model.Amount" @bind-Value:event="oninput" /><div class="form-text">Reference rate: 1 @SelectedInvoice.Currency = @model.SettlementRate.ToString("0.########") @access.Organisation.BaseCurrency. Enter the actual banked amount when known.</div></div>
                     }
                     else
                     {
-                        <div class="col-md-6 mb-3"><label class="form-label">Amount (@access.Organisation.BaseCurrency)</label><InputNumber class="form-control" @bind-Value="model.Amount" @bind-Value:after="BaseAmountChanged" /></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Amount (@access.Organisation.BaseCurrency)</label><input type="number" step="0.01" class="form-control" @bind="model.Amount" @bind:event="oninput" @bind:after="BaseAmountChanged" /></div>
                     }
                 </div>
                 @if (SelectedInvoice is not null && IsForeignInvoice)
