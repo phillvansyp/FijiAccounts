@@ -38,7 +38,7 @@ else
                 <div class="row">
                     <div class="col-md-4 mb-3"><label class="form-label">Tracked item</label><InputSelect class="form-select" @bind-Value="model.ProductItemId">@foreach (var item in items.Where(x => x.IsActive)) { <option value="@item.Id">@item.Code - @item.Name (@item.QuantityOnHand.ToString("N2") on hand)</option> }</InputSelect></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><input type="number" step="any" class="form-control" @bind="model.QuantityChange" @bind:event="oninput" /><small class="text-muted">Use a minus to reduce stock.</small></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><input type="number" step="any" class="form-control" @bind="model.QuantityChange" /><small class="text-muted">Use a minus to reduce stock.</small></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Unit cost</label><input type="number" step="any" min="0" class="form-control" @bind="model.UnitCost" @bind:event="oninput" /><small class="text-muted">Used for increases.</small></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Reorder level</label><input type="number" step="any" min="0" class="form-control" @bind="model.ReorderLevel" @bind:event="oninput" /></div>
                 </div>
