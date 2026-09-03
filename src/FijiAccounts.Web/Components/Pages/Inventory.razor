@@ -38,9 +38,9 @@ else
                 <div class="row">
                     <div class="col-md-4 mb-3"><label class="form-label">Tracked item</label><InputSelect class="form-select" @bind-Value="model.ProductItemId">@foreach (var item in items.Where(x => x.IsActive)) { <option value="@item.Id">@item.Code - @item.Name (@item.QuantityOnHand.ToString("N2") on hand)</option> }</InputSelect></div>
                     <div class="col-md-2 mb-3"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="model.Date" /></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><InputNumber class="form-control" @bind-Value="model.QuantityChange" /><small class="text-muted">Use a minus to reduce stock.</small></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Unit cost</label><InputNumber class="form-control" @bind-Value="model.UnitCost" /><small class="text-muted">Used for increases.</small></div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Reorder level</label><InputNumber class="form-control" @bind-Value="model.ReorderLevel" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Quantity change</label><input type="number" step="any" class="form-control" @bind="model.QuantityChange" @bind:event="oninput" /><small class="text-muted">Use a minus to reduce stock.</small></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Unit cost</label><input type="number" step="any" min="0" class="form-control" @bind="model.UnitCost" @bind:event="oninput" /><small class="text-muted">Used for increases.</small></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Reorder level</label><input type="number" step="any" min="0" class="form-control" @bind="model.ReorderLevel" @bind:event="oninput" /></div>
                 </div>
                 <div class="row">
                     <div class="col-md-4 mb-3">
@@ -52,10 +52,10 @@ else
                             }
                         </InputSelect>
                     </div>
-                    <div class="col-md-2 mb-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="model.Reference" /></div>
+                    <div class="col-md-2 mb-3"><label class="form-label">Reference</label><input class="form-control" @bind="model.Reference" @bind:event="oninput" /></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Inventory asset account</label><InputSelect class="form-select" @bind-Value="model.InventoryAccountId">@foreach (var account in assetAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
                     <div class="col-md-3 mb-3"><label class="form-label">Adjustment expense account</label><InputSelect class="form-select" @bind-Value="model.AdjustmentAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
-                    <div class="col-12 mb-3"><label class="form-label">Reason / note</label><InputText class="form-control" @bind-Value="model.Note" /></div>
+                    <div class="col-12 mb-3"><label class="form-label">Reason / note</label><input class="form-control" @bind="model.Note" @bind:event="oninput" /></div>
                 </div>
                 <button class="btn btn-primary">Post stock adjustment</button>
             </EditForm>
@@ -70,7 +70,7 @@ else
     {
         @if (LowStock.Count > 0) { <div class="alert alert-warning"><strong>Low stock:</strong> @string.Join(", ", LowStock.Select(x => $"{x.Code} ({x.QuantityOnHand:N2})"))</div> }
         <section class="detail-card mb-4">
-            <div class="card-heading"><div><span class="eyebrow">Inventory valuation</span><h2>Stock on hand</h2></div><InputText class="form-control no-print" style="max-width:18rem" @bind-Value="search" placeholder="Search code or item" /></div>
+            <div class="card-heading"><div><span class="eyebrow">Inventory valuation</span><h2>Stock on hand</h2></div><input class="form-control no-print" style="max-width:18rem" @bind="search" @bind:event="oninput" placeholder="Search code or item" /></div>
             <div class="table-responsive"><table class="table"><thead><tr><th>Item</th><th class="text-end">On hand</th><th class="text-end">Average cost</th><th class="text-end">Stock value</th><th class="text-end">Reorder level</th><th>Status</th></tr></thead><tbody>
                 @foreach (var item in FilteredItems) { <tr><td><strong>@item.Code - @item.Name</strong></td><td class="text-end">@item.QuantityOnHand.ToString("N4")</td><td class="text-end">$@item.AverageCost.ToString("N4")</td><td class="text-end"><strong>$@((item.QuantityOnHand * item.AverageCost).ToString("N2"))</strong></td><td class="text-end">@item.ReorderLevel.ToString("N2")</td><td><span class="status-pill">@(item.QuantityOnHand <= item.ReorderLevel ? "Reorder" : "In stock")</span></td></tr> }
             </tbody><tfoot><tr><th colspan="3">Total inventory value</th><th class="text-end">$@TotalValue.ToString("N2")</th><th colspan="2"></th></tr></tfoot></table></div>
