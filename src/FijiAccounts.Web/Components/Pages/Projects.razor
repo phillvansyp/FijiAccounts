@@ -329,8 +329,8 @@ else
                                     }
                                     @if (canManage && claim.Status == ProjectProgressClaimStatus.Approved)
                                     {
-                                        <InputDate class="form-control form-control-sm" style="width: 9rem" title="Invoice date" @bind-Value="claimInvoiceModels[claim.Id].IssueDate" />
-                                        <InputDate class="form-control form-control-sm" style="width: 9rem" title="Due date" @bind-Value="claimInvoiceModels[claim.Id].DueDate" />
+                                        <input type="date" class="form-control form-control-sm" style="width: 9rem" title="Invoice date" @bind="claimInvoiceModels[claim.Id].IssueDate" />
+                                        <input type="date" class="form-control form-control-sm" style="width: 9rem" title="Due date" @bind="claimInvoiceModels[claim.Id].DueDate" />
                                         <button class="btn btn-sm btn-primary" @onclick="() => GenerateClaimInvoice(claim)">Create invoice</button>
                                     }
                                 </div>
