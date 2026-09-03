@@ -290,12 +290,12 @@ else
 
                     <div class="col-md-4">
                         <label class="form-label">Supplier reference / reason</label>
-                        <InputText class="form-control" @bind-Value="creditReason" @bind-Value:event="oninput" />
+                        <input class="form-control" @bind="creditReason" @bind:event="oninput" />
                     </div>
 
                     <div class="col-md-2">
                         <label class="form-label">Amount incl. VAT</label>
-                        <InputNumber class="form-control" @bind-Value="creditAmount" @bind-Value:event="oninput" />
+                        <input type="number" step="0.01" class="form-control" @bind="creditAmount" @bind:event="oninput" />
                     </div>
 
                     @if (HasTrackedItems)
@@ -333,7 +333,7 @@ else
 
                     <div class="col-md-6">
                         <label class="form-label">Reason</label>
-                        <InputText class="form-control" @bind-Value="voidReason" @bind-Value:event="oninput" />
+                        <input class="form-control" @bind="voidReason" @bind:event="oninput" />
                     </div>
 
                     <div class="col-md-3 d-flex align-items-end gap-2">
@@ -704,7 +704,7 @@ else
                                     <tr>
                                         <td colspan="7">
                                             <div class="d-flex gap-2 align-items-center">
-                                                <InputText class="form-control" @bind-Value="paymentRejectionReason" @bind-Value:event="oninput" placeholder="Reason for rejection" />
+                                                <input class="form-control" @bind="paymentRejectionReason" @bind:event="oninput" placeholder="Reason for rejection" />
                                                 <button class="btn btn-danger text-nowrap" @onclick="RejectPayment">Confirm rejection</button>
                                                 <button class="btn btn-outline-secondary" @onclick="() => rejectingApprovalId = null">Cancel</button>
                                             </div>
@@ -782,7 +782,7 @@ else
 
                             <div class="col-md-6">
                                 <label class="form-label">Reason</label>
-                                <InputText class="form-control" @bind-Value="paymentReversalReason" @bind-Value:event="oninput" />
+                                <input class="form-control" @bind="paymentReversalReason" @bind:event="oninput" />
                             </div>
 
                             <div class="col-md-3 d-flex align-items-end gap-2">
