@@ -534,18 +534,24 @@ else
             }
         </div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>@(HasActiveReconciliationFilters ? "No statement lines match the selected filters." : "Add a statement line to begin reconciling.")</span></div> }
-        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@if (StatementDocumentLink(item) is string documentUrl) { <a href="@documentUrl" title="Open invoice or bill">@item.Description</a> } else { @item.Description }</strong>@if (statementDocuments.TryGetValue(item.Id, out var linkedDocuments) && linkedDocuments.Count > 1) { @foreach (var document in linkedDocuments) { <small><a href="@document.Url">@document.Label</a></small> } }<small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
+        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@if (StatementDocumentLink(item) is string documentUrl) { <a href="@documentUrl" title="Open invoice or bill">@item.Description</a> } else { @item.Description }</strong>@if (statementDocuments.TryGetValue(item.Id, out var linkedDocuments) && linkedDocuments.Count > 1) { @foreach (var document in linkedDocuments) { <small><a href="@document.Url">@document.Label</a></small> } }<small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile && SuggestedSupplierBill(item) is null) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>@(SuggestedSupplierBill(item) is not null ? "Existing bill found" : "No exact match")</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
             @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
             {
                 <div class="alert alert-info mx-3 mb-3 d-flex justify-content-between align-items-center gap-3">
                     <div>
-                        <small class="d-block">Suggested supplier bill</small>
+                        <small class="d-block">Existing supplier bill</small>
                         <strong>@suggestedBill.Supplier.Name - @suggestedBill.SupplierReference</strong>
                         <span class="d-block">Outstanding $@Outstanding(suggestedBill).ToString("N2")</span>
+                        <span class="d-block">VAT already recorded on bill: $@suggestedBill.VatTotal.ToString("N2")</span>
+                        @if (suggestedBill.BillDate > item.TransactionDate.AddDays(3))
+                        {
+                            <span class="d-block">Bill date @suggestedBill.BillDate.ToString("dd MMM yyyy") is after this payment. Check the original invoice and correct the bill date.</span>
+                            <a class="btn btn-outline-primary mt-2" href="@($"/o/{OrganisationId}/purchases/{suggestedBill.Id}/edit")">Edit bill date</a>
+                        }
                     </div>
                     <button type="button"
                             class="btn btn-primary"
-                            disabled="@settlingSuggestedDocument"
+                            disabled="@(settlingSuggestedDocument || suggestedBill.BillDate > item.TransactionDate.AddDays(3))"
                             @onclick="() => PayAndReconcileSupplierBill(item, suggestedBill)">
                         @(settlingSuggestedDocument
                             ? "Processing..."
@@ -1139,7 +1145,9 @@ reconciliationSessions =
         var candidates = outstandingSupplierBills
             .Where(x =>
                 Math.Abs(Outstanding(x) - amount) <= 0.01m &&
-                x.BillDate <= item.TransactionDate.AddDays(3) &&
+                (x.BillDate <= item.TransactionDate.AddDays(3) ||
+                    BankDocumentReferenceMatcher.Matches(x.SupplierReference, item.Description, item.Reference) ||
+                    BankDocumentReferenceMatcher.Matches(x.BillNumber, item.Description, item.Reference)) &&
                 !SupplierReferenceConflicts(x, item))
             .Select(x => new
             {
@@ -1303,6 +1311,12 @@ reconciliationSessions =
         BankStatementLine statement,
         SupplierBill bill)
     {
+        if (bill.BillDate > statement.TransactionDate.AddDays(3))
+        {
+            statusClass = "alert-warning";
+            status = "Check and correct the bill date before reconciling this earlier payment.";
+            return;
+        }
         try
         {
             settlingSuggestedDocument = true;
@@ -1372,6 +1386,11 @@ reconciliationSessions =
     }
     private async Task BeginCoding(BankStatementLine item)
     {
+        if (SuggestedSupplierBill(item) is not null)
+        {
+            codingStatementId = null;
+            return;
+        }
         codingError = null;
         codingSuggestion = null;
         status = null;
@@ -1489,6 +1508,12 @@ reconciliationSessions =
     private async Task PostCoding()
     {
         if (codingStatementId is null || postingCoding) return;
+        var existingStatement = statementLines.FirstOrDefault(x => x.Id == codingStatementId);
+        if (existingStatement is not null && SuggestedSupplierBill(existingStatement) is not null)
+        {
+            codingError = "This payment matches an existing supplier bill. Use Pay bill & reconcile to preserve its recorded VAT.";
+            return;
+        }
         if (codingModel.IsTransfer &&
     (codingModel.TransferToAccountId is null || codingModel.TransferToAccountId == Guid.Empty))
 {
