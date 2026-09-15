@@ -34,6 +34,8 @@ public sealed class BankTransactionCodingService(
                 "You cannot change bank coding for this organisation.");
         }
 
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+
         var statement = await db.BankStatementLines
             .SingleOrDefaultAsync(
                 x => x.Id == statementLineId &&
@@ -84,8 +86,9 @@ if (completedReconciliationExists)
                 "Only transactions created by bank coding can be changed here.");
         }
 
-        await using var transaction =
-            await db.Database.BeginTransactionAsync(ct);
+        var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
+        if (excluded.Contains(original.Id))
+            throw new InvalidOperationException("This bank entry has already been reversed. Refresh and match an active entry.");
 
         var reversal = await posting.PostAsync(
             userId,

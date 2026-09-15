@@ -15,6 +15,20 @@ public static class AccountMaintenanceCommand
         WebApplication app,
         IReadOnlyList<string> arguments)
     {
+        if (arguments.Count > 0 && arguments[0] == "repair-bank-ledger")
+        {
+            if (arguments.Count != 2 || arguments[1] is not ("preview" or "apply"))
+                throw new InvalidOperationException("Usage: repair-bank-ledger preview|apply, with a reviewed JSON plan on stdin.");
+            var json = await Console.In.ReadToEndAsync();
+            var plan = System.Text.Json.JsonSerializer.Deserialize<BankRepairPlan>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Repair plan required.");
+            await using var repairScope = app.Services.CreateAsyncScope();
+            var service = repairScope.ServiceProvider.GetRequiredService<BankLedgerRepairService>();
+            Console.WriteLine(await service.RunAsync(plan, arguments[1] == "apply"));
+            return true;
+        }
+
         if (arguments.Count == 0)
         {
             return false;

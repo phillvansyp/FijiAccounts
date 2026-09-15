@@ -116,6 +116,9 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
             "You cannot reconcile this organisation.");
     }
 
+    await using var transaction = db.Database.CurrentTransaction is null
+        ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct) : null;
+
     var statement =
         await db.BankStatementLines
             .SingleOrDefaultAsync(
@@ -156,6 +159,10 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
                 ct)
         ?? throw new InvalidOperationException(
             "Matching bank ledger entry not found.");
+
+    var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
+    if (excluded.Contains(ledger.PostedJournalId) || ledger.PostedJournal.Reference.StartsWith("REV-BANK-", StringComparison.Ordinal))
+        throw new InvalidOperationException("This entry has been reversed and cannot be matched. Choose an active bank entry.");
 
     if (await db.BankStatementLines.AnyAsync(
             x => x.MatchedPostedJournalLineId == journalLineId,
@@ -207,6 +214,7 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
             }));
 
     await db.SaveChangesAsync(ct);
+    if (transaction is not null) await transaction.CommitAsync(ct);
 }
 
     public async Task UnreconcileAsync(

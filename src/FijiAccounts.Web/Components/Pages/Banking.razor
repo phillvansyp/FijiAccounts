@@ -83,14 +83,15 @@ else
                            @bind="model.OpeningBalance"
                            @bind:event="oninput" />
                     <small class="text-muted">
-                        Enter the bank balance when you begin using Account Island.
+                        Enter the opening bank balance at the start of the first period you will import. Do not include those imported transactions again.
                     </small>
                 </div>
 
                 <div>
-                    <label class="form-label">Balance date</label>
+                    <label class="form-label">Opening balance date</label>
                     <InputDate class="form-control"
                                @bind-Value="model.OpeningBalanceDate" />
+                    <small class="text-muted">Use the start of your imported history, not today. For January history, use 1 January and its opening bank balance.</small>
                 </div>
 
                 <div class="d-flex align-items-end">
@@ -866,6 +867,17 @@ private string reconciliationStatusClass = "alert-success";
             x.OrganisationId == OrganisationId)
         .ToListAsync();
 
+// Keep displayed balances current after bill payments or coding corrections.
+var sessionBankIds = loadedReconciliationSessions.Where(x => !x.IsCompleted).Select(x => x.BankAccountId).Distinct().ToArray();
+var sessionLines = await Db.PostedJournalLines.AsNoTracking()
+    .Where(x => x.PostedJournal.OrganisationId == OrganisationId && sessionBankIds.Contains(x.LedgerAccountId))
+    .Select(x => new { x.LedgerAccountId, x.PostedJournal.EntryDate, x.Debit, x.Credit }).ToListAsync();
+foreach (var session in loadedReconciliationSessions.Where(x => !x.IsCompleted))
+{
+    session.LedgerBalance = sessionLines.Where(x => x.LedgerAccountId == session.BankAccountId && x.EntryDate <= session.StatementEndDate)
+        .Sum(x => x.Debit - x.Credit);
+    session.Difference = Math.Round(session.ClosingStatementBalance - session.LedgerBalance, 2, MidpointRounding.AwayFromZero);
+}
 reconciliationSessions =
     loadedReconciliationSessions
         .OrderByDescending(x => x.StatementEndDate)
@@ -959,12 +971,15 @@ reconciliationSessions =
         var firstDate = statementLines.Min(x => x.TransactionDate).AddDays(-3);
         var lastDate = statementLines.Max(x => x.TransactionDate).AddDays(3);
         var pageBankAccountIds = statementLines.Select(x => x.BankAccountId).Distinct().ToArray();
+        var excludedJournals = await BankCodingHistory.UnmatchableJournalIdsAsync(Db, OrganisationId);
         matchTransactions = await Db.PostedJournalLines
             .AsNoTracking()
             .Include(x => x.PostedJournal)
             .Include(x => x.LedgerAccount)
             .Where(x =>
                 pageBankAccountIds.Contains(x.LedgerAccountId) &&
+                !excludedJournals.Contains(x.PostedJournalId) &&
+                !x.PostedJournal.Reference.StartsWith("REV-BANK-") &&
                 x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) &&
                 x.PostedJournal.EntryDate >= firstDate &&
                 x.PostedJournal.EntryDate <= lastDate &&
@@ -1796,6 +1811,7 @@ await Reload();
         if (showAdd)
         {
             model = new();
+            model.OpeningBalanceDate = access?.Organisation.ConversionDate ?? DateOnly.FromDateTime(DateTime.Today);
             model.Code = await NextAvailableBankCodeAsync();
             status = null;
             statusClass = "alert-success";
