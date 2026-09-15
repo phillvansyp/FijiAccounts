@@ -25,7 +25,7 @@
     <p>Saving issues a corrected version with a new document number. The original remains in the history and its posting is reversed. No changes are made until you save.</p>
     <EditForm Model="model" OnValidSubmit="Save" FormName="edit-posted-invoice">
         <DataAnnotationsValidator /><ValidationSummary />
-        <fieldset disabled="saving">
+        <fieldset disabled="@saving">
             <div class="edit-fields">
                 <label>@(IsSales ? "Customer" : "Supplier")<InputSelect class="form-select" @bind-Value="model.PartyId">@foreach (var party in parties) { <option value="@party.Id">@party.Name</option> }</InputSelect></label>
                 @if (!IsSales) { <label>Supplier invoice reference<InputText class="form-control" @bind-Value="model.Reference" /></label> }
