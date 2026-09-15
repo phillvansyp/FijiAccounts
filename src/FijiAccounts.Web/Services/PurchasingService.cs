@@ -898,7 +898,7 @@ public sealed class PurchasingService(
         }
         var receipts = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == bill.BillNumber && x.QuantityChange > 0).ToListAsync(ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; if (item.QuantityOnHand < receipt.QuantityChange) throw new InvalidOperationException($"Cannot void this bill because {item.Code} no longer has all received units on hand."); var remainingValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost) - receipt.ValueChange; if (remainingValue < 0) throw new InvalidOperationException($"Cannot void this bill because it would make the value of {item.Code} negative."); }
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct) : null;
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == bill.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reversalLines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {bill.BillNumber}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{bill.BillNumber}", $"Void supplier bill {bill.SupplierReference}: {reason.Trim()}", reversalLines), ct);
@@ -914,7 +914,7 @@ public sealed class PurchasingService(
         };
 
         db.SupplierBillVoids.Add(billVoid);
-        bill.Status = BillStatus.Voided; db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillVoided", nameof(SupplierBill), bill.Id, new { bill.BillNumber, reason, ReversalJournalId = journal.Id, StockReturns = receipts.Count })); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return bill;
+        bill.Status = BillStatus.Voided; db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillVoided", nameof(SupplierBill), bill.Id, new { bill.BillNumber, reason, ReversalJournalId = journal.Id, StockReturns = receipts.Count })); await db.SaveChangesAsync(ct); if (transaction is not null) await transaction.CommitAsync(ct); return bill;
     }
 
     public async Task<SupplierPaymentReversal> ReversePaymentAsync(string userId, Guid organisationId, Guid paymentId, DateOnly reversalDate, string reason, CancellationToken ct = default)

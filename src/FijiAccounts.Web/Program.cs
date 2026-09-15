@@ -220,6 +220,8 @@ builder.Services.AddHttpClient<IPayrollIslandClient, PayrollIslandHttpClient>(cl
 });
 builder.Services.AddScoped<PayrollIslandIntegrationService>();
 builder.Services.AddScoped<SalesInvoiceService>();
+builder.Services.AddScoped<InvoiceCorrectionService>();
+builder.Services.AddScoped<ReportTransactionService>();
 builder.Services.AddScoped<FiscalisationWorkflowService>();
 builder.Services.AddScoped<FiscalisationOrchestratorService>();
 builder.Services.AddSingleton<FiscalisationSubmissionFactory>();
@@ -251,6 +253,7 @@ builder.Services.AddHostedService<VatTurnoverMonitorWorker>();
 builder.Services.AddHostedService<ImmutableDocumentIntegrityWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
+builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
 builder.Services.AddScoped<IImmutableDocumentStore>(services =>
     services.GetRequiredService<DatabaseImmutableDocumentStore>());
@@ -364,6 +367,16 @@ app.MapAdditionalIdentityEndpoints();
 // Supplier bill attachment endpoint (single registration only).
 app.MapSupplierBillAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
+app.MapGet("/api/o/{organisationId:guid}/registration-documents/{documentId:guid}",
+    async (Guid organisationId, Guid documentId, OrganisationDocumentService documents, System.Security.Claims.ClaimsPrincipal principal, HttpContext http) =>
+    {
+        var user = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var content = user is null ? null : await documents.ReadAsync(user, organisationId, documentId);
+        if (content is null) return Results.NotFound();
+        http.Response.Headers.CacheControl = "private, no-store";
+        http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return Results.File(content, "application/pdf");
+    }).RequireAuthorization();
 app.MapBankStatementDocumentEndpoints();
 app.MapYearEndHandoverPackEndpoints();
 app.MapYearEndReviewAttachmentEndpoints();

@@ -14,6 +14,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
+@using System.Text.Json
 
 <PageTitle>Reports · Account Island</PageTitle>
 
@@ -45,19 +46,25 @@ else
             <div>
                 <label class="form-label">From</label>
                 <InputDate class="form-control"
-                           @bind-Value="period.From" />
+                           @bind-Value="period.From" @bind-Value:after="Load" disabled="isLoading" />
             </div>
 
             <div>
                 <label class="form-label">To</label>
                 <InputDate class="form-control"
-                           @bind-Value="period.To" />
+                           @bind-Value="period.To" @bind-Value:after="Load" disabled="isLoading" />
             </div>
 
             <div>
                 <label class="form-label">Compare with</label>
+                @if (NormalisedReportType == "profit-loss")
+                {
+                    <ReportComparisonPicker Options="comparisonOptions" Changed="Load" Disabled="isLoading" />
+                }
+                else
+                {
                 <InputSelect class="form-select"
-                             @bind-Value="period.CompareWith">
+                             @bind-Value="period.CompareWith" @bind-Value:after="Load" disabled="isLoading">
                     <option value="none">None</option>
                     <option value="previous-period">
                         Previous period
@@ -66,12 +73,13 @@ else
                         Previous year
                     </option>
                 </InputSelect>
+                }
             </div>
 
             <div>
                 <label class="form-label">Tracking</label>
                 <InputSelect class="form-select"
-                             @bind-Value="period.Tracking">
+                             @bind-Value="period.Tracking" @bind-Value:after="Load" disabled="isLoading">
                     <option value="all">All accessible transactions</option>
                     @foreach (var branch in branches)
                     {
@@ -114,13 +122,23 @@ else
                 </div>
             </details>
 
-            <button class="btn btn-primary">
+            <button class="btn btn-primary" disabled="isLoading">
                 Update
             </button>
         </EditForm>
     </section>
 
-    @if (period.CompareWith != "none")
+    @if (isLoading)
+    {
+        <p role="status">Loading report...</p>
+    }
+    else if (loadError is not null)
+    {
+        <div class="alert alert-danger" role="alert">@loadError</div>
+    }
+    else
+    {
+    @if (NormalisedReportType != "profit-loss" && period.CompareWith != "none")
     {
         <div class="comparison-strip no-print">
             <span>
@@ -153,8 +171,49 @@ else
                 </strong>
             </header>
 
+            @if (ShowProfitComparison)
+            {
+                <div class="comparison-table-scroll">
+                    <table class="report-table profit-comparison" style="min-width:@(360 + (comparisonColumns.Count + 1) * 165)px">
+                        <thead>
+                            <tr><th scope="col">Account</th><th scope="col" class="number">@PeriodHeading(period.From, period.To)</th>
+                                @foreach (var column in comparisonColumns)
+                                {
+                                    <th scope="col" class="number">@PeriodHeading(column.Period.From, column.Period.To)</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var type in new[] { AccountType.Revenue, AccountType.Expense })
+                            {
+                                <tr><th colspan="@(comparisonColumns.Count + 2)">@(type == AccountType.Revenue ? "Income" : "Expenses")</th></tr>
+                                @foreach (var row in ComparisonRows(type))
+                                {
+                                    <tr>
+                                        <th scope="row">@if (period.ShowAccountCodes) { <small>@row.Code </small> }@row.Name</th>
+                                        <td class="number @(row.Current < 0 ? "negative" : null)"><a href="@TransactionUrl(row.Code, period.From, period.To)" rel="noopener" title="View transactions">@Money(row.Current)</a></td>
+                                        @for (var columnIndex = 0; columnIndex < row.Previous.Length; columnIndex++)
+                                        {
+                                            var amount = row.Previous[columnIndex];
+                                            var selectedPeriod = comparisonColumns[columnIndex].Period;
+                                            <td class="number @(amount < 0 ? "negative" : null)"><a href="@TransactionUrl(row.Code, selectedPeriod.From, selectedPeriod.To)" rel="noopener" title="View transactions">@Money(amount)</a></td>
+                                        }
+                                    </tr>
+                                }
+                                <tr class="comparison-total"><th scope="row">@(type == AccountType.Revenue ? "Total income" : "Total expenses")</th><td class="number">@Money(CurrentTotal(type))</td>@foreach (var column in comparisonColumns) { <td class="number">@Money(ColumnTotal(column, type))</td> }</tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr><th scope="row">Net profit</th><td class="number @(NetProfit < 0 ? "negative" : null)">@Money(NetProfit)</td>@foreach (var column in comparisonColumns) { <td class="number @(ColumnProfit(column) < 0 ? "negative" : null)">@Money(ColumnProfit(column))</td> }</tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+            else
+            {
             <ReportSection
                 Title="Income"
+                DetailUrl="@(row => TransactionUrl(row.Code, period.From, period.To))"
                 Rows="RevenueRows"
                 TotalLabel="Total income"
                 Total="RevenueTotal"
@@ -163,6 +222,7 @@ else
 
             <ReportSection
                 Title="Expenses"
+                DetailUrl="@(row => TransactionUrl(row.Code, period.From, period.To))"
                 Rows="ExpenseRows"
                 TotalLabel="Total expenses"
                 Total="ExpenseTotal"
@@ -176,6 +236,7 @@ else
                     @Money(NetProfit)
                 </strong>
             </div>
+            }
         </section>
     }
     else if (NormalisedReportType == "balance-sheet")
@@ -330,6 +391,8 @@ else
     }
 }
 
+}
+
 @code {
     [Parameter]
     public Guid OrganisationId { get; set; }
@@ -354,6 +417,17 @@ else
     private string userId = "";
     private List<Branch> branches = [];
 
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewState { get; set; }
+    private sealed class ReportView
+    {
+        public PeriodModel Period { get; set; } = new();
+        public ReportComparisonOptions Comparison { get; set; } = new();
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (access is not null && !isLoading && loadError is null)
+            await JS.InvokeVoidAsync("accountIslandNavigation.saveView", JsonSerializer.Serialize(new ReportView { Period = period, Comparison = comparisonOptions }));
+    }
     private PeriodModel period = new();
 
     private FinancialReportData report =
@@ -366,6 +440,39 @@ else
 
     private DateOnly comparisonFrom;
     private DateOnly comparisonTo;
+    private bool isLoading;
+    private string? loadError;
+
+    private ReportComparisonOptions comparisonOptions = new();
+    private List<ReportComparisonColumn> comparisonColumns = [];
+    private string TransactionUrl(string code, DateOnly from, DateOnly to) =>
+        $"/o/{OrganisationId}/report-transactions?account={Uri.EscapeDataString(code)}&from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&tracking={Uri.EscapeDataString(period.Tracking)}";
+
+    private bool ShowProfitComparison => NormalisedReportType == "profit-loss" && comparisonColumns.Count > 0;
+
+    private static string PeriodHeading(DateOnly from, DateOnly to) =>
+        from.Day == 1 && to == from.AddMonths(1).AddDays(-1)
+            ? from.ToString("MMMM yyyy")
+            : $"{from:dd MMM yyyy} – {to:dd MMM yyyy}";
+
+    private sealed record ComparisonRow(string Code, string Name, decimal Current, decimal[] Previous);
+
+    private IEnumerable<ComparisonRow> ComparisonRows(AccountType type)
+    {
+        var current = report.Balances.Where(x => x.Type == type).ToDictionary(x => x.Code);
+        var previous = comparisonColumns.Select(column => column.Report.Balances.Where(x => x.Type == type).ToDictionary(x => x.Code)).ToArray();
+        return current.Keys.Concat(previous.SelectMany(x => x.Keys)).Distinct().OrderBy(x => x, StringComparer.Ordinal)
+            .Select(code => new ComparisonRow(code,
+                current.GetValueOrDefault(code)?.Name ?? previous.First(x => x.ContainsKey(code))[code].Name,
+                current.GetValueOrDefault(code)?.DisplayAmount ?? 0,
+                previous.Select(x => x.GetValueOrDefault(code)?.DisplayAmount ?? 0).ToArray()))
+            .Where(x => period.ShowZeroBalances || x.Current != 0 || x.Previous.Any(amount => amount != 0));
+    }
+
+    private decimal CurrentTotal(AccountType type) => report.Balances.Where(x => x.Type == type).Sum(x => x.DisplayAmount);
+    private static decimal ColumnTotal(ReportComparisonColumn column, AccountType type) => column.Report.Balances.Where(x => x.Type == type).Sum(x => x.DisplayAmount);
+    private static decimal ColumnProfit(ReportComparisonColumn column) => ColumnTotal(column, AccountType.Revenue) - ColumnTotal(column, AccountType.Expense);
+    private static string CsvAmounts(IEnumerable<decimal> amounts) => string.Join(",", amounts.Select(amount => amount.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
     private string TrackingLabel
     {
@@ -542,17 +649,44 @@ else
                 .AddYears(-1)
                 .AddDays(1);
 
+        if (NormalisedReportType == "profit-loss")
+        {
+            period.To = new DateOnly(today.Year, today.Month, 1).AddDays(-1);
+            period.From = new DateOnly(period.To.Year, period.To.Month, 1);
+            comparisonOptions.CustomFrom = period.From.AddMonths(-1);
+            comparisonOptions.CustomTo = period.From.AddDays(-1);
+        }
+
+        if (!string.IsNullOrEmpty(ViewState))
+        {
+            try
+            {
+                var saved = JsonSerializer.Deserialize<ReportView>(ViewState);
+                if (saved?.Period is not null && saved.Comparison is not null)
+                {
+                    period = saved.Period;
+                    comparisonOptions = saved.Comparison;
+                }
+            }
+            catch (JsonException) { }
+        }
         await Load();
     }
 
     private async Task Load()
     {
-        if (access is null ||
-            period.From > period.To)
+        if (access is null || isLoading) return;
+        loadError = null;
+        if (period.From > period.To)
         {
+            loadError = "The From date must be on or before the To date.";
             return;
         }
 
+        isLoading = true;
+        try
+        {
+        var comparisonPeriods = NormalisedReportType == "profit-loss" ? comparisonOptions.Periods(period.From, period.To) : [];
         var divisionScope = await ResolveDivisionScope();
 
         report =
@@ -564,6 +698,18 @@ else
 
         comparisonReport =
             FinancialReportData.Empty;
+
+        if (NormalisedReportType == "profit-loss")
+        {
+            var columns = new List<ReportComparisonColumn>();
+            foreach (var comparisonPeriod in comparisonPeriods)
+            {
+                var data = await FinancialReports.GetAsync(OrganisationId, comparisonPeriod.From, comparisonPeriod.To, divisionIds: divisionScope);
+                columns.Add(new(comparisonPeriod, data));
+            }
+            comparisonColumns = columns;
+            return;
+        }
 
         if (period.CompareWith == "none")
         {
@@ -577,6 +723,12 @@ else
 
             comparisonTo =
                 period.To.AddYears(-1);
+        }
+        else if (period.From.Day == 1 && period.To.Day == DateTime.DaysInMonth(period.To.Year, period.To.Month))
+        {
+            var months = (period.To.Year - period.From.Year) * 12 + period.To.Month - period.From.Month + 1;
+            comparisonFrom = period.From.AddMonths(-months);
+            comparisonTo = period.From.AddDays(-1);
         }
         else
         {
@@ -599,6 +751,19 @@ else
                 comparisonFrom,
                 comparisonTo,
                 divisionIds: divisionScope);
+        }
+        catch (ArgumentException ex)
+        {
+            loadError = ex.Message;
+        }
+        catch
+        {
+            loadError = "The report could not be loaded. Please try Update again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
     private async Task<Guid[]?> ResolveDivisionScope()
@@ -644,7 +809,21 @@ else
         var csv =
             new StringBuilder();
 
-        if (NormalisedReportType == "trial-balance")
+        if (ShowProfitComparison)
+        {
+            csv.AppendLine($"Code,Account,Type,{Q(PeriodHeading(period.From, period.To))},{string.Join(",", comparisonColumns.Select(column => Q(PeriodHeading(column.Period.From, column.Period.To))))}");
+            foreach (var type in new[] { AccountType.Revenue, AccountType.Expense })
+            {
+                foreach (var row in ComparisonRows(type))
+                {
+                    csv.AppendLine($"{Q(row.Code)},{Q(row.Name)},{type},{CsvAmounts(new[] { row.Current }.Concat(row.Previous))}");
+                }
+                var label = type == AccountType.Revenue ? "Total income" : "Total expenses";
+                csv.AppendLine($",{Q(label)},,{CsvAmounts(new[] { CurrentTotal(type) }.Concat(comparisonColumns.Select(column => ColumnTotal(column, type))))}");
+            }
+            csv.AppendLine($",Net profit,,{CsvAmounts(new[] { NetProfit }.Concat(comparisonColumns.Select(ColumnProfit)))}");
+        }
+        else if (NormalisedReportType == "trial-balance")
         {
             csv.AppendLine(
                 "Code,Account,Debit,Credit");

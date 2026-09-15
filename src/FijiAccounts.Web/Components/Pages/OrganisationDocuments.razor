@@ -1,0 +1,59 @@
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject OrganisationDocumentService Documents
+@inject AuthenticationStateProvider Authentication
+
+<section class="settings-card mb-3">
+    <h2>Registration documents</h2>
+    <p>Keep company and VAT registration confirmations here. Click a filename to open it.</p>
+    @if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
+    @if (message is not null) { <div class="alert alert-success" role="status">@message</div> }
+    <div class="row align-items-end mb-3">
+        <div class="col-md-4"><label for="registration-category" class="form-label">Document type</label>
+            <select id="registration-category" class="form-select" @bind="category" disabled="@busy">
+                @foreach (var type in OrganisationDocumentService.Categories) { <option>@type</option> }
+            </select>
+        </div>
+        <div class="col-md-8"><label for="registration-file" class="form-label">Add PDF (up to 10 MB)</label>
+            <InputFile id="registration-file" class="form-control" accept="application/pdf,.pdf" OnChange="Upload" disabled="@busy" />
+        </div>
+    </div>
+    @if (busy) { <p role="status">Saving document...</p> }
+    @if (items.Count == 0) { <p>No registration documents added yet.</p> }
+    else
+    {
+        <div class="table-responsive"><table class="table">
+            <thead><tr><th>Document type</th><th>File</th><th>Added</th></tr></thead>
+            <tbody>@foreach (var item in items) {
+                <tr><td>@item.Category</td><td><a href="/api/o/@OrganisationId/registration-documents/@item.Id">@item.FileName</a></td><td>@item.UploadedAt.ToString("dd MMM yyyy")</td></tr>
+            }</tbody>
+        </table></div>
+    }
+</section>
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private string user = "", category = "Company registration";
+    private string? error, message;
+    private bool busy;
+    private List<OrganisationDocument> items = [];
+    protected override async Task OnParametersSetAsync()
+    {
+        user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value;
+        items = await Documents.ListAsync(user, OrganisationId);
+    }
+    private async Task Upload(InputFileChangeEventArgs args)
+    {
+        busy = true; error = null; message = null;
+        try {
+            using var stream = args.File.OpenReadStream(OrganisationDocumentService.MaximumBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            await Documents.AddAsync(user, OrganisationId, category, args.File.Name, buffer.ToArray());
+            items = await Documents.ListAsync(user, OrganisationId);
+            message = "Document saved.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException) { error = ex.Message; }
+        finally { busy = false; }
+    }
+}

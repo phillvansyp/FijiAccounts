@@ -30,6 +30,7 @@
 }
 else
 {
+    <InvoiceCorrectionNotice OrganisationId="OrganisationId" DocumentId="BillId" IsSales="false" />
     <div class="bill-page">
         <div class="bill-heading no-print">
             <div>
@@ -48,6 +49,10 @@ else
 
                         <div class="bill-actions">
 
+                @if (canManage && bill.Status == BillStatus.Posted && bill.AmountPaid == 0 && bill.AmountCredited == 0)
+                {
+                    <a class="btn btn-outline-primary" href="/o/@OrganisationId/purchases/@BillId/edit">Edit bill</a>
+                }
                 <div class="attachment-menu-wrap">
 
                     @if (bill.Attachments.Count == 0)
@@ -65,7 +70,7 @@ else
 
                         <a class="btn btn-outline-secondary attachment-top-button"
                            href="@AttachmentUrl(attachment)"
-                           target="_blank"
+
                            title="@(AttachmentDeletionProtected ? $"Retained until {AttachmentRetainUntil:dd MMM yyyy}" : "Open attachment")">
                             Attachments
                             <span class="attachment-count">1</span>
@@ -102,7 +107,7 @@ else
 
                                         <a class="attachment-menu-item"
                                            href="@AttachmentUrl(attachment)"
-                                           target="_blank">
+                                          >
 
                                             <span class="attachment-menu-icon">
                                                 @DocumentIcon(attachment.ContentType)
@@ -1307,7 +1312,7 @@ private async Task RecordPayment()
                 x.IsActive &&
                 x.IsBankAccount)
         .OrderBy(x => x.Code)
-        .ToListAsync();        
+        .ToListAsync();
 
         payments = await Db.SupplierPayments
             .AsNoTracking()

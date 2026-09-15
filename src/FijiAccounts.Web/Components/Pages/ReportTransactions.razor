@@ -1,0 +1,89 @@
+@page "/o/{OrganisationId:guid}/report-transactions"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Identity
+@inject ReportTransactionService Transactions
+@inject IJSRuntime JS
+@inject UserManager<ApplicationUser> Users
+@inject AuthenticationStateProvider Authentication
+
+<PageTitle>Account transactions - Account Island</PageTitle>
+@if (loading) { <p role="status">Loading transactions...</p> }
+else if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
+else if (result is not null)
+{
+    <p class="eyebrow">Profit &amp; Loss details</p>
+    <h1>@result.AccountCode - @result.AccountName</h1>
+    <p>@From!.Value.ToString("dd MMM yyyy") to @To!.Value.ToString("dd MMM yyyy") &middot; @result.Currency &middot; @result.Scope</p>
+    <div class="detail-card mb-3"><strong>Total for this period: @result.Currency @result.Total.ToString("N2")</strong><p class="mb-0">@result.Transactions.Count transaction lines. Amounts are those included in Profit &amp; Loss. Open an invoice or bill for its line items, tax, and attachments.</p></div>
+    @if (result.Transactions.Count == 0)
+    {
+        <div class="alert alert-info">No transactions for this account in the selected period and tracking scope.</div>
+    }
+    else
+    {
+        <div class="table-responsive detail-card">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Contact</th><th>Description</th><th>Source document</th><th>Attachments</th><th>Journal</th><th class="text-end">Amount (@result.Currency)</th></tr></thead>
+                <tbody>
+                    @foreach (var row in result.Transactions.Skip(page * PageSize).Take(PageSize))
+                    {
+                        <tr><td class="text-nowrap">@row.Date.ToString("dd MMM yyyy")</td><td>@row.Contact</td><td>@row.Description<div class="small text-muted">@row.Reference</div></td>
+                            <td><a href="@row.SourceUrl" rel="noopener">@row.SourceLabel</a></td>
+                            <td>
+                                @if (row.Attachments.Count == 0) { <span class="text-muted">No attachments</span> }
+                                else
+                                {
+                                    <div class="small text-muted">@row.Attachments.Count @(row.Attachments.Count == 1 ? "attachment" : "attachments")</div>
+                                    @foreach (var file in row.Attachments)
+                                    {
+                                        <div class="mb-1"><a href="@file.Url" rel="noopener" title="Open attachment">@file.FileName</a></div>
+                                    }
+                                }
+                            </td>
+                            <td><a href="/o/@OrganisationId/journals/@row.JournalId" rel="noopener">J-@row.JournalNumber.ToString("D6")</a></td>
+                            <td class="text-end @(row.Amount < 0 ? "text-danger" : null)">@row.Amount.ToString("N2")</td></tr>
+                    }
+                </tbody>
+                <tfoot><tr><th colspan="6">Total for all @result.Transactions.Count lines</th><th class="text-end">@result.Total.ToString("N2")</th></tr></tfoot>
+            </table>
+        </div>
+        @if (result.Transactions.Count > PageSize)
+        {
+            <nav class="d-flex gap-3 align-items-center mt-3" aria-label="Transaction pages"><button class="btn btn-outline-secondary" disabled="@(page == 0)" @onclick="() => page--">Previous</button><span>Page @(page + 1) of @((result.Transactions.Count + PageSize - 1) / PageSize)</span><button class="btn btn-outline-secondary" disabled="@((page + 1) * PageSize >= result.Transactions.Count)" @onclick="() => page++">Next</button></nav>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [SupplyParameterFromQuery(Name = "account")] public string? AccountCode { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public DateOnly? From { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public DateOnly? To { get; set; }
+    [SupplyParameterFromQuery(Name = "tracking")] public string? Tracking { get; set; }
+    [SupplyParameterFromQuery(Name = "page")] public int? PageNumber { get; set; }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!loading && error is null)
+            await JS.InvokeVoidAsync("accountIslandNavigation.savePage", page + 1);
+    }
+    private ReportTransactionResult? result;
+    private string? error;
+    private bool loading = true;
+    private const int PageSize = 100;
+    private int page;
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true; result = null; error = null; page = Math.Max(0, PageNumber.GetValueOrDefault(1) - 1);
+        try
+        {
+            if (string.IsNullOrWhiteSpace(AccountCode) || From is null || To is null) throw new InvalidOperationException("Open an account amount from Profit & Loss to select its dates.");
+            var userId = Users.GetUserId((await Authentication.GetAuthenticationStateAsync()).User)!;
+            result = await Transactions.GetAsync(userId, OrganisationId, AccountCode, From.Value, To.Value, Tracking ?? "all");
+            page = Math.Min(page, Math.Max(0, (result.Transactions.Count - 1) / PageSize));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { error = ex.Message; }
+        finally { loading = false; }
+    }
+}

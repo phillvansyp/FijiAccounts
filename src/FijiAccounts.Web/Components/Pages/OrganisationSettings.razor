@@ -22,6 +22,7 @@ else
 {
     <div class="settings-heading"><div><p class="eyebrow">Organisation</p><h1>Business settings</h1><p>Identity, regional accounting and compliance configuration.</p></div><span class="tax-pack @(jurisdiction.TaxPackEnabled ? "enabled" : "pending")">@(jurisdiction.TaxPackEnabled ? "Tax pack enabled" : "Tax pack pending verification")</span></div>
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
+    @if (canManage) { <OrganisationDocuments OrganisationId="OrganisationId" /> }
     <section class="settings-card mb-3">
         <h2>Organisation group</h2>
         <p>

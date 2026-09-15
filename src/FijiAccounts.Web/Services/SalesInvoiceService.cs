@@ -248,7 +248,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
             .SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Invoice not found.");
         ValidateVoidable(invoice);
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken) : null;
         var invoiceVoid = new SalesInvoiceVoid
         {
             OrganisationId = organisationId,
@@ -259,7 +259,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         };
         db.SalesInvoiceVoids.Add(invoiceVoid);
         await PostVoidCoreAsync(userId, invoice, invoiceVoid, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return invoice;
     }
 
@@ -305,7 +305,9 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         {
             var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!;
             var quantity = -issue.QuantityChange;
+            var restoredValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost) - issue.ValueChange;
             item.QuantityOnHand += quantity;
+            item.AverageCost = decimal.Round(restoredValue / item.QuantityOnHand, 4, MidpointRounding.AwayFromZero);
             db.InventoryMovements.Add(new InventoryMovement
             {
                 OrganisationId = invoice.OrganisationId,

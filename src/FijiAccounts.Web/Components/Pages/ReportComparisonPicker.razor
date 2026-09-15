@@ -1,0 +1,90 @@
+@using FijiAccounts.Web.Services
+
+<div class="comparison-picker" @onkeydown="KeyDown">
+    <button type="button" class="comparison-trigger" aria-label="@($"Compare with: {Options.Label}")" aria-expanded="@(isOpen ? "true" : "false")" aria-controls="comparison-options" disabled="Disabled" @onclick="Toggle">
+        <span>@Options.Label</span><span aria-hidden="true">&#9662;</span>
+    </button>
+    @if (isOpen)
+    {
+        <button type="button" class="comparison-dismiss" aria-label="Close comparison options" @onclick="Close"></button>
+        <div id="comparison-options" class="comparison-menu">
+            <fieldset disabled="Disabled" style="border:0;padding:0;margin:0;min-width:0;display:contents">
+            <p>Compare with</p>
+            <button type="button" class="@(Options.Count == 0 ? "selected" : null)" @onclick="() => ChooseCount(0)">None</button>
+            @for (var i = 1; i <= 4; i++)
+            {
+                var count = i;
+                <button type="button" class="@(Options.Count == count && Options.Unit != "custom" ? "selected" : null)" @onclick="() => ChooseCount(count)">@count @UnitLabel(count)</button>
+            }
+            <button type="button" class="custom-number" @onclick="ShowCustomNumber">Enter a different number</button>
+            @if (showNumber)
+            {
+                <div class="custom-fields">
+                    <label for="comparison-count">Number of periods (1-60)</label>
+                    <input id="comparison-count" type="number" min="1" max="60" @bind="customCount" />
+                    <button type="button" class="apply" @onclick="ApplyNumber">Apply</button>
+                </div>
+            }
+            <div class="previous-options">
+                <p>Previous</p>
+                @foreach (var unit in new[] { "month", "quarter", "year", "custom" })
+                {
+                    <label><input type="radio" name="comparison-unit" checked="@(Options.Unit == unit)" @onchange="() => ChooseUnit(unit)" />@(unit == "custom" ? "Custom date range" : char.ToUpperInvariant(unit[0]) + unit[1..])</label>
+                }
+            </div>
+            @if (Options.Unit == "custom")
+            {
+                <div class="custom-fields">
+                    <label for="comparison-from">From</label><input id="comparison-from" type="date" @bind="customFrom" />
+                    <label for="comparison-to">To</label><input id="comparison-to" type="date" @bind="customTo" />
+                    <button type="button" class="apply" @onclick="ApplyDates">Apply dates</button>
+                </div>
+            }
+            @if (error is not null) { <p class="error" role="alert">@error</p> }
+            </fieldset>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportComparisonOptions Options { get; set; } = new();
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    private bool isOpen;
+    private bool showNumber;
+    private int customCount = 5;
+    private DateOnly customFrom;
+    private DateOnly customTo;
+    private string? error;
+    private string UnitLabel(int count) => $"{(Options.Unit == "custom" ? "month" : Options.Unit)}{(count == 1 ? "" : "s")}";
+    private void Toggle() { isOpen = !isOpen; error = null; customFrom = Options.CustomFrom; customTo = Options.CustomTo; }
+    private void Close() => isOpen = false;
+    private void KeyDown(KeyboardEventArgs e) { if (e.Key == "Escape") Close(); }
+    private void ShowCustomNumber() { showNumber = true; error = null; }
+    private async Task ChooseCount(int count)
+    {
+        Options.Count = count;
+        if (Options.Unit == "custom") Options.Unit = "month";
+        isOpen = false;
+        await Changed.InvokeAsync();
+    }
+    private async Task ChooseUnit(string unit)
+    {
+        Options.Unit = unit;
+        error = null;
+        if (unit == "custom") return;
+        await Changed.InvokeAsync();
+    }
+    private async Task ApplyNumber()
+    {
+        if (customCount is < 1 or > 60) { error = "Enter a number from 1 to 60."; return; }
+        await ChooseCount(customCount);
+    }
+    private async Task ApplyDates()
+    {
+        if (customFrom == default || customTo == default || customFrom > customTo) { error = "Choose a valid date range."; return; }
+        Options.CustomFrom = customFrom; Options.CustomTo = customTo; Options.Count = 1;
+        isOpen = false;
+        await Changed.InvokeAsync();
+    }
+}

@@ -20,6 +20,7 @@
 @inject BankAccountService BankAccounts
 @inject PurchasingService Purchasing
 @inject CustomerReceiptService CustomerReceipts
+@inject IJSRuntime NavigationJS
 
 <PageTitle>Banking - Account Island</PageTitle>
     @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
@@ -202,7 +203,7 @@ else
                                         {
                                             <a class="btn btn-sm btn-outline-primary"
                                                href="@StatementDocumentUrl(item.BatchId)"
-                                               target="_blank"
+
                                                rel="noopener">View statement</a>
                                         }
                                         else
@@ -510,18 +511,18 @@ else
                 <input id="reconciliation-date-from"
                        type="date"
                        class="form-control"
-                       max="@(reconciliationDateTo?.ToString("yyyy-MM-dd"))"
+
                        @bind="reconciliationDateFrom"
-                       @bind:after="OnReconciliationDateRangeChanged" />
+                       @bind:after="OnReconciliationFromChanged" />
             </div>
             <div>
                 <label class="form-label" for="reconciliation-date-to">To date</label>
                 <input id="reconciliation-date-to"
                        type="date"
                        class="form-control"
-                       min="@(reconciliationDateFrom?.ToString("yyyy-MM-dd"))"
+
                        @bind="reconciliationDateTo"
-                       @bind:after="OnReconciliationDateRangeChanged" />
+                       @bind:after="OnReconciliationToChanged" />
             </div>
             @if (HasActiveReconciliationFilters)
             {
@@ -533,7 +534,7 @@ else
             }
         </div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>@(HasActiveReconciliationFilters ? "No statement lines match the selected filters." : "Add a statement line to begin reconciling.")</span></div> }
-        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@item.Description</strong><small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
+        else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@if (StatementDocumentLink(item) is string documentUrl) { <a href="@documentUrl" title="Open invoice or bill">@item.Description</a> } else { @item.Description }</strong>@if (statementDocuments.TryGetValue(item.Id, out var linkedDocuments) && linkedDocuments.Count > 1) { @foreach (var document in linkedDocuments) { <small><a href="@document.Url">@document.Label</a></small> } }<small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>No exact match</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
             @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
             {
                 <div class="alert alert-info mx-3 mb-3 d-flex justify-content-between align-items-center gap-3">
@@ -800,7 +801,26 @@ private bool savingReconciliationSession;
 private Guid? editingReconciliationSessionId;
 private string? reconciliationStatus;
 private string reconciliationStatusClass = "alert-success";
-    protected override async Task OnParametersSetAsync() { var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
+    [SupplyParameterFromQuery(Name = "bankView")] public string? BankViewState { get; set; }
+    private sealed record BankView(Guid? Account, DateOnly? From, DateOnly? To, string Search, int Page);
+    private void RestoreBankView()
+    {
+        if (string.IsNullOrEmpty(BankViewState)) return;
+        try {
+            var view = System.Text.Json.JsonSerializer.Deserialize<BankView>(BankViewState);
+            if (view is null) return;
+            selectedBankAccountId = view.Account;
+            reconciliationDateFrom = view.From; reconciliationDateTo = view.To;
+            reconciliationSearch = view.Search ?? string.Empty; reconciliationPage = Math.Max(1, view.Page);
+        } catch (System.Text.Json.JsonException) { }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (access is not null)
+            await NavigationJS.InvokeVoidAsync("accountIslandNavigation.saveBankView", System.Text.Json.JsonSerializer.Serialize(
+                new BankView(selectedBankAccountId, reconciliationDateFrom, reconciliationDateTo, reconciliationSearch, reconciliationPage)));
+    }
+    protected override async Task OnParametersSetAsync() { RestoreBankView(); var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
     private async Task Reload()
     {
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
@@ -951,12 +971,29 @@ reconciliationSessions =
 
     private async Task LoadCodedAccounts()
     {
+        await LoadReferenceDocuments();
         codedAccounts = [];
         codedVat = [];
         var matchedIds = statementLines.Where(x => x.MatchedPostedJournalLineId.HasValue).Select(x => x.MatchedPostedJournalLineId!.Value).ToArray();
         if (matchedIds.Length == 0) return;
         var matchedLines = await Db.PostedJournalLines.AsNoTracking().Where(x => matchedIds.Contains(x.Id)).Select(x => new { x.Id, x.PostedJournalId }).ToListAsync();
         var journalIds = matchedLines.Select(x => x.PostedJournalId).Distinct().ToArray();
+        var documentLinks = new List<BankDocumentLink>();
+        documentLinks.AddRange(await Db.SupplierPayments.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && journalIds.Contains(x.PostedJournalId))
+            .Select(x => new BankDocumentLink(x.PostedJournalId, "Bill " + x.SupplierBill.SupplierReference, "/o/" + OrganisationId + "/purchases/" + x.SupplierBillId)).ToListAsync());
+        documentLinks.AddRange(await Db.CustomerReceiptAllocations.AsNoTracking().Where(x => x.CustomerReceipt.OrganisationId == OrganisationId && x.SalesInvoice.OrganisationId == OrganisationId && journalIds.Contains(x.CustomerReceipt.PostedJournalId))
+            .Select(x => new BankDocumentLink(x.CustomerReceipt.PostedJournalId, "Invoice " + x.SalesInvoice.InvoiceNumber, "/o/" + OrganisationId + "/sales/" + x.SalesInvoiceId)).ToListAsync());
+        documentLinks.AddRange(await Db.SupplierBills.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && journalIds.Contains(x.PostedJournalId))
+            .Select(x => new BankDocumentLink(x.PostedJournalId, "Bill " + x.SupplierReference, "/o/" + OrganisationId + "/purchases/" + x.Id)).ToListAsync());
+        documentLinks.AddRange(await Db.SalesInvoices.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.PostedJournalId != null && journalIds.Contains(x.PostedJournalId.Value))
+            .Select(x => new BankDocumentLink(x.PostedJournalId!.Value, "Invoice " + x.InvoiceNumber, "/o/" + OrganisationId + "/sales/" + x.Id)).ToListAsync());
+        foreach (var statement in statementLines.Where(x => x.MatchedPostedJournalLineId != null))
+        {
+            var journal = matchedLines.FirstOrDefault(x => x.Id == statement.MatchedPostedJournalLineId)?.PostedJournalId;
+            var links = documentLinks.Where(x => x.JournalId == journal).DistinctBy(x => x.Url).ToList();
+            if (links.Count > 0) statementDocuments[statement.Id] = links;
+        }
+
         var allLines = await Db.PostedJournalLines.AsNoTracking().Include(x => x.LedgerAccount).Where(x => journalIds.Contains(x.PostedJournalId) && x.LedgerAccount.OrganisationId == OrganisationId).ToListAsync();
         var linesByJournal = allLines.GroupBy(x => x.PostedJournalId).ToDictionary(x => x.Key, x => x.ToList());
         var matchedJournals = matchedLines.ToDictionary(x => x.Id, x => x.PostedJournalId);
@@ -980,6 +1017,32 @@ reconciliationSessions =
                 }
             }
     }
+    private sealed record BankDocumentLink(Guid JournalId, string Label, string Url);
+    private Dictionary<Guid, List<BankDocumentLink>> statementDocuments = [];
+    private string? StatementDocumentLink(BankStatementLine item) =>
+        statementDocuments.TryGetValue(item.Id, out var documents) && documents.Count == 1 ? documents[0].Url : null;
+
+    private async Task LoadReferenceDocuments()
+    {
+        statementDocuments = [];
+        var bills = await Db.SupplierBills.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
+            .Select(x => new { x.Id, x.SupplierReference, x.BillNumber }).ToListAsync();
+        var invoices = await Db.SalesInvoices.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
+            .Select(x => new { x.Id, x.InvoiceNumber }).ToListAsync();
+        foreach (var statement in statementLines)
+        {
+            var links = statement.Amount < 0
+                ? bills.Where(x => BankDocumentReferenceMatcher.Matches(x.SupplierReference, statement.Description, statement.Reference) ||
+                    BankDocumentReferenceMatcher.Matches(x.BillNumber, statement.Description, statement.Reference))
+                    .Select(x => new BankDocumentLink(Guid.Empty, x.BillNumber + " · " + x.SupplierReference, $"/o/{OrganisationId}/purchases/{x.Id}")).ToList()
+                : invoices.Where(x => BankDocumentReferenceMatcher.Matches(x.InvoiceNumber, statement.Description, statement.Reference))
+                    .Select(x => new BankDocumentLink(Guid.Empty, x.InvoiceNumber, $"/o/{OrganisationId}/sales/{x.Id}")).ToList();
+            if (links.Count > 0) statementDocuments[statement.Id] = links;
+        }
+    }
+
     private decimal Balance(Guid accountId) => balances.GetValueOrDefault(accountId);
     private async Task AddBank()
 {
@@ -1780,6 +1843,20 @@ await Reload();
         CancelCoding();
         await LoadReconciliationPage(SelectedBankAccountIds());
         await LoadCodedAccounts();
+    }
+
+    private async Task OnReconciliationFromChanged()
+    {
+        if (reconciliationDateFrom is DateOnly from && reconciliationDateTo is DateOnly to && from > to)
+            reconciliationDateTo = new DateOnly(from.Year, from.Month, DateTime.DaysInMonth(from.Year, from.Month));
+        await OnReconciliationDateRangeChanged();
+    }
+
+    private async Task OnReconciliationToChanged()
+    {
+        if (reconciliationDateFrom is DateOnly from && reconciliationDateTo is DateOnly to && to < from)
+            reconciliationDateFrom = new DateOnly(to.Year, to.Month, 1);
+        await OnReconciliationDateRangeChanged();
     }
 
     private async Task OnReconciliationDateRangeChanged()

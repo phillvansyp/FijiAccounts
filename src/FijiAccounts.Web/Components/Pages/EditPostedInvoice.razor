@@ -1,0 +1,196 @@
+@page "/o/{OrganisationId:guid}/sales/{InvoiceId:guid}/correct"
+@page "/o/{OrganisationId:guid}/purchases/{BillId:guid}/edit"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Identity
+@using System.ComponentModel.DataAnnotations
+@inject ApplicationDbContext Db
+@inject TenantAccessService Access
+@inject TransactionCurrencyService Currencies
+@inject ProjectService Projects
+@inject UserManager<ApplicationUser> Users
+@inject AuthenticationStateProvider Authentication
+@inject IServiceScopeFactory Scopes
+@inject NavigationManager Navigation
+
+<PageTitle>Edit @(IsSales ? "invoice" : "supplier bill") - Account Island</PageTitle>
+<h1>Edit @(IsSales ? "sales invoice" : "supplier bill") @documentNumber</h1>
+@if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
+@if (ready)
+{
+    <p>Saving issues a corrected version with a new document number. The original remains in the history and its posting is reversed. No changes are made until you save.</p>
+    <EditForm Model="model" OnValidSubmit="Save" FormName="edit-posted-invoice">
+        <DataAnnotationsValidator /><ValidationSummary />
+        <fieldset disabled="saving">
+            <div class="edit-fields">
+                <label>@(IsSales ? "Customer" : "Supplier")<InputSelect class="form-select" @bind-Value="model.PartyId">@foreach (var party in parties) { <option value="@party.Id">@party.Name</option> }</InputSelect></label>
+                @if (!IsSales) { <label>Supplier invoice reference<InputText class="form-control" @bind-Value="model.Reference" /></label> }
+                <label>Invoice date<InputDate class="form-control" @bind-Value="model.Date" /></label>
+                <label>Due date<InputDate class="form-control" @bind-Value="model.DueDate" /></label>
+                <label>Currency<InputSelect class="form-select" @bind-Value="model.Currency" @bind-Value:after="CurrencyChanged">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code</option> }</InputSelect></label>
+                @if (model.Currency != baseCurrency) { <label>Exchange rate to @baseCurrency<InputNumber class="form-control" @bind-Value="model.ExchangeRate" step="0.00000001" /></label> }
+                <label>Branch and division<InputSelect class="form-select" @bind-Value="model.DivisionId" @bind-Value:after="DivisionChanged">@foreach (var branch in branches) { @foreach (var division in branch.Divisions.Where(x => x.IsActive)) { <option value="@division.Id">@branch.Code / @division.Code - @division.Name</option> } }</InputSelect></label>
+            </div>
+            <p class="text-muted">Unit prices exclude tax. Tax is recalculated when changes are saved.</p>
+            <CatalogProductPicker OrganisationId="OrganisationId" OnSelected="AddProduct" />
+            @foreach (var line in model.Lines)
+            {
+                <section class="edit-line" @key="line">
+                    <div class="edit-fields">
+                        <label class="description">Description<InputText class="form-control" @bind-Value="line.Description" /></label>
+                        @if (IsSales) { <label>Customer PO<InputText class="form-control" @bind-Value="line.PurchaseOrder" /></label> }
+                        <label>Quantity<InputNumber class="form-control" @bind-Value="line.Quantity" step="0.0001" /></label>
+                        <label>Unit price<InputNumber class="form-control" @bind-Value="line.Price" step="0.0001" /></label>
+                        <label>Tax<InputSelect class="form-select" @bind-Value="line.Tax">@foreach (var tax in Enum.GetValues<VatTreatment>()) { <option value="@tax">@tax</option> }</InputSelect></label>
+                        <label>Account<InputSelect class="form-select" @bind-Value="line.AccountId">@foreach (var account in accounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></label>
+                        <label>Project<InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => line.CostCodeId = null"><option value="">No project</option>@foreach (var project in projects.Where(x => x.DivisionId == model.DivisionId)) { <option value="@project.Id">@project.ProjectNumber - @project.Name</option> }</InputSelect></label>
+                        <label>Cost code<InputSelect class="form-select" @bind-Value="line.CostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in projects.FirstOrDefault(x => x.Id == line.ProjectId)?.CostCodes ?? []) { <option value="@costCode.Id">@costCode.Code - @costCode.Name</option> }</InputSelect></label>
+                    </div>
+                    @if (line.ProductId is not null) { <small>Linked catalogue item retained</small> }
+                    <button type="button" class="btn btn-outline-danger" disabled="@(model.Lines.Count == 1)" @onclick="() => model.Lines.Remove(line)">Remove line</button>
+                </section>
+            }
+            <button type="button" class="btn btn-outline-primary" @onclick="AddLine">Add line</button>
+            <div class="edit-summary"><strong>Subtotal: @model.Currency @model.Lines.Sum(x => x.Quantity * x.Price).ToString("N2")</strong></div>
+            <label class="w-100">Reason for edit<InputText class="form-control" @bind-Value="model.Reason" maxlength="300" /></label>
+            <div class="edit-actions"><button type="submit" class="btn btn-primary">@(saving ? "Saving..." : "Save changes")</button><a class="btn btn-outline-secondary" href="@ReturnUrl">Cancel</a></div>
+        </fieldset>
+    </EditForm>
+}
+else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back to document</a> }
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid? InvoiceId { get; set; }
+    [Parameter] public Guid? BillId { get; set; }
+    private bool IsSales => InvoiceId is not null;
+    private string ReturnUrl => $"/o/{OrganisationId}/{(IsSales ? "sales" : "purchases")}/{InvoiceId ?? BillId}";
+    private string userId = "", documentNumber = "", baseCurrency = "";
+    private bool ready, loaded, saving;
+    private string? error;
+    private EditModel model = new();
+    private List<BusinessParty> parties = [];
+    private List<LedgerAccount> accounts = [];
+    private List<Branch> branches = [];
+    private List<Project> projects = [];
+    private IReadOnlyList<CurrencyOption> currencies = [];
+
+    public override Task SetParametersAsync(ParameterView parameters)
+    {
+        InvoiceId = null;
+        BillId = null;
+        return base.SetParametersAsync(parameters);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        ready = false; loaded = false; error = null;
+        try
+        {
+            userId = Users.GetUserId((await Authentication.GetAuthenticationStateAsync()).User)!;
+            var access = await Access.FindAsync(userId, OrganisationId);
+            if (access is null || !await Access.CanPostJournalsAsync(userId, OrganisationId)) throw new UnauthorizedAccessException("You cannot edit invoices for this organisation.");
+            baseCurrency = access.Organisation.BaseCurrency;
+            Guid? branchId, divisionId;
+            if (IsSales)
+            {
+                var invoice = await Db.SalesInvoices.AsNoTracking().Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == InvoiceId && x.OrganisationId == OrganisationId) ?? throw new InvalidOperationException("Invoice not found.");
+                branchId = invoice.BranchId; divisionId = invoice.DivisionId;
+                await CheckDimension(branchId, divisionId);
+                if (invoice.Status != InvoiceStatus.Posted || invoice.AmountPaid != 0 || invoice.AmountCredited != 0) throw new InvalidOperationException("Full editing is available for unpaid posted invoices. Use the payment or credit correction workflow for this invoice.");
+                documentNumber = invoice.InvoiceNumber;
+                model = new() { PartyId = invoice.CustomerId, Date = invoice.IssueDate, DueDate = invoice.DueDate, Currency = invoice.Currency, ExchangeRate = invoice.ExchangeRateToBase, DivisionId = divisionId!.Value,
+                    Lines = invoice.Lines.Select(x => new EditLine { Description = x.Description, Quantity = x.Quantity, Price = x.TransactionUnitPrice, Tax = x.VatTreatment, AccountId = x.RevenueAccountId, ProductId = x.ProductItemId, PurchaseOrder = x.CustomerPurchaseOrderNumber, ProjectId = x.ProjectId, CostCodeId = x.ProjectCostCodeId }).ToList() };
+            }
+            else
+            {
+                var bill = await Db.SupplierBills.AsNoTracking().Include(x => x.Lines).SingleOrDefaultAsync(x => x.Id == BillId && x.OrganisationId == OrganisationId) ?? throw new InvalidOperationException("Supplier bill not found.");
+                branchId = bill.BranchId; divisionId = bill.DivisionId;
+                await CheckDimension(branchId, divisionId);
+                if (bill.Status != BillStatus.Posted || bill.AmountPaid != 0 || bill.AmountCredited != 0) throw new InvalidOperationException("Full editing is available for unpaid posted bills. Use the payment or credit correction workflow for this bill.");
+                documentNumber = bill.BillNumber;
+                model = new() { PartyId = bill.SupplierId, Reference = bill.SupplierReference, Date = bill.BillDate, DueDate = bill.DueDate, Currency = bill.Currency, ExchangeRate = bill.ExchangeRateToBase, DivisionId = divisionId!.Value,
+                    Lines = bill.Lines.Select(x => new EditLine { Description = x.Description, Quantity = x.Quantity, Price = x.TransactionUnitPrice, Tax = x.VatTreatment, AccountId = x.ExpenseAccountId, ProductId = x.ProductItemId, ProjectId = x.ProjectId, CostCodeId = x.ProjectCostCodeId }).ToList() };
+            }
+            var partyType = IsSales ? PartyType.Customer : PartyType.Supplier;
+            parties = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & partyType) != 0).OrderBy(x => x.Name).ToListAsync();
+            accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (IsSales ? x.Type == AccountType.Revenue : x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
+            branches = await Access.ListAccessibleBranchesAsync(userId, OrganisationId);
+            currencies = await Currencies.ListAsync(userId, OrganisationId);
+            projects = await Projects.ListAsync(userId, OrganisationId);
+            ready = true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { error = ex.Message; }
+        finally { loaded = true; }
+    }
+
+    private async Task CheckDimension(Guid? branchId, Guid? divisionId)
+    {
+        if (branchId is null || divisionId is null || !await Access.CanAccessDimensionAsync(userId, OrganisationId, branchId.Value, divisionId.Value)) throw new UnauthorizedAccessException("You do not have access to this invoice's branch and division.");
+    }
+    private void AddLine() => model.Lines.Add(new EditLine { AccountId = accounts.FirstOrDefault()?.Id ?? Guid.Empty });
+    private void AddProduct(ProductItem item) => model.Lines.Add(new EditLine
+    {
+        Description = string.IsNullOrWhiteSpace(item.Description) ? item.Name : item.Description,
+        Quantity = 1, ProductId = item.Id,
+        Price = IsSales ? item.SalePrice : item.PurchasePrice,
+        Tax = IsSales ? item.SaleTaxTreatment : item.PurchaseTaxTreatment,
+        AccountId = (IsSales ? item.RevenueAccountId : item.Kind == ProductKind.TrackedItem ? item.InventoryAccountId ?? item.ExpenseAccountId : item.ExpenseAccountId) ?? accounts.FirstOrDefault()?.Id ?? Guid.Empty
+    });
+    private void DivisionChanged() { foreach (var line in model.Lines) { line.ProjectId = null; line.CostCodeId = null; } }
+    private async Task CurrencyChanged() => model.ExchangeRate = model.Currency == baseCurrency ? 1 : await Currencies.FindRateAsync(userId, OrganisationId, model.Currency, model.Date) ?? 0;
+    private async Task Save()
+    {
+        if (saving) return;
+        saving = true; error = null;
+        try
+        {
+            await using var scope = Scopes.CreateAsyncScope();
+            var service = scope.ServiceProvider.GetRequiredService<InvoiceCorrectionService>();
+            Guid resultId;
+            if (IsSales)
+            {
+                var result = await service.CorrectSalesAsync(userId, InvoiceId!.Value, new SalesInvoiceRequest(OrganisationId, model.PartyId, model.Date, model.DueDate,
+                    model.Lines.Select(x => new SalesInvoiceLineRequest(x.Description, x.Quantity, x.Price, x.Tax, x.AccountId, x.ProductId, x.PurchaseOrder, x.ProjectId, x.CostCodeId)).ToList(), DivisionId: model.DivisionId, Currency: model.Currency, ExchangeRateToBase: model.ExchangeRate), model.Reason);
+                resultId = result.Id;
+            }
+            else
+            {
+                var result = await service.CorrectPurchaseAsync(userId, BillId!.Value, new SupplierBillRequest(OrganisationId, model.PartyId, model.Reference, model.Date, model.DueDate,
+                    model.Lines.Select(x => new SupplierBillLineRequest(x.Description, x.Quantity, x.Price, x.Tax, x.AccountId, x.ProductId, x.ProjectId, x.CostCodeId)).ToList(), DivisionId: model.DivisionId, Currency: model.Currency, ExchangeRateToBase: model.ExchangeRate), model.Reason);
+                resultId = result.Id;
+            }
+            Navigation.NavigateTo($"/o/{OrganisationId}/{(IsSales ? "sales" : "purchases")}/{resultId}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { error = ex.Message; }
+        finally { saving = false; }
+    }
+    private sealed class EditModel
+    {
+        public Guid PartyId { get; set; }
+        public string Reference { get; set; } = "";
+        public DateOnly Date { get; set; }
+        public DateOnly DueDate { get; set; }
+        public Guid DivisionId { get; set; }
+        public string Currency { get; set; } = "";
+        public decimal ExchangeRate { get; set; }
+        [Required, StringLength(300)] public string Reason { get; set; } = "";
+        public List<EditLine> Lines { get; set; } = [];
+    }
+    private sealed class EditLine
+    {
+        public string Description { get; set; } = "";
+        public decimal Quantity { get; set; } = 1;
+        public decimal Price { get; set; }
+        public VatTreatment Tax { get; set; }
+        public Guid AccountId { get; set; }
+        public Guid? ProductId { get; set; }
+        public string? PurchaseOrder { get; set; }
+        public Guid? ProjectId { get; set; }
+        public Guid? CostCodeId { get; set; }
+    }
+}

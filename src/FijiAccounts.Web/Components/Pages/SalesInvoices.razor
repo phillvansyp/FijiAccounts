@@ -402,6 +402,7 @@ else
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "search")] public string? ReferenceSearch { get; set; }
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access;
     private string userId = string.Empty;
@@ -425,6 +426,8 @@ else
     private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
     {
+        invoiceSearch = ReferenceSearch ?? string.Empty;
+
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
@@ -455,7 +458,7 @@ else
                 .Include(x => x.Lines)
                 .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
                 .OrderByDescending(x => x.SequenceNumber)
-                .Take(100)
+                .Take(ReferenceSearch is null ? 100 : int.MaxValue)
                 .ToListAsync();
 
         recurringInvoices =

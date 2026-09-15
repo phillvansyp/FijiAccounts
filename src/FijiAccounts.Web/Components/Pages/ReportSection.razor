@@ -21,7 +21,11 @@
                 </span>
 
                 <strong class="@(row.DisplayAmount < 0 ? "negative" : null)">
-                    @Money(row.DisplayAmount)
+                    @if (DetailUrl is not null)
+                    {
+                        <a href="@DetailUrl(row)" rel="noopener" title="View transactions">@Money(row.DisplayAmount)</a>
+                    }
+                    else { @Money(row.DisplayAmount) }
                 </strong>
             </div>
         }
@@ -51,6 +55,8 @@
 
     [Parameter]
     public bool ShowDecimals { get; set; } = true;
+
+    [Parameter] public Func<FinancialAccountBalance, string>? DetailUrl { get; set; }
 
     private string Money(decimal value) =>
         ShowDecimals

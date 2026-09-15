@@ -131,7 +131,7 @@ public sealed class SalesInvoiceEmailSenderTests
         Assert.Contains("Project", text);
         Assert.Contains("Customer PO", text);
         Assert.Contains("Zero-rated 0%", text);
-        Assert.Contains("Powered by www.accountisland.com", text);
+        Assert.Contains("Powered by Account Island", text);
     }
 
     [Fact]

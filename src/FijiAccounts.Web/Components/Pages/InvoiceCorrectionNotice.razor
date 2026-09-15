@@ -1,0 +1,30 @@
+@using FijiAccounts.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory Scopes
+
+@foreach (var correction in history)
+{
+    var original = correction.OriginalId == DocumentId;
+    <div class="alert alert-info no-print">
+        @(original ? "Replaced by" : "Corrects")
+        <a href="/o/@OrganisationId/@(IsSales ? "sales" : "purchases")/@(original ? correction.ReplacementId : correction.OriginalId)">@(original ? correction.ReplacementNumber : correction.OriginalNumber)</a>.
+        Reason: @correction.Reason
+    </div>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public bool IsSales { get; set; }
+    private List<InvoiceCorrectionHistory> history = [];
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var scope = Scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<FijiAccounts.Web.Data.ApplicationDbContext>();
+        var entity = IsSales ? "SalesInvoice" : "SupplierBill";
+        var id = DocumentId.ToString();
+        var events = await db.AuditEvents.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.EntityType == entity && x.EntityId == id && x.EventType == "InvoiceCorrection").Select(x => x.JsonData).ToListAsync();
+        history = events.Select(x => JsonSerializer.Deserialize<InvoiceCorrectionHistory>(x)!).ToList();
+    }
+}

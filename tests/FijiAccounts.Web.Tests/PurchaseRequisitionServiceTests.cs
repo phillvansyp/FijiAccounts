@@ -237,7 +237,7 @@ public sealed class PurchaseRequisitionServiceTests
             division.Id,
             test.Supplier.Id,
             new DateOnly(2026, 8, 24),
-            new DateOnly(2026, 9, 7),
+            DateOnly.FromDateTime(DateTime.UtcNow).AddDays(14),
             "Replace office supplies",
             [new PurchaseRequisitionLineRequest("Office supplies", 2m, 50m, test.Account("6500").Id)]);
     }
