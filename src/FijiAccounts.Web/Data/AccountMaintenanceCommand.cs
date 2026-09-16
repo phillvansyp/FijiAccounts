@@ -15,6 +15,19 @@ public static class AccountMaintenanceCommand
         WebApplication app,
         IReadOnlyList<string> arguments)
     {
+        if (arguments.Count > 0 && arguments[0] == "separate-payroll-accounts")
+        {
+            if (arguments.Count != 2 || arguments[1] is not ("preview" or "apply"))
+                throw new InvalidOperationException("Usage: separate-payroll-accounts preview|apply, with a reviewed JSON plan on stdin.");
+            var json = await Console.In.ReadToEndAsync();
+            var plan = System.Text.Json.JsonSerializer.Deserialize<PayrollAccountSeparationPlan>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Payroll account plan required.");
+            await using var payrollScope = app.Services.CreateAsyncScope();
+            Console.WriteLine(await payrollScope.ServiceProvider.GetRequiredService<PayrollAccountSeparationService>()
+                .RunAsync(plan, arguments[1] == "apply"));
+            return true;
+        }
         if (arguments.Count > 0 && arguments[0] == "repair-bank-ledger")
         {
             if (arguments.Count != 2 || arguments[1] is not ("preview" or "apply"))

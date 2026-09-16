@@ -317,6 +317,7 @@ builder.Services.AddScoped<IntercompanyReconciliationService>();
 builder.Services.AddScoped<BankReconciliationService>();
 builder.Services.AddScoped<BankReconciliationSessionService>();
  builder.Services.AddScoped<BankLedgerRepairService>();
+builder.Services.AddScoped<PayrollAccountSeparationService>();
 builder.Services.AddScoped<BankAccountService>();
 builder.Services.AddScoped<DemoDataService>();
 builder.Services.AddScoped<PlatformAdminAccessService>();
