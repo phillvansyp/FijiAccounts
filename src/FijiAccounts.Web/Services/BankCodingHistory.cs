@@ -21,6 +21,10 @@ public static class BankCodingHistory
                 if (document.RootElement.TryGetProperty(name, out var id) && id.ValueKind == JsonValueKind.String && id.TryGetGuid(out var parsed))
                     ids.Add(parsed);
         }
+        var reversals = await db.SupplierPaymentReversals.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId)
+            .Select(x => new { Original = x.SupplierPayment.PostedJournalId, Reversal = x.PostedJournalId }).ToListAsync(ct);
+        foreach (var reversal in reversals) { ids.Add(reversal.Original); ids.Add(reversal.Reversal); }
         return ids;
     }
 }

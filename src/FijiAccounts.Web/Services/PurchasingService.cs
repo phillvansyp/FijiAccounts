@@ -938,7 +938,8 @@ public sealed class PurchasingService(
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == payment.PostedJournalId && x.OrganisationId == organisationId, ct);
         var originalLineIds = original.Lines.Select(x => x.Id).ToList();
         var matchedStatements = await db.BankStatementLines.Where(x => x.OrganisationId == organisationId &&
-            x.MatchedPostedJournalLineId.HasValue && originalLineIds.Contains(x.MatchedPostedJournalLineId.Value))
+            ((x.MatchedPostedJournalLineId.HasValue && originalLineIds.Contains(x.MatchedPostedJournalLineId.Value)) ||
+                db.BankStatementAdditionalMatches.Any(m => m.BankStatementLineId == x.Id && originalLineIds.Contains(m.PostedJournalLineId))))
             .Select(x => x.Id).ToListAsync(ct);
         foreach (var statementId in matchedStatements)
             await reconciliation.UnreconcileAsync(userId, organisationId, statementId,

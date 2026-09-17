@@ -117,6 +117,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<SupplierCreditNote> SupplierCreditNotes => Set<SupplierCreditNote>();
     public DbSet<SupplierCreditNoteReversal> SupplierCreditNoteReversals =>
     Set<SupplierCreditNoteReversal>();
+    public DbSet<BankStatementAdditionalMatch> BankStatementAdditionalMatches => Set<BankStatementAdditionalMatch>();
     public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
     public DbSet<BankStatementImportDocument> BankStatementImportDocuments =>
         Set<BankStatementImportDocument>();
@@ -1087,6 +1088,9 @@ builder.Entity<SupplierCreditNoteReversal>()
     .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPayment>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierPaymentReversal>().HasIndex(x => x.SupplierPaymentId).IsUnique(); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.SupplierPayment).WithMany().HasForeignKey(x => x.SupplierPaymentId).OnDelete(DeleteBehavior.Restrict); builder.Entity<SupplierPaymentReversal>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankStatementAdditionalMatch>().HasKey(x => x.PostedJournalLineId);
+        builder.Entity<BankStatementAdditionalMatch>().HasOne(x => x.BankStatementLine).WithMany().HasForeignKey(x => x.BankStatementLineId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<BankStatementAdditionalMatch>().HasOne(x => x.PostedJournalLine).WithMany().HasForeignKey(x => x.PostedJournalLineId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankStatementLine>().Property(x => x.Amount).HasPrecision(18, 2);
         builder.Entity<BankStatementLine>().HasIndex(x => new { x.OrganisationId, x.BankAccountId, x.TransactionDate });
         builder.Entity<BankStatementLine>().HasIndex(x => x.MatchedPostedJournalLineId).IsUnique();

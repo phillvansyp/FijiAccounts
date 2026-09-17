@@ -540,6 +540,31 @@ else
             {
                 <div class="alert @statusClass mx-3 mb-3" role="status">@status</div>
             }
+            @if (canReconcile && item.ReconciledAt is null && item.Amount < 0)
+            {
+                <button class="btn btn-sm btn-outline-primary m-2" @onclick="() => OpenMultipleMatch(item)">Match multiple bill payments</button>
+            }
+            @if (multipleStatementId == item.Id)
+            {
+                <div class="card p-3 m-3">
+                    <h3>Match existing bill payments</h3>
+                    <p>Select payments for this bank transaction. Only unmatched payments from this account and month are shown.</p>
+                    <input class="form-control mb-2" aria-label="Search bill payments" placeholder="Search supplier, bill or reference" @bind="multipleSearch" @bind:event="oninput" />
+                    @if (multipleCandidates.Count == 0) { <p>No eligible bill payments found.</p> }
+                    @foreach (var payment in multipleCandidates.Where(x => string.IsNullOrWhiteSpace(multipleSearch) || x.Label.Contains(multipleSearch, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        <label class="d-flex gap-3 p-2 border-bottom">
+                            <input type="checkbox" checked="@multipleSelected.Contains(payment.LineId)" disabled="@savingMultiple" @onchange="() => ToggleMultiple(payment.LineId)" />
+                            <span>@payment.Date.ToString("dd MMM yyyy")  -  <a href="@payment.Url">@payment.Label</a></span>
+                            <strong class="ms-auto">@payment.Amount.ToString("N2")</strong>
+                        </label>
+                    }
+                    <p class="mt-3">Bank payment: <strong>@Math.Abs(item.Amount).ToString("N2")</strong>  -  Selected: <strong>@MultipleTotal.ToString("N2")</strong>  -  Remaining: <strong>@((Math.Abs(item.Amount) - MultipleTotal).ToString("N2"))</strong></p>
+                    @if (multipleError is not null) { <div class="alert alert-danger" role="alert">@multipleError</div> }
+                    <div><button class="btn btn-primary" disabled="@(savingMultiple || multipleSelected.Count < 2 || MultipleTotal != Math.Abs(item.Amount))" @onclick="() => SaveMultipleMatch(item)">Match selected payments</button>
+                    <button class="btn btn-outline-secondary ms-2" disabled="@savingMultiple" @onclick="() => multipleStatementId = null">Cancel</button></div>
+                </div>
+            }
             @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
             {
                 <div class="alert alert-info mx-3 mb-3 d-flex justify-content-between align-items-center gap-3">
@@ -988,7 +1013,7 @@ reconciliationSessions =
                 x.PostedJournal.EntryDate >= firstDate &&
                 x.PostedJournal.EntryDate <= lastDate &&
                 !Db.BankStatementLines.Any(statement =>
-                    statement.MatchedPostedJournalLineId == x.Id))
+                    statement.MatchedPostedJournalLineId == x.Id) && !Db.BankStatementAdditionalMatches.Any(m => m.PostedJournalLineId == x.Id))
             .OrderByDescending(x => x.PostedJournal.EntryDate)
             .ThenByDescending(x => x.PostedJournal.SequenceNumber)
             .ToListAsync();
@@ -999,7 +1024,9 @@ reconciliationSessions =
         await LoadReferenceDocuments();
         codedAccounts = [];
         codedVat = [];
-        var matchedIds = statementLines.Where(x => x.MatchedPostedJournalLineId.HasValue).Select(x => x.MatchedPostedJournalLineId!.Value).ToArray();
+        var statementIds = statementLines.Select(x => x.Id).ToArray();
+        var additionalMatches = await Db.BankStatementAdditionalMatches.AsNoTracking().Where(x => statementIds.Contains(x.BankStatementLineId)).ToListAsync();
+        var matchedIds = statementLines.Where(x => x.MatchedPostedJournalLineId.HasValue).Select(x => x.MatchedPostedJournalLineId!.Value).Concat(additionalMatches.Select(x => x.PostedJournalLineId)).Distinct().ToArray();
         if (matchedIds.Length == 0) return;
         var matchedLines = await Db.PostedJournalLines.AsNoTracking().Where(x => matchedIds.Contains(x.Id)).Select(x => new { x.Id, x.PostedJournalId }).ToListAsync();
         var journalIds = matchedLines.Select(x => x.PostedJournalId).Distinct().ToArray();
@@ -1015,7 +1042,9 @@ reconciliationSessions =
         foreach (var statement in statementLines.Where(x => x.MatchedPostedJournalLineId != null))
         {
             var journal = matchedLines.FirstOrDefault(x => x.Id == statement.MatchedPostedJournalLineId)?.PostedJournalId;
-            var links = documentLinks.Where(x => x.JournalId == journal).DistinctBy(x => x.Url).ToList();
+            var extraIds = additionalMatches.Where(x => x.BankStatementLineId == statement.Id).Select(x => x.PostedJournalLineId).ToHashSet();
+            var extraJournals = matchedLines.Where(x => extraIds.Contains(x.Id)).Select(x => x.PostedJournalId).ToHashSet();
+            var links = documentLinks.Where(x => x.JournalId == journal || extraJournals.Contains(x.JournalId)).DistinctBy(x => x.Url).ToList();
             if (links.Count > 0) statementDocuments[statement.Id] = links;
         }
 
@@ -1125,6 +1154,52 @@ reconciliationSessions =
     }
 }
     private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private Guid? multipleStatementId;
+    private string multipleSearch = "";
+    private string? multipleError;
+    private bool savingMultiple;
+    private HashSet<Guid> multipleSelected = [];
+    private List<MultiplePaymentOption> multipleCandidates = [];
+    private sealed record MultiplePaymentOption(Guid LineId, DateOnly Date, string Label, string Url, decimal Amount);
+    private decimal MultipleTotal => multipleCandidates.Where(x => multipleSelected.Contains(x.LineId)).Sum(x => x.Amount);
+    private void ToggleMultiple(Guid id) { if (!multipleSelected.Add(id)) multipleSelected.Remove(id); }
+    private async Task OpenMultipleMatch(BankStatementLine item)
+    {
+        multipleStatementId = item.Id; multipleSearch = ""; multipleError = null; multipleSelected.Clear(); multipleCandidates.Clear();
+        try
+        {
+            var start = new DateOnly(item.TransactionDate.Year, item.TransactionDate.Month, 1);
+            var end = start.AddMonths(1);
+            var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(Db, OrganisationId);
+            multipleCandidates = await (from line in Db.PostedJournalLines.AsNoTracking()
+                join payment in Db.SupplierPayments.AsNoTracking() on line.PostedJournalId equals payment.PostedJournalId
+                where payment.OrganisationId == OrganisationId && line.LedgerAccountId == item.BankAccountId &&
+                    line.DivisionId != null && accessibleDivisionIds.Contains(line.DivisionId.Value) &&
+                    payment.PaymentDate >= start && payment.PaymentDate < end && line.Credit > line.Debit &&
+                    !excluded.Contains(line.PostedJournalId) &&
+                    !Db.BankStatementLines.Any(x => x.MatchedPostedJournalLineId == line.Id) &&
+                    !Db.BankStatementAdditionalMatches.Any(x => x.PostedJournalLineId == line.Id)
+                orderby payment.PaymentDate, payment.SupplierBill.BillNumber
+                select new MultiplePaymentOption(line.Id, payment.PaymentDate,
+                    payment.SupplierBill.BillNumber + "  -  " + payment.Supplier.Name + "  -  " + payment.SupplierBill.SupplierReference,
+                    "/o/" + OrganisationId + "/purchases/" + payment.SupplierBillId, line.Credit - line.Debit)).ToListAsync();
+        }
+        catch (Exception ex) { multipleError = ex.Message; }
+    }
+    private async Task SaveMultipleMatch(BankStatementLine item)
+    {
+        if (savingMultiple) return;
+        savingMultiple = true; multipleError = null;
+        try
+        {
+            await Reconciliation.ReconcileManyAsync(userId, OrganisationId, item.Id, multipleSelected.ToArray());
+            multipleStatementId = null; status = "Selected bill payments matched. No new payment was created."; statusClass = "alert-success";
+            await Reload();
+        }
+        catch (Exception ex) { multipleError = ex.Message; }
+        finally { savingMultiple = false; }
+    }
+
     private PostedJournalLine? SuggestedMatch(BankStatementLine item)
     {
         var candidates =

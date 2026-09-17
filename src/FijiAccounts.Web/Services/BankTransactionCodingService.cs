@@ -251,7 +251,7 @@ if (completedReconciliationExists)
                 !x.PostedJournal.Description!.StartsWith("Coded from bank statement") &&
                 !x.PostedJournal.Reference.StartsWith("REV-BANK-") &&
                 !db.BankStatementLines.Any(s =>
-                    s.MatchedPostedJournalLineId == x.Id))
+                    s.MatchedPostedJournalLineId == x.Id) && !db.BankStatementAdditionalMatches.Any(m => m.PostedJournalLineId == x.Id))
             .FirstOrDefaultAsync(x =>
                 x.Debit - x.Credit >= roundedStatementAmount - 0.01m &&
                 x.Debit - x.Credit <= roundedStatementAmount + 0.01m,

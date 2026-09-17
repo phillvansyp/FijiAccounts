@@ -121,3 +121,13 @@ public sealed class BankTransferReversal
     [MaxLength(450)]
     public required string CreatedByUserId { get; set; }
 }
+
+// Additional members of a combined match. The first member stays on BankStatementLine
+// for compatibility with existing single-payment reconciliation workflows.
+public sealed class BankStatementAdditionalMatch
+{
+    public Guid PostedJournalLineId { get; set; }
+    public PostedJournalLine PostedJournalLine { get; set; } = null!;
+    public Guid BankStatementLineId { get; set; }
+    public BankStatementLine BankStatementLine { get; set; } = null!;
+}
