@@ -22,7 +22,7 @@ public sealed class BankTransactionCodingService(
     JournalPostingService posting,
     BankReconciliationService reconciliation)
 {
-    public async Task ReopenCodingAsync(
+    public async Task<bool> ReopenCodingAsync(
         string userId,
         Guid organisationId,
         Guid statementLineId,
@@ -82,8 +82,12 @@ if (completedReconciliationExists)
                 "Coded from bank statement",
                 StringComparison.OrdinalIgnoreCase) ?? false))
         {
-            throw new InvalidOperationException(
-                "Only transactions created by bank coding can be changed here.");
+            // Payments and other existing journals belong to their source document.
+            // Editing a reconciliation removes only the match, not the payment.
+            await reconciliation.UnreconcileAsync(userId, organisationId, statementLineId,
+                "Removed existing transaction match to select the correct transaction.", ct);
+            await transaction.CommitAsync(ct);
+            return false;
         }
 
         var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
@@ -194,6 +198,7 @@ if (completedReconciliationExists)
 
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        return true;
     }
 
     public async Task<PostedJournal> PostAndReconcileAsync(

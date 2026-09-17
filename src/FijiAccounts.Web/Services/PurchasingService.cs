@@ -938,6 +938,13 @@ public sealed class PurchasingService(
         }
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == payment.PostedJournalId && x.OrganisationId == organisationId, ct);
+        var originalLineIds = original.Lines.Select(x => x.Id).ToList();
+        var matchedStatements = await db.BankStatementLines.Where(x => x.OrganisationId == organisationId &&
+            x.MatchedPostedJournalLineId.HasValue && originalLineIds.Contains(x.MatchedPostedJournalLineId.Value))
+            .Select(x => x.Id).ToListAsync(ct);
+        foreach (var statementId in matchedStatements)
+            await reconciliation.UnreconcileAsync(userId, organisationId, statementId,
+                $"Supplier payment reversed: {reason.Trim()}", ct);
         var reference = $"REV-{payment.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse payment {payment.Reference}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse supplier payment: {reason.Trim()}", lines), ct);
         var reversal = new SupplierPaymentReversal { OrganisationId = organisationId, SupplierPaymentId = payment.Id, ReversalDate = reversalDate, Reason = reason.Trim(), PostedJournalId = journal.Id, CreatedByUserId = userId };

@@ -536,6 +536,10 @@ else
         </div>
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>@(HasActiveReconciliationFilters ? "No statement lines match the selected filters." : "Add a statement line to begin reconciling.")</span></div> }
         else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@if (StatementDocumentLink(item) is string documentUrl) { <a href="@documentUrl" title="Open invoice or bill">@item.Description</a> } else { @item.Description }</strong>@if (statementDocuments.TryGetValue(item.Id, out var linkedDocuments) && linkedDocuments.Count > 1) { @foreach (var document in linkedDocuments) { <small><a href="@document.Url">@document.Label</a></small> } }<small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action">@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile && SuggestedSupplierBill(item) is null) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>@(SuggestedSupplierBill(item) is not null ? "Existing bill found" : "No exact match")</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
+            @if (changedStatementId == item.Id && status is not null)
+            {
+                <div class="alert @statusClass mx-3 mb-3" role="status">@status</div>
+            }
             @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
             {
                 <div class="alert alert-info mx-3 mb-3 d-flex justify-content-between align-items-center gap-3">
@@ -1481,13 +1485,25 @@ reconciliationSessions =
     private string SuggestedCodingAccount(BankStatementLine item) { var preferredType = item.Amount < 0 ? AccountType.Expense : AccountType.Revenue; return codingAccounts.FirstOrDefault(x => x.Type == preferredType)?.Code ?? codingAccounts.FirstOrDefault()?.Code ?? ""; }
     private LedgerAccount? CodedAccount(BankStatementLine item) => codedAccounts.GetValueOrDefault(item.Id);
     private CodedVatInfo CodedVat(BankStatementLine item) => codedVat.GetValueOrDefault(item.Id) ?? new(0m, item.ReconciledAt is null ? "Not coded" : "No VAT");
+    private Guid? changedStatementId;
+    private bool changingCoding;
     private async Task ChangeCoding(BankStatementLine item)
     {
+        if (changingCoding) return;
+        changingCoding = true;
+        changedStatementId = item.Id;
         try
         {
             var previousAccount = CodedAccount(item);
-            await TransactionCoding.ReopenCodingAsync(userId, OrganisationId, item.Id);
+            var reversed = await TransactionCoding.ReopenCodingAsync(userId, OrganisationId, item.Id);
             await Reload();
+            if (!reversed)
+            {
+                codingStatementId = null;
+                statusClass = "alert-warning";
+                status = "Previous match removed. Choose the correct transaction. The original payment is still recorded; open its invoice or bill to change or reverse it.";
+                return;
+            }
             await BeginCoding(statementLines.Single(x => x.Id == item.Id));
             if (previousAccount is not null && !previousAccount.IsBankAccount)
             {
@@ -1508,6 +1524,7 @@ reconciliationSessions =
             statusClass = "alert-danger";
             status = $"Could not change coding: {ex.Message}";
         }
+        finally { changingCoding = false; }
     }
     private async Task<LedgerAccount?> FindCodedAccount(Guid? matchedLineId, BankStatementLine? statementLine = null)
     {

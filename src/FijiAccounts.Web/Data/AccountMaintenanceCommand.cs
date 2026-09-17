@@ -15,6 +15,34 @@ public static class AccountMaintenanceCommand
         WebApplication app,
         IReadOnlyList<string> arguments)
     {
+        if (arguments.Count > 0 && arguments[0] == "reverse-supplier-payment")
+        {
+            if (arguments.Count != 1) throw new InvalidOperationException("Provide the payment correction as JSON on stdin.");
+            var json = await Console.In.ReadToEndAsync();
+            var request = System.Text.Json.JsonSerializer.Deserialize<SupplierPaymentCorrection>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Payment correction required.");
+            await using var paymentScope = app.Services.CreateAsyncScope();
+            var db = paymentScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var access = paymentScope.ServiceProvider.GetRequiredService<TenantAccessService>();
+            if (!await access.CanManageTeamAsync(request.UserId, request.OrganisationId) ||
+                !await access.CanPostJournalsAsync(request.UserId, request.OrganisationId))
+                throw new UnauthorizedAccessException("An authorised organisation administrator must run this correction.");
+            var payment = await db.SupplierPayments.AsNoTracking().SingleAsync(x =>
+                x.Id == request.PaymentId && x.OrganisationId == request.OrganisationId);
+            if (payment.SupplierBillId != request.BillId || payment.Amount != request.ExpectedAmount ||
+                payment.PaymentDate != request.PaymentDate || string.IsNullOrWhiteSpace(request.Reason))
+                throw new InvalidOperationException("The payment does not match the reviewed correction.");
+            if (await db.SupplierPaymentReversals.AnyAsync(x => x.SupplierPaymentId == payment.Id))
+            {
+                Console.WriteLine("Payment already reversed; no changes made.");
+                return true;
+            }
+            await paymentScope.ServiceProvider.GetRequiredService<PurchasingService>().ReversePaymentAsync(
+                request.UserId, request.OrganisationId, request.PaymentId, request.PaymentDate, request.Reason);
+            Console.WriteLine("Incorrect supplier payment reversed and bank matches removed. Bill retained.");
+            return true;
+        }
         if (arguments.Count > 0 && arguments[0] == "separate-payroll-accounts")
         {
             if (arguments.Count != 2 || arguments[1] is not ("preview" or "apply"))
@@ -192,3 +220,5 @@ public static class AccountMaintenanceCommand
             cancellationToken);
     }
 }
+
+public sealed record SupplierPaymentCorrection(string UserId, Guid OrganisationId, Guid PaymentId, Guid BillId, decimal ExpectedAmount, DateOnly PaymentDate, string Reason);
