@@ -101,6 +101,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     Set<RecurringSupplierBillGeneration>();
     public DbSet<SupplierBillVoid> SupplierBillVoids =>
     Set<SupplierBillVoid>();
+    public DbSet<SupplierBillReinstatement> SupplierBillReinstatements =>
+        Set<SupplierBillReinstatement>();
     public DbSet<SupplierBillLine> SupplierBillLines => Set<SupplierBillLine>();
     public DbSet<SupplierBillAttachment> SupplierBillAttachments => Set<SupplierBillAttachment>();
     public DbSet<SupplierBillDraft> SupplierBillDrafts => Set<SupplierBillDraft>();
@@ -660,6 +662,27 @@ builder.Entity<SupplierBillVoid>()
     .WithMany()
     .HasForeignKey(x => x.SupplierBillId)
     .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillReinstatement>()
+            .HasIndex(x => x.SupplierBillId)
+            .IsUnique();
+        builder.Entity<SupplierBillReinstatement>()
+            .HasIndex(x => x.SupplierBillVoidId)
+            .IsUnique();
+        builder.Entity<SupplierBillReinstatement>()
+            .HasOne(x => x.SupplierBill)
+            .WithMany()
+            .HasForeignKey(x => x.SupplierBillId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillReinstatement>()
+            .HasOne(x => x.SupplierBillVoid)
+            .WithMany()
+            .HasForeignKey(x => x.SupplierBillVoidId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierBillReinstatement>()
+            .HasOne(x => x.PostedJournal)
+            .WithMany()
+            .HasForeignKey(x => x.PostedJournalId)
+            .OnDelete(DeleteBehavior.Restrict);
 
 builder.Entity<SupplierBillVoid>()
     .HasOne(x => x.PostedJournal)
@@ -1492,6 +1515,8 @@ builder.Entity<FixedAsset>()
             (x.State == EntityState.Deleted && x.Entity.Status != SalesInvoiceVoidStatus.Draft) ||
             (x.State == EntityState.Modified && x.Property(y => y.Status).OriginalValue != SalesInvoiceVoidStatus.Draft)) ||
     ChangeTracker.Entries<SupplierBillVoid>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<SupplierBillReinstatement>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<SalesCreditNoteReversal>()
         .Any(x =>

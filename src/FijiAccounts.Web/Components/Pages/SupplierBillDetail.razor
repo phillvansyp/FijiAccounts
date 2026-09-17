@@ -170,6 +170,13 @@ else
                     </button>
                 }
 
+                @if (canManage && bill.Status == BillStatus.Voided)
+                {
+                    <button class="btn btn-primary" @onclick="OpenReinstatement">
+                        Reinstate bill
+                    </button>
+                }
+
                 <button class="btn btn-outline-secondary" onclick="window.print()">
                     Print / Save PDF
                 </button>
@@ -345,6 +352,37 @@ else
                     <div class="col-md-3 d-flex align-items-end gap-2">
                         <button class="btn btn-danger" @onclick="VoidBill">Confirm void</button>
                         <button class="btn btn-outline-secondary" @onclick="() => showVoid = false">Cancel</button>
+                    </div>
+                </div>
+            </section>
+        }
+
+        @if (showReinstatement)
+        {
+            <section class="action-card no-print">
+                <div class="action-card-heading">
+                    <span class="eyebrow">Reinstate bill</span>
+                    <h2>Reinstate supplier bill</h2>
+                    <p>This restores the original bill, posts a new journal to reverse the void, and keeps both actions in the audit trail.</p>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Reinstatement date</label>
+                        <InputDate class="form-control" @bind-Value="reinstatementDate" />
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">Reason</label>
+                        <input class="form-control"
+                               placeholder="Why is this bill being reinstated?"
+                               @bind="reinstatementReason"
+                               @bind:event="oninput" />
+                    </div>
+
+                    <div class="col-md-3 d-flex align-items-end gap-2">
+                        <button class="btn btn-primary" @onclick="ReinstateBill">Confirm reinstatement</button>
+                        <button class="btn btn-outline-secondary" @onclick="() => showReinstatement = false">Cancel</button>
                     </div>
                 </div>
             </section>
@@ -1101,6 +1139,7 @@ else
     private string userId = "";
     private bool canManage;
     private bool showVoid;
+    private bool showReinstatement;
     private bool showCredit;
     private bool showAttachmentMenu;
     private bool uploadingDocument;
@@ -1114,6 +1153,8 @@ else
 
     private DateOnly voidDate = DateOnly.FromDateTime(DateTime.Today);
     private string voidReason = "";
+    private DateOnly reinstatementDate = DateOnly.FromDateTime(DateTime.Today);
+    private string reinstatementReason = "";
 
     private DateOnly creditDate = DateOnly.FromDateTime(DateTime.Today);
     private string creditReason = "";
@@ -1212,6 +1253,7 @@ private string paymentRejectionReason = "";
     showPayment = true;
     showCredit = false;
     showVoid = false;
+    showReinstatement = false;
     reversingPaymentId = null;
     reversingCreditId = null;
 
@@ -1556,6 +1598,7 @@ creditReversals =
     {
         showCredit = true;
         showVoid = false;
+        showReinstatement = false;
 
         creditDate = DateOnly.FromDateTime(DateTime.Today);
         creditReason = "";
@@ -1620,12 +1663,48 @@ creditReversals =
         }
     }
 
+    private void OpenReinstatement()
+    {
+        showReinstatement = true;
+        showVoid = false;
+        showCredit = false;
+        reversingPaymentId = null;
+        reversingCreditId = null;
+        reinstatementDate = DateOnly.FromDateTime(DateTime.Today);
+        reinstatementReason = "";
+    }
+
+    private async Task ReinstateBill()
+    {
+        try
+        {
+            await Purchasing.ReinstateBillAsync(
+                userId,
+                OrganisationId,
+                BillId,
+                reinstatementDate,
+                reinstatementReason);
+
+            showReinstatement = false;
+            statusClass = "alert-success";
+            status = "Supplier bill reinstated. The void remains in the audit trail and the bill is available for payment again.";
+            await Reload();
+        }
+        catch (Exception ex)
+            when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
+
     private void OpenPaymentReversal(Guid id)
     {
         reversingPaymentId = id;
         paymentReversalReason = "";
         paymentReversalDate = DateOnly.FromDateTime(DateTime.Today);
         showVoid = false;
+        showReinstatement = false;
         showCredit = false;
     }
 
@@ -1736,6 +1815,7 @@ private void ToggleAttachmentUploader()
 
     showCredit = false;
     showVoid = false;
+    showReinstatement = false;
     reversingPaymentId = null;
 }
 

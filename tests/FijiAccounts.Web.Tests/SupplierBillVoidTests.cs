@@ -95,8 +95,63 @@ public sealed class SupplierBillVoidTests
             0m,
             await test.AccountBalanceAsync("2000"));
     }
+
     [Fact]
-    public async Task VoidSupplierBill_WithTrackedPurchase_RestoresOriginalInventoryPosition()
+    public async Task ReinstateSupplierBill_RepostsBalancesAndPreservesVoidAuditTrail()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bill = await test.Purchasing.PostBillAsync(
+            test.UserId,
+            new SupplierBillRequest(
+                test.Organisation.Id,
+                test.Supplier.Id,
+                "SUP-REINSTATE-001",
+                new DateOnly(2026, 8, 18),
+                new DateOnly(2026, 9, 17),
+                [new SupplierBillLineRequest(
+                    "Office supplies",
+                    1m,
+                    100m,
+                    VatTreatment.Standard,
+                    test.Account("6500").Id)]));
+
+        await test.Purchasing.VoidBillAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            new DateOnly(2026, 8, 19),
+            "Entered as void by mistake");
+
+        await test.Purchasing.ReinstateBillAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            new DateOnly(2026, 8, 20),
+            "Original supplier invoice remains payable");
+
+        var reloaded = await test.Db.SupplierBills
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == bill.Id);
+        var reinstatement = await test.Db.SupplierBillReinstatements
+            .AsNoTracking()
+            .SingleAsync(x => x.SupplierBillId == bill.Id);
+
+        Assert.Equal(BillStatus.Posted, reloaded.Status);
+        Assert.Equal(new DateOnly(2026, 8, 20), reinstatement.ReinstatementDate);
+        Assert.True(await test.Db.SupplierBillVoids.AsNoTracking()
+            .AnyAsync(x => x.SupplierBillId == bill.Id));
+        Assert.Equal(3, await test.Db.PostedJournals.CountAsync(
+            x => x.OrganisationId == test.Organisation.Id));
+        Assert.Equal(100m, await test.AccountBalanceAsync("6500"));
+        Assert.Equal(12.5m, await test.AccountBalanceAsync("1150"));
+        Assert.Equal(-112.5m, await test.AccountBalanceAsync("2000"));
+        Assert.True(await test.Db.AuditEvents.AsNoTracking().AnyAsync(x =>
+            x.EntityId == bill.Id.ToString() &&
+            x.EventType == "SupplierBillReinstated"));
+    }
+
+    [Fact]
+    public async Task VoidAndReinstateSupplierBill_WithTrackedPurchase_RestoresEachInventoryPosition()
     {
         await using var test =
             await AccountingTestDatabase.CreateAsync();
@@ -204,6 +259,27 @@ public sealed class SupplierBillVoidTests
                 .SingleAsync(x => x.Id == bill.Id);
 
         Assert.Equal(BillStatus.Voided, reloadedBill.Status);
+
+        await test.Purchasing.ReinstateBillAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bill.Id,
+            new DateOnly(2026, 8, 20),
+            "Reinstate tracked supplier purchase");
+
+        var afterReinstatement = await test.Db.ProductItems
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == item.Id);
+        var restoredMovement = await test.Db.InventoryMovements
+            .AsNoTracking()
+            .SingleAsync(x =>
+                x.ProductItemId == item.Id &&
+                x.Reference == $"REINSTATE-{bill.BillNumber}");
+
+        Assert.Equal(3m, afterReinstatement.QuantityOnHand);
+        Assert.Equal(23.3333m, afterReinstatement.AverageCost);
+        Assert.Equal(2m, restoredMovement.QuantityChange);
+        Assert.Equal(40m, restoredMovement.ValueChange);
     }
 
     [Fact]

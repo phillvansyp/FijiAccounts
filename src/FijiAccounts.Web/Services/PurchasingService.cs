@@ -915,6 +915,171 @@ public sealed class PurchasingService(
         bill.Status = BillStatus.Voided; db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillVoided", nameof(SupplierBill), bill.Id, new { bill.BillNumber, reason, ReversalJournalId = journal.Id, StockReturns = receipts.Count })); await db.SaveChangesAsync(ct); if (transaction is not null) await transaction.CommitAsync(ct); return bill;
     }
 
+    public async Task<SupplierBill> ReinstateBillAsync(
+        string userId,
+        Guid organisationId,
+        Guid billId,
+        DateOnly reinstatementDate,
+        string reason,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException("You cannot reinstate bills for this organisation.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new InvalidOperationException("Enter a reason for reinstating the bill.");
+        }
+
+        var bill = await db.SupplierBills
+            .Include(x => x.Lines)
+            .ThenInclude(x => x.ProductItem)
+            .SingleOrDefaultAsync(x => x.Id == billId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Supplier bill not found.");
+
+        if (bill.Status != BillStatus.Voided)
+        {
+            throw new InvalidOperationException("Only a voided supplier bill can be reinstated.");
+        }
+
+        var billVoid = await db.SupplierBillVoids
+            .SingleOrDefaultAsync(x => x.SupplierBillId == bill.Id && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("The bill's void record could not be found.");
+
+        if (reinstatementDate < billVoid.VoidDate)
+        {
+            throw new InvalidOperationException("The reinstatement date cannot be before the void date.");
+        }
+
+        if (await db.SupplierBillReinstatements.AnyAsync(
+                x => x.SupplierBillId == bill.Id && x.OrganisationId == organisationId, ct))
+        {
+            throw new InvalidOperationException("This supplier bill has already been reinstated.");
+        }
+
+        var replacement = await db.SupplierBills
+            .AsNoTracking()
+            .Where(x =>
+                x.Id != bill.Id &&
+                x.OrganisationId == organisationId &&
+                x.SupplierId == bill.SupplierId &&
+                x.SupplierReference == bill.SupplierReference &&
+                x.Status != BillStatus.Voided)
+            .Select(x => x.BillNumber)
+            .SingleOrDefaultAsync(ct);
+        if (replacement is not null)
+        {
+            throw new InvalidOperationException(
+                $"This supplier reference is already active on {replacement}. Void or correct that replacement before reinstating this bill.");
+        }
+
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
+
+        var voidJournal = await db.PostedJournals
+            .AsNoTracking()
+            .Include(x => x.Lines)
+            .SingleAsync(x => x.Id == billVoid.PostedJournalId && x.OrganisationId == organisationId, ct);
+        var journalLines = voidJournal.Lines
+            .Select(x => new JournalLineInput(
+                x.LedgerAccountId,
+                $"Reinstate {bill.BillNumber}",
+                x.Credit,
+                x.Debit,
+                x.BranchId,
+                x.DivisionId,
+                x.ProjectId,
+                x.ProjectCostCodeId))
+            .ToList();
+        var journal = await posting.PostAsync(
+            userId,
+            new JournalPostRequest(
+                organisationId,
+                reinstatementDate,
+                $"REINSTATE-{bill.BillNumber}",
+                $"Reinstate supplier bill {bill.SupplierReference}: {reason.Trim()}",
+                journalLines,
+                bill.BranchId,
+                bill.DivisionId),
+            ct);
+
+        var returnedMovements = await db.InventoryMovements
+            .AsNoTracking()
+            .Where(x =>
+                x.OrganisationId == organisationId &&
+                x.PostedJournalId == billVoid.PostedJournalId &&
+                x.Type == InventoryMovementType.PurchaseReturn)
+            .ToListAsync(ct);
+        foreach (var returned in returnedMovements)
+        {
+            var item = bill.Lines
+                .Select(x => x.ProductItem)
+                .First(x => x?.Id == returned.ProductItemId)!;
+            var quantity = -returned.QuantityChange;
+            var value = -returned.ValueChange;
+            item.AverageCost = InventoryValuation.WeightedAverage(
+                item.QuantityOnHand,
+                item.AverageCost,
+                quantity,
+                returned.UnitCost);
+            item.QuantityOnHand += quantity;
+            db.InventoryMovements.Add(new InventoryMovement
+            {
+                OrganisationId = organisationId,
+                BranchId = returned.BranchId,
+                DivisionId = returned.DivisionId,
+                ProductItemId = item.Id,
+                MovementDate = reinstatementDate,
+                Type = InventoryMovementType.AdjustmentIncrease,
+                QuantityChange = quantity,
+                UnitCost = returned.UnitCost,
+                ValueChange = value,
+                Reference = $"REINSTATE-{bill.BillNumber}",
+                Note = $"Stock restored by supplier bill reinstatement: {reason.Trim()}",
+                PostedJournalId = journal.Id,
+                PostedByUserId = userId
+            });
+        }
+
+        var reinstatement = new SupplierBillReinstatement
+        {
+            OrganisationId = organisationId,
+            SupplierBillId = bill.Id,
+            SupplierBillVoidId = billVoid.Id,
+            ReinstatementDate = reinstatementDate,
+            Reason = reason.Trim(),
+            PostedJournalId = journal.Id,
+            CreatedByUserId = userId
+        };
+        db.SupplierBillReinstatements.Add(reinstatement);
+        bill.Status = BillStatus.Posted;
+        db.AuditEvents.Add(Audit(
+            organisationId,
+            userId,
+            "SupplierBillReinstated",
+            nameof(SupplierBill),
+            bill.Id,
+            new
+            {
+                bill.BillNumber,
+                Reason = reason.Trim(),
+                VoidId = billVoid.Id,
+                ReinstatementJournalId = journal.Id,
+                StockReceipts = returnedMovements.Count
+            }));
+
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
+        notifications.PublishOrganisationUpdate(organisationId);
+        return bill;
+    }
+
     public async Task<SupplierPaymentReversal> ReversePaymentAsync(string userId, Guid organisationId, Guid paymentId, DateOnly reversalDate, string reason, CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot reverse supplier payments for this organisation.");

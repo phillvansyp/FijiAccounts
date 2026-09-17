@@ -65,6 +65,8 @@ public sealed class ReportTransactionService(ApplicationDbContext db, TenantAcce
             .Select(x => new { JournalId = x.PostedJournalId, BillId = x.Id }).ToListAsync(ct);
         billLinks.AddRange(await db.SupplierBillVoids.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))
             .Select(x => new { JournalId = x.PostedJournalId, BillId = x.SupplierBillId }).ToListAsync(ct));
+        billLinks.AddRange(await db.SupplierBillReinstatements.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))
+            .Select(x => new { JournalId = x.PostedJournalId, BillId = x.SupplierBillId }).ToListAsync(ct));
         billLinks.AddRange(await db.SupplierCreditNotes.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))
             .Select(x => new { JournalId = x.PostedJournalId, BillId = x.SupplierBillId }).ToListAsync(ct));
         var billIds = billLinks.Select(x => x.BillId).Distinct().ToArray();
@@ -103,6 +105,8 @@ public sealed class ReportTransactionService(ApplicationDbContext db, TenantAcce
             .Select(x => new Source(x.PostedJournalId!.Value, "Invoice reversal " + x.SalesInvoice.InvoiceNumber, prefix + "/sales/" + x.SalesInvoiceId, x.SalesInvoice.Customer.Name)).ToListAsync(ct));
         Add(await db.SupplierBillVoids.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))
             .Select(x => new Source(x.PostedJournalId, "Bill reversal " + x.SupplierBill.BillNumber, prefix + "/purchases/" + x.SupplierBillId, x.SupplierBill.Supplier.Name)).ToListAsync(ct));
+        Add(await db.SupplierBillReinstatements.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))
+            .Select(x => new Source(x.PostedJournalId, "Bill reinstatement " + x.SupplierBill.BillNumber, prefix + "/purchases/" + x.SupplierBillId, x.SupplierBill.Supplier.Name)).ToListAsync(ct));
         Add(await db.SalesCreditNotes.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.PostedJournalId != null && ids.Contains(x.PostedJournalId.Value))
             .Select(x => new Source(x.PostedJournalId!.Value, "Credit note " + x.CreditNoteNumber, prefix + "/sales/credits/" + x.Id, x.SalesInvoice.Customer.Name)).ToListAsync(ct));
         Add(await db.SupplierCreditNotes.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId))

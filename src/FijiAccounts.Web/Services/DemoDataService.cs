@@ -238,6 +238,9 @@ public sealed class DemoDataService(
         await db.CustomerReceiptReversals
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);
+        await db.SupplierBillReinstatements
+            .Where(x => organisationIds.Contains(x.OrganisationId))
+            .ExecuteDeleteAsync(ct);
         await db.SupplierBillVoids
             .Where(x => organisationIds.Contains(x.OrganisationId))
             .ExecuteDeleteAsync(ct);

@@ -119,7 +119,10 @@ else
         .AsNoTracking()
         .Where(x =>
             billIds.Contains(x.SupplierBillId) &&
-            x.VoidDate <= filter.AsAt)
+            x.VoidDate <= filter.AsAt &&
+            !Db.SupplierBillReinstatements.Any(r =>
+                r.SupplierBillId == x.SupplierBillId &&
+                r.ReinstatementDate <= filter.AsAt))
         .Select(x => x.SupplierBillId)
         .ToListAsync();
 

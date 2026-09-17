@@ -119,6 +119,25 @@ public sealed class VatWorkpaperService(
 
         purchases.AddRange(purchaseVoids);
 
+        var purchaseReinstatements =
+            await db.SupplierBillLines
+                .AsNoTracking()
+                .Where(x =>
+                    x.SupplierBill.OrganisationId == organisationId &&
+                    db.SupplierBillReinstatements.Any(r =>
+                        r.OrganisationId == organisationId &&
+                        r.SupplierBillId == x.SupplierBillId &&
+                        r.ReinstatementDate >= from &&
+                        r.ReinstatementDate <= to))
+                .Select(x =>
+                    new VatLine(
+                        x.VatTreatment,
+                        x.NetAmount,
+                        x.VatAmount))
+                .ToListAsync(ct);
+
+        purchases.AddRange(purchaseReinstatements);
+
         var salesCredits =
             await db.SalesCreditNotes
                 .AsNoTracking()

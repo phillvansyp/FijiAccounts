@@ -656,7 +656,12 @@ public sealed class YearEndHandoverPackService(
             .ToListAsync(cancellationToken);
         var billIds = bills.Select(x => x.Id).ToArray();
         var voided = await db.SupplierBillVoids.AsNoTracking()
-            .Where(x => billIds.Contains(x.SupplierBillId) && x.VoidDate <= asAt)
+            .Where(x =>
+                billIds.Contains(x.SupplierBillId) &&
+                x.VoidDate <= asAt &&
+                !db.SupplierBillReinstatements.Any(r =>
+                    r.SupplierBillId == x.SupplierBillId &&
+                    r.ReinstatementDate <= asAt))
             .Select(x => x.SupplierBillId)
             .ToListAsync(cancellationToken);
         bills = bills.Where(x => !voided.Contains(x.Id)).ToList();
