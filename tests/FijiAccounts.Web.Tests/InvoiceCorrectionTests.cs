@@ -12,6 +12,36 @@ public sealed class InvoiceCorrectionTests
     private static SalesInvoiceRequest Sale(AccountingTestDatabase test, decimal price = 100) => new(test.Organisation.Id, test.Customer.Id, new(2026, 8, 15), new(2026, 9, 15), [new("Consulting", 1, price, VatTreatment.Standard, test.Account("4000").Id)]);
     private static SupplierBillRequest Purchase(AccountingTestDatabase test, decimal price = 40) => new(test.Organisation.Id, test.Supplier.Id, "SUP-EDIT-001", new(2026, 8, 15), new(2026, 9, 15), [new("Office costs", 1, price, VatTreatment.Standard, test.Account("6000").Id)]);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PurchaseDateCorrectionRequiresAllPaymentsReversed(bool reversePayment)
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var request = Purchase(t) with { BillDate = new(2026, 2, 24), DueDate = new(2026, 3, 3) };
+        var original = await t.Purchasing.PostBillAsync(t.UserId, request);
+        var payment = await t.Purchasing.PayBillAsync(t.UserId,
+            new SupplierPaymentRequest(t.Organisation.Id, original.Id, new(2026, 3, 17), "PAY-EDIT", original.Total, t.Account("1000").Id));
+        if (reversePayment)
+            await t.Purchasing.ReversePaymentAsync(t.UserId, t.Organisation.Id, payment.Id, new(2026, 3, 17), "Incorrect payment");
+        var correctedRequest = request with { BillDate = new(2026, 3, 24), DueDate = new(2026, 3, 31) };
+        if (!reversePayment)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => Service(t).CorrectPurchaseAsync(t.UserId,
+                original.Id, correctedRequest, "Move bill to March"));
+            return;
+        }
+        var corrected = await Service(t).CorrectPurchaseAsync(t.UserId, original.Id, correctedRequest, "Move bill to March");
+        Assert.Equal(new DateOnly(2026, 3, 24), corrected.BillDate);
+        Assert.Equal(new DateOnly(2026, 3, 31), corrected.DueDate);
+        Assert.Equal(original.Total, corrected.Total);
+        Assert.Equal(BillStatus.Voided, (await t.Db.SupplierBills.AsNoTracking().SingleAsync(x => x.Id == original.Id)).Status);
+        Assert.Equal(0m, await t.AccountBalanceAsync("1000"));
+        Assert.Equal(-corrected.Total, await t.AccountBalanceAsync("2000"));
+        Assert.True(await t.Db.SupplierPayments.AnyAsync(x => x.Id == payment.Id));
+        Assert.True(await t.Db.SupplierPaymentReversals.AnyAsync(x => x.SupplierPaymentId == payment.Id));
+    }
+
     [Fact]
     public async Task SalesEdit_RetainsOriginalAndPostsOnlyCorrectedNetAmounts()
     {

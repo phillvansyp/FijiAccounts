@@ -872,12 +872,10 @@ public sealed class PurchasingService(
         var bill = await db.SupplierBills.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == billId && x.OrganisationId == organisationId, ct) ?? throw new InvalidOperationException("Supplier bill not found.");
         if (bill.Status == BillStatus.Voided) throw new InvalidOperationException("This bill has already been voided.");
 
-        var hasPaymentHistory =
-    await db.SupplierPayments.AnyAsync(
-        x =>
-            x.SupplierBillId == bill.Id &&
-            x.OrganisationId == organisationId,
-        ct);
+        var hasActivePayment = await db.SupplierPayments.AnyAsync(x =>
+            x.SupplierBillId == bill.Id && x.OrganisationId == organisationId &&
+            !db.SupplierPaymentReversals.Any(r => r.SupplierPaymentId == x.Id &&
+                r.OrganisationId == organisationId), ct);
 
         var hasCreditHistory =
             await db.SupplierCreditNotes.AnyAsync(
@@ -887,7 +885,7 @@ public sealed class PurchasingService(
                 ct);
         if (bill.AmountPaid > 0 ||
     bill.AmountCredited > 0 ||
-    hasPaymentHistory ||
+    hasActivePayment ||
     hasCreditHistory ||
     bill.Status is BillStatus.PartPaid or
         BillStatus.Paid or
