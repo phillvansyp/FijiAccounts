@@ -418,7 +418,11 @@ else
                             </td>
 
                             <td class="text-end @(Math.Abs(session.Difference) <= 0.01m ? "money-in" : "money-out")">
-                                $@session.Difference.ToString("N2")
+                                @if (Math.Abs(session.Difference) > 0.01m)
+                                {
+                                    <a class="text-danger" href="@($"/o/{OrganisationId}/banking/reconciliation/{session.Id}")" title="Explain this reconciliation difference">$@session.Difference.ToString("N2")</a>
+                                }
+                                else { <span>$@session.Difference.ToString("N2")</span> }
                             </td>
 
                             <td>

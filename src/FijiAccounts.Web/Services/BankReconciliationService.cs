@@ -217,5 +217,74 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<BankDifferenceReport> GetDifferenceReportAsync(string userId, Guid organisationId, Guid sessionId, CancellationToken ct = default)
+    {
+        if (await access.FindAsync(userId, organisationId) is null)
+            throw new UnauthorizedAccessException("You cannot view this organisation.");
+        var session = await db.BankReconciliationSessions.AsNoTracking().Include(x => x.BankAccount)
+            .SingleOrDefaultAsync(x => x.Id == sessionId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Reconciliation not found.");
+        var statements = await db.BankStatementLines.AsNoTracking().Where(x => x.OrganisationId == organisationId &&
+            x.BankAccountId == session.BankAccountId && x.TransactionDate >= session.StatementStartDate && x.TransactionDate <= session.StatementEndDate).ToListAsync(ct);
+        var statementIds = statements.Select(x => x.Id).ToArray();
+        var additional = await db.BankStatementAdditionalMatches.AsNoTracking().Where(x => statementIds.Contains(x.BankStatementLineId)).ToListAsync(ct);
+        var matchedIds = statements.Where(x => x.MatchedPostedJournalLineId != null).Select(x => x.MatchedPostedJournalLineId!.Value)
+            .Concat(additional.Select(x => x.PostedJournalLineId)).ToArray();
+        var bankLines = await db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal).Where(x =>
+            x.PostedJournal.OrganisationId == organisationId && x.LedgerAccountId == session.BankAccountId &&
+            (x.PostedJournal.EntryDate <= session.StatementEndDate || matchedIds.Contains(x.Id))).ToListAsync(ct);
+        var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
+        var divisions = (await access.ListAccessibleBranchesAsync(userId, organisationId, ct)).SelectMany(x => x.Divisions).Select(x => x.Id).ToHashSet();
+        var payments = await db.SupplierPayments.AsNoTracking().Include(x => x.SupplierBill).Where(x => x.OrganisationId == organisationId &&
+            x.BankAccountId == session.BankAccountId && x.DivisionId != null && divisions.Contains(x.DivisionId.Value)).ToListAsync(ct);
+        var issues = new List<BankDifferenceIssue>();
+        foreach (var statement in statements)
+        {
+            if (statement.ReconciledAt is null)
+            {
+                issues.Add(new(statement.TransactionDate, statement.Description, statement.Amount, "Statement transaction has not been matched or coded.", statement.Id, null, null));
+                continue;
+            }
+            var ids = additional.Where(x => x.BankStatementLineId == statement.Id).Select(x => x.PostedJournalLineId)
+                .Concat(statement.MatchedPostedJournalLineId is Guid first ? new[] { first } : Array.Empty<Guid>()).ToHashSet();
+            var lines = bankLines.Where(x => ids.Contains(x.Id)).ToList();
+            if (lines.Any(x => x.DivisionId == null || !divisions.Contains(x.DivisionId.Value))) continue;
+            var bad = lines.Where(x => excluded.Contains(x.PostedJournalId)).ToList();
+            if (bad.Count > 0)
+            {
+                foreach (var line in bad)
+                {
+                    var payment = payments.FirstOrDefault(x => x.PostedJournalId == line.PostedJournalId);
+                    issues.Add(new(statement.TransactionDate, statement.Description, line.Debit - line.Credit,
+                        "Matched to a reversed payment or entry. The row still says reconciled, but this match no longer represents an active payment. Remove the match and check the bill/payment history before matching again.",
+                        statement.Id, payment?.SupplierBillId, payment?.SupplierBill.BillNumber));
+                }
+            }
+            else if (lines.Count != ids.Count || ids.Count == 0 || Math.Round(lines.Sum(x => x.Debit - x.Credit) - statement.Amount, 2) != 0)
+                issues.Add(new(statement.TransactionDate, statement.Description, statement.Amount, "The linked ledger amounts do not equal the bank transaction.", statement.Id, null, null));
+            else if (lines.Any(x => x.PostedJournal.EntryDate < session.StatementStartDate || x.PostedJournal.EntryDate > session.StatementEndDate))
+                issues.Add(new(statement.TransactionDate, statement.Description, statement.Amount, "Matched payment is dated outside this statement period. Check its payment date.", statement.Id, null, null));
+        }
+        var occupied = (await db.BankStatementLines.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.MatchedPostedJournalLineId != null)
+            .Select(x => x.MatchedPostedJournalLineId!.Value).ToListAsync(ct)).ToHashSet();
+        occupied.UnionWith(await db.BankStatementAdditionalMatches.AsNoTracking().Where(x => x.BankStatementLine.OrganisationId == organisationId).Select(x => x.PostedJournalLineId).ToListAsync(ct));
+        foreach (var payment in payments.Where(x => x.PaymentDate >= session.StatementStartDate && x.PaymentDate <= session.StatementEndDate && !excluded.Contains(x.PostedJournalId)))
+        {
+            var line = bankLines.FirstOrDefault(x => x.PostedJournalId == payment.PostedJournalId);
+            if (line is not null && !occupied.Contains(line.Id))
+                issues.Add(new(payment.PaymentDate, payment.SupplierBill.BillNumber + " · " + payment.SupplierBill.SupplierReference,
+                    line.Debit - line.Credit, "Bill payment is in the ledger but is not matched to a bank statement transaction.", null, payment.SupplierBillId, payment.SupplierBill.BillNumber));
+        }
+        var ledger = bankLines.Where(x => x.PostedJournal.EntryDate <= session.StatementEndDate).Sum(x => x.Debit - x.Credit);
+        var opening = bankLines.Where(x => x.PostedJournal.EntryDate < session.StatementStartDate).Sum(x => x.Debit - x.Credit);
+        return new(session, ledger, opening, statements.Sum(x => x.Amount), issues.OrderBy(x => x.Date).ToList());
+    }
+
     private static AuditEvent Audit(Guid organisationId, string userId, string eventType, Guid entityId, object data) => new() { OrganisationId = organisationId, UserId = userId, EventType = eventType, EntityType = nameof(BankStatementLine), EntityId = entityId.ToString(), JsonData = JsonSerializer.Serialize(data) };
+}
+
+public sealed record BankDifferenceIssue(DateOnly Date, string Description, decimal Amount, string Reason, Guid? StatementId, Guid? BillId, string? BillNumber);
+public sealed record BankDifferenceReport(BankReconciliationSession Session, decimal LedgerBalance, decimal OpeningLedgerBalance, decimal StatementMovement, IReadOnlyList<BankDifferenceIssue> Issues)
+{
+    public decimal Difference => Math.Round(Session.ClosingStatementBalance - LedgerBalance, 2);
 }

@@ -1,0 +1,85 @@
+@page "/o/{OrganisationId:guid}/banking/reconciliation/{SessionId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using FijiAccounts.Web.Services
+@using FijiAccounts.Web.Data
+@using Microsoft.AspNetCore.Identity
+@inject BankReconciliationService Reconciliation
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Reconciliation difference</PageTitle>
+@if (error is not null)
+{
+    <div class="alert alert-danger" role="alert">@error</div>
+}
+else if (report is null)
+{
+    <p>Checking reconciliation...</p>
+}
+else
+{
+    <a href="@BankUrl()">← Back to bank reconciliation</a>
+    <section class="card p-4 mt-3">
+        <h1>Reconciliation difference</h1>
+        <p>@report.Session.BankAccount.Name · @report.Session.StatementStartDate.ToString("dd MMM yyyy") – @report.Session.StatementEndDate.ToString("dd MMM yyyy")</p>
+        <div class="d-flex flex-wrap gap-4 mb-3">
+            <div>Statement balance<strong class="d-block">$@report.Session.ClosingStatementBalance.ToString("N2")</strong></div>
+            <div>Current ledger balance<strong class="d-block">$@report.LedgerBalance.ToString("N2")</strong></div>
+            <div>Difference<strong class="d-block">$@report.Difference.ToString("N2")</strong></div>
+        </div>
+        <p>“0 unreconciled” counts unmatched statement rows. A reversed payment can still have an old match, and a separate bill payment may exist only in the ledger.</p>
+        @if (Math.Abs(report.Session.OpeningStatementBalance - report.OpeningLedgerBalance) > 0.01m)
+        {
+            <div class="alert alert-warning">The opening balances differ: statement $@report.Session.OpeningStatementBalance.ToString("N2"), ledger $@report.OpeningLedgerBalance.ToString("N2"). Check the previous period and opening balance.</div>
+        }
+        @if (Math.Abs(report.Session.OpeningStatementBalance + report.StatementMovement - report.Session.ClosingStatementBalance) > 0.01m)
+        {
+            <div class="alert alert-warning">The imported statement transactions do not add up from the entered opening balance to the closing balance. Check the statement import and entered balances.</div>
+        }
+        <h2>Items to check</h2>
+        <p>These checks identify unmatched bill payments, invalid matches and payment dates outside this period. They are not a complete audit of every ledger entry.</p>
+        @if (report.Issues.Count == 0)
+        {
+            <p>No unmatched bill payments or invalid statement matches were found. If the difference remains, check the original statement, opening balance and other bank ledger entries.</p>
+        }
+        @foreach (var issue in report.Issues)
+        {
+            <article class="border rounded p-3 mb-3">
+                <div class="d-flex justify-content-between gap-3"><strong>@issue.Description</strong><strong>$@issue.Amount.ToString("N2")</strong></div>
+                <small>@issue.Date.ToString("dd MMM yyyy")</small>
+                <p class="mt-2">@issue.Reason</p>
+                @if (issue.BillId is Guid billId)
+                {
+                    <a class="btn btn-outline-primary me-2" href="@($"/o/{OrganisationId}/purchases/{billId}")">Open @issue.BillNumber</a>
+                }
+                @if (issue.StatementId is not null)
+                {
+                    <a class="btn btn-outline-primary" href="@BankUrl(issue.Description)">View bank transaction</a>
+                }
+            </article>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid SessionId { get; set; }
+    private BankDifferenceReport? report;
+    private string? error;
+    protected override async Task OnParametersSetAsync()
+    {
+        report = null; error = null;
+        try
+        {
+            var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userId = UserManager.GetUserId(state.User) ?? throw new UnauthorizedAccessException("Please sign in.");
+            report = await Reconciliation.GetDifferenceReportAsync(userId, OrganisationId, SessionId);
+        }
+        catch (Exception ex) { error = ex.Message; }
+    }
+    private string BankUrl(string search = "")
+    {
+        var view = System.Text.Json.JsonSerializer.Serialize(new { Account = report!.Session.BankAccountId, From = report.Session.StatementStartDate, To = report.Session.StatementEndDate, Search = search, Page = 1 });
+        return $"/o/{OrganisationId}/banking?bankView={Uri.EscapeDataString(view)}";
+    }
+}
