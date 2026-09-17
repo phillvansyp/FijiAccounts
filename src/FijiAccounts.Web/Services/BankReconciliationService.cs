@@ -145,6 +145,7 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
             if (statement.Amount >= 0 || lines.Any(x => x.Debit - x.Credit >= 0))
                 throw new InvalidOperationException("Select outgoing bill payments for an outgoing bank transaction.");
         }
+        await PaymentDocumentPolicy.ValidateMatchesAsync(db, organisationId, lines.Select(x => x.PostedJournalId).Distinct().ToArray(), ct);
         var ledgerAmount = Math.Round(lines.Sum(x => x.Debit - x.Credit), 2, MidpointRounding.AwayFromZero);
         var statementAmount = Math.Round(statement.Amount, 2, MidpointRounding.AwayFromZero);
         if (Math.Abs(statementAmount - ledgerAmount) > (ids.Length > 1 ? 0m : AmountTolerance))

@@ -18,7 +18,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     bool RequireSupplierPaymentApproval = false,
     string? BusinessAddress = null,
     bool IsVatRegistered = false,
-    DateOnly? VatRegistrationDate = null);
+    DateOnly? VatRegistrationDate = null,
+    bool? RequireTradePaymentDocuments = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -98,7 +99,8 @@ public sealed class OrganisationSettingsService(
             DefaultSupplierBillPaymentTermType =
                 organisation.DefaultSupplierBillPaymentTermType.ToString(),
             organisation.DefaultSupplierBillDueDays,
-            organisation.RequireSupplierPaymentApproval
+            organisation.RequireSupplierPaymentApproval,
+            organisation.RequireTradePaymentDocuments
         };
         var updated = new
         {
@@ -115,7 +117,8 @@ public sealed class OrganisationSettingsService(
             DefaultSupplierBillPaymentTermType =
                 request.DefaultSupplierBillPaymentTermType.ToString(),
             request.DefaultSupplierBillDueDays,
-            request.RequireSupplierPaymentApproval
+            request.RequireSupplierPaymentApproval,
+            RequireTradePaymentDocuments = request.RequireTradePaymentDocuments ?? organisation.RequireTradePaymentDocuments
         };
         if (previous.Equals(updated))
         {
@@ -141,6 +144,7 @@ public sealed class OrganisationSettingsService(
             request.DefaultSupplierBillDueDays;
         organisation.RequireSupplierPaymentApproval =
             request.RequireSupplierPaymentApproval;
+        organisation.RequireTradePaymentDocuments = request.RequireTradePaymentDocuments ?? organisation.RequireTradePaymentDocuments;
 
         db.AuditEvents.Add(CreateAuditEvent(
             request.OrganisationId,

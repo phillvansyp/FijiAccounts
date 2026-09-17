@@ -7,10 +7,14 @@ namespace FijiAccounts.Web.Tests;
 
 public sealed class CustomerReceiptStatementReconciliationTests
 {
-    [Fact]
-    public async Task RecordAsync_WithStatementLine_ReceivesAndReconcilesAtomically()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecordAsync_WithStatementLine_ReceivesAndReconcilesAtomically(bool requireDocuments)
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.RequireTradePaymentDocuments = requireDocuments;
+        await test.Db.SaveChangesAsync();
         var bank = test.Account("1000");
         var receiptDate = new DateOnly(2026, 7, 17);
         var invoice = await test.SalesInvoices.CreateAndPostAsync(

@@ -248,6 +248,11 @@ else
                 </div>
 
                 <div class="border rounded p-3 mb-3">
+                    <div class="form-check mb-3">
+                        <InputCheckbox class="form-check-input" @bind-Value="model.RequireTradePaymentDocuments" disabled="@(!canManage)" />
+                        <label class="form-check-label">Require invoices and bills for customer and supplier payments</label>
+                        <div class="form-text">Bank fees, payroll and tax liabilities, transfers and owner movements use their own records. Older transactions without trade documents are flagged for review.</div>
+                    </div>
                     <div class="form-check form-switch">
                         <InputCheckbox class="form-check-input"
                                        @bind-Value="model.RequireSupplierPaymentApproval"
@@ -577,7 +582,8 @@ else
                     model.RequireSupplierPaymentApproval,
                     model.BusinessAddress,
                     model.IsVatRegistered,
-                    model.VatRegistrationDate));
+                    model.VatRegistrationDate,
+                    model.RequireTradePaymentDocuments));
             model = ModelFrom(stored);
             access = access with { Organisation = stored };
             statusClass = "alert-success";
@@ -882,8 +888,8 @@ else
         }
     }
 
-    private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Tin = organisation.Tin, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval };
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } }
+    private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Tin = organisation.Tin, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval, RequireTradePaymentDocuments = organisation.RequireTradePaymentDocuments };
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } public bool RequireTradePaymentDocuments { get; set; } }
     private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }

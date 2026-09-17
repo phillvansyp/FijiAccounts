@@ -555,6 +555,14 @@ else
             {
                 <div class="alert @statusClass mx-3 mb-3" role="status">@status</div>
             }
+            @if (MissingTradeDocument(item))
+            {
+                <div class="alert alert-warning mx-3" role="status">
+                    <strong>Missing @(CodedAccount(item)?.Code is "6000" or "6010" ? "payroll record" : item.Amount > 0 ? "sales invoice" : "supplier bill")</strong>
+                    <span>This transaction was coded directly. Link the original document before considering the paperwork complete.</span>
+                    <a href="@($"/o/{OrganisationId}/{(CodedAccount(item)?.Code is "6000" or "6010" ? "integrations/payroll-island" : item.Amount > 0 ? "sales" : "purchases")}")">Find supporting record</a>
+                </div>
+            }
             @if (canReconcile && item.ReconciledAt is null && item.Amount < 0)
             {
                 <button class="btn btn-sm btn-outline-primary m-2" @onclick="() => OpenMultipleMatch(item)">Match multiple bill payments</button>
@@ -629,6 +637,13 @@ else
                         <DataAnnotationsValidator />
                         <ValidationSummary />
                         @if (codingError is not null) { <div class="alert alert-danger">@codingError</div> }
+                        @if (requireTradePaymentDocuments)
+                        {
+                            <div class="alert alert-info">
+                                Customer and supplier payments need an invoice or bill. Choose the document and record its payment; bank coding below is for bank fees, tax/payroll liabilities and owner or loan movements.
+                                <a href="@($"/o/{OrganisationId}/{(item.Amount > 0 ? "sales" : "purchases")}")">Find or add @(item.Amount > 0 ? "invoice" : "bill")</a>
+                            </div>
+                        }
                         <div class="coding-fields">
                             <div class="mb-3">
                                 <label class="form-label">Code as</label>
@@ -663,6 +678,7 @@ else
                                 <div>
                                     <label class="form-label">Account</label>
                                     <InputSelect class="form-select" @bind-Value="codingModel.TargetAccountCode">
+                                        <option value="">Choose an account</option>
                                         @foreach (var account in codingAccounts)
                                         {
                                             <option value="@account.Code">@account.Code - @account.Name</option>
@@ -874,8 +890,10 @@ private string reconciliationStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync() { RestoreBankView(); var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
     private async Task Reload()
     {
+        requireTradePaymentDocuments = await Db.Organisations.Where(x => x.Id == OrganisationId).Select(x => x.RequireTradePaymentDocuments).SingleAsync();
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
         codingAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && !x.IsBankAccount && x.Code != "1100" && x.Code != "1150" && x.Code != "2000" && x.Code != "2100").OrderBy(x => x.Type).ThenBy(x => x.Code).ToListAsync();
+        if (requireTradePaymentDocuments) codingAccounts = codingAccounts.Where(x => !PaymentDocumentPolicy.RequiresTradeDocument(x)).ToList();
         var ids = selectedBankAccountId is Guid selectedId &&
                   accounts.Any(x => x.Id == selectedId)
             ? new[] { selectedId }
@@ -1037,6 +1055,7 @@ reconciliationSessions =
     private async Task LoadCodedAccounts()
     {
         await LoadReferenceDocuments();
+        confirmedPaymentDocuments = [];
         codedAccounts = [];
         codedVat = [];
         var statementIds = statementLines.Select(x => x.Id).ToArray();
@@ -1060,7 +1079,7 @@ reconciliationSessions =
             var extraIds = additionalMatches.Where(x => x.BankStatementLineId == statement.Id).Select(x => x.PostedJournalLineId).ToHashSet();
             var extraJournals = matchedLines.Where(x => extraIds.Contains(x.Id)).Select(x => x.PostedJournalId).ToHashSet();
             var links = documentLinks.Where(x => x.JournalId == journal || extraJournals.Contains(x.JournalId)).DistinctBy(x => x.Url).ToList();
-            if (links.Count > 0) statementDocuments[statement.Id] = links;
+            if (links.Count > 0) { statementDocuments[statement.Id] = links; confirmedPaymentDocuments.Add(statement.Id); }
         }
 
         var allLines = await Db.PostedJournalLines.AsNoTracking().Include(x => x.LedgerAccount).Where(x => journalIds.Contains(x.PostedJournalId) && x.LedgerAccount.OrganisationId == OrganisationId).ToListAsync();
@@ -1088,6 +1107,12 @@ reconciliationSessions =
     }
     private sealed record BankDocumentLink(Guid JournalId, string Label, string Url);
     private Dictionary<Guid, List<BankDocumentLink>> statementDocuments = [];
+    private HashSet<Guid> confirmedPaymentDocuments = [];
+    private bool requireTradePaymentDocuments;
+    private bool MissingTradeDocument(BankStatementLine item) => requireTradePaymentDocuments &&
+        item.ReconciledAt is not null && !confirmedPaymentDocuments.Contains(item.Id) &&
+        CodedAccount(item) is { } account && PaymentDocumentPolicy.RequiresTradeDocument(account);
+
     private string? StatementDocumentLink(BankStatementLine item) =>
         statementDocuments.TryGetValue(item.Id, out var documents) && documents.Count == 1 ? documents[0].Url : null;
 
@@ -1572,7 +1597,7 @@ reconciliationSessions =
                 codingModel.TargetAccountCode = SuggestedCodingAccount(item);
         }
     }
-    private string SuggestedCodingAccount(BankStatementLine item) { var preferredType = item.Amount < 0 ? AccountType.Expense : AccountType.Revenue; return codingAccounts.FirstOrDefault(x => x.Type == preferredType)?.Code ?? codingAccounts.FirstOrDefault()?.Code ?? ""; }
+    private string SuggestedCodingAccount(BankStatementLine item) { if (requireTradePaymentDocuments) return ""; var preferredType = item.Amount < 0 ? AccountType.Expense : AccountType.Revenue; return codingAccounts.FirstOrDefault(x => x.Type == preferredType)?.Code ?? codingAccounts.FirstOrDefault()?.Code ?? ""; }
     private LedgerAccount? CodedAccount(BankStatementLine item) => codedAccounts.GetValueOrDefault(item.Id);
     private CodedVatInfo CodedVat(BankStatementLine item) => codedVat.GetValueOrDefault(item.Id) ?? new(0m, item.ReconciledAt is null ? "Not coded" : "No VAT");
     private Guid? changedStatementId;
