@@ -250,8 +250,8 @@ else
                 <div class="border rounded p-3 mb-3">
                     <div class="form-check mb-3">
                         <InputCheckbox class="form-check-input" @bind-Value="model.RequireTradePaymentDocuments" disabled="@(!canManage)" />
-                        <label class="form-check-label">Require invoices and bills for customer and supplier payments</label>
-                        <div class="form-text">Bank fees, payroll and tax liabilities, transfers and owner movements use their own records. Older transactions without trade documents are flagged for review.</div>
+                        <label class="form-check-label">Warn when customer or supplier payments are missing invoices or bills</label>
+                        <div class="form-text">Bank fees, payroll and tax liabilities, transfers and owner movements use their own records. Transactions without trade documents are flagged for review. Missing documents do not block reconciliation.</div>
                     </div>
                     <div class="form-check form-switch">
                         <InputCheckbox class="form-check-input"

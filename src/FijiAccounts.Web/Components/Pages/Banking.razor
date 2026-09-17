@@ -640,7 +640,7 @@ else
                         @if (requireTradePaymentDocuments)
                         {
                             <div class="alert alert-info">
-                                Customer and supplier payments need an invoice or bill. Choose the document and record its payment; bank coding below is for bank fees, tax/payroll liabilities and owner or loan movements.
+                                Link an existing invoice or bill when available to avoid recording the payment twice. If the document is missing, you can still code and reconcile this transaction; it will be flagged for follow-up.
                                 <a href="@($"/o/{OrganisationId}/{(item.Amount > 0 ? "sales" : "purchases")}")">Find or add @(item.Amount > 0 ? "invoice" : "bill")</a>
                             </div>
                         }
@@ -893,7 +893,6 @@ private string reconciliationStatusClass = "alert-success";
         requireTradePaymentDocuments = await Db.Organisations.Where(x => x.Id == OrganisationId).Select(x => x.RequireTradePaymentDocuments).SingleAsync();
         accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.IsBankAccount).OrderBy(x => x.Code).ToListAsync();
         codingAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && !x.IsBankAccount && x.Code != "1100" && x.Code != "1150" && x.Code != "2000" && x.Code != "2100").OrderBy(x => x.Type).ThenBy(x => x.Code).ToListAsync();
-        if (requireTradePaymentDocuments) codingAccounts = codingAccounts.Where(x => !PaymentDocumentPolicy.RequiresTradeDocument(x)).ToList();
         var ids = selectedBankAccountId is Guid selectedId &&
                   accounts.Any(x => x.Id == selectedId)
             ? new[] { selectedId }

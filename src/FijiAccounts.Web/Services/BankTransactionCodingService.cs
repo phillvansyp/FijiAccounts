@@ -315,10 +315,6 @@ var isLiabilityAccount =
             ?? throw new InvalidOperationException(
                 "Choose an active non-bank account.");
 
-        if (PaymentDocumentPolicy.RequiresTradeDocument(target) &&
-            await db.Organisations.AnyAsync(x => x.Id == request.OrganisationId && x.RequireTradePaymentDocuments, ct))
-            throw new InvalidOperationException(PaymentDocumentPolicy.MissingDocumentMessage);
-
         var organisationTaxSettings = await db.Organisations.AsNoTracking()
             .Where(x => x.Id == request.OrganisationId)
             .Select(x => new { x.CountryCode, x.BaseCurrency })

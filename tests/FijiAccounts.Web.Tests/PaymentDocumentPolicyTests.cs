@@ -35,7 +35,7 @@ public sealed class PaymentDocumentPolicyTests
     [InlineData("6000", -100)]
     [InlineData("2000", -100)]
     [InlineData("1100", 100)]
-    public async Task DirectTradeOrWageCodingCannotBypassSupportingRecords(string code, int amount)
+    public async Task MissingDocumentsDoNotBlockDirectCoding(string code, int amount)
     {
         await using var t = await AccountingTestDatabase.CreateAsync();
         t.Organisation.RequireTradePaymentDocuments = true;
@@ -43,11 +43,10 @@ public sealed class PaymentDocumentPolicyTests
         var s = await t.Reconciliation.AddStatementLineAsync(t.UserId,
             new(t.Organisation.Id, t.Account("1000").Id, new(2026, 8, 18), "Payment", "TEST", amount));
         var before = await t.Db.PostedJournals.CountAsync();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => t.BankCoding.PostAndReconcileAsync(t.UserId,
-            new(t.Organisation.Id, s.Id, code, "Payment", VatTreatment.OutOfScope)));
-        Assert.Contains("invoice or bill", error.Message);
-        Assert.Equal(before, await t.Db.PostedJournals.CountAsync());
-        Assert.Null((await t.Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == s.Id)).ReconciledAt);
+        await t.BankCoding.PostAndReconcileAsync(t.UserId,
+            new(t.Organisation.Id, s.Id, code, "Payment", VatTreatment.OutOfScope));
+        Assert.Equal(before + 1, await t.Db.PostedJournals.CountAsync());
+        Assert.NotNull((await t.Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == s.Id)).ReconciledAt);
     }
 
     [Fact]
@@ -65,7 +64,7 @@ public sealed class PaymentDocumentPolicyTests
     }
 
     [Fact]
-    public async Task MatchingLegacySalesJournalCannotBypassInvoiceRequirement()
+    public async Task MissingInvoiceDoesNotBlockMatchingExistingJournal()
     {
         await using var t = await AccountingTestDatabase.CreateAsync();
         var bank = t.Account("1000");
@@ -75,8 +74,8 @@ public sealed class PaymentDocumentPolicyTests
         var s = await t.Reconciliation.AddStatementLineAsync(t.UserId, new(t.Organisation.Id, bank.Id, date, "Customer", "OLD", 100m));
         t.Organisation.RequireTradePaymentDocuments = true;
         await t.Db.SaveChangesAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => t.Reconciliation.ReconcileAsync(t.UserId,
-            t.Organisation.Id, s.Id, journal.Lines.Single(x => x.LedgerAccountId == bank.Id).Id));
-        Assert.Null((await t.Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == s.Id)).ReconciledAt);
+        await t.Reconciliation.ReconcileAsync(t.UserId,
+            t.Organisation.Id, s.Id, journal.Lines.Single(x => x.LedgerAccountId == bank.Id).Id);
+        Assert.NotNull((await t.Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == s.Id)).ReconciledAt);
     }
 }
