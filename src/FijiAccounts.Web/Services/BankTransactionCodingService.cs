@@ -34,7 +34,7 @@ public sealed class BankTransactionCodingService(
                 "You cannot change bank coding for this organisation.");
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct) : null;
 
         var statement = await db.BankStatementLines
             .SingleOrDefaultAsync(
@@ -86,7 +86,7 @@ if (completedReconciliationExists)
             // Editing a reconciliation removes only the match, not the payment.
             await reconciliation.UnreconcileAsync(userId, organisationId, statementLineId,
                 "Removed existing transaction match to select the correct transaction.", ct);
-            await transaction.CommitAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
             return false;
         }
 
@@ -197,7 +197,7 @@ if (completedReconciliationExists)
         });
 
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
         return true;
     }
 

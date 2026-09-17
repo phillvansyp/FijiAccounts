@@ -1,0 +1,7 @@
+.connections { max-width: 1200px; margin: 1rem auto; padding: 1.5rem; background: white; border: 1px solid #dce7eb; border-radius: 16px; }
+nav, h3, h4 { margin: 1.2rem 0; }
+article, .choice { display: block; padding: 1rem; border-bottom: 1px solid #dce7eb; }
+.allocation { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; align-items: center; }
+small { display: block; color: #607787; }
+.allocation-summary { padding: 1.5rem; margin-top: 1rem; background: #eaf7f3; border-radius: 10px; }
+@media(max-width: 700px) { .allocation { grid-template-columns: 1fr; } }

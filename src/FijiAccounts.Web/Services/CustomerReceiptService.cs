@@ -93,7 +93,7 @@ if (receivable is null ||
                     $"Foreign Exchange {(realisedDifference > 0 ? "Gains (4300)" : "Losses (6950)")} must be active.");
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken) : null;
         var lines = new List<JournalLineInput>
         {
             new(bank.Id, invoice.InvoiceNumber, request.Amount, 0),
@@ -135,7 +135,7 @@ if (receivable is null ||
                 cancellationToken);
         }
         await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         notifications.PublishOrganisationUpdate(request.OrganisationId);
         return receipt;
     }
@@ -170,6 +170,14 @@ await using var transaction =
         IsolationLevel.Serializable,
         ct);
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == receipt.PostedJournalId && x.OrganisationId == organisationId, ct);
+        var originalLineIds = original.Lines.Select(x => x.Id).ToArray();
+        var secondaryStatementIds = await db.BankStatementAdditionalMatches.Where(x => originalLineIds.Contains(x.PostedJournalLineId))
+            .Select(x => x.BankStatementLineId).ToListAsync(ct);
+        var matchedStatementIds = await db.BankStatementLines.Where(x => x.OrganisationId == organisationId &&
+            ((x.MatchedPostedJournalLineId != null && originalLineIds.Contains(x.MatchedPostedJournalLineId.Value)) || secondaryStatementIds.Contains(x.Id)))
+            .Select(x => x.Id).ToListAsync(ct);
+        foreach (var statementId in matchedStatementIds)
+            await reconciliation.UnreconcileAsync(userId, organisationId, statementId, $"Receipt reversed: {reason.Trim()}", ct);
         var reference = $"REV-{receipt.Reference}"; var lines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Reverse receipt {receipt.Reference}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, reversalDate, reference, $"Reverse customer receipt: {reason.Trim()}", lines), ct);
         foreach (var allocation in receipt.Allocations) { var invoice = allocation.SalesInvoice; invoice.AmountPaid -= allocation.Amount; invoice.TransactionAmountPaid -= allocation.TransactionAmount; if (invoice.AmountPaid < 0 || invoice.TransactionAmountPaid < 0) throw new InvalidOperationException("Receipt allocation history is inconsistent and cannot be reversed."); var outstanding = invoice.Total - invoice.AmountPaid - invoice.AmountCredited; invoice.Status = outstanding <= 0 ? (invoice.AmountCredited > 0 ? InvoiceStatus.Credited : InvoiceStatus.Paid) : invoice.AmountPaid > 0 || invoice.AmountCredited > 0 ? InvoiceStatus.PartPaid : InvoiceStatus.Posted; }

@@ -252,6 +252,7 @@ builder.Services.AddHostedService<UpcomingSupplierBillWorker>();
 builder.Services.AddHostedService<VatTurnoverMonitorWorker>();
 builder.Services.AddHostedService<ImmutableDocumentIntegrityWorker>();
 builder.Services.AddScoped<CustomerReceiptService>();
+builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();

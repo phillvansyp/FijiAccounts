@@ -25,6 +25,7 @@
 else
 {
     <InvoiceCorrectionNotice OrganisationId="OrganisationId" DocumentId="InvoiceId" IsSales="true" />
+    <a class="btn btn-outline-primary mb-3" href="@($"/o/{OrganisationId}/payments/document/{InvoiceId}")">Payments and bank connections</a>
     <div class="detail-actions no-print"><a href="o/@OrganisationId/sales">← Invoices</a><div>
     @if (canPost && invoice.Status == InvoiceStatus.Posted && invoice.AmountPaid == 0 && invoice.AmountCredited == 0 && !fiscalisationEnabled)
     {

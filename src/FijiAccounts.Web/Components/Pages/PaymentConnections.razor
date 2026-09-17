@@ -1,0 +1,173 @@
+@page "/o/{OrganisationId:guid}/payments"
+@page "/o/{OrganisationId:guid}/payments/statement/{StatementId:guid}"
+@page "/o/{OrganisationId:guid}/payments/document/{DocumentId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Identity
+@inject PaymentConnectionsService Connections
+@inject UserManager<ApplicationUser> Users
+@inject AuthenticationStateProvider Authentication
+@inject TenantAccessService Access
+
+<PageTitle>Payments and documents - Account Island</PageTitle>
+<section class="connections">
+    <h1>Payments and documents</h1>
+    <p>Follow the invoice or bill, its payments and the bank transaction together.</p>
+    <nav><a href="@($"/o/{OrganisationId}/banking")">Bank reconciliation</a> · <a href="@($"/o/{OrganisationId}/payments")">Payment overview</a></nav>
+    @if (error != null) { <div role="alert" class="alert alert-danger">@error</div> }
+    @if (success != null) { <div role="status" class="alert alert-success">@success</div> }
+    @if (data == null) { <p>Loading connections…</p> }
+    else if (StatementId != null && statement == null || DocumentId != null && document == null) { <p>This record is unavailable.</p> }
+    else
+    {
+        @if (document != null)
+        {
+            <h2><a href="@DocumentUrl(document)">@document.Number</a> · @document.Party</h2>
+            <p>@document.Date.ToString("dd MMM yyyy") · @document.Status · Outstanding (base currency): @document.Outstanding.ToString("N2")</p>
+            <p>Open the document above to see its line items, attachments and payment controls.</p>
+        }
+        @if (statement != null)
+        {
+            <h2>@statement.Description</h2>
+            <p>@statement.BankAccount.Name · @statement.TransactionDate.ToString("dd MMM yyyy") · <strong>@statement.Amount.ToString("N2")</strong></p>
+            <p>Bank match: @(statement.ReconciledAt == null ? "Not matched" : "Matched") · Linked payments: @LinkedPayments.Count()</p>
+        }
+        @if (statement != null || document != null)
+        {
+            <h3>Connected payments</h3>
+            @if (!LinkedPayments.Any()) { <p>No invoice or bill payment is connected yet. Direct coding can be reconciled while paperwork is still missing.</p> }
+            @foreach (var payment in LinkedPayments)
+            {
+                <article><strong>@payment.Date.ToString("dd MMM yyyy") · @payment.Amount.ToString("N2")</strong> · @payment.Reference
+                    <div>@foreach (var doc in data.Documents.Where(d => payment.DocumentIds.Contains(d.Id))) { <a class="me-3" href="@DocumentUrl(doc)">@doc.Number · @doc.Party</a> }</div>
+                    @if (payment.StatementId is Guid id) { <a href="@StatementUrl(id)">View matched bank transaction</a> } else { <span>Awaiting bank match</span> }
+                </article>
+            }
+        }
+        @if (statement != null && canPost && !LinkedPayments.Any())
+        {
+            <h3>Connect this bank transaction</h3>
+            <p>Choose payments already recorded first. For unpaid documents, enter the amount this bank transaction pays. Partial payments and several documents are supported. Existing payment dates stay unchanged.</p>
+            @if (statement.ReconciledAt != null)
+            {
+                <div class="alert alert-warning">Saving will reverse this transaction’s direct coding and replace it with document payments in one operation. This prevents the expense or income being counted twice. Completed reconciliation periods must be reopened before a correction.</div>
+            }
+            <label>Find a payment or document <input class="form-control" @bind="search" @bind:event="oninput" placeholder="Number, supplier or customer" disabled="@busy" /></label>
+            <h4>Existing payments</h4>
+            @foreach (var payment in AvailablePayments)
+            {
+                <label class="choice"><input type="checkbox" checked="@selected.Contains(payment.LineId)" disabled="@busy" @onchange="e => Select(payment.LineId, e.Value is true)" />
+                    @payment.Date.ToString("dd MMM yyyy") · @payment.Reference · @payment.Amount.ToString("N2")
+                    @string.Join(", ", data.Documents.Where(d => payment.DocumentIds.Contains(d.Id)).Select(d => d.Number + " " + d.Party))
+                </label>
+            }
+            <h4>Unpaid bills or invoices</h4>
+            <p>Amounts paid are in the bank’s base currency. For a foreign-currency document, also enter the amount being settled in that document’s currency.</p>
+            @foreach (var doc in AvailableDocuments)
+            {
+                <article class="allocation"><div><a href="@DocumentUrl(doc)">@doc.Number · @doc.Party</a><small>@doc.Date.ToString("dd MMM yyyy") · Outstanding base @doc.Outstanding.ToString("N2") · @doc.Currency</small></div>
+                    <label>Pay (base)<input aria-label="@($"Pay {doc.Number} in base currency")" class="form-control" type="number" min="0" step="0.01" @bind="amounts[doc.Id]" disabled="@busy" /></label>
+                    <label>Document amount (optional)<input aria-label="@($"Document currency amount {doc.Number}")" class="form-control" type="number" min="0" step="0.01" @bind="foreignAmounts[doc.Id]" disabled="@busy" /></label>
+                </article>
+            }
+            <div class="allocation-summary"><strong>Bank amount: @Math.Abs(statement.Amount).ToString("N2") · Selected: @SelectedAmount.ToString("N2") · Remaining: @((Math.Abs(statement.Amount) - SelectedAmount).ToString("N2"))</strong>
+                <p>Saving records the selected document payments on @statement.TransactionDate.ToString("dd MMM yyyy") and matches them to this bank transaction. Existing payments are reused.</p>
+                <button class="btn btn-primary" disabled="@(busy || SelectedAmount != Math.Abs(statement.Amount))" @onclick="Save">@(busy ? "Saving…" : "Save payments and match")</button>
+            </div>
+        }
+        @if (statement == null)
+        {
+            <label>Search <input class="form-control" @bind="search" @bind:event="oninput" placeholder="Number, name or reference" /></label>
+            <h3>Documents awaiting payment</h3>
+            @foreach (var doc in data.Documents.Where(d => (DocumentId == null || d.Id == DocumentId) && d.Outstanding > 0 && IsPayable(d) && Matches(d.Number + " " + d.Party)).OrderBy(d => d.Due))
+            {
+                <article><a href="@DocumentUrl(doc)">@doc.Number · @doc.Party</a> · @doc.Outstanding.ToString("N2") outstanding (base) · Due @doc.Due.ToString("dd MMM yyyy") <a href="@($"/o/{OrganisationId}/payments/document/{doc.Id}")">Connections</a></article>
+            }
+            <h3>Payments awaiting a bank match</h3>
+            @foreach (var payment in data.Payments.Where(p => p.StatementId == null && (DocumentId == null || p.DocumentIds.Contains(DocumentId.Value)) && Matches(p.Reference)))
+            {
+                <article>@payment.Date.ToString("dd MMM yyyy") · @payment.Reference · @payment.Amount.ToString("N2")
+                    @foreach (var doc in data.Documents.Where(d => payment.DocumentIds.Contains(d.Id))) { <a href="@DocumentUrl(doc)">@doc.Number</a> }
+                </article>
+            }
+            <h3>Bank transactions — find and connect</h3>
+            @if (DocumentId == null)
+            {
+                <h4>Supporting records to check (@data.MissingDocuments.Count)</h4>
+                <p>These bank entries are matched, but a linked invoice, bill or payroll record was not found. You can keep them reconciled and connect the record later.</p>
+                @foreach (var bank in data.Statements.Where(s => data.MissingDocuments.Contains(s.Id) && Matches(s.Description + " " + s.Reference)).Take(100))
+                {
+                    <article><a href="@StatementUrl(bank.Id)">@bank.TransactionDate.ToString("dd MMM yyyy") · @bank.Description</a> · @bank.Amount.ToString("N2") · Check supporting record</article>
+                }
+            }
+            <p>Search by bank description or reference. Missing paperwork does not prevent reconciliation. Showing up to 100 matching transactions.</p>
+            @foreach (var bank in data.Statements.Where(s => Matches(s.Description + " " + s.Reference)).Take(100))
+            {
+                <article><a href="@StatementUrl(bank.Id)">@bank.TransactionDate.ToString("dd MMM yyyy") · @bank.Description</a> · @bank.BankAccount.Name · @bank.Amount.ToString("N2") · @(bank.ReconciledAt == null ? "Needs bank match" : "Bank matched")</article>
+            }
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid? StatementId { get; set; }
+    [Parameter] public Guid? DocumentId { get; set; }
+    private PaymentWorkspace? data;
+    private BankStatementLine? statement;
+    private PaymentDocument? document;
+    private string userId = "", search = "";
+    private string? error, success;
+    private bool busy, canPost;
+    private HashSet<Guid> selected = [];
+    private Dictionary<Guid, decimal> amounts = [];
+    private Dictionary<Guid, decimal?> foreignAmounts = [];
+    private IEnumerable<ConnectedPayment> LinkedPayments => data!.Payments.Where(p => StatementId != null ? p.StatementId == StatementId : DocumentId != null && p.DocumentIds.Contains(DocumentId.Value));
+    private IEnumerable<ConnectedPayment> AvailablePayments => data!.Payments.Where(p => p.StatementId == null && p.BankAccountId == statement!.BankAccountId && Math.Sign(p.Amount) == Math.Sign(statement!.Amount) && Matches(p.Reference + " " + string.Join(" ", data.Documents.Where(d => p.DocumentIds.Contains(d.Id)).Select(d => d.Number + " " + d.Party))));
+    private IEnumerable<PaymentDocument> AvailableDocuments => data!.Documents.Where(d => d.IsSales == (statement!.Amount > 0) && d.Outstanding > 0 && IsPayable(d) && Matches(d.Number + " " + d.Party)).OrderBy(d => d.Date);
+    private decimal SelectedAmount => data!.Payments.Where(p => selected.Contains(p.LineId)).Sum(p => Math.Abs(p.Amount)) + amounts.Values.Sum();
+    private bool Matches(string value) => string.IsNullOrWhiteSpace(search) || value.Contains(search, StringComparison.OrdinalIgnoreCase);
+    private static bool IsPayable(PaymentDocument doc) => doc.Status is not ("Draft" or "Voided" or "Void" or "Credited" or "Paid");
+    private string DocumentUrl(PaymentDocument d) => $"/o/{OrganisationId}/{(d.IsSales ? "sales" : "purchases")}/{d.Id}";
+    private string StatementUrl(Guid id) => $"/o/{OrganisationId}/payments/statement/{id}";
+    private void Select(Guid id, bool value) { if (value) selected.Add(id); else selected.Remove(id); }
+    public override Task SetParametersAsync(ParameterView parameters)
+    {
+        if (!parameters.TryGetValue<Guid?>(nameof(StatementId), out _)) StatementId = null;
+        if (!parameters.TryGetValue<Guid?>(nameof(DocumentId), out _)) DocumentId = null;
+        return base.SetParametersAsync(parameters);
+    }
+    protected override async Task OnParametersSetAsync()
+    {
+        error = null; data = null;
+        try
+        {
+            userId = Users.GetUserId((await Authentication.GetAuthenticationStateAsync()).User) ?? "";
+            canPost = await Access.CanPostJournalsAsync(userId, OrganisationId);
+            await Load();
+        }
+        catch (Exception ex) { error = ex is UnauthorizedAccessException ? "You do not have access to these records." : "Could not load connections. Please refresh."; }
+    }
+    private async Task Load()
+    {
+        data = await Connections.ReadAsync(userId, OrganisationId);
+        statement = data.Statements.SingleOrDefault(s => s.Id == StatementId);
+        document = data.Documents.SingleOrDefault(d => d.Id == DocumentId);
+        selected.Clear(); amounts = data.Documents.ToDictionary(d => d.Id, _ => 0m);
+        foreignAmounts = data.Documents.ToDictionary(d => d.Id, _ => (decimal?)null);
+    }
+    private async Task Save()
+    {
+        if (busy || statement == null) return;
+        busy = true; error = null;
+        try
+        {
+            await Connections.ConnectAsync(userId, new(OrganisationId, statement.Id, statement.MatchedPostedJournalLineId,
+                selected.ToArray(), amounts.Where(x => x.Value > 0).Select(x => new PaymentAllocation(x.Key, x.Value, foreignAmounts[x.Key])).ToArray()));
+            success = "Payments connected and bank transaction matched."; await Load();
+        }
+        catch (Exception ex) { error = ex is InvalidOperationException ? ex.Message : "Could not save these connections. No changes were saved."; }
+        finally { busy = false; }
+    }
+}

@@ -39,7 +39,6 @@ public sealed class BankMultiplePaymentTests
     [Theory]
     [InlineData("total")]
     [InlineData("duplicate")]
-    [InlineData("month")]
     [InlineData("completed")]
     [InlineData("reversed")]
     [InlineData("account")]
@@ -48,7 +47,7 @@ public sealed class BankMultiplePaymentTests
         await using var t = await AccountingTestDatabase.CreateAsync();
         var date = new DateOnly(2026, 7, 8);
         var first = await Payment(t, date, 100m);
-        var second = await Payment(t, fault == "month" ? date.AddMonths(-1) : date, 20m);
+        var second = await Payment(t, date, 20m);
         var statement = await Statement(t, date, fault == "total" ? -120.01m : -120m);
         if (fault == "completed")
         {

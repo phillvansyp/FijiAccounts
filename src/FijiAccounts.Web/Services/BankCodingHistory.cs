@@ -25,6 +25,10 @@ public static class BankCodingHistory
             .Where(x => x.OrganisationId == organisationId)
             .Select(x => new { Original = x.SupplierPayment.PostedJournalId, Reversal = x.PostedJournalId }).ToListAsync(ct);
         foreach (var reversal in reversals) { ids.Add(reversal.Original); ids.Add(reversal.Reversal); }
+        var receiptReversals = await db.CustomerReceiptReversals.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId)
+            .Select(x => new { Original = x.CustomerReceipt.PostedJournalId, Reversal = x.PostedJournalId }).ToListAsync(ct);
+        foreach (var reversal in receiptReversals) { ids.Add(reversal.Original); ids.Add(reversal.Reversal); }
         return ids;
     }
 }

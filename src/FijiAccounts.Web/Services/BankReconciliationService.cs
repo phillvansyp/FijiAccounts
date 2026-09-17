@@ -137,13 +137,13 @@ public sealed class BankReconciliationService(ApplicationDbContext db, TenantAcc
             var journalIds = lines.Select(x => x.PostedJournalId).ToArray();
             var paymentJournals = await db.SupplierPayments.Where(x => x.OrganisationId == organisationId && journalIds.Contains(x.PostedJournalId))
                 .Select(x => x.PostedJournalId).ToListAsync(ct);
+            paymentJournals.AddRange(await db.CustomerReceipts.Where(x => x.OrganisationId == organisationId && journalIds.Contains(x.PostedJournalId))
+                .Select(x => x.PostedJournalId).ToListAsync(ct));
             var divisions = (await access.ListAccessibleBranchesAsync(userId, organisationId)).SelectMany(x => x.Divisions).Select(x => x.Id).ToHashSet();
             if (lines.Any(x => !paymentJournals.Contains(x.PostedJournalId) || x.DivisionId == null || !divisions.Contains(x.DivisionId.Value)))
-                throw new InvalidOperationException("Select accessible supplier bill payments from this bank account.");
-            if (lines.Any(x => x.PostedJournal.EntryDate.Year != statement.TransactionDate.Year || x.PostedJournal.EntryDate.Month != statement.TransactionDate.Month))
-                throw new InvalidOperationException("The selected payment dates must be in the same month as this statement transaction. Correct the payment dates first.");
-            if (statement.Amount >= 0 || lines.Any(x => x.Debit - x.Credit >= 0))
-                throw new InvalidOperationException("Select outgoing bill payments for an outgoing bank transaction.");
+                throw new InvalidOperationException("Select accessible bill payments or customer receipts from this bank account.");
+            if (lines.Any(x => Math.Sign(x.Debit - x.Credit) != Math.Sign(statement.Amount)))
+                throw new InvalidOperationException("Select payments with the same direction as this bank transaction.");
         }
         var ledgerAmount = Math.Round(lines.Sum(x => x.Debit - x.Credit), 2, MidpointRounding.AwayFromZero);
         var statementAmount = Math.Round(statement.Amount, 2, MidpointRounding.AwayFromZero);
