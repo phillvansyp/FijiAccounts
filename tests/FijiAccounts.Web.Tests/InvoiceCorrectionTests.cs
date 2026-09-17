@@ -12,6 +12,29 @@ public sealed class InvoiceCorrectionTests
     private static SalesInvoiceRequest Sale(AccountingTestDatabase test, decimal price = 100) => new(test.Organisation.Id, test.Customer.Id, new(2026, 8, 15), new(2026, 9, 15), [new("Consulting", 1, price, VatTreatment.Standard, test.Account("4000").Id)]);
     private static SupplierBillRequest Purchase(AccountingTestDatabase test, decimal price = 40) => new(test.Organisation.Id, test.Supplier.Id, "SUP-EDIT-001", new(2026, 8, 15), new(2026, 9, 15), [new("Office costs", 1, price, VatTreatment.Standard, test.Account("6000").Id)]);
 
+    [Fact]
+    public async Task ReinstatedBillCanBeCorrectedAndHistoryStillBalances()
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var request = Purchase(t);
+        var bill = await t.Purchasing.PostBillAsync(t.UserId, request);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            await t.Purchasing.VoidBillAsync(t.UserId, t.Organisation.Id, bill.Id, new(2026, 8, 16), "Incorrect void");
+            await t.Purchasing.ReinstateBillAsync(t.UserId, t.Organisation.Id, bill.Id, new(2026, 8, 17), "Restore bill");
+        }
+        var corrected = await Service(t).CorrectPurchaseAsync(t.UserId, bill.Id,
+            request with { BillDate = new(2026, 8, 12), DueDate = new(2026, 8, 19) }, "Correct date");
+        Assert.Equal(new DateOnly(2026, 8, 12), corrected.BillDate);
+        Assert.Equal(3, await t.Db.SupplierBillVoids.CountAsync(v => v.SupplierBillId == bill.Id));
+        Assert.Equal(2, await t.Db.SupplierBillReinstatements.CountAsync(v => v.SupplierBillId == bill.Id));
+        Assert.Equal(BillStatus.Voided, (await t.Db.SupplierBills.AsNoTracking().SingleAsync(x => x.Id == bill.Id)).Status);
+        Assert.Equal(-corrected.Total, await t.AccountBalanceAsync("2000"));
+        var vat = await new VatWorkpaperService(t.Db).GetAsync(t.Organisation.Id, new(2026, 8, 1), new(2026, 8, 31));
+        Assert.Equal(corrected.VatTotal, vat.InputTax);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(t).CorrectPurchaseAsync(t.UserId, bill.Id, request, "Repeat"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

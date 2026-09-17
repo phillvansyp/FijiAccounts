@@ -100,42 +100,16 @@ public sealed class VatWorkpaperService(
                         x.VatAmount))
                 .ToListAsync(ct);
 
-        var purchaseVoids =
-            await db.SupplierBillLines
-                .AsNoTracking()
-                .Where(x =>
-                    x.SupplierBill.OrganisationId == organisationId &&
-                    db.SupplierBillVoids.Any(v =>
-                        v.OrganisationId == organisationId &&
-                        v.SupplierBillId == x.SupplierBillId &&
-                        v.VoidDate >= from &&
-                        v.VoidDate <= to))
-                .Select(x =>
-                    new VatLine(
-                        x.VatTreatment,
-                        -x.NetAmount,
-                        -x.VatAmount))
-                .ToListAsync(ct);
-
+        var purchaseVoids = await db.SupplierBillVoids.AsNoTracking()
+            .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
+            .SelectMany(v => v.SupplierBill.Lines.Select(x => new VatLine(x.VatTreatment, -x.NetAmount, -x.VatAmount)))
+            .ToListAsync(ct);
         purchases.AddRange(purchaseVoids);
 
-        var purchaseReinstatements =
-            await db.SupplierBillLines
-                .AsNoTracking()
-                .Where(x =>
-                    x.SupplierBill.OrganisationId == organisationId &&
-                    db.SupplierBillReinstatements.Any(r =>
-                        r.OrganisationId == organisationId &&
-                        r.SupplierBillId == x.SupplierBillId &&
-                        r.ReinstatementDate >= from &&
-                        r.ReinstatementDate <= to))
-                .Select(x =>
-                    new VatLine(
-                        x.VatTreatment,
-                        x.NetAmount,
-                        x.VatAmount))
-                .ToListAsync(ct);
-
+        var purchaseReinstatements = await db.SupplierBillReinstatements.AsNoTracking()
+            .Where(r => r.OrganisationId == organisationId && r.ReinstatementDate >= from && r.ReinstatementDate <= to)
+            .SelectMany(r => r.SupplierBill.Lines.Select(x => new VatLine(x.VatTreatment, x.NetAmount, x.VatAmount)))
+            .ToListAsync(ct);
         purchases.AddRange(purchaseReinstatements);
 
         var salesCredits =

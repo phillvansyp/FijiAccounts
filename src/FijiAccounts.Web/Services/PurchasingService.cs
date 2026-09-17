@@ -897,6 +897,9 @@ public sealed class PurchasingService(
         var receipts = await db.InventoryMovements.Where(x => x.OrganisationId == organisationId && x.Reference == bill.BillNumber && x.QuantityChange > 0).ToListAsync(ct);
         foreach (var receipt in receipts) { var item = bill.Lines.Select(x => x.ProductItem).First(x => x?.Id == receipt.ProductItemId)!; if (item.QuantityOnHand < receipt.QuantityChange) throw new InvalidOperationException($"Cannot void this bill because {item.Code} no longer has all received units on hand."); var remainingValue = InventoryValuation.MovementValue(item.QuantityOnHand, item.AverageCost) - receipt.ValueChange; if (remainingValue < 0) throw new InvalidOperationException($"Cannot void this bill because it would make the value of {item.Code} negative."); }
         await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct) : null;
+        if (await db.SupplierBillVoids.AnyAsync(v => v.SupplierBillId == billId &&
+            !db.SupplierBillReinstatements.Any(r => r.SupplierBillVoidId == v.Id), ct))
+            throw new InvalidOperationException("This bill already has an active void. Refresh the bill before editing.");
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == bill.PostedJournalId && x.OrganisationId == organisationId, ct);
         var reversalLines = original.Lines.Select(x => new JournalLineInput(x.LedgerAccountId, $"Void {bill.BillNumber}", x.Credit, x.Debit, x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(organisationId, voidDate, $"VOID-{bill.BillNumber}", $"Void supplier bill {bill.SupplierReference}: {reason.Trim()}", reversalLines), ct);
@@ -945,7 +948,8 @@ public sealed class PurchasingService(
         }
 
         var billVoid = await db.SupplierBillVoids
-            .SingleOrDefaultAsync(x => x.SupplierBillId == bill.Id && x.OrganisationId == organisationId, ct)
+            .SingleOrDefaultAsync(x => x.SupplierBillId == bill.Id && x.OrganisationId == organisationId &&
+                !db.SupplierBillReinstatements.Any(r => r.SupplierBillVoidId == x.Id), ct)
             ?? throw new InvalidOperationException("The bill's void record could not be found.");
 
         if (reinstatementDate < billVoid.VoidDate)
@@ -954,9 +958,9 @@ public sealed class PurchasingService(
         }
 
         if (await db.SupplierBillReinstatements.AnyAsync(
-                x => x.SupplierBillId == bill.Id && x.OrganisationId == organisationId, ct))
+                x => x.SupplierBillVoidId == billVoid.Id && x.OrganisationId == organisationId, ct))
         {
-            throw new InvalidOperationException("This supplier bill has already been reinstated.");
+            throw new InvalidOperationException("This void has already been reversed.");
         }
 
         var replacement = await db.SupplierBills

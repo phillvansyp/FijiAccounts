@@ -654,8 +654,7 @@ builder.Entity<SalesCreditNoteReversal>()
         foreach (var property in new[] { nameof(SupplierBill.Subtotal), nameof(SupplierBill.VatTotal), nameof(SupplierBill.Total), nameof(SupplierBill.AmountPaid), nameof(SupplierBill.AmountCredited), nameof(SupplierBill.TransactionSubtotal), nameof(SupplierBill.TransactionVatTotal), nameof(SupplierBill.TransactionTotal), nameof(SupplierBill.TransactionAmountPaid) }) builder.Entity<SupplierBill>().Property(property).HasPrecision(18, 2);
         builder.Entity<SupplierBill>().Property(x => x.ExchangeRateToBase).HasPrecision(18, 8);
         builder.Entity<SupplierBillVoid>()
-    .HasIndex(x => x.SupplierBillId)
-    .IsUnique();
+    .HasIndex(x => x.SupplierBillId);
 
 builder.Entity<SupplierBillVoid>()
     .HasOne(x => x.SupplierBill)
@@ -663,8 +662,7 @@ builder.Entity<SupplierBillVoid>()
     .HasForeignKey(x => x.SupplierBillId)
     .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierBillReinstatement>()
-            .HasIndex(x => x.SupplierBillId)
-            .IsUnique();
+            .HasIndex(x => x.SupplierBillId);
         builder.Entity<SupplierBillReinstatement>()
             .HasIndex(x => x.SupplierBillVoidId)
             .IsUnique();

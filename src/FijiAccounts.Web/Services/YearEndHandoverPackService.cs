@@ -660,7 +660,7 @@ public sealed class YearEndHandoverPackService(
                 billIds.Contains(x.SupplierBillId) &&
                 x.VoidDate <= asAt &&
                 !db.SupplierBillReinstatements.Any(r =>
-                    r.SupplierBillId == x.SupplierBillId &&
+                    r.SupplierBillVoidId == x.Id &&
                     r.ReinstatementDate <= asAt))
             .Select(x => x.SupplierBillId)
             .ToListAsync(cancellationToken);

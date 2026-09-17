@@ -167,6 +167,7 @@ else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back t
             Navigation.NavigateTo($"/o/{OrganisationId}/{(IsSales ? "sales" : "purchases")}/{resultId}");
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { error = ex.Message; }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException) { error = "The correction could not be saved. Your entered changes are still here. Reload the bill to check its current status before trying again."; }
         finally { saving = false; }
     }
     private sealed class EditModel
