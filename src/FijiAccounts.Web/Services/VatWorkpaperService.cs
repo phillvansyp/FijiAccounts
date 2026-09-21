@@ -18,6 +18,9 @@ public sealed record VatAdjustmentSummary(
     decimal Net,
     decimal Tax);
 
+public sealed record VatBillAdjustment(Guid BillId, string BillNumber, DateOnly BillDate,
+    DateOnly Date, string Kind, string Reason, decimal Net, decimal Tax);
+
 public sealed record VatWorkpaper(
     DateOnly From,
     DateOnly To,
@@ -26,6 +29,9 @@ public sealed record VatWorkpaper(
     VatTreatmentSummary Purchases,
     VatAdjustmentSummary SupplierCredits)
 {
+    public VatTreatmentSummary? PurchasesBeforeAdjustments { get; init; }
+    public IReadOnlyList<VatBillAdjustment> BillAdjustments { get; init; } = [];
+
     public decimal OutputTax =>
         Sales.TotalTax - SalesCredits.Tax;
 
@@ -99,6 +105,18 @@ public sealed class VatWorkpaperService(
                         x.NetAmount,
                         x.VatAmount))
                 .ToListAsync(ct);
+
+        var purchasesBeforeAdjustments = Summarise(purchases);
+        var adjustments = await db.SupplierBillVoids.AsNoTracking()
+            .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
+            .Select(v => new VatBillAdjustment(v.SupplierBillId, v.SupplierBill.BillNumber,
+                v.SupplierBill.BillDate, v.VoidDate, "Bill reversal", v.Reason,
+                -v.SupplierBill.Subtotal, -v.SupplierBill.VatTotal)).ToListAsync(ct);
+        adjustments.AddRange(await db.SupplierBillReinstatements.AsNoTracking()
+            .Where(v => v.OrganisationId == organisationId && v.ReinstatementDate >= from && v.ReinstatementDate <= to)
+            .Select(v => new VatBillAdjustment(v.SupplierBillId, v.SupplierBill.BillNumber,
+                v.SupplierBill.BillDate, v.ReinstatementDate, "Bill reinstatement", v.Reason,
+                v.SupplierBill.Subtotal, v.SupplierBill.VatTotal)).ToListAsync(ct));
 
         var purchaseVoids = await db.SupplierBillVoids.AsNoTracking()
             .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
@@ -176,7 +194,11 @@ public sealed class VatWorkpaperService(
             Summarise(purchases),
             NetAdjustments(
                 supplierCredits,
-                supplierCreditReversals));
+                supplierCreditReversals))
+        {
+            PurchasesBeforeAdjustments = purchasesBeforeAdjustments,
+            BillAdjustments = adjustments.OrderBy(x => x.Date).ThenBy(x => x.BillNumber).ToArray()
+        };
     }
 
     private static VatTreatmentSummary Summarise(

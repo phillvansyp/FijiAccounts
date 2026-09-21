@@ -144,11 +144,11 @@ else
                 <article>
                     <span>Input @access.Organisation.TaxLabel</span>
                     <strong>$@workpaper.InputTax.ToString("N2")</strong>
-                    <small>Tax on supplier bills</small>
+                    <small>Supplier bill tax after reversals and credits</small>
                 </article>
                 <article class="@(workpaper.NetTax > 0 ? "needs-attention" : null)">
                     <span>Net position</span>
-                    <strong>$@Math.Abs(workpaper.NetTax).ToString("N2")</strong>
+                    <strong>$@workpaper.NetTax.ToString("N2")</strong>
                     <small>
                         @(workpaper.NetTax >= 0
                             ? "Estimated payable"
@@ -241,24 +241,35 @@ else
                         </tr>
                         <tr>
                             <td>Standard-rated purchases</td>
-                            <td class="number">$@workpaper.Purchases.StandardNet.ToString("N2")</td>
-                            <td class="number">$@workpaper.Purchases.StandardTax.ToString("N2")</td>
+                            <td class="number">$@((workpaper.PurchasesBeforeAdjustments ?? workpaper.Purchases).StandardNet.ToString("N2"))</td>
+                            <td class="number">$@((workpaper.PurchasesBeforeAdjustments ?? workpaper.Purchases).StandardTax.ToString("N2"))</td>
                         </tr>
                         <tr>
                             <td>Zero-rated purchases</td>
-                            <td class="number">$@workpaper.Purchases.ZeroRatedNet.ToString("N2")</td>
+                            <td class="number">$@((workpaper.PurchasesBeforeAdjustments ?? workpaper.Purchases).ZeroRatedNet.ToString("N2"))</td>
                             <td class="number">—</td>
                         </tr>
                         <tr>
                             <td>Exempt purchases</td>
-                            <td class="number">$@workpaper.Purchases.ExemptNet.ToString("N2")</td>
+                            <td class="number">$@((workpaper.PurchasesBeforeAdjustments ?? workpaper.Purchases).ExemptNet.ToString("N2"))</td>
                             <td class="number">—</td>
                         </tr>
                         <tr>
                             <td>Out-of-scope purchases</td>
-                            <td class="number">$@workpaper.Purchases.OutOfScopeNet.ToString("N2")</td>
+                            <td class="number">$@((workpaper.PurchasesBeforeAdjustments ?? workpaper.Purchases).OutOfScopeNet.ToString("N2"))</td>
                             <td class="number">—</td>
                         </tr>
+                        @foreach (var adjustment in workpaper.BillAdjustments)
+                        {
+                            <tr class="adjustment-row">
+                                <td>
+                                    @adjustment.Kind · <a href="o/@OrganisationId/purchases/@adjustment.BillId">@adjustment.BillNumber</a>
+                                    <small>@adjustment.Date.ToString("dd MMM yyyy") · @adjustment.Reason · Original bill @adjustment.BillDate.ToString("dd MMM yyyy")</small>
+                                </td>
+                                <td class="number">$@adjustment.Net.ToString("N2")</td>
+                                <td class="number">$@adjustment.Tax.ToString("N2")</td>
+                            </tr>
+                        }
                         <tr>
                             <td>Supplier credit notes</td>
                             <td class="number">($@workpaper.SupplierCredits.Net.ToString("N2"))</td>
@@ -274,12 +285,17 @@ else
                             </th>
                             <th></th>
                             <th class="number">
-                                $@Math.Abs(workpaper.NetTax).ToString("N2")
+                                $@workpaper.NetTax.ToString("N2")
                             </th>
                         </tr>
                     </tfoot>
                 </table>
 
+                @if (workpaper.InputTax < 0)
+                {
+                    <p class="vat-explanation">Reversals and credits exceed purchase tax in this period. Negative input tax increases the amount payable. Check the linked corrections and their dates before filing.</p>
+                }
+                <p class="vat-calculation">Output tax $@workpaper.OutputTax.ToString("N2") − input tax ($@workpaper.InputTax.ToString("N2")) = net tax $@workpaper.NetTax.ToString("N2"). A negative net amount is an estimated credit.</p>
                 <div class="alert alert-info mt-4 mb-0">
                     Review transaction classifications and supporting documents
                     before filing. Account Island has not submitted this return to

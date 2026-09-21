@@ -209,6 +209,39 @@ public sealed class VatWorkpaperServiceTests
         Assert.Equal(7.50m, afterReversal.NetTax);
     }
 
+    [Fact]
+    public async Task Cross_period_bill_reversal_is_visible_separately_and_preserves_net_tax()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var originalDate = new DateOnly(2026, 7, 15);
+        var bill = await test.Purchasing.PostBillAsync(test.UserId,
+            new SupplierBillRequest(test.Organisation.Id, test.Supplier.Id, "OLD-VAT", originalDate,
+                originalDate.AddDays(7), [PurchaseLine(test, 100m, VatTreatment.Standard)]));
+        var date = new DateOnly(2026, 8, 15);
+        await test.Purchasing.PostBillAsync(test.UserId,
+            new SupplierBillRequest(test.Organisation.Id, test.Supplier.Id, "NEW-VAT", date,
+                date.AddDays(7), [PurchaseLine(test, 40m, VatTreatment.Standard)]));
+        await test.Purchasing.VoidBillAsync(test.UserId, test.Organisation.Id, bill.Id, date, "Wrong amount");
+
+        var result = await new VatWorkpaperService(test.Db).GetAsync(test.Organisation.Id,
+            new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 31));
+        Assert.Equal(5m, result.PurchasesBeforeAdjustments!.StandardTax);
+        var adjustment = Assert.Single(result.BillAdjustments);
+        Assert.Equal(bill.Id, adjustment.BillId);
+        Assert.Equal(bill.BillNumber, adjustment.BillNumber);
+        Assert.Equal(originalDate, adjustment.BillDate);
+        Assert.Equal(date, adjustment.Date);
+        Assert.Equal("Wrong amount", adjustment.Reason);
+        Assert.Equal(-12.5m, adjustment.Tax);
+        Assert.Equal(-100m, adjustment.Net);
+        Assert.Equal(-7.5m, result.InputTax);
+        Assert.Equal(7.5m, result.NetTax);
+        var july = await new VatWorkpaperService(test.Db).GetAsync(test.Organisation.Id,
+            new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+        Assert.Empty(july.BillAdjustments);
+        Assert.Equal(-12.5m, july.NetTax);
+    }
+
     private static SalesInvoiceLineRequest SalesLine(
         AccountingTestDatabase test,
         decimal amount,
