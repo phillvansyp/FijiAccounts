@@ -10,6 +10,7 @@
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject PaymentConnectionsService PaymentConnections
 @inject SalesInvoiceService InvoiceService
 @inject RecurringSalesInvoiceService RecurringInvoices
 @inject RecurringInvoiceAutomationSettingsService AutomationSettings
@@ -373,6 +374,7 @@ else
                                     Outstanding
                                 </button>
                             </th>
+                            <th><span class="visually-hidden">Bank match</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -392,6 +394,12 @@ else
                             <td class="text-end">@invoice.Currency @invoice.TransactionVatTotal.ToString("N2")</td>
                             <td class="text-end">@invoice.Currency @invoice.TransactionTotal.ToString("N2")</td>
                             <td class="text-end outstanding">@access.Organisation.BaseCurrency @((invoice.Total - invoice.AmountPaid - invoice.AmountCredited).ToString("N2"))</td>
+                            <td class="invoice-match-cell">
+                                @if (invoiceMatchLinks.TryGetValue(invoice.Id, out var matchLink))
+                                {
+                                    <a class="invoice-match" href="@matchLink" title="Possible bank match — review and reconcile" aria-label="@($"Review possible bank matches for {invoice.InvoiceNumber}")">M</a>
+                                }
+                            </td>
                         </tr>
                     }
                     </tbody>
@@ -449,6 +457,7 @@ else
         await Reload();
     }
 
+    private Dictionary<Guid, string> invoiceMatchLinks = [];
     private async Task Reload()
     {
         invoices =
@@ -460,6 +469,21 @@ else
                 .OrderByDescending(x => x.SequenceNumber)
                 .Take(ReferenceSearch is null ? 100 : int.MaxValue)
                 .ToListAsync();
+
+        invoiceMatchLinks.Clear();
+        if (canPost && access != null)
+        {
+            var workspace = await PaymentConnections.ReadAsync(userId, OrganisationId);
+            var visibleIds = invoices.Select(x => x.Id).ToHashSet();
+            foreach (var document in workspace.Documents.Where(d => d.IsSales && visibleIds.Contains(d.Id)))
+            {
+                var candidates = workspace.Statements.Where(bank => PaymentMatchSuggestion.Matches(workspace, document, bank, access.Organisation.BaseCurrency)).ToArray();
+                if (candidates.Length > 0)
+                    invoiceMatchLinks[document.Id] = candidates.Length == 1
+                        ? $"/o/{OrganisationId}/payments/statement/{candidates[0].Id}?matchDocument={document.Id}"
+                        : $"/o/{OrganisationId}/payments/document/{document.Id}";
+            }
+        }
 
         recurringInvoices =
             await Db.RecurringSalesInvoices
