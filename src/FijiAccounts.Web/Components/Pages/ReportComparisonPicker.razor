@@ -1,14 +1,14 @@
 @using FijiAccounts.Web.Services
 
 <div class="comparison-picker" @onkeydown="KeyDown">
-    <button type="button" class="comparison-trigger" aria-label="@($"Compare with: {Options.Label}")" aria-expanded="@(isOpen ? "true" : "false")" aria-controls="comparison-options" disabled="Disabled" @onclick="Toggle">
+    <button type="button" class="comparison-trigger" aria-label="@($"Compare with: {Options.Label}")" aria-expanded="@(isOpen ? "true" : "false")" aria-controls="comparison-options" disabled="@Disabled" @onclick="Toggle">
         <span>@Options.Label</span><span aria-hidden="true">&#9662;</span>
     </button>
     @if (isOpen)
     {
         <button type="button" class="comparison-dismiss" aria-label="Close comparison options" @onclick="Close"></button>
         <div id="comparison-options" class="comparison-menu">
-            <fieldset disabled="Disabled" style="border:0;padding:0;margin:0;min-width:0;display:contents">
+            <fieldset disabled="@Disabled" style="border:0;padding:0;margin:0;min-width:0;display:contents">
             <p>Compare with</p>
             <button type="button" class="@(Options.Count == 0 ? "selected" : null)" @onclick="() => ChooseCount(0)">None</button>
             @for (var i = 1; i <= 4; i++)

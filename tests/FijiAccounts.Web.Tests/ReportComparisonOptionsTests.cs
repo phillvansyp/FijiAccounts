@@ -69,6 +69,27 @@ public sealed class ReportComparisonOptionsTests
         Assert.Contains("aria-expanded=\"true\"", html);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Picker_DisablesControlsOnlyWhileLoading(bool loading)
+    {
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var output = await renderer.RenderComponentAsync<OpenPicker>(ParameterView.FromDictionary(
+                new Dictionary<string, object?> { ["Options"] = new ReportComparisonOptions(), ["Disabled"] = loading }));
+            return output.ToHtmlString();
+        });
+        var trigger = System.Text.RegularExpressions.Regex.Match(html, "<button[^>]*comparison-trigger[^>]*>").Value;
+        var fieldset = System.Text.RegularExpressions.Regex.Match(html, "<fieldset[^>]*>").Value;
+        Assert.NotEmpty(trigger);
+        Assert.NotEmpty(fieldset);
+        Assert.Equal(loading, trigger.Contains(" disabled"));
+        Assert.Equal(loading, fieldset.Contains(" disabled"));
+    }
+
     public sealed class OpenPicker : ReportComparisonPicker
     {
         protected override void OnInitialized() => typeof(ReportComparisonPicker).GetField("isOpen", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(this, true);
