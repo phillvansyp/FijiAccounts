@@ -635,7 +635,6 @@ public sealed class PayrollIslandIntegrationService(
     private static bool HasSameAccounting(
         PayrollIslandPayRunImport imported,
         PayrollIslandPayRunPayload payload) =>
-        imported.PayRunNumber == payload.PayRunNumber.Trim() &&
         imported.PeriodStart == payload.PeriodStart &&
         imported.PeriodEnd == payload.PeriodEnd &&
         imported.PaymentDate == payload.PaymentDate &&

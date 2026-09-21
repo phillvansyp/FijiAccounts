@@ -198,7 +198,7 @@ public sealed class PayrollIslandIntegrationServiceTests
         await service.SyncAsync(test.UserId, test.Organisation.Id);
         var original = await test.Db.PayrollIslandPayRunImports.SingleAsync();
         var journal = await service.PostPayRunAsync(test.UserId, test.Organisation.Id, original.Id);
-        client.Page = Page(DetailedRun() with { Revision = 2 });
+        client.Page = Page(DetailedRun() with { Revision = 2, PayRunNumber = "RENAMED-001" });
         await service.SyncAsync(test.UserId, test.Organisation.Id);
         var current = await test.Db.PayrollIslandPayRunImports.SingleAsync(x => x.Status == PayrollIslandImportStatus.Posted);
         Assert.Equal(journal.Id, current.PostedJournalId);
@@ -207,7 +207,7 @@ public sealed class PayrollIslandIntegrationServiceTests
         var report = await new ReportTransactionService(test.Db, test.Access).GetAsync(test.UserId, test.Organisation.Id,
             "6000", new(2026, 8, 1), new(2026, 8, 31));
         Assert.All(report.Transactions, x => Assert.EndsWith($"/payroll/{current.Id}", x.SourceUrl));
-        client.Page = Page(DetailedRun() with { Revision = 2, Employees = DetailedRun().Employees!.Reverse().ToArray() });
+        client.Page = Page(DetailedRun() with { Revision = 2, PayRunNumber = "RENAMED-001", Employees = DetailedRun().Employees!.Reverse().ToArray() });
         Assert.Equal(1, (await service.SyncAsync(test.UserId, test.Organisation.Id)).Skipped);
     }
 
