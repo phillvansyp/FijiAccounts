@@ -135,8 +135,11 @@ if (receivable is null ||
                 cancellationToken);
         }
         await db.SaveChangesAsync(cancellationToken);
-        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
-        notifications.PublishOrganisationUpdate(request.OrganisationId);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            notifications.PublishOrganisationUpdate(request.OrganisationId);
+        }
         return receipt;
     }
 

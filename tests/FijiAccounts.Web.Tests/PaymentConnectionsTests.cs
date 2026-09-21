@@ -7,12 +7,46 @@ namespace FijiAccounts.Web.Tests;
 
 public sealed class PaymentConnectionsTests
 {
-    private static PaymentConnectionsService Service(AccountingTestDatabase t) => new(t.Db, t.Access, t.Purchasing, t.CustomerReceipts, t.BankCoding, t.Reconciliation);
+    private static PaymentConnectionsService Service(AccountingTestDatabase t) => new(t.Db, t.Access, t.Purchasing, t.CustomerReceipts, t.BankCoding, t.Reconciliation, t.Notifications);
     private static Task<SupplierBill> Bill(AccountingTestDatabase t, decimal amount) => t.Purchasing.PostBillAsync(t.UserId,
         new(t.Organisation.Id, t.Supplier.Id, Guid.NewGuid().ToString(), new(2026, 6, 1), new(2026, 6, 30),
             [new("Supplies", 1m, amount, VatTreatment.OutOfScope, t.Account("6500").Id)]));
     private static Task<BankStatementLine> Statement(AccountingTestDatabase t, decimal amount) => t.Reconciliation.AddStatementLineAsync(t.UserId,
         new(t.Organisation.Id, t.Account("1000").Id, new(2026, 7, 15), "Payment", "TEST", amount));
+
+    [Fact]
+    public async Task MatchPublishesOnlyAfterTransactionIsCommittedAndDisposed()
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var invoice = await t.SalesInvoices.CreateAndPostAsync(t.UserId, new(t.Organisation.Id, t.Customer.Id,
+            new(2026, 6, 1), new(2026, 6, 30), [new("Services", 1, 100, VatTreatment.OutOfScope, t.Account("4000").Id)]));
+        var bank = await Statement(t, 100);
+        var updates = new List<(bool OpenTransaction, bool Matched)>();
+        using var subscription = t.Updates.Subscribe(_ => updates.Add((t.Db.Database.CurrentTransaction != null,
+            t.Db.BankStatementLines.AsNoTracking().Single(x => x.Id == bank.Id).ReconciledAt != null)));
+        await Service(t).ConnectAsync(t.UserId, new(t.Organisation.Id, bank.Id, null, [], [new(invoice.Id, 100)]));
+        var update = Assert.Single(updates);
+        Assert.False(update.OpenTransaction);
+        Assert.True(update.Matched);
+    }
+
+    [Fact]
+    public async Task FailedMatchDoesNotPublishAnUncommittedReceipt()
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var invoice = await t.SalesInvoices.CreateAndPostAsync(t.UserId, new(t.Organisation.Id, t.Customer.Id,
+            new(2026, 6, 1), new(2026, 6, 30), [new("Services", 1, 100, VatTreatment.OutOfScope, t.Account("4000").Id)]));
+        var bank = await Statement(t, 100);
+        t.Db.BankReconciliationSessions.Add(new() { OrganisationId = t.Organisation.Id, BankAccountId = t.Account("1000").Id,
+            StatementStartDate = new(2026, 7, 1), StatementEndDate = new(2026, 7, 31), IsCompleted = true, CreatedByUserId = t.UserId });
+        await t.Db.SaveChangesAsync();
+        var updates = 0;
+        using var subscription = t.Updates.Subscribe(_ => updates++);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(t).ConnectAsync(t.UserId,
+            new(t.Organisation.Id, bank.Id, null, [], [new(invoice.Id, 100)])));
+        Assert.Equal(0, updates);
+        Assert.Empty(await t.Db.CustomerReceipts.ToListAsync());
+    }
 
     [Theory]
     [InlineData(true)]

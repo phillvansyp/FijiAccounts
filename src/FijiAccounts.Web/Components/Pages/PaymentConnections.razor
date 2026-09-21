@@ -55,6 +55,7 @@
                         <p>The full remaining document amount is filled in below. Matching records the bank payment and the exchange difference.</p>
                         @if (statement.ReconciledAt != null) { <p>Matching replaces the existing direct coding. Completed reconciliation periods must be reopened first.</p> }
                         <button class="btn btn-primary" disabled="@(busy || SelectedAmount != Math.Abs(statement.Amount))" @onclick="Save">@(busy ? "Saving…" : "Match and reconcile")</button>
+                        @if (error != null) { <div role="alert" class="alert alert-danger mt-2">@error</div> }
                     }
                     else
                     {

@@ -21,7 +21,7 @@ public sealed record ConnectPaymentsRequest(Guid OrganisationId, Guid StatementI
 /// <summary>One transaction for replacing direct coding, recording settlements and matching the bank.</summary>
 public sealed class PaymentConnectionsService(ApplicationDbContext db, TenantAccessService access,
     PurchasingService purchasing, CustomerReceiptService receipts, BankTransactionCodingService coding,
-    BankReconciliationService reconciliation)
+    BankReconciliationService reconciliation, NotificationService notifications)
 {
     public async Task<PaymentWorkspace> ReadAsync(string userId, Guid organisationId, CancellationToken ct = default)
     {
@@ -83,53 +83,56 @@ public sealed class PaymentConnectionsService(ApplicationDbContext db, TenantAcc
             request.Allocations.Select(x => x.DocumentId).Distinct().Count() != request.Allocations.Count ||
             request.ExistingPaymentLineIds.Distinct().Count() != request.ExistingPaymentLineIds.Count)
             throw new InvalidOperationException("Choose each payment or document once and enter positive amounts with at most two decimal places.");
-        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
-        try
+        await using (var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct))
         {
-            if (await db.PayrollBankMatches.AnyAsync(x => x.OrganisationId == request.OrganisationId && x.BankStatementLineId == request.StatementId, ct))
-                throw new InvalidOperationException("This bank transaction is connected to payroll. Review its payroll payment instead.");
-            var statement = await db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == request.StatementId && x.OrganisationId == request.OrganisationId, ct);
-            if (statement.MatchedPostedJournalLineId != request.ExpectedMatchId)
-                throw new InvalidOperationException("This transaction has changed. Refresh before continuing.");
-            var workspace = await ReadAsync(userId, request.OrganisationId, ct);
-            var selected = workspace.Payments.Where(x => request.ExistingPaymentLineIds.Contains(x.LineId)).ToList();
-            if (selected.Count != request.ExistingPaymentLineIds.Count || selected.Any(x => x.StatementId != null || x.BankAccountId != statement.BankAccountId))
-                throw new InvalidOperationException("An existing payment is unavailable or already matched. Refresh the list.");
-            if (request.Allocations.Any(x => !workspace.Documents.Any(d => d.Id == x.DocumentId && d.IsSales == (statement.Amount > 0))))
-                throw new InvalidOperationException("Choose accessible documents for this payment direction.");
-            if (selected.Any(x => Math.Sign(x.Amount) != Math.Sign(statement.Amount)) ||
-                selected.Sum(x => Math.Abs(x.Amount)) + request.Allocations.Sum(x => x.Amount) != Math.Abs(statement.Amount))
-                throw new InvalidOperationException("The selected payments and allocations must equal the bank amount exactly.");
-            if (statement.ReconciledAt != null)
+            try
             {
-                var line = await db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal)
-                    .SingleAsync(x => x.Id == statement.MatchedPostedJournalLineId, ct);
-                if (!(line.PostedJournal.Description?.StartsWith("Coded from bank statement", StringComparison.OrdinalIgnoreCase) ?? false))
-                    throw new InvalidOperationException("This transaction already has a payment. Open the linked document to correct that payment first.");
-                await coding.ReopenCodingAsync(userId, request.OrganisationId, statement.Id, ct);
+                if (await db.PayrollBankMatches.AnyAsync(x => x.OrganisationId == request.OrganisationId && x.BankStatementLineId == request.StatementId, ct))
+                    throw new InvalidOperationException("This bank transaction is connected to payroll. Review its payroll payment instead.");
+                var statement = await db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == request.StatementId && x.OrganisationId == request.OrganisationId, ct);
+                if (statement.MatchedPostedJournalLineId != request.ExpectedMatchId)
+                    throw new InvalidOperationException("This transaction has changed. Refresh before continuing.");
+                var workspace = await ReadAsync(userId, request.OrganisationId, ct);
+                var selected = workspace.Payments.Where(x => request.ExistingPaymentLineIds.Contains(x.LineId)).ToList();
+                if (selected.Count != request.ExistingPaymentLineIds.Count || selected.Any(x => x.StatementId != null || x.BankAccountId != statement.BankAccountId))
+                    throw new InvalidOperationException("An existing payment is unavailable or already matched. Refresh the list.");
+                if (request.Allocations.Any(x => !workspace.Documents.Any(d => d.Id == x.DocumentId && d.IsSales == (statement.Amount > 0))))
+                    throw new InvalidOperationException("Choose accessible documents for this payment direction.");
+                if (selected.Any(x => Math.Sign(x.Amount) != Math.Sign(statement.Amount)) ||
+                    selected.Sum(x => Math.Abs(x.Amount)) + request.Allocations.Sum(x => x.Amount) != Math.Abs(statement.Amount))
+                    throw new InvalidOperationException("The selected payments and allocations must equal the bank amount exactly.");
+                if (statement.ReconciledAt != null)
+                {
+                    var line = await db.PostedJournalLines.AsNoTracking().Include(x => x.PostedJournal)
+                        .SingleAsync(x => x.Id == statement.MatchedPostedJournalLineId, ct);
+                    if (!(line.PostedJournal.Description?.StartsWith("Coded from bank statement", StringComparison.OrdinalIgnoreCase) ?? false))
+                        throw new InvalidOperationException("This transaction already has a payment. Open the linked document to correct that payment first.");
+                    await coding.ReopenCodingAsync(userId, request.OrganisationId, statement.Id, ct);
+                }
+                var ids = request.ExistingPaymentLineIds.ToList();
+                foreach (var allocation in request.Allocations)
+                {
+                    Guid journalId;
+                    if (statement.Amount < 0)
+                        journalId = (await purchasing.PayBillAsync(userId, new(request.OrganisationId, allocation.DocumentId,
+                            statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
+                            TransactionAmount: allocation.TransactionAmount), ct)).PostedJournalId;
+                    else
+                        journalId = (await receipts.RecordAsync(userId, new(request.OrganisationId, allocation.DocumentId,
+                            statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
+                            TransactionAmount: allocation.TransactionAmount), ct)).PostedJournalId;
+                    ids.Add(await db.PostedJournalLines.Where(x => x.PostedJournalId == journalId && x.LedgerAccountId == statement.BankAccountId).Select(x => x.Id).SingleAsync(ct));
+                }
+                await reconciliation.ReconcileManyAsync(userId, request.OrganisationId, statement.Id, ids, ct);
+                await transaction.CommitAsync(ct);
             }
-            var ids = request.ExistingPaymentLineIds.ToList();
-            foreach (var allocation in request.Allocations)
+            catch
             {
-                Guid journalId;
-                if (statement.Amount < 0)
-                    journalId = (await purchasing.PayBillAsync(userId, new(request.OrganisationId, allocation.DocumentId,
-                        statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
-                        TransactionAmount: allocation.TransactionAmount), ct)).PostedJournalId;
-                else
-                    journalId = (await receipts.RecordAsync(userId, new(request.OrganisationId, allocation.DocumentId,
-                        statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
-                        TransactionAmount: allocation.TransactionAmount), ct)).PostedJournalId;
-                ids.Add(await db.PostedJournalLines.Where(x => x.PostedJournalId == journalId && x.LedgerAccountId == statement.BankAccountId).Select(x => x.Id).SingleAsync(ct));
+                await transaction.RollbackAsync(ct);
+                db.ChangeTracker.Clear();
+                throw;
             }
-            await reconciliation.ReconcileManyAsync(userId, request.OrganisationId, statement.Id, ids, ct);
-            await transaction.CommitAsync(ct);
         }
-        catch
-        {
-            await transaction.RollbackAsync(ct);
-            db.ChangeTracker.Clear();
-            throw;
-        }
+        notifications.PublishOrganisationUpdate(request.OrganisationId);
     }
 }
