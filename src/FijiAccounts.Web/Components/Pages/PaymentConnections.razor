@@ -5,6 +5,8 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext Db
 @inject PaymentConnectionsService Connections
 @inject UserManager<ApplicationUser> Users
 @inject AuthenticationStateProvider Authentication
@@ -43,7 +45,8 @@
         @if (statement != null || document != null)
         {
             <h3>Connected payments</h3>
-            @if (!LinkedPayments.Any()) { <p>No invoice or bill payment is connected yet. Direct coding can be reconciled while paperwork is still missing.</p> }
+            @if (payrollMatch is not null) { <p>Connected payroll payment: <a href="/o/@OrganisationId/payroll/@payrollMatch.PayRunImportId">View employee breakdown</a></p> }
+            else if (!LinkedPayments.Any()) { <p>No invoice or bill payment is connected yet. Direct coding can be reconciled while paperwork is still missing.</p> }
             @foreach (var payment in LinkedPayments)
             {
                 <article><strong>@payment.Date.ToString("dd MMM yyyy") · @payment.Amount.ToString("N2")</strong> · @payment.Reference
@@ -52,7 +55,7 @@
                 </article>
             }
         }
-        @if (statement != null && canPost && !LinkedPayments.Any())
+        @if (statement != null && canPost && !LinkedPayments.Any() && payrollMatch is null)
         {
             <h3>Connect this bank transaction</h3>
             <p>Choose payments already recorded first. For unpaid documents, enter the amount this bank transaction pays. Partial payments and several documents are supported. Existing payment dates stay unchanged.</p>
@@ -128,6 +131,7 @@
     [Parameter] public Guid? StatementId { get; set; }
     [Parameter] public Guid? DocumentId { get; set; }
     private PaymentWorkspace? data;
+    private PayrollBankMatch? payrollMatch;
     private BankStatementLine? statement;
     private PaymentDocument? document;
     private string userId = "", search = "";
@@ -169,6 +173,7 @@
         baseCurrency = (await Access.FindAsync(userId, OrganisationId))?.Organisation.BaseCurrency ?? "";
         data = await Connections.ReadAsync(userId, OrganisationId);
         statement = data.Statements.SingleOrDefault(s => s.Id == StatementId);
+        payrollMatch = statement is null ? null : await Db.PayrollBankMatches.AsNoTracking().SingleOrDefaultAsync(x => x.OrganisationId == OrganisationId && x.BankStatementLineId == statement.Id);
         document = data.Documents.SingleOrDefault(d => d.Id == DocumentId);
         selected.Clear(); amounts = data.Documents.ToDictionary(d => d.Id, _ => 0m);
         foreignAmounts = data.Documents.ToDictionary(d => d.Id, _ => (decimal?)null);

@@ -40,7 +40,7 @@ else
     <section class="settings-card mb-3">
         <h2>Connection and account mapping</h2>
         <p>
-            Account Island retrieves aggregate totals only. Employee bank details and individual payslips remain in Payroll Island.
+            Account Island retrieves finalised totals and employee pay breakdowns. Bank account numbers and individual payslips remain in Payroll Island.
         </p>
         <EditForm Model="model" OnValidSubmit="SaveConnection" FormName="payroll-island-connection">
             <DataAnnotationsValidator />
@@ -148,7 +148,7 @@ else
                             {
                                 <tr>
                                     <td>
-                                        <strong>@item.PayRunNumber</strong>
+                                        <a href="/o/@OrganisationId/payroll/@item.Id"><strong>@item.PayRunNumber</strong></a>
                                         <small class="d-block text-secondary">Revision @item.Revision · @item.EmployeeCount employees</small>
                                         <details class="mt-2">
                                             <summary>Review breakdown</summary>

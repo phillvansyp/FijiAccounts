@@ -38,7 +38,8 @@ public sealed record BankStatementImportDeleteResult(Guid BatchId, int Deleted);
 public sealed class BankStatementImportService(
     ApplicationDbContext db,
     TenantAccessService access,
-    IImmutableDocumentStore? storage = null)
+    IImmutableDocumentStore? storage = null,
+    PayrollBankMatchingService? payrollMatching = null)
 {
     public async Task<StatementPreview> ReadAsync(
     Stream stream,
@@ -172,6 +173,7 @@ public sealed class BankStatementImportService(
             });
             await db.SaveChangesAsync(ct);
         }
+        if (payrollMatching is not null) await payrollMatching.MatchAsync(userId, organisationId, ct);
         return new(imported, skipped, batchId);
     }
 

@@ -96,6 +96,20 @@ public sealed class ReportTransactionService(ApplicationDbContext db, TenantAcce
         var sources = new Dictionary<Guid, Source>();
         if (ids.Length == 0) return sources;
         var prefix = $"/o/{organisationId}";
+        var payroll = await db.PayrollIslandPayRunImports.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.PostedJournalId != null)
+            .OrderByDescending(x => x.Revision).ToListAsync(ct);
+        var correctionRefs = await db.PostedJournals.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.Id))
+            .Select(x => new { x.Id, x.Reference }).ToListAsync(ct);
+        foreach (var match in await db.PayrollBankMatches.AsNoTracking().Where(x => x.OrganisationId == organisationId && ids.Contains(x.PostedJournalId)).ToListAsync(ct))
+            sources.TryAdd(match.PostedJournalId, new(match.PostedJournalId, "Payroll payment", prefix + "/payroll/" + match.PayRunImportId, null));
+        foreach (var run in payroll)
+        {
+            var source = new Source(run.PostedJournalId!.Value, "Payroll " + run.PayRunNumber, prefix + "/payroll/" + run.Id, null);
+            if (ids.Contains(source.JournalId)) sources.TryAdd(source.JournalId, source);
+            foreach (var correction in correctionRefs.Where(x => x.Reference == $"PAY-SPLIT-{run.PostedJournalId.Value:N}"))
+                sources.TryAdd(correction.Id, source with { JournalId = correction.Id });
+        }
         void Add(IEnumerable<Source> entries) { foreach (var source in entries) sources.TryAdd(source.JournalId, source); }
         Add(await db.SalesInvoices.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.PostedJournalId != null && ids.Contains(x.PostedJournalId.Value))
             .Select(x => new Source(x.PostedJournalId!.Value, "Invoice " + x.InvoiceNumber, prefix + "/sales/" + x.Id, x.Customer.Name)).ToListAsync(ct));

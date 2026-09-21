@@ -143,6 +143,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<ProjectWipPosting> ProjectWipPostings => Set<ProjectWipPosting>();
     public DbSet<PayrollIslandConnection> PayrollIslandConnections =>
         Set<PayrollIslandConnection>();
+    public DbSet<PayrollBankMatch> PayrollBankMatches => Set<PayrollBankMatch>();
     public DbSet<PayrollIslandPayRunImport> PayrollIslandPayRunImports =>
         Set<PayrollIslandPayRunImport>();
     public DbSet<PayrollIslandPaymentRecord> PayrollIslandPaymentRecords =>
@@ -1422,6 +1423,10 @@ builder.Entity<FixedAsset>()
                 .Property(property)
                 .HasPrecision(18, 2);
         }
+        builder.Entity<PayrollBankMatch>().HasIndex(x => new { x.OrganisationId, x.ConnectionId, x.ExternalPaymentId }).IsUnique();
+        builder.Entity<PayrollBankMatch>().HasIndex(x => x.BankStatementLineId).IsUnique();
+        builder.Entity<PayrollBankMatch>().HasOne<BankStatementLine>().WithMany().HasForeignKey(x => x.BankStatementLineId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<PayrollBankMatch>().HasOne<PayrollIslandPayRunImport>().WithMany().HasForeignKey(x => x.PayRunImportId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PayrollIslandPaymentRecord>()
             .HasIndex(x => new { x.PayRunImportId, x.ExternalPaymentId })
             .IsUnique();

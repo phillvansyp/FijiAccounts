@@ -29,7 +29,7 @@ public sealed record PayrollIslandPayRunPayload(
     decimal EmployerFnpf,
     decimal OtherDeductions,
     decimal NetPay,
-    IReadOnlyList<PayrollIslandPaymentPayload> Payments);
+    IReadOnlyList<PayrollIslandPaymentPayload> Payments, IReadOnlyList<PayrollEmployeeDetail>? Employees = null);
 
 public sealed record PayrollIslandPayRunPage(
     IReadOnlyList<PayrollIslandPayRunPayload> PayRuns,

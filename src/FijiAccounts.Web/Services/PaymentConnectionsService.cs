@@ -82,6 +82,8 @@ public sealed class PaymentConnectionsService(ApplicationDbContext db, TenantAcc
         await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
         try
         {
+            if (await db.PayrollBankMatches.AnyAsync(x => x.OrganisationId == request.OrganisationId && x.BankStatementLineId == request.StatementId, ct))
+                throw new InvalidOperationException("This bank transaction is connected to payroll. Review its payroll payment instead.");
             var statement = await db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == request.StatementId && x.OrganisationId == request.OrganisationId, ct);
             if (statement.MatchedPostedJournalLineId != request.ExpectedMatchId)
                 throw new InvalidOperationException("This transaction has changed. Refresh before continuing.");

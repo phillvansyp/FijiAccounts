@@ -27,7 +27,8 @@ public sealed class PayrollIslandIntegrationService(
     TenantAccessService access,
     JournalPostingService posting,
     IPayrollIslandClient client,
-    IDataProtectionProvider dataProtection)
+    IDataProtectionProvider dataProtection,
+    PayrollBankMatchingService? bankMatching = null)
 {
     private const string ProtectorPurpose = "AccountIsland.PayrollIsland.AccessToken.v1";
     private static readonly Regex ExternalIdPattern = new(
@@ -221,6 +222,7 @@ public sealed class PayrollIslandIntegrationService(
             connection.LastSyncedAt = DateTimeOffset.UtcNow;
             connection.LastSyncError = null;
             await db.SaveChangesAsync(cancellationToken);
+            if (bankMatching is not null) await bankMatching.MatchAsync(userId, organisationId, cancellationToken);
             return result;
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or CryptographicException)
@@ -348,6 +350,7 @@ public sealed class PayrollIslandIntegrationService(
                 OtherDeductions = payload.OtherDeductions,
                 NetPay = payload.NetPay,
                 PayloadSha256 = hash,
+                EmployeesJson = payload.Employees is null ? null : JsonSerializer.Serialize(payload.Employees),
                 Status = importStatus,
                 PostedJournalId = importStatus == PayrollIslandImportStatus.Posted
                     ? postedPrior!.PostedJournalId
@@ -444,6 +447,8 @@ public sealed class PayrollIslandIntegrationService(
             new { payRun.ExternalPayRunId, payRun.Revision, JournalId = journal.Id }));
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await transaction.DisposeAsync();
+        if (bankMatching is not null) await bankMatching.MatchAsync(userId, organisationId, cancellationToken);
         return journal;
     }
 
@@ -555,6 +560,7 @@ public sealed class PayrollIslandIntegrationService(
             }
             _ = ParsePaymentKind(payment.Kind);
         }
+        PayrollEmployeeDetail.Validate(payload);
         var activePayments = payload.Payments
             .Where(x => ParsePaymentStatus(x.Status) != PayrollPaymentStatus.Cancelled)
             .ToList();
@@ -622,7 +628,8 @@ public sealed class PayrollIslandIntegrationService(
                 })
         };
         return Convert.ToHexString(
-            SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(canonical)));
+            SHA256.HashData(payload.Employees is null ? JsonSerializer.SerializeToUtf8Bytes(canonical) :
+                JsonSerializer.SerializeToUtf8Bytes(new { Accounting = canonical, Employees = payload.Employees.OrderBy(x => x.PaymentId, StringComparer.Ordinal) })));
     }
 
     private static bool HasSameAccounting(

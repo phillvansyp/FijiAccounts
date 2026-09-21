@@ -16,7 +16,7 @@ else if (result is not null)
     <p class="eyebrow">Profit &amp; Loss details</p>
     <h1>@result.AccountCode - @result.AccountName</h1>
     <p>@From!.Value.ToString("dd MMM yyyy") to @To!.Value.ToString("dd MMM yyyy") &middot; @result.Currency &middot; @result.Scope</p>
-    <div class="detail-card mb-3"><strong>Total for this period: @result.Currency @result.Total.ToString("N2")</strong><p class="mb-0">@result.Transactions.Count transaction lines. Amounts are those included in Profit &amp; Loss. Open an invoice or bill for its line items, tax, and attachments.</p></div>
+    <div class="detail-card mb-3"><strong>Total for this period: @result.Currency @result.Total.ToString("N2")</strong><p class="mb-0">@result.Transactions.Count transaction lines. Amounts are those included in Profit &amp; Loss. Open the source payroll run, invoice or bill for its line items, tax, and attachments.</p></div>
     @if (result.Transactions.Count == 0)
     {
         <div class="alert alert-info">No transactions for this account in the selected period and tracking scope.</div>

@@ -1,0 +1,92 @@
+@page "/o/{OrganisationId:guid}/payroll/{ImportId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Identity
+@inject ApplicationDbContext Db
+@inject TenantAccessService Access
+@inject UserManager<ApplicationUser> Users
+@inject AuthenticationStateProvider Authentication
+
+<PageTitle>Payroll breakdown · Account Island</PageTitle>
+@if (error is not null) { <div class="alert alert-danger">@error</div> }
+else if (run is null) { <p>Loading payroll…</p> }
+else
+{
+    <a href="/o/@OrganisationId/integrations/payroll-island">← Payroll imports</a>
+    <h1>Payroll @run.PayRunNumber</h1>
+    <p>@run.PeriodStart.ToString("dd MMM yyyy") – @run.PeriodEnd.ToString("dd MMM yyyy") · @run.Currency · Revision @run.Revision</p>
+    <section class="settings-card mb-3">
+        <div class="d-flex flex-wrap gap-4">
+            <div>Gross pay<strong class="d-block">@Money(run.GrossEarnings)</strong></div>
+            <div>Net pay<strong class="d-block">@Money(run.NetPay)</strong></div>
+            <div>Employer FNPF<strong class="d-block">@Money(run.EmployerFnpf)</strong></div>
+            <div>Employees<strong class="d-block">@run.EmployeeCount</strong></div>
+        </div>
+        <p class="mt-3 mb-0">Source: finalised Payroll Island records. Bank matches confirm net payments; gross pay and deductions come from payroll.</p>
+        @if (run.PostedJournalId is Guid journalId) { <a href="/o/@OrganisationId/journals/@journalId">View accounting journal</a> }
+        @if (Guid.TryParse(run.ExternalPayRunId, out var payrollId))
+        {
+            <a class="ms-3" href="@(run.Connection.BaseUrl.TrimEnd('/') + "/api/pay-runs/" + payrollId + "/register")" target="_blank" rel="noopener">Open Payroll Island register</a>
+        }
+    </section>
+    @if (employees.Count == 0)
+    {
+        <div class="alert alert-info">This earlier import contains totals only. Sync Payroll Island to retrieve the employee breakdown.</div>
+    }
+    else
+    {
+        <section class="settings-card">
+            <h2>Who was paid what</h2>
+            <p>Unique matches with the same employee, date, currency and exact net pay are reconciled automatically when payroll or bank statements are imported. Other payments remain available for review.</p>
+            <div class="table-responsive"><table class="table align-middle">
+                <thead><tr><th>Employee</th><th>Payment date</th><th class="text-end">Gross</th><th class="text-end">PAYE</th><th class="text-end">Employee FNPF</th><th class="text-end">Other deductions</th><th class="text-end">Employer FNPF</th><th class="text-end">Net pay</th><th>Bank connection</th></tr></thead>
+                <tbody>
+                @foreach (var employee in employees.OrderBy(x => x.PaymentDate).ThenBy(x => x.Name))
+                {
+                    var link = matches.SingleOrDefault(x => x.ExternalPaymentId == employee.PaymentId);
+                    <tr><td>@employee.Name<small class="d-block text-muted">@employee.EmployeeId</small></td><td>@employee.PaymentDate.ToString("dd MMM yyyy")</td>
+                        <td class="text-end">@Money(employee.Gross)</td><td class="text-end">@Money(employee.Paye)</td><td class="text-end">@Money(employee.EmployeeFnpf)</td><td class="text-end">@Money(employee.OtherDeductions)</td><td class="text-end">@Money(employee.EmployerFnpf)</td><td class="text-end"><strong>@Money(employee.NetPay)</strong></td>
+                        <td>@if (link is not null)
+                            {
+                                <a href="/o/@OrganisationId/payments/statement/@link.BankStatementLineId">@(reconciled.Contains(link.BankStatementLineId) && link.Amount == employee.NetPay ? "Matched payment" : "Review payment")</a>
+                            }
+                            else { <a href="@BankUrl(employee)">Find bank payment</a> }
+                        </td></tr>
+                }
+                </tbody>
+                <tfoot><tr><th colspan="2">Total</th><th class="text-end">@Money(run.GrossEarnings)</th><th class="text-end">@Money(run.EmployeePaye)</th><th class="text-end">@Money(run.EmployeeFnpf)</th><th class="text-end">@Money(run.OtherDeductions)</th><th class="text-end">@Money(run.EmployerFnpf)</th><th class="text-end">@Money(run.NetPay)</th><th></th></tr></tfoot>
+            </table></div>
+        </section>
+    }
+}
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid ImportId { get; set; }
+    private PayrollIslandPayRunImport? run;
+    private IReadOnlyList<PayrollEmployeeDetail> employees = [];
+    private List<PayrollBankMatch> matches = [];
+    private HashSet<Guid> reconciled = [];
+    private string? error;
+    private static string Money(decimal amount) => amount.ToString("N2");
+    private string BankUrl(PayrollEmployeeDetail employee) => $"/o/{OrganisationId}/banking?bankView=" + Uri.EscapeDataString(System.Text.Json.JsonSerializer.Serialize(new { Account = (Guid?)null, From = employee.PaymentDate.ToString("yyyy-MM-dd"), To = employee.PaymentDate.ToString("yyyy-MM-dd"), Search = employee.Name, Page = 1 }));
+    protected override async Task OnParametersSetAsync()
+    {
+        run = null; error = null;
+        try
+        {
+            var userId = Users.GetUserId((await Authentication.GetAuthenticationStateAsync()).User)!;
+            if (await Access.FindAsync(userId, OrganisationId) is null || await Access.GetReportDivisionScopeAsync(userId, OrganisationId) is not null)
+                throw new UnauthorizedAccessException("Organisation-wide payroll access is required to view this breakdown.");
+            run = await Db.PayrollIslandPayRunImports.AsNoTracking().Include(x => x.Connection).SingleOrDefaultAsync(x => x.OrganisationId == OrganisationId && x.Id == ImportId)
+                ?? throw new InvalidOperationException("Payroll run not found.");
+            employees = PayrollEmployeeDetail.Read(run);
+            var ids = employees.Select(x => x.PaymentId).ToArray();
+            matches = await Db.PayrollBankMatches.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.ConnectionId == run.ConnectionId && ids.Contains(x.ExternalPaymentId)).ToListAsync();
+            var statementIds = matches.Select(x => x.BankStatementLineId).ToArray();
+            reconciled = (await Db.BankStatementLines.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && statementIds.Contains(x.Id) && x.ReconciledAt != null).Select(x => x.Id).ToListAsync()).ToHashSet();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException) { error = ex.Message; }
+    }
+}

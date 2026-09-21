@@ -182,6 +182,87 @@ public sealed class PayrollIslandIntegrationServiceTests
         Assert.Contains("payroll source records", exception.Message);
     }
 
+    private static PayrollIslandPayRunPayload DetailedRun() => PayRun() with
+    {
+        Employees = Enumerable.Range(0, 10).Select(i => new PayrollEmployeeDetail($"run-1:EMP{i}", $"EMP{i:D4}",
+            $"Employee Person{i}", new(2026, 8, 28), 1000m, 100m, 80m, 100m, 20m, 800m)).ToArray()
+    };
+
+    [Fact]
+    public async Task Employee_enrichment_preserves_posted_journal_and_report_opens_payroll()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var client = new FakePayrollIslandClient(Page(PayRun()));
+        var service = Service(test, client);
+        await ConnectAsync(test, service);
+        await service.SyncAsync(test.UserId, test.Organisation.Id);
+        var original = await test.Db.PayrollIslandPayRunImports.SingleAsync();
+        var journal = await service.PostPayRunAsync(test.UserId, test.Organisation.Id, original.Id);
+        client.Page = Page(DetailedRun() with { Revision = 2 });
+        await service.SyncAsync(test.UserId, test.Organisation.Id);
+        var current = await test.Db.PayrollIslandPayRunImports.SingleAsync(x => x.Status == PayrollIslandImportStatus.Posted);
+        Assert.Equal(journal.Id, current.PostedJournalId);
+        Assert.Equal(10, PayrollEmployeeDetail.Read(current).Count);
+        Assert.Single(await test.Db.PostedJournals.ToListAsync());
+        var report = await new ReportTransactionService(test.Db, test.Access).GetAsync(test.UserId, test.Organisation.Id,
+            "6000", new(2026, 8, 1), new(2026, 8, 31));
+        Assert.All(report.Transactions, x => Assert.EndsWith($"/payroll/{current.Id}", x.SourceUrl));
+        client.Page = Page(DetailedRun() with { Revision = 2, Employees = DetailedRun().Employees!.Reverse().ToArray() });
+        Assert.Equal(1, (await service.SyncAsync(test.UserId, test.Organisation.Id)).Skipped);
+    }
+
+    [Fact]
+    public async Task Invalid_employee_breakdown_is_rejected_before_import()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var run = DetailedRun();
+        var invalid = run with { Employees = run.Employees!.Select((x, i) => i == 0 ? x with { NetPay = 801m } : x).ToArray() };
+        var service = Service(test, new FakePayrollIslandClient(Page(invalid)));
+        await ConnectAsync(test, service);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SyncAsync(test.UserId, test.Organisation.Id));
+        Assert.Empty(await test.Db.PayrollIslandPayRunImports.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(1, true)]
+    public async Task Automatic_matching_is_unique_idempotent_and_preserves_expenses(int copies, bool existingPayment)
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = Service(test, new FakePayrollIslandClient(Page(DetailedRun())));
+        await ConnectAsync(test, service);
+        await service.SyncAsync(test.UserId, test.Organisation.Id);
+        var import = await test.Db.PayrollIslandPayRunImports.SingleAsync();
+        await service.PostPayRunAsync(test.UserId, test.Organisation.Id, import.Id);
+        if (existingPayment)
+            await test.Posting.PostAsync(test.UserId, new(test.Organisation.Id, new(2026, 8, 28), "WAGES", "Employee Person0",
+                [new(test.Account("2200").Id, "Employee Person0", 800m, 0), new(test.Account("1000").Id, "Employee Person0", 0, 800m)]));
+        for (var i = 0; i < copies; i++)
+            await test.Reconciliation.AddStatementLineAsync(test.UserId, new(test.Organisation.Id, test.Account("1000").Id,
+                new(2026, 8, 28), "Employee Person0", null, -800m));
+        var matching = new PayrollBankMatchingService(test.Db, test.Access, test.Posting, test.Reconciliation);
+        Assert.Equal(copies == 1 ? 1 : 0, await matching.MatchAsync(test.UserId, test.Organisation.Id));
+        Assert.Equal(0, await matching.MatchAsync(test.UserId, test.Organisation.Id));
+        Assert.Equal(11000m, await test.AccountBalanceAsync("6000"));
+        Assert.Equal(copies == 1 ? -800m : 0m, await test.AccountBalanceAsync("1000"));
+        Assert.Equal(copies == 1 ? 2 : 1, await test.Db.PostedJournals.CountAsync());
+    }
+
+    [Theory]
+    [InlineData("Employee Person0", -800, 28, true)]
+    [InlineData("WAGES EMP0000", -800, 28, true)]
+    [InlineData("Employee Person1", -800, 28, false)]
+    [InlineData("Employee Person0", -799, 28, false)]
+    [InlineData("Employee Person0", 800, 28, false)]
+    [InlineData("Employee Person0", -800, 27, false)]
+    [InlineData("Employee Person01", -800, 28, false)]
+    public void Automatic_matching_requires_employee_exact_amount_and_date(string name, decimal amount, int day, bool expected)
+    {
+        var statement = new BankStatementLine { Description = name, Amount = amount, TransactionDate = new(2026, 8, day) };
+        Assert.Equal(expected, PayrollBankMatchingService.Matches(DetailedRun().Employees![0], statement));
+    }
+
     private static PayrollIslandIntegrationService Service(
         AccountingTestDatabase test,
         IPayrollIslandClient client) => new(

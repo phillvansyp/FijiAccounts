@@ -10,6 +10,7 @@
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject PayrollBankMatchingService PayrollMatching
 @inject BankReconciliationService Reconciliation
 @inject BankReconciliationSessionService ReconciliationSessions
 @inject BankStatementImportService StatementImport
@@ -1201,7 +1202,7 @@ reconciliationSessions =
         }
     }
 }
-    private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); await PayrollMatching.MatchAsync(userId, OrganisationId); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
     private Guid? multipleStatementId;
     private string multipleSearch = "";
     private string? multipleError;

@@ -77,6 +77,7 @@ public sealed class PayrollIslandPayRunImport
     public PostedJournal? PostedJournal { get; set; }
     public DateTimeOffset ImportedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string ImportedByUserId { get; set; }
+    public string? EmployeesJson { get; set; }
     public List<PayrollIslandPaymentRecord> Payments { get; set; } = [];
 }
 
@@ -92,4 +93,17 @@ public sealed class PayrollIslandPaymentRecord
     public DateOnly? PaidDate { get; set; }
     public decimal Amount { get; set; }
     [MaxLength(160)] public string? Reference { get; set; }
+}
+
+public sealed class PayrollBankMatch
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid ConnectionId { get; set; }
+    [MaxLength(120)] public required string ExternalPaymentId { get; set; }
+    public Guid PayRunImportId { get; set; }
+    public Guid BankStatementLineId { get; set; }
+    public Guid PostedJournalId { get; set; }
+    public decimal Amount { get; set; }
+    public DateTimeOffset MatchedAt { get; set; } = DateTimeOffset.UtcNow;
 }
