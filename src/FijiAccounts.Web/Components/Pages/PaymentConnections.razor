@@ -32,7 +32,7 @@
                 !data.Payments.Any(p => p.StatementId == s.Id) && (s.ReconciledAt == null || data.MissingDocuments.Contains(s.Id))))
             {
                 <div class="alert alert-info">Possible foreign-currency payment:
-                    <a href="@StatementUrl(candidate.Id)">@candidate.TransactionDate.ToString("dd MMM yyyy") · @candidate.Description · @candidate.Amount.ToString("N2")</a>.
+                    <a href="@($"{StatementUrl(candidate.Id)}?matchDocument={document.Id}")">@candidate.TransactionDate.ToString("dd MMM yyyy") · @candidate.Description · @candidate.Amount.ToString("N2")</a>.
                     Difference @((Math.Abs(candidate.Amount) - document.Outstanding).ToString("N2")) @baseCurrency (within 10%). Review and connect.</div>
             }
         }
@@ -41,6 +41,27 @@
             <h2>@statement.Description</h2>
             <p>@statement.BankAccount.Name · @statement.TransactionDate.ToString("dd MMM yyyy") · <strong>@statement.Amount.ToString("N2")</strong></p>
             <p>Bank match: @(statement.ReconciledAt == null ? "Not matched" : "Matched") · Linked payments: @LinkedPayments.Count()</p>
+        }
+        @if (statement != null && canPost && !LinkedPayments.Any() && payrollMatch is null)
+        {
+            @foreach (var candidate in AvailableDocuments.Where(d => Suggested(d, statement)).OrderByDescending(d => d.Id == chosenDocument))
+            {
+                <article class="alert alert-info">
+                    <h3>Suggested match · <a href="@DocumentUrl(candidate)">@candidate.Number</a></h3>
+                    <p>@candidate.Party · Document balance @candidate.Currency @candidate.OutstandingDocumentAmount.ToString("N2")</p>
+                    <p>Document base balance: @baseCurrency @candidate.Outstanding.ToString("N2") · Bank payment: @baseCurrency @Math.Abs(statement.Amount).ToString("N2") · Exchange difference: @baseCurrency @((Math.Abs(statement.Amount) - candidate.Outstanding).ToString("N2"))</p>
+                    @if (chosenDocument == candidate.Id)
+                    {
+                        <p>The full remaining document amount is filled in below. Matching records the bank payment and the exchange difference.</p>
+                        @if (statement.ReconciledAt != null) { <p>Matching replaces the existing direct coding. Completed reconciliation periods must be reopened first.</p> }
+                        <button class="btn btn-primary" disabled="@(busy || SelectedAmount != Math.Abs(statement.Amount))" @onclick="Save">@(busy ? "Saving…" : "Match and reconcile")</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-outline-primary" disabled="@busy" @onclick="() => ChooseSuggestion(candidate)">Use this match</button>
+                    }
+                </article>
+            }
         }
         @if (statement != null || document != null)
         {
@@ -73,18 +94,12 @@
                 </label>
             }
             <h4>Unpaid bills or invoices</h4>
-            @foreach (var candidate in AvailableDocuments.Where(d => Suggested(d, statement)))
-            {
-                <div class="alert alert-info">Possible foreign-currency match: <a href="@DocumentUrl(candidate)">@candidate.Number · @candidate.Party</a>.
-                    Estimated outstanding @baseCurrency @candidate.Outstanding.ToString("N2"); difference @((Math.Abs(statement.Amount) - candidate.Outstanding).ToString("N2")).
-                    Within 10%. Check the document and enter the amount settled in its currency below.</div>
-            }
             <p>Amounts paid are in the bank’s base currency. For a foreign-currency document, also enter the amount being settled in that document’s currency.</p>
             @foreach (var doc in AvailableDocuments)
             {
                 <article class="allocation"><div><a href="@DocumentUrl(doc)">@doc.Number · @doc.Party</a><small>@doc.Date.ToString("dd MMM yyyy") · Outstanding base @doc.Outstanding.ToString("N2") · @doc.Currency</small></div>
-                    <label>Pay (base)<input aria-label="@($"Pay {doc.Number} in base currency")" class="form-control" type="number" min="0" step="0.01" @bind="amounts[doc.Id]" disabled="@busy" /></label>
-                    <label>Document amount (optional)<input aria-label="@($"Document currency amount {doc.Number}")" class="form-control" type="number" min="0" step="0.01" @bind="foreignAmounts[doc.Id]" disabled="@busy" /></label>
+                    <label>Pay (base)<input aria-label="@($"Pay {doc.Number} in base currency")" class="form-control" type="number" min="0" step="0.01" @bind="amounts[doc.Id]" @bind:after="ClearSuggestion" disabled="@busy" /></label>
+                    <label>Document amount (optional)<input aria-label="@($"Document currency amount {doc.Number}")" class="form-control" type="number" min="0" step="0.01" @bind="foreignAmounts[doc.Id]" @bind:after="ClearSuggestion" disabled="@busy" /></label>
                 </article>
             }
             <div class="allocation-summary"><strong>Bank amount: @Math.Abs(statement.Amount).ToString("N2") · Selected: @SelectedAmount.ToString("N2") · Remaining: @((Math.Abs(statement.Amount) - SelectedAmount).ToString("N2"))</strong>
@@ -130,6 +145,8 @@
     [Parameter] public Guid OrganisationId { get; set; }
     [Parameter] public Guid? StatementId { get; set; }
     [Parameter] public Guid? DocumentId { get; set; }
+    [SupplyParameterFromQuery(Name = "matchDocument")] public Guid? MatchDocumentId { get; set; }
+    private Guid? chosenDocument;
     private PaymentWorkspace? data;
     private PayrollBankMatch? payrollMatch;
     private BankStatementLine? statement;
@@ -144,13 +161,14 @@
     private IEnumerable<ConnectedPayment> LinkedPayments => data!.Payments.Where(p => StatementId != null ? p.StatementId == StatementId : DocumentId != null && p.DocumentIds.Contains(DocumentId.Value));
     private IEnumerable<ConnectedPayment> AvailablePayments => data!.Payments.Where(p => p.StatementId == null && p.BankAccountId == statement!.BankAccountId && Math.Sign(p.Amount) == Math.Sign(statement!.Amount) && Matches(p.Reference + " " + string.Join(" ", data.Documents.Where(d => p.DocumentIds.Contains(d.Id)).Select(d => d.Number + " " + d.Party))));
     private IEnumerable<PaymentDocument> AvailableDocuments => data!.Documents.Where(d => d.IsSales == (statement!.Amount > 0) && d.Outstanding > 0 && IsPayable(d) && Matches(d.Number + " " + d.Party)).OrderBy(d => d.Date);
-    private bool Suggested(PaymentDocument doc, BankStatementLine bank) => IsPayable(doc) && ForeignCurrencyMatchSuggestion.Matches(doc.Currency, baseCurrency, doc.Outstanding, bank.Amount, doc.IsSales, doc.Date, bank.TransactionDate);
+    private bool Suggested(PaymentDocument doc, BankStatementLine bank) => IsPayable(doc) && doc.OutstandingDocumentAmount > 0 && !data!.Payments.Any(p => p.StatementId == null && p.DocumentIds.Contains(doc.Id)) && ForeignCurrencyMatchSuggestion.Matches(doc.Currency, baseCurrency, doc.Outstanding, bank.Amount, doc.IsSales, doc.Date, bank.TransactionDate);
     private decimal SelectedAmount => data!.Payments.Where(p => selected.Contains(p.LineId)).Sum(p => Math.Abs(p.Amount)) + amounts.Values.Sum();
     private bool Matches(string value) => string.IsNullOrWhiteSpace(search) || value.Contains(search, StringComparison.OrdinalIgnoreCase);
     private static bool IsPayable(PaymentDocument doc) => doc.Status is not ("Draft" or "Voided" or "Void" or "Credited" or "Paid");
     private string DocumentUrl(PaymentDocument d) => $"/o/{OrganisationId}/{(d.IsSales ? "sales" : "purchases")}/{d.Id}";
     private string StatementUrl(Guid id) => $"/o/{OrganisationId}/payments/statement/{id}";
-    private void Select(Guid id, bool value) { if (value) selected.Add(id); else selected.Remove(id); }
+    private void ClearSuggestion() => chosenDocument = null;
+    private void Select(Guid id, bool value) { chosenDocument = null; if (value) selected.Add(id); else selected.Remove(id); }
     public override Task SetParametersAsync(ParameterView parameters)
     {
         if (!parameters.TryGetValue<Guid?>(nameof(StatementId), out _)) StatementId = null;
@@ -175,8 +193,25 @@
         statement = data.Statements.SingleOrDefault(s => s.Id == StatementId);
         payrollMatch = statement is null ? null : await Db.PayrollBankMatches.AsNoTracking().SingleOrDefaultAsync(x => x.OrganisationId == OrganisationId && x.BankStatementLineId == statement.Id);
         document = data.Documents.SingleOrDefault(d => d.Id == DocumentId);
+        chosenDocument = null;
         selected.Clear(); amounts = data.Documents.ToDictionary(d => d.Id, _ => 0m);
         foreignAmounts = data.Documents.ToDictionary(d => d.Id, _ => (decimal?)null);
+        if (statement != null && canPost && !LinkedPayments.Any() && payrollMatch is null)
+        {
+            var candidates = AvailableDocuments.Where(d => Suggested(d, statement)).ToArray();
+            var candidate = MatchDocumentId.HasValue ? candidates.SingleOrDefault(d => d.Id == MatchDocumentId)
+                : candidates.Length == 1 ? candidates[0] : null;
+            if (candidate != null) ChooseSuggestion(candidate);
+        }
+    }
+    private void ChooseSuggestion(PaymentDocument candidate)
+    {
+        if (busy || statement == null || !Suggested(candidate, statement)) return;
+        selected.Clear();
+        foreach (var id in amounts.Keys.ToArray()) { amounts[id] = 0m; foreignAmounts[id] = null; }
+        amounts[candidate.Id] = Math.Abs(statement.Amount);
+        foreignAmounts[candidate.Id] = candidate.OutstandingDocumentAmount;
+        chosenDocument = candidate.Id;
     }
     private async Task Save()
     {

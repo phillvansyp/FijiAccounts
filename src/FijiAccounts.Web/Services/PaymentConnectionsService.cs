@@ -4,7 +4,11 @@ using Microsoft.EntityFrameworkCore;
 namespace FijiAccounts.Web.Services;
 
 public sealed record PaymentDocument(Guid Id, bool IsSales, string Number, string Party, DateOnly Date,
-    DateOnly Due, string Currency, decimal Outstanding, string Status);
+    DateOnly Due, string Currency, decimal Outstanding, string Status, decimal ExchangeRateToBase = 1m)
+{
+    public decimal OutstandingDocumentAmount => ExchangeRateToBase > 0
+        ? decimal.Round(Outstanding / ExchangeRateToBase, 2, MidpointRounding.AwayFromZero) : 0m;
+}
 public sealed record ConnectedPayment(Guid LineId, Guid BankAccountId, DateOnly Date, decimal Amount, string Reference,
     IReadOnlyList<Guid> DocumentIds, Guid? StatementId);
 public sealed record PaymentWorkspace(IReadOnlyList<PaymentDocument> Documents,
@@ -29,9 +33,9 @@ public sealed class PaymentConnectionsService(ApplicationDbContext db, TenantAcc
         var invoices = await db.SalesInvoices.AsNoTracking().Include(x => x.Customer)
             .Where(x => x.OrganisationId == organisationId && x.DivisionId != null && divisions.Contains(x.DivisionId.Value)).ToListAsync(ct);
         var documents = bills.Select(x => new PaymentDocument(x.Id, false, x.BillNumber, x.Supplier.Name,
-            x.BillDate, x.DueDate, x.Currency, x.Total - x.AmountPaid - x.AmountCredited, x.Status.ToString()))
+            x.BillDate, x.DueDate, x.Currency, x.Total - x.AmountPaid - x.AmountCredited, x.Status.ToString(), x.ExchangeRateToBase))
             .Concat(invoices.Select(x => new PaymentDocument(x.Id, true, x.InvoiceNumber, x.Customer.Name,
-                x.IssueDate, x.DueDate, x.Currency, x.Total - x.AmountPaid - x.AmountCredited, x.Status.ToString()))).ToList();
+                x.IssueDate, x.DueDate, x.Currency, x.Total - x.AmountPaid - x.AmountCredited, x.Status.ToString(), x.ExchangeRateToBase))).ToList();
         var excluded = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
         var supplierPayments = await db.SupplierPayments.AsNoTracking().Where(x => x.OrganisationId == organisationId &&
             x.DivisionId != null && divisions.Contains(x.DivisionId.Value)).ToListAsync(ct);

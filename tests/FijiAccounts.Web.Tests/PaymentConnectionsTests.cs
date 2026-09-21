@@ -14,6 +14,37 @@ public sealed class PaymentConnectionsTests
     private static Task<BankStatementLine> Statement(AccountingTestDatabase t, decimal amount) => t.Reconciliation.AddStatementLineAsync(t.UserId,
         new(t.Organisation.Id, t.Account("1000").Id, new(2026, 7, 15), "Payment", "TEST", amount));
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SuggestedForeignPaymentUsesRemainingDocumentBalanceAndActualBankAmount(bool sales)
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        Guid id;
+        if (sales)
+            id = (await t.SalesInvoices.CreateAndPostAsync(t.UserId, new(t.Organisation.Id, t.Customer.Id,
+                new(2026, 6, 1), new(2026, 6, 30), [new("Services", 1, 100, VatTreatment.OutOfScope, t.Account("4000").Id)],
+                Currency: "USD", ExchangeRateToBase: 2m))).Id;
+        else
+            id = (await t.Purchasing.PostBillAsync(t.UserId, new(t.Organisation.Id, t.Supplier.Id, "FX",
+                new(2026, 6, 1), new(2026, 6, 30), [new("Supplies", 1, 100, VatTreatment.OutOfScope, t.Account("6500").Id)],
+                Currency: "USD", ExchangeRateToBase: 2m))).Id;
+        // Part-payment at a different exchange rate leaves USD 75 / FJD 150 to settle.
+        var first = await Statement(t, sales ? 48 : -48);
+        await Service(t).ConnectAsync(t.UserId, new(t.Organisation.Id, first.Id, null, [], [new(id, 48, 25)]));
+        var graph = await Service(t).ReadAsync(t.UserId, t.Organisation.Id);
+        var doc = graph.Documents.Single(d => d.Id == id);
+        Assert.Equal(150, doc.Outstanding);
+        Assert.Equal(75, doc.OutstandingDocumentAmount);
+        var bank = await Statement(t, sales ? 145 : -145);
+        await Service(t).ConnectAsync(t.UserId, new(t.Organisation.Id, bank.Id, null, [],
+            [new(id, Math.Abs(bank.Amount), doc.OutstandingDocumentAmount)]));
+        var result = await Service(t).ReadAsync(t.UserId, t.Organisation.Id);
+        Assert.Equal(0, result.Documents.Single(d => d.Id == id).Outstanding);
+        Assert.Single(result.Payments, p => p.StatementId == bank.Id);
+        Assert.Equal(sales ? 193 : -193, await t.AccountBalanceAsync("1000"));
+    }
+
     [Fact]
     public async Task SplitPaymentSupportsPartialBillsAndPreventsRepeatSave()
     {

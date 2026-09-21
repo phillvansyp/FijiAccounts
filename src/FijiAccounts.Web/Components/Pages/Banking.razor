@@ -595,7 +595,7 @@ else
                     <strong>Possible foreign-currency match: <a href="@suggestion.Url">@suggestion.Number</a> · @suggestion.Party</strong>
                     <div>Estimated outstanding @access!.Organisation.BaseCurrency @suggestion.Outstanding.ToString("N2") · Bank amount @Math.Abs(item.Amount).ToString("N2") · Difference @((Math.Abs(item.Amount) - suggestion.Outstanding).ToString("N2"))</div>
                     <div>Within 10% of the estimate. Review the document currency amount and exchange difference before saving.</div>
-                    <a class="btn btn-outline-primary mt-2" href="@($"/o/{OrganisationId}/payments/statement/{item.Id}")">Review and connect</a>
+                    <a class="btn btn-outline-primary mt-2" href="@($"/o/{OrganisationId}/payments/statement/{item.Id}?matchDocument={suggestion.Id}")">Review and connect</a>
                 </div>
             }
             @if (item.ReconciledAt is null && SuggestedMatch(item) is null && SuggestedSupplierBill(item) is { } suggestedBill)
@@ -1354,18 +1354,18 @@ reconciliationSessions =
     private static decimal Outstanding(SupplierBill bill) =>
         bill.Total - bill.AmountPaid - bill.AmountCredited;
 
-    private IEnumerable<(string Number, string Party, decimal Outstanding, string Url)> ForeignCurrencySuggestions(BankStatementLine item)
+    private IEnumerable<(Guid Id, string Number, string Party, decimal Outstanding, string Url)> ForeignCurrencySuggestions(BankStatementLine item)
     {
         if (access is null || confirmedPaymentDocuments.Contains(item.Id)) yield break;
         if (item.ReconciledAt is not null && (CodedAccount(item) is not { } account || !PaymentDocumentPolicy.RequiresTradeDocument(account))) yield break;
         foreach (var invoice in outstandingSalesInvoices)
             if (ForeignCurrencyMatchSuggestion.Matches(invoice.Currency, access.Organisation.BaseCurrency,
                 Outstanding(invoice), item.Amount, true, invoice.IssueDate, item.TransactionDate))
-                yield return (invoice.InvoiceNumber, invoice.Customer.Name, Outstanding(invoice), $"/o/{OrganisationId}/sales/{invoice.Id}");
+                yield return (invoice.Id, invoice.InvoiceNumber, invoice.Customer.Name, Outstanding(invoice), $"/o/{OrganisationId}/sales/{invoice.Id}");
         foreach (var bill in outstandingSupplierBills)
             if (ForeignCurrencyMatchSuggestion.Matches(bill.Currency, access.Organisation.BaseCurrency,
                 Outstanding(bill), item.Amount, false, bill.BillDate, item.TransactionDate))
-                yield return (bill.BillNumber, bill.Supplier.Name, Outstanding(bill), $"/o/{OrganisationId}/purchases/{bill.Id}");
+                yield return (bill.Id, bill.BillNumber, bill.Supplier.Name, Outstanding(bill), $"/o/{OrganisationId}/purchases/{bill.Id}");
     }
 
     private SalesInvoice? SuggestedSalesInvoice(BankStatementLine item)
