@@ -29,7 +29,7 @@ public sealed class SalesQuoteAccountingTests
                     OrganisationId: test.Organisation.Id,
                     CustomerId: test.Customer.Id,
                     QuoteDate: new DateOnly(2026, 8, 20),
-                    ExpiryDate: new DateOnly(2026, 9, 20),
+                    ExpiryDate: DateOnly.FromDateTime(DateTime.Today).AddDays(30),
                     Lines:
                     [
                         new SalesInvoiceLineRequest(
