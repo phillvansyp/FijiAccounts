@@ -155,7 +155,7 @@ else
 
     @if (NormalisedReportType == "profit-loss")
     {
-        <section class="financial-report">
+        <section class="financial-report @(comparisonColumns.Count > 1 ? "financial-report-wide" : null)">
             <header>
                 <div>
                     <h2>Profit &amp; Loss</h2>

@@ -4,3 +4,5 @@
 .report-controls ::deep form{display:flex;flex-wrap:wrap;gap:.75rem;align-items:end;width:100%}.report-controls ::deep form>div{flex:1 1 180px;min-width:0}
 
 .profit-comparison td a{color:#007eae;text-decoration:underline;text-underline-offset:3px}.profit-comparison td.negative a{color:#b42318}
+
+.financial-report-wide{width:100%;max-width:none;min-width:0;box-sizing:border-box}
