@@ -1447,6 +1447,8 @@ builder.Entity<FixedAsset>()
     public override int SaveChanges(bool acceptAllChangesOnSuccess) { ProtectAppendOnlyRecords(); return base.SaveChanges(acceptAllChangesOnSuccess); }
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default) { ProtectAppendOnlyRecords(); return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
 
+    internal HashSet<Guid> InvoicesBeingCorrected { get; } = [];
+
     private void ProtectAppendOnlyRecords()
     {
         if (
@@ -1548,6 +1550,8 @@ builder.Entity<FixedAsset>()
     private bool IsDraftSalesInvoiceLine(
     Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<SalesInvoiceLine> entry)
 {
+    if (InvoicesBeingCorrected.Contains(entry.Entity.SalesInvoiceId)) return true;
+
     if (entry.Entity.SalesInvoice is not null)
     {
         return entry.Entity.SalesInvoice.Status == InvoiceStatus.Draft;

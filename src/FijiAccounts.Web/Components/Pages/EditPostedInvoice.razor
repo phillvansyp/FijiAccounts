@@ -22,7 +22,7 @@
 @if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
 @if (ready)
 {
-    <p>Saving issues a corrected version with a new document number. The original remains in the history and its posting is reversed. No changes are made until you save.</p>
+    <p>@(InvoiceId.HasValue ? "Saving updates this invoice and keeps its invoice number. No changes are made until you save." : "Saving issues a corrected version with a new document number. The original remains in the history and its posting is reversed. No changes are made until you save.")</p>
     <EditForm Model="model" OnValidSubmit="Save" FormName="edit-posted-invoice">
         <DataAnnotationsValidator /><ValidationSummary />
         <fieldset disabled="@saving">

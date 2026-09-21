@@ -235,6 +235,20 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, EventType = "SalesInvoiceDraftUpdated", EntityType = nameof(SalesInvoice), EntityId = invoice.Id.ToString(), UserId = userId, JsonData = JsonSerializer.Serialize(new { invoice.InvoiceNumber, invoice.Total, Lines = lines.Count }) }); await db.SaveChangesAsync(cancellationToken); return invoice;
     }
 
+    internal async Task UpdatePostedAsync(string userId, SalesInvoice invoice, SalesInvoiceRequest request, CancellationToken ct)
+    {
+        if (await db.FiscalisationConfigurations.AsNoTracking().AnyAsync(x => x.OrganisationId == invoice.OrganisationId && x.IsEnabled, ct))
+            throw new InvalidOperationException("This organisation requires the fiscal invoice correction workflow.");
+        await db.Entry(invoice).Collection(x => x.Lines).Query().Include(x => x.ProductItem).LoadAsync(ct);
+        await PostVoidCoreAsync(userId, invoice, new SalesInvoiceVoid { VoidDate = invoice.IssueDate, CreatedByUserId = userId }, ct, isEdit: true);
+        db.InvoicesBeingCorrected.Add(invoice.Id);
+        try
+        {
+            await CreateAndPostCoreAsync(userId, request, ct, false, invoice);
+        }
+        finally { db.InvoicesBeingCorrected.Remove(invoice.Id); }
+    }
+
     public async Task<SalesInvoice> VoidAsync(string userId, Guid organisationId, Guid invoiceId, DateOnly voidDate, CancellationToken cancellationToken = default)
     {
         if (await db.FiscalisationConfigurations.AsNoTracking().AnyAsync(
@@ -288,19 +302,20 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         string userId,
         SalesInvoice invoice,
         SalesInvoiceVoid invoiceVoid,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool isEdit = false)
     {
+        var operation = isEdit ? "EDIT" : "VOID";
         var original = await db.PostedJournals.AsNoTracking().Include(x => x.Lines)
             .SingleAsync(x => x.Id == invoice.PostedJournalId && x.OrganisationId == invoice.OrganisationId, cancellationToken);
         var reversal = original.Lines.Select(x => new JournalLineInput(
-            x.LedgerAccountId, $"Void {invoice.InvoiceNumber}", x.Credit, x.Debit,
+            x.LedgerAccountId, $"{operation} {invoice.InvoiceNumber}", x.Credit, x.Debit,
             x.BranchId, x.DivisionId, x.ProjectId, x.ProjectCostCodeId)).ToList();
         var journal = await posting.PostAsync(userId, new(
-            invoice.OrganisationId, invoiceVoid.VoidDate, $"VOID-{invoice.InvoiceNumber}",
-            $"Void sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
+            invoice.OrganisationId, invoiceVoid.VoidDate, $"{operation}-{invoice.InvoiceNumber}",
+            $"{operation} sales invoice {invoice.InvoiceNumber}", reversal), cancellationToken);
         var issues = await db.InventoryMovements.Where(x =>
             x.OrganisationId == invoice.OrganisationId &&
-            x.Reference == invoice.InvoiceNumber && x.QuantityChange < 0).ToListAsync(cancellationToken);
+            x.PostedJournalId == invoice.PostedJournalId && x.QuantityChange < 0).ToListAsync(cancellationToken);
         foreach (var issue in issues)
         {
             var item = invoice.Lines.Select(x => x.ProductItem).First(x => x?.Id == issue.ProductItemId)!;
@@ -319,11 +334,16 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
                 QuantityChange = quantity,
                 UnitCost = issue.UnitCost,
                 ValueChange = -issue.ValueChange,
-                Reference = $"VOID-{invoice.InvoiceNumber}",
-                Note = "Stock restored by invoice void",
+                Reference = $"{operation}-{invoice.InvoiceNumber}",
+                Note = isEdit ? "Stock restored before invoice edit" : "Stock restored by invoice void",
                 PostedJournalId = journal.Id,
                 PostedByUserId = userId
             });
+        }
+        if (isEdit)
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return;
         }
         invoiceVoid.Status = SalesInvoiceVoidStatus.Posted;
         invoiceVoid.PostedJournalId = journal.Id;
@@ -391,7 +411,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
     string userId,
     SalesInvoiceRequest request,
     CancellationToken cancellationToken,
-    bool skipPermissionCheck)
+    bool skipPermissionCheck, SalesInvoice? existingInvoice = null)
     {
         if (!skipPermissionCheck &&
             !await access.CanPostJournalsAsync(
@@ -477,17 +497,34 @@ if (!controlAccounts.TryGetValue(
         await db.Entry(organisation)
             .ReloadAsync(cancellationToken);
 
-        var sequence = (await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1;
+        var sequence = existingInvoice?.SequenceNumber ?? ((await db.SalesInvoices.Where(x => x.OrganisationId == request.OrganisationId).MaxAsync(x => (long?)x.SequenceNumber, cancellationToken) ?? 0) + 1);
 
         var invoiceNumber =
-            AllocateSalesInvoiceNumber(organisation);
+            existingInvoice?.InvoiceNumber ?? AllocateSalesInvoiceNumber(organisation);
 
         var invoice = new SalesInvoice { OrganisationId = request.OrganisationId, BranchId = dimension.BranchId, DivisionId = dimension.DivisionId, CustomerId = request.CustomerId, SequenceNumber = sequence, InvoiceNumber = invoiceNumber, IssueDate = request.IssueDate, DueDate = request.DueDate, Currency = currency, ExchangeRateToBase = exchangeRateToBase, TransactionSubtotal = lines.Sum(x => x.TransactionNetAmount), TransactionVatTotal = lines.Sum(x => x.TransactionVatAmount), TransactionTotal = lines.Sum(x => x.TransactionGrossAmount), Status = InvoiceStatus.Posted, Subtotal = lines.Sum(x => x.NetAmount), VatTotal = lines.Sum(x => x.VatAmount), Total = lines.Sum(x => x.GrossAmount), CreatedByUserId = userId, Lines = lines };
         var customer = await db.BusinessParties.AsNoTracking().SingleAsync(
             x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId,
             cancellationToken);
         TaxDocumentCompliance.ApplySnapshot(invoice, organisation, customer);
-        db.SalesInvoices.Add(invoice); await db.SaveChangesAsync(cancellationToken);
+        if (existingInvoice is null) db.SalesInvoices.Add(invoice);
+        else
+        {
+            invoice.Id = existingInvoice.Id;
+            invoice.CreatedByUserId = existingInvoice.CreatedByUserId;
+            invoice.CreatedAt = existingInvoice.CreatedAt;
+            db.SalesInvoiceLines.RemoveRange(existingInvoice.Lines.ToList());
+            db.Entry(existingInvoice).CurrentValues.SetValues(invoice);
+            existingInvoice.Lines = lines;
+            foreach (var line in lines)
+            {
+                line.SalesInvoiceId = existingInvoice.Id;
+                line.SalesInvoice = existingInvoice;
+                db.SalesInvoiceLines.Add(line);
+            }
+            invoice = existingInvoice;
+        }
+        await db.SaveChangesAsync(cancellationToken);
 
         var journalLines = new List<JournalLineInput> { new(receivables.Id, invoice.InvoiceNumber, invoice.Total, 0) };
         journalLines.AddRange(lines.GroupBy(x => new { x.RevenueAccountId, x.ProjectId, x.ProjectCostCodeId }).Select(x => new JournalLineInput(x.Key.RevenueAccountId, invoice.InvoiceNumber, 0, x.Sum(y => y.NetAmount), ProjectId: x.Key.ProjectId, ProjectCostCodeId: x.Key.ProjectCostCodeId)));

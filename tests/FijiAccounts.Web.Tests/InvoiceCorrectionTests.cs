@@ -66,26 +66,41 @@ public sealed class InvoiceCorrectionTests
     }
 
     [Fact]
-    public async Task SalesEdit_RetainsOriginalAndPostsOnlyCorrectedNetAmounts()
+    public async Task SalesEdit_UpdatesSameInvoiceAndPostsOnlyCorrectedNetAmounts()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var original = await test.SalesInvoices.CreateAndPostAsync(test.UserId, Sale(test));
         var originalJournal = original.PostedJournalId;
+        var originalId = original.Id;
+        var originalNumber = original.InvoiceNumber;
+        var originalSequence = original.SequenceNumber;
         var corrected = await Service(test).CorrectSalesAsync(test.UserId, original.Id, Sale(test, 200) with { DueDate = new(2026, 10, 15) }, "Correct unit price");
-        Assert.NotEqual(original.Id, corrected.Id);
-        Assert.NotEqual(original.InvoiceNumber, corrected.InvoiceNumber);
-        Assert.Equal(InvoiceStatus.Voided, original.Status);
+        Assert.Equal(originalId, corrected.Id);
+        Assert.Equal(originalNumber, corrected.InvoiceNumber);
+        Assert.Equal(originalSequence, corrected.SequenceNumber);
+        Assert.Equal(InvoiceStatus.Posted, original.Status);
         Assert.Equal(InvoiceStatus.Posted, corrected.Status);
-        Assert.Equal(100, original.Lines.Single().TransactionUnitPrice);
+        Assert.Equal(1, await test.Db.SalesInvoices.CountAsync());
+        Assert.Empty(await test.Db.SalesInvoiceVoids.ToListAsync());
         Assert.Equal(200, corrected.Lines.Single().TransactionUnitPrice);
         Assert.Equal(new DateOnly(2026, 10, 15), corrected.DueDate);
-        Assert.Equal(originalJournal, original.PostedJournalId);
+        Assert.NotEqual(originalJournal, original.PostedJournalId);
         Assert.Equal(3, await test.Db.PostedJournals.CountAsync());
-        Assert.Equal(2, await test.Db.AuditEvents.CountAsync(x => x.EventType == "InvoiceCorrection"));
+        Assert.Equal(1, await test.Db.AuditEvents.CountAsync(x => x.EventType == "SalesInvoiceUpdated"));
         var report = await new FinancialReportService(test.Db).GetAsync(test.Organisation.Id, new(2026, 8, 1), new(2026, 8, 31));
         Assert.Equal(200, report.Balances.Where(x => x.Type == AccountType.Revenue).Sum(x => x.DisplayAmount));
         Assert.Equal(corrected.Total, report.Balances.Single(x => x.Code == "1100").DisplayAmount);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(test).CorrectSalesAsync(test.UserId, original.Id, Sale(test, 300), "Duplicate save"));
+        var next = await Service(test).CorrectSalesAsync(test.UserId, original.Id, Sale(test, 300) with { IssueDate = new(2026, 9, 1) }, "Second edit");
+        Assert.Equal(original.Id, next.Id);
+        Assert.Equal(1, await test.Db.SalesInvoices.CountAsync());
+        Assert.Empty(await test.Db.SalesInvoiceVoids.ToListAsync());
+        Assert.Equal(next.Total, await test.AccountBalanceAsync("1100"));
+        var august = await new VatWorkpaperService(test.Db).GetAsync(test.Organisation.Id, new(2026, 8, 1), new(2026, 8, 31));
+        var september = await new VatWorkpaperService(test.Db).GetAsync(test.Organisation.Id, new(2026, 9, 1), new(2026, 9, 30));
+        Assert.Equal(0, august.OutputTax);
+        Assert.Equal(next.VatTotal, september.OutputTax);
+        await test.SalesInvoices.VoidAsync(test.UserId, test.Organisation.Id, next.Id, new(2026, 9, 2));
+        Assert.Equal(0, await test.AccountBalanceAsync("1100"));
     }
 
     [Fact]
@@ -175,5 +190,8 @@ public sealed class InvoiceCorrectionTests
         Assert.Equal(17, stock.QuantityOnHand);
         Assert.Equal(25, stock.AverageCost);
         Assert.Equal(425, await test.AccountBalanceAsync("1200"));
+        await Service(test).CorrectSalesAsync(test.UserId, original.Id, request, "Correct quantity again");
+        Assert.Equal(18, item.QuantityOnHand);
+        Assert.Equal(450, await test.AccountBalanceAsync("1200"));
     }
 }

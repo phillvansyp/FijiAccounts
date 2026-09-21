@@ -25,12 +25,16 @@ public sealed class InvoiceCorrectionService(ApplicationDbContext db, TenantAcce
         if (await db.FiscalisationRecords.AnyAsync(x => x.SalesInvoiceId == invoiceId, ct))
             throw new InvalidOperationException("This invoice has fiscal records. Use its fiscal credit and replacement workflow.");
 
-        await sales.VoidAsync(userId, request.OrganisationId, invoiceId, original.IssueDate, ct);
-        var replacement = await sales.CreateAndPostAsync(userId, request, ct);
-        AddHistory(userId, request.OrganisationId, true, original.Id, original.InvoiceNumber, replacement.Id, replacement.InvoiceNumber, reason);
+        var before = JsonSerializer.Serialize(new { original.InvoiceNumber, original.IssueDate, original.DueDate,
+            original.CustomerId, original.Currency, original.ExchangeRateToBase, original.Total, original.VatTotal,
+            Lines = original.Lines.Select(x => new { x.Description, x.Quantity, x.TransactionUnitPrice, x.VatTreatment }) });
+        await sales.UpdatePostedAsync(userId, original, request, ct);
+        db.AuditEvents.Add(new AuditEvent { OrganisationId = request.OrganisationId, UserId = userId,
+            EntityType = nameof(SalesInvoice), EntityId = original.Id.ToString(), EventType = "SalesInvoiceUpdated",
+            JsonData = JsonSerializer.Serialize(new { Before = before, original.Total, original.VatTotal, Reason = reason.Trim() }) });
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
-        return replacement;
+        return original;
     }
 
     public async Task<SupplierBill> CorrectPurchaseAsync(string userId, Guid billId, SupplierBillRequest request, string reason, CancellationToken ct = default)
