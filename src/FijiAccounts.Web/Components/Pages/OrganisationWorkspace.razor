@@ -299,6 +299,8 @@ else
                     <div><label class="form-label" for="profile-description">Description</label><input id="profile-description" name="permissionProfileEditor.Description" class="form-control" @bind="permissionProfileEditor.Description" @bind:event="oninput" /></div>
                 </div>
                 <div class="row g-2 mt-2">
+                    <div class="col-md-6"><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="permissionProfileEditor.CanAddReceipts" /><span class="form-check-label">Add receipts</span></label><small>Submit and view their own receipts.</small></div>
+                    <div class="col-md-6"><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="permissionProfileEditor.CanViewAccounts" /><span class="form-check-label">View accounts and reports</span></label><small>Turn off for employees who only submit receipts.</small></div>
                     <div class="col-md-6"><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="permissionProfileEditor.CanManageTeam" /><span class="form-check-label">Manage team and permission profiles</span></label></div>
                     <div class="col-md-6"><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="permissionProfileEditor.CanPostAccounting" /><span class="form-check-label">Post accounting and journals</span></label></div>
                     <div class="col-md-6"><label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="permissionProfileEditor.CanManageContacts" /><span class="form-check-label">Create and edit contacts</span></label></div>
@@ -755,7 +757,9 @@ else
                 permissionProfileEditor.CanManageTeam,
                 permissionProfileEditor.CanPostAccounting,
                 permissionProfileEditor.CanManageContacts,
-                permissionProfileEditor.CanApprovePurchases);
+                permissionProfileEditor.CanApprovePurchases,
+                permissionProfileEditor.CanAddReceipts,
+                permissionProfileEditor.CanViewAccounts);
             if (editingPermissionProfileId is Guid profileId)
             {
                 await PermissionProfiles.UpdateAsync(userId, OrganisationId, profileId, request);
@@ -791,7 +795,9 @@ else
             CanManageTeam = profile.CanManageTeam,
             CanPostAccounting = profile.CanPostAccounting,
             CanManageContacts = profile.CanManageContacts,
-            CanApprovePurchases = profile.CanApprovePurchases
+            CanApprovePurchases = profile.CanApprovePurchases,
+            CanAddReceipts = profile.CanAddReceipts,
+            CanViewAccounts = profile.CanViewAccounts
         };
         permissionProfileMessage = null;
     }
@@ -904,7 +910,9 @@ else
         if (profile.CanPostAccounting) permissions.Add("Accounting");
         if (profile.CanManageContacts) permissions.Add("Contacts");
         if (profile.CanApprovePurchases) permissions.Add("Purchase approvals");
-        return permissions.Count == 0 ? "View only" : string.Join(", ", permissions);
+        if (profile.CanAddReceipts) permissions.Add("Add own receipts");
+        if (profile.CanViewAccounts) permissions.Add("View accounts and reports");
+        return permissions.Count == 0 ? "No access" : string.Join(", ", permissions);
     }
 
     private Task SetFullDimensionAccess() => SetDimensionAccessMode(DimensionAccessMode.All);
@@ -1098,6 +1106,8 @@ else
         public bool CanPostAccounting { get; set; }
         public bool CanManageContacts { get; set; }
         public bool CanApprovePurchases { get; set; }
+        public bool CanAddReceipts { get; set; }
+        public bool CanViewAccounts { get; set; } = true;
     }
     private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
 }

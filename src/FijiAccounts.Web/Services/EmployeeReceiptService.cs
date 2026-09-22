@@ -15,8 +15,10 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
     public async Task<List<Organisation>> OrganisationsAsync(string user) => await db.Organisations.AsNoTracking()
         .Where(o =>
             (o.OrganisationGroupId == null || o.OrganisationGroup!.Status == TenantStatus.Active) &&
-            (db.OrganisationMemberships.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.Role == OrganisationRole.Owner) ||
-             db.ReceiptContributors.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.Active)))
+            (db.OrganisationMemberships.Any(m => m.OrganisationId == o.Id && m.UserId == user &&
+                (m.Role == OrganisationRole.Owner || m.PermissionProfileId != null && m.PermissionProfile!.CanAddReceipts)) ||
+             (!db.OrganisationMemberships.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.PermissionProfileId != null) &&
+              db.ReceiptContributors.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.Active))))
         .OrderBy(o => o.LegalName).ToListAsync();
 
     private async Task RequireAccess(string user, Guid org)
@@ -30,6 +32,8 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         var normalized = email.Trim().ToUpperInvariant();
         var employee = await db.Users.SingleOrDefaultAsync(u => u.NormalizedEmail == normalized && u.EmailConfirmed);
         if (employee is null) throw new InvalidOperationException("Ask the employee to register and verify their Account Island email first.");
+        if (await db.OrganisationMemberships.AnyAsync(m => m.OrganisationId == org && m.UserId == employee.Id && m.PermissionProfileId != null))
+            throw new InvalidOperationException("This employee uses a permission profile. Enable Add receipts under Team & permissions.");
         var grant = await db.ReceiptContributors.SingleOrDefaultAsync(x => x.OrganisationId == org && x.UserId == employee.Id);
         if (grant is null) db.ReceiptContributors.Add(new ReceiptContributor { OrganisationId = org, UserId = employee.Id });
         else grant.Active = true;
@@ -41,6 +45,13 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
     {
         if (!await IsOwnerAsync(user, org)) throw new UnauthorizedAccessException();
         return await db.Users.Where(u => db.ReceiptContributors.Any(c => c.OrganisationId == org && c.UserId == u.Id && c.Active))
+            .ToDictionaryAsync(u => u.Id, u => u.Email ?? u.UserName ?? "Employee");
+    }
+
+    public async Task<Dictionary<string, string>> SubmittersAsync(string user, Guid org)
+    {
+        if (!await IsOwnerAsync(user, org)) throw new UnauthorizedAccessException();
+        return await db.Users.Where(u => db.EmployeeReceipts.Any(r => r.OrganisationId == org && r.SubmittedByUserId == u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.Email ?? u.UserName ?? "Employee");
     }
 

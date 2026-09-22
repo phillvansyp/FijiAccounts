@@ -11,6 +11,37 @@ public sealed class EmployeeReceiptTests
         service.SubmitAsync(user, org, request, "Hardware shop", "Site supplies", new DateOnly(2026, 1, 1), 25m, "FJD", true, "receipt.png", Photo);
 
     [Fact]
+    public async Task AssignedReceiptProfileGrantsOwnReceiptAccessWithoutAccountsAndRevokesImmediately()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var service = Service(db);
+        var profiles = new OrganisationPermissionProfileService(db.Db, db.Access);
+        const string employee = "receipt-profile-employee";
+        db.Db.Users.Add(new ApplicationUser { Id = employee, UserName = employee, Email = "receipts@example.com", NormalizedEmail = "RECEIPTS@EXAMPLE.COM", EmailConfirmed = true });
+        db.Db.OrganisationMemberships.Add(new OrganisationMembership { OrganisationId = db.Organisation.Id, UserId = employee, Role = OrganisationRole.ReadOnly });
+        await db.Db.SaveChangesAsync();
+        var profile = await profiles.CreateAsync(db.UserId, db.Organisation.Id,
+            new("Employee receipts", null, false, false, false, false, CanAddReceipts: true, CanViewAccounts: false));
+        await profiles.AssignAsync(db.UserId, db.Organisation.Id, employee, profile.Id);
+        Assert.Single(await service.OrganisationsAsync(employee));
+        Assert.Null(await db.Access.FindAsync(employee, db.Organisation.Id));
+        Assert.False(await db.Access.CanPostJournalsAsync(employee, db.Organisation.Id));
+        Assert.False(await db.Access.CanManageTeamAsync(employee, db.Organisation.Id));
+        var receipt = await Submit(service, employee, db.Organisation.Id, Guid.NewGuid());
+        Assert.Single(await service.ListAsync(employee, db.Organisation.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReviewAsync(employee, db.Organisation.Id, receipt.Id, 0, true, null));
+        // An old contributor grant must not override the assigned profile's explicit denial.
+        db.Db.ReceiptContributors.Add(new ReceiptContributor { OrganisationId = db.Organisation.Id, UserId = employee });
+        await db.Db.SaveChangesAsync();
+        await profiles.UpdateAsync(db.UserId, db.Organisation.Id, profile.Id,
+            new("Employee receipts", null, false, false, false, false, CanAddReceipts: false, CanViewAccounts: false));
+        Assert.Empty(await service.OrganisationsAsync(employee));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReadAsync(employee, db.Organisation.Id, receipt.Id));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => profiles.UpdateAsync(db.UserId, db.Organisation.Id, profile.Id,
+            new("Invalid profile", null, false, true, false, false, CanAddReceipts: true, CanViewAccounts: false)));
+    }
+
+    [Fact]
     public async Task ReceiptOnlyEmployeeCanSubmitButCannotAccessAccountsOrAnotherEmployeesReceipt()
     {
         await using var db = await AccountingTestDatabase.CreateAsync();

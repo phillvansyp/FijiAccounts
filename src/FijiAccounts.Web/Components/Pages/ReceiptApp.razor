@@ -58,7 +58,7 @@ else
                 <div class="receipt-heading"><h3>@receipt.Merchant</h3><strong>@receipt.Currency @receipt.Amount.ToString("N2")</strong></div>
                 <p>@receipt.ReceiptDate.ToString("dd MMM yyyy") · <span class="receipt-status">@receipt.Status</span> · @(receipt.PaidPersonally ? "Paid personally" : "Company paid")</p>
                 <p>@receipt.Purpose</p>
-                @if (owner) { <p class="receipt-hint">Submitted by @(receipt.SubmittedByUserId == user ? "you" : contributors.GetValueOrDefault(receipt.SubmittedByUserId, "Previous contributor"))</p> }
+                @if (owner) { <p class="receipt-hint">Submitted by @(receipt.SubmittedByUserId == user ? "you" : submitters.GetValueOrDefault(receipt.SubmittedByUserId, "Previous contributor"))</p> }
                 <a href="/api/receipts/@org/@receipt.Id/file">Download receipt</a>
                 @if (receipt.ReviewNote is not null) { <p><strong>Review note:</strong> @receipt.ReviewNote</p> }
                 @if (receipt.Status == "Approved") { <p class="receipt-hint">Approved for accounting review. Payment and reconciliation are recorded in Account Island.</p> }
@@ -91,6 +91,7 @@ else
     private List<EmployeeReceipt> items = [];
     private Dictionary<Guid,string?> notes = [];
     private Dictionary<string,string> contributors = [];
+    private Dictionary<string,string> submitters = [];
     private MobileDashboardResponse? dashboard;
     protected override async Task OnInitializedAsync()
     {
@@ -102,6 +103,7 @@ else
     {
         owner = await Receipts.IsOwnerAsync(user, org);
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
+        submitters = owner ? await Receipts.SubmittersAsync(user, org) : [];
         items = await Receipts.ListAsync(user, org);
         notes = items.ToDictionary(x => x.Id, x => x.ReviewNote);
         dashboard = owner ? await Mobile.GetDashboardAsync(user, org) : null;

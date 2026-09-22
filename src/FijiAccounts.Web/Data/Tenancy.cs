@@ -256,6 +256,8 @@ public sealed class OrganisationPermissionProfile
     public bool CanPostAccounting { get; set; }
     public bool CanManageContacts { get; set; }
     public bool CanApprovePurchases { get; set; }
+    public bool CanAddReceipts { get; set; }
+    public bool CanViewAccounts { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string CreatedByUserId { get; set; }
     public List<OrganisationMembership> Members { get; set; } = [];

@@ -10,7 +10,9 @@ public sealed record SaveOrganisationPermissionProfileRequest(
     bool CanManageTeam,
     bool CanPostAccounting,
     bool CanManageContacts,
-    bool CanApprovePurchases);
+    bool CanApprovePurchases,
+    bool CanAddReceipts = false,
+    bool CanViewAccounts = true);
 
 public sealed class OrganisationPermissionProfileService(
     ApplicationDbContext db,
@@ -35,6 +37,7 @@ public sealed class OrganisationPermissionProfileService(
         CancellationToken ct = default)
     {
         await RequireManagerAsync(actorUserId, organisationId, ct);
+        ValidateCapabilities(request);
         var name = ValidateName(request.Name);
         if (await db.OrganisationPermissionProfiles.AnyAsync(
                 x => x.OrganisationId == organisationId && x.Name == name, ct))
@@ -49,6 +52,8 @@ public sealed class OrganisationPermissionProfileService(
             CanPostAccounting = request.CanPostAccounting,
             CanManageContacts = request.CanManageContacts,
             CanApprovePurchases = request.CanApprovePurchases,
+            CanAddReceipts = request.CanAddReceipts,
+            CanViewAccounts = request.CanViewAccounts,
             CreatedByUserId = actorUserId
         };
         db.OrganisationPermissionProfiles.Add(profile);
@@ -68,6 +73,7 @@ public sealed class OrganisationPermissionProfileService(
         var profile = await db.OrganisationPermissionProfiles.SingleOrDefaultAsync(
             x => x.Id == profileId && x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Permission profile not found.");
+        ValidateCapabilities(request);
         var name = ValidateName(request.Name);
         if (await db.OrganisationPermissionProfiles.AnyAsync(
                 x => x.OrganisationId == organisationId && x.Id != profileId && x.Name == name, ct))
@@ -79,6 +85,8 @@ public sealed class OrganisationPermissionProfileService(
         profile.CanPostAccounting = request.CanPostAccounting;
         profile.CanManageContacts = request.CanManageContacts;
         profile.CanApprovePurchases = request.CanApprovePurchases;
+        profile.CanAddReceipts = request.CanAddReceipts;
+        profile.CanViewAccounts = request.CanViewAccounts;
         AddAudit(actorUserId, organisationId, "PermissionProfileUpdated", profile);
         await db.SaveChangesAsync(ct);
         return profile;
@@ -139,6 +147,12 @@ public sealed class OrganisationPermissionProfileService(
             throw new UnauthorizedAccessException("You cannot manage this organisation's permission profiles.");
     }
 
+    private static void ValidateCapabilities(SaveOrganisationPermissionProfileRequest request)
+    {
+        if (!request.CanViewAccounts && (request.CanManageTeam || request.CanPostAccounting || request.CanManageContacts || request.CanApprovePurchases))
+            throw new InvalidOperationException("Enable View accounts and reports when granting accounting, contact, team or purchase approval permissions.");
+    }
+
     private static string ValidateName(string name)
     {
         var value = name.Trim();
@@ -168,7 +182,9 @@ public sealed class OrganisationPermissionProfileService(
                 profile.CanManageTeam,
                 profile.CanPostAccounting,
                 profile.CanManageContacts,
-                profile.CanApprovePurchases
+                profile.CanApprovePurchases,
+                profile.CanAddReceipts,
+                profile.CanViewAccounts
             })
         });
 }

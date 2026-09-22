@@ -6,7 +6,11 @@ can also open it from the organisation menu: **Receipts & owner overview**.
 ## Employee workflow
 
 1. Register an Account Island account and verify the email.
-2. The company owner adds that email under **Employee receipt access**.
+2. Under **Team & permissions → Permission profiles**, create an **Employee receipts**
+   profile. Tick **Add receipts**, untick **View accounts and reports**, and leave
+   the other permissions off. Assign the profile to the employee in **Assign
+   permission profiles**. Existing verified users without a team membership can
+   also receive receipt-only access under **Employee receipt access**.
 3. Open `/receipts`, choose the company and upload a JPEG, PNG or PDF up to 10 MB.
 4. Enter merchant, receipt date, currency, amount and business purpose. Indicate
    whether company funds or personal funds paid for the purchase.
@@ -20,8 +24,11 @@ and payables. The receipt inbox shows employee submissions with original files.
 Owners approve or return submissions with a reason. A second owner must review
 an owner's own receipt. Access can be removed without deleting submitted files.
 
-Receipt contributors are a separate access list, **not** accounting members.
-Adding a contributor never gives them access to company ledgers or reports.
+Receipt-only permission profiles exclude account and report access. Legacy
+receipt contributors are a separate access list, **not** accounting members.
+An assigned permission profile takes precedence over a contributor grant,
+including when **Add receipts** is switched off. Existing profiles retain their
+previous account visibility by default; receipt submission defaults off.
 Every query, file download and command checks organisation and user access.
 Suspended organisation groups cannot use the workspace.
 
