@@ -1,0 +1,138 @@
+@page "/receipts"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@layout ReceiptAppLayout
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using FijiAccounts.Web.Api.Mobile.V1
+@inject EmployeeReceiptService Receipts
+@inject MobileApiV1Service Mobile
+@inject AuthenticationStateProvider Authentication
+
+<PageTitle>Receipts · Account Island</PageTitle>
+<h1>@(owner ? "Your business at a glance" : "Your receipts")</h1>
+<p>Capture a receipt. Keep the paperwork with the purchase.</p>
+@if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
+@if (message is not null) { <div class="alert alert-success" role="status">@message</div> }
+@if (loading) { <p role="status">Loading your workspace…</p> }
+else if (organisations.Count == 0)
+{
+    <section class="receipt-card"><h2>You’re ready to join</h2><p>Ask your organisation owner to add your verified email to receipt access. You will then be able to submit receipts without access to the company accounts.</p></section>
+}
+else
+{
+    <label for="receipt-org">Organisation</label>
+    <select id="receipt-org" class="form-select mb-4" @bind="org" @bind:after="SwitchOrganisation" disabled="@busy">
+        @foreach (var company in organisations) { <option value="@company.Id">@company.LegalName</option> }
+    </select>
+    @if (owner && dashboard is not null)
+    {
+        <section class="receipt-metrics" aria-label="Owner overview">
+            <div><span>Cash in accounts</span><strong>@dashboard.Currency @dashboard.CashPosition.ToString("N2")</strong></div>
+            <div><span>Customers owe</span><strong>@dashboard.Currency @dashboard.Receivables.ToString("N2")</strong></div>
+            <div><span>Bills to pay</span><strong>@dashboard.Currency @dashboard.Payables.ToString("N2")</strong></div>
+            <div><span>Receipts to review</span><strong>@items.Count(x => x.Status == "Submitted")</strong></div>
+        </section>
+        <p><a href="/o/@org">Open accounts overview</a> · <a href="/o/@org/purchases">Purchases</a> · <a href="/o/@org/banking">Bank reconciliation</a></p>
+    }
+    <section class="receipt-card">
+        <h2>Add a receipt</h2>
+        <div class="receipt-grid">
+            <div><label for="receipt-merchant">Merchant</label><input id="receipt-merchant" class="form-control" maxlength="160" @bind="merchant" disabled="@busy" /></div>
+            <div><label for="receipt-date">Receipt date</label><InputDate id="receipt-date" class="form-control" @bind-Value="date" disabled="@busy" /></div>
+            <div><label for="receipt-amount">Total paid</label><InputNumber id="receipt-amount" class="form-control" @bind-Value="amount" min="0.01" step="0.01" disabled="@busy" /></div>
+            <div><label for="receipt-currency">Currency</label><input id="receipt-currency" class="form-control" maxlength="3" @bind="currency" disabled="@busy" /></div>
+        </div>
+        <label for="receipt-purpose">What was it for?</label><textarea id="receipt-purpose" class="form-control mb-3" maxlength="1000" @bind="purpose" disabled="@busy"></textarea>
+        <label for="receipt-paid">Who paid?</label><select id="receipt-paid" class="form-select mb-3" @bind="personal" disabled="@busy"><option value="false">Company card or company money</option><option value="true">I paid personally — reimbursement requested</option></select>
+        <label for="receipt-file">Take a photo or choose a receipt (JPEG, PNG or PDF, up to 10 MB)</label>
+        <InputFile @key="requestId" id="receipt-file" class="form-control mb-3" accept="image/jpeg,image/png,application/pdf" OnChange="ChooseFile" disabled="@busy" />
+        <button class="btn btn-primary" disabled="@(busy || file is null)" @onclick="Submit">@(busy ? "Please wait…" : "Submit receipt")</button>
+        <p class="receipt-hint">Submitting saves the receipt for review. It does not create a payment or post an expense.</p>
+    </section>
+    <section class="receipt-card">
+        <div class="receipt-heading"><h2>@(owner ? "Receipt inbox" : "My submissions")</h2><button class="btn btn-outline-secondary" disabled="@busy" @onclick="Load">Refresh</button></div>
+        @if (items.Count == 0) { <p>No receipts yet. Your submissions will appear here.</p> }
+        @foreach (var receipt in items)
+        {
+            <article class="receipt-item" @key="receipt.Id">
+                <div class="receipt-heading"><h3>@receipt.Merchant</h3><strong>@receipt.Currency @receipt.Amount.ToString("N2")</strong></div>
+                <p>@receipt.ReceiptDate.ToString("dd MMM yyyy") · <span class="receipt-status">@receipt.Status</span> · @(receipt.PaidPersonally ? "Paid personally" : "Company paid")</p>
+                <p>@receipt.Purpose</p>
+                @if (owner) { <p class="receipt-hint">Submitted by @(receipt.SubmittedByUserId == user ? "you" : contributors.GetValueOrDefault(receipt.SubmittedByUserId, "Previous contributor"))</p> }
+                <a href="/api/receipts/@org/@receipt.Id/file">Download receipt</a>
+                @if (receipt.ReviewNote is not null) { <p><strong>Review note:</strong> @receipt.ReviewNote</p> }
+                @if (receipt.Status == "Approved") { <p class="receipt-hint">Approved for accounting review. Payment and reconciliation are recorded in Account Island.</p> }
+                @if (owner && receipt.Status == "Submitted" && receipt.SubmittedByUserId != user)
+                {
+                    <div class="receipt-review"><label for="note-@receipt.Id">Review note (required when returning)</label><input id="note-@receipt.Id" class="form-control" maxlength="1000" @bind="notes[receipt.Id]" disabled="@busy" />
+                    <button class="btn btn-primary" disabled="@busy" @onclick="() => Review(receipt, true)">Approve</button>
+                    <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => Review(receipt, false)">Return</button></div>
+                }
+            </article>
+        }
+    </section>
+    @if (owner)
+    {
+        <section class="receipt-card"><h2>Employee receipt access</h2><p>Add an employee’s verified Account Island email. This grants receipt submission only.</p><label for="receipt-employee">Employee email</label><input id="receipt-employee" class="form-control mb-3" type="email" @bind="employeeEmail" disabled="@busy" /><button class="btn btn-outline-primary" @onclick="AddEmployee" disabled="@busy">Add employee</button>
+            @foreach (var contributor in contributors) { <div class="receipt-item receipt-heading"><span>@contributor.Value</span><button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => RemoveEmployee(contributor.Key)">Remove access</button></div> }
+        </section>
+    }
+}
+
+@code {
+    private string user = "", merchant = "", purpose = "", currency = "FJD", employeeEmail = "";
+    private Guid org, requestId = Guid.NewGuid();
+    private DateOnly date = DateOnly.FromDateTime(DateTime.Today);
+    private decimal amount;
+    private bool owner, personal, busy, loading = true;
+    private string? error, message;
+    private IBrowserFile? file;
+    private List<Organisation> organisations = [];
+    private List<EmployeeReceipt> items = [];
+    private Dictionary<Guid,string?> notes = [];
+    private Dictionary<string,string> contributors = [];
+    private MobileDashboardResponse? dashboard;
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        try { organisations = await Receipts.OrganisationsAsync(user); org = organisations.FirstOrDefault()?.Id ?? Guid.Empty; if (org != Guid.Empty) await Load(); }
+        finally { loading = false; }
+    }
+    private async Task Load()
+    {
+        owner = await Receipts.IsOwnerAsync(user, org);
+        contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
+        items = await Receipts.ListAsync(user, org);
+        notes = items.ToDictionary(x => x.Id, x => x.ReviewNote);
+        dashboard = owner ? await Mobile.GetDashboardAsync(user, org) : null;
+        currency = organisations.Single(x => x.Id == org).BaseCurrency;
+    }
+    private Task SwitchOrganisation() => Run(async () => {
+        requestId = Guid.NewGuid(); file = null; merchant = purpose = employeeEmail = ""; amount = 0; personal = false;
+        await Load();
+    });
+    private void ChooseFile(InputFileChangeEventArgs args) { file = args.File; error = null; }
+    private async Task Run(Func<Task> action)
+    {
+        if (busy) return;
+        busy = true; error = null; message = null;
+        try { await action(); }
+        catch (UnauthorizedAccessException) { error = "Your access has changed. Ask your organisation owner for help."; }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException) { error = ex.Message; }
+        finally { busy = false; }
+    }
+    private Task Submit() => Run(async () => {
+        if (file is null) return;
+        using var stream = file.OpenReadStream(EmployeeReceiptService.MaximumBytes);
+        using var buffer = new MemoryStream(); await stream.CopyToAsync(buffer);
+        await Receipts.SubmitAsync(user, org, requestId, merchant, purpose, date, amount, currency.Trim().ToUpperInvariant(), personal, file.Name, buffer.ToArray());
+        requestId = Guid.NewGuid(); file = null; merchant = purpose = ""; amount = 0;
+        await Load(); message = "Receipt submitted. You can follow its review status below.";
+    });
+    private Task Review(EmployeeReceipt receipt, bool approve) => Run(async () => {
+        await Receipts.ReviewAsync(user, org, receipt.Id, receipt.Version, approve, notes[receipt.Id]);
+        await Load(); message = approve ? "Receipt approved for accounting review." : "Receipt returned with your note.";
+    });
+    private Task AddEmployee() => Run(async () => { await Receipts.AddContributorAsync(user, org, employeeEmail); employeeEmail = ""; await Load(); message = "Receipt access added. The employee can sign in at /receipts."; });
+    private Task RemoveEmployee(string employee) => Run(async () => { await Receipts.RemoveContributorAsync(user, org, employee); await Load(); message = "Receipt access removed. Submitted receipts remain available to owners."; });
+}
