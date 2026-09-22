@@ -219,6 +219,7 @@ builder.Services.AddHttpClient<IPayrollIslandClient, PayrollIslandHttpClient>(cl
     client.MaxResponseContentBufferSize = 5 * 1024 * 1024;
 });
 builder.Services.AddScoped<PayrollIslandIntegrationService>();
+builder.Services.AddScoped<PayrollServiceBillingService>();
 builder.Services.AddScoped<PayrollBankMatchingService>();
 builder.Services.AddScoped<SalesInvoiceService>();
 builder.Services.AddScoped<InvoiceCorrectionService>();
@@ -359,6 +360,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapMobileApiV1();
+PayrollServiceBillingService.Map(app);
 
 if (mobileAuthenticationEnabled)
 {

@@ -152,6 +152,11 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.Entity<PayrollServiceBillingImport>(e => {
+            e.HasIndex(x => x.SourceBillId).IsUnique();
+            e.HasIndex(x => new { x.OrganisationId, x.SourceCustomerId, x.PeriodStart }).IsUnique();
+            e.HasOne(x => x.SalesInvoice).WithMany().HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Restrict);
+        });
         builder.UseOpenIddict();
         builder.Entity<ImmutableDocumentObject>()
             .HasIndex(x => new { x.OrganisationId, x.Provider, x.ObjectKey })
