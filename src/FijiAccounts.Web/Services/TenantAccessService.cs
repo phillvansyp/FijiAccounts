@@ -12,6 +12,7 @@ public sealed class TenantAccessService(ApplicationDbContext db)
     {
         var direct = await db.OrganisationMemberships.AsNoTracking().Include(x => x.Organisation)
             .Where(x => x.UserId == userId &&
+                (x.Role == OrganisationRole.Owner || x.PermissionProfileId == null || x.PermissionProfile!.CanViewAccounts) &&
                 (x.Organisation.OrganisationGroupId == null ||
                  x.Organisation.OrganisationGroup!.Status == TenantStatus.Active))
             .Select(x => new AccessibleOrganisation(

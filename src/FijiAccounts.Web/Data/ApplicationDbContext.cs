@@ -5,6 +5,8 @@ namespace FijiAccounts.Web.Data;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
+    public DbSet<EmployeeReceipt> EmployeeReceipts => Set<EmployeeReceipt>();
+    public DbSet<ReceiptContributor> ReceiptContributors => Set<ReceiptContributor>();
     public DbSet<OrganisationDocument> OrganisationDocuments => Set<OrganisationDocument>();
     public DbSet<Organisation> Organisations => Set<Organisation>();
     public DbSet<OrganisationBranding> OrganisationBrandings => Set<OrganisationBranding>();

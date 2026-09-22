@@ -257,6 +257,7 @@ builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
+builder.Services.AddScoped<EmployeeReceiptService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
 builder.Services.AddScoped<IImmutableDocumentStore>(services =>
     services.GetRequiredService<DatabaseImmutableDocumentStore>());
@@ -373,6 +374,20 @@ app.MapAdditionalIdentityEndpoints();
 // Supplier bill attachment endpoint (single registration only).
 app.MapSupplierBillAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
+app.MapGet("/api/receipts/{organisationId:guid}/{receiptId:guid}/file", async (Guid organisationId, Guid receiptId, EmployeeReceiptService receipts, System.Security.Claims.ClaimsPrincipal principal, HttpContext http) =>
+{
+    var user = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+    if (user is null) return Results.Unauthorized();
+    try
+    {
+        var result = await receipts.ReadAsync(user, organisationId, receiptId);
+        if (result is null) return Results.NotFound();
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.XContentTypeOptions = "nosniff";
+        return Results.File(result.Value.Content, result.Value.Receipt.ContentType, result.Value.Receipt.FileName);
+    }
+    catch (UnauthorizedAccessException) { return Results.NotFound(); }
+}).RequireAuthorization();
 app.MapGet("/api/o/{organisationId:guid}/registration-documents/{documentId:guid}",
     async (Guid organisationId, Guid documentId, OrganisationDocumentService documents, System.Security.Claims.ClaimsPrincipal principal, HttpContext http) =>
     {

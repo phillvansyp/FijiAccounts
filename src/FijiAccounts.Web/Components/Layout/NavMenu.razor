@@ -14,6 +14,7 @@
     <a class="brand" href=""><img class="brand-mark" src="account-island-logo.png" alt="" /><span>Account Island</span></a>
     <input id="menu-toggle" class="menu-toggle" type="checkbox" aria-label="Toggle navigation" /><label class="menu-button" for="menu-toggle"><span></span><span></span><span></span></label>
     <AuthorizeView><Authorized>
+        <a href="/receipts">Receipts</a>
         @if (accessibleOrganisations.Count > 0)
         {
             <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
@@ -32,6 +33,7 @@
                         <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, Fiji tax and financial settings</small></span></a>
                         <a class="company-action" href="@OrgUrl("team")"><span class="company-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
                     }
+                    <a class="company-action" href="/receipts"><span><b>Receipts &amp; owner overview</b><small>Employee receipts and spending review</small></span></a>
                     <a class="manage-organisations" href="organisations">Manage organisations</a>
                 </div>
             </details>
