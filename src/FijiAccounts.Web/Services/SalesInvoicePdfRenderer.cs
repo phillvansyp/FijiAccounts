@@ -47,7 +47,13 @@ public sealed class SalesInvoicePdfRenderer
 
         foreach (var line in invoice.Lines)
         {
-            if (y > PageHeight - 150)
+            var rowHeight = Math.Max(48d, 28 + new[] {
+                WrapText(gfx, line.Description, regular, 100).Count,
+                WrapText(gfx, ProjectLabel(line), regular, 49).Count,
+                WrapText(gfx, line.CustomerPurchaseOrderNumber ?? "—", regular, 58).Count,
+                WrapText(gfx, TaxDocumentCompliance.TaxLabel(line, TaxName(invoice)), regular, 66).Count
+            }.Max() * (regular.Size + 2));
+            if (y + rowHeight > PageHeight - 65)
             {
                 DrawFooter(gfx, small, muted);
                 gfx.Dispose();
@@ -59,7 +65,6 @@ public sealed class SalesInvoicePdfRenderer
                 y += 31;
             }
 
-            const double rowHeight = 48d;
             DrawCell(gfx, line.Description, regular, Margin + 8, y + 16, 100);
             DrawCell(gfx, ProjectLabel(line), regular, Margin + 116, y + 16, 49);
             DrawCell(gfx, string.IsNullOrWhiteSpace(line.CustomerPurchaseOrderNumber) ? "—" : line.CustomerPurchaseOrderNumber!, regular, Margin + 173, y + 16, 58);
@@ -269,28 +274,37 @@ public sealed class SalesInvoicePdfRenderer
         gfx.DrawString(value, font, brush, new XPoint(left + ((right - left - width) / 2), baseline));
     }
 
+    private static List<string> WrapText(XGraphics gfx, string value, XFont font, double maxWidth)
+    {
+        var result = new List<string>();
+        foreach (var paragraph in value.Replace("\r", "").Split('\n'))
+        {
+            var line = "";
+            foreach (var word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.Length > 0 && gfx.MeasureString(line + " " + word, font).Width > maxWidth)
+                { result.Add(line); line = ""; }
+                if (line.Length > 0) line += " ";
+                foreach (var character in word)
+                {
+                    if (line.Length > 0 && gfx.MeasureString(line + character, font).Width > maxWidth)
+                    { result.Add(line); line = ""; }
+                    line += character;
+                }
+            }
+            if (line.Length > 0) result.Add(line);
+        }
+        return result;
+    }
+
     private static void DrawCell(XGraphics gfx, string value, XFont font, double x, double y, double maxWidth)
     {
-        value = System.Text.RegularExpressions.Regex.Replace(value, @",\s*", ", ");
-        var words = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0) return;
-
-        var line = words[0];
         var baseline = y + font.Size;
-        foreach (var word in words.Skip(1))
+        foreach (var line in WrapText(gfx, value, font, maxWidth))
         {
-            var candidate = $"{line} {word}";
-            if (gfx.MeasureString(candidate, font).Width <= maxWidth)
-            {
-                line = candidate;
-                continue;
-            }
-
             gfx.DrawString(line, font, XBrushes.Black, new XPoint(x, baseline));
             baseline += font.Size + 2;
-            line = word;
         }
-        gfx.DrawString(line, font, XBrushes.Black, new XPoint(x, baseline));
     }
 
     private static string DocumentTitle(SalesInvoice invoice)

@@ -77,4 +77,22 @@ public sealed class PayrollServiceBillingTests
         Assert.False(PayrollServiceBillingService.Authenticate(new('a', 64), new('b', 64)));
         Assert.True(PayrollServiceBillingService.Authenticate(new('a', 64), new('a', 64)));
     }
+    [Fact]
+    public async Task EmployeeCountIsIncludedAndRetryKeepsInvoiceNumberAndTotals()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new PayrollServiceBillingService(test.Db, test.SalesInvoices);
+        var charge = Charge() with { Detail = "Distinct employees active during September 2026: 20 (first 40 at FJD 5.00 each, then FJD 2.00 each) = FJD 100.00\n" };
+        var first = await service.ImportAsync(test.Organisation.Id, charge, default);
+        var invoice = await test.Db.SalesInvoices.Include(x => x.Lines).SingleAsync();
+        Assert.Contains("20 employees", invoice.Lines.Single().Description);
+        // Previously issued imports have the older generic description.
+        var oldDescription = $"Payroll Island services {charge.PeriodStart:dd MMM yyyy}–{charge.PeriodEnd:dd MMM yyyy} · {charge.Reference}";
+        await test.Db.SalesInvoiceLines.Where(x => x.SalesInvoiceId == invoice.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.Description, oldDescription));
+        test.Db.ChangeTracker.Clear();
+        Assert.Equal(first, await service.ImportAsync(test.Organisation.Id, charge, default));
+        Assert.Contains("20 employees", (await test.Db.SalesInvoices.Include(x => x.Lines).SingleAsync()).Lines.Single().Description);
+        Assert.Equal(112.50m, invoice.Total);
+        Assert.Single(await test.Db.SalesInvoices.ToListAsync());
+    }
 }
