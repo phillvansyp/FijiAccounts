@@ -1,0 +1,11 @@
+{
+  "id": "/receipts",
+  "name": "Account Island",
+  "short_name": "Account Island",
+  "start_url": "/receipts",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f7f8",
+  "theme_color": "#073b4c",
+  "icons": [{"src": "/account-island-app-icon.png?v=2", "type": "image/png", "purpose": "any"}]
+}
