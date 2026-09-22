@@ -5,7 +5,7 @@ can also open it from the organisation menu: **Receipts & owner overview**.
 
 ## Employee workflow
 
-1. Register an Account Island account and verify the email.
+1. For a new employee, use **Invite team member → Role → Receipts only**. They follow the invitation, create their login and open the receipt workspace. This grants receipt access immediately without account visibility or a separate profile-assignment step.
 2. Under **Team & permissions → Permission profiles**, create an **Employee receipts**
    profile. Tick **Add receipts**, untick **View accounts and reports**, and leave
    the other permissions off. Assign the profile to the employee in **Assign

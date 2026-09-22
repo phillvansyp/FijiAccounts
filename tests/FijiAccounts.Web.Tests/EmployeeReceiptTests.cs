@@ -11,6 +11,32 @@ public sealed class EmployeeReceiptTests
         service.SubmitAsync(user, org, request, "Hardware shop", "Site supplies", new DateOnly(2026, 1, 1), 25m, "FJD", true, "receipt.png", Photo);
 
     [Fact]
+    public async Task ReceiptsOnlyInvitationGrantsSubmissionWithoutAnyLedgerAccess()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var invitations = new OrganisationInvitationService(db.Db, db.Access);
+        var issued = await invitations.IssueAsync(db.UserId, db.Organisation.Id, "receipt-invite@example.com", OrganisationRole.ReceiptsOnly);
+        var renewed = await invitations.ReissueAsync(db.UserId, db.Organisation.Id,
+            (await invitations.ListPendingAsync(db.UserId, db.Organisation.Id)).Single().Id);
+        Assert.Equal(OrganisationRole.ReceiptsOnly, renewed.Role);
+        const string employee = "receipt-invited-employee";
+        db.Db.Users.Add(new ApplicationUser { Id = employee, UserName = employee, Email = "receipt-invite@example.com", EmailConfirmed = true });
+        await db.Db.SaveChangesAsync();
+        Assert.False((await invitations.AcceptAsync(employee, "receipt-invite@example.com", issued.Token)).Succeeded);
+        Assert.True((await invitations.AcceptAsync(employee, "receipt-invite@example.com", renewed.Token)).Succeeded);
+        Assert.Null(await db.Access.FindAsync(employee, db.Organisation.Id));
+        Assert.False(await db.Access.CanManageTeamAsync(employee, db.Organisation.Id));
+        Assert.False(await db.Access.CanPostJournalsAsync(employee, db.Organisation.Id));
+        Assert.False(await db.Access.CanManageContactsAsync(employee, db.Organisation.Id));
+        var service = Service(db);
+        Assert.Single(await service.OrganisationsAsync(employee));
+        await Submit(service, employee, db.Organisation.Id, Guid.NewGuid());
+        Assert.Single(await service.ListAsync(employee, db.Organisation.Id));
+        Assert.True((await invitations.AcceptAsync(employee, "receipt-invite@example.com", renewed.Token)).Succeeded);
+        Assert.Null(await db.Access.FindAsync(employee, db.Organisation.Id));
+    }
+
+    [Fact]
     public async Task AssignedReceiptProfileGrantsOwnReceiptAccessWithoutAccountsAndRevokesImmediately()
     {
         await using var db = await AccountingTestDatabase.CreateAsync();

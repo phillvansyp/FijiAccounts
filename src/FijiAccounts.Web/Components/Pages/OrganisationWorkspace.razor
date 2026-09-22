@@ -422,7 +422,7 @@ else
             </EditForm>
         </details>
     }
-    @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label" for="invite-email">Email</label><input id="invite-email" name="invite.Email" type="email" class="form-control" @bind="invite.Email" @bind:event="oninput" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@role</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationError is not null) { <div class="alert alert-danger mt-3">@invitationError</div> }@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
+    @if (canManageTeam) { <details class="invite-panel"><summary>＋ Invite team member</summary><EditForm Model="invite" OnValidSubmit="CreateInvitation" FormName="invite-member"><DataAnnotationsValidator /><ValidationSummary /><div class="invite-fields"><div><label class="form-label" for="invite-email">Email</label><input id="invite-email" name="invite.Email" type="email" class="form-control" @bind="invite.Email" @bind:event="oninput" /></div><div><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="invite.Role">@foreach (var role in inviteRoles) { <option value="@role">@(role == OrganisationRole.ReceiptsOnly ? "Receipts only" : role.ToString())</option> }</InputSelect></div><button class="btn btn-primary">Create invitation</button></div></EditForm>@if (invitationError is not null) { <div class="alert alert-danger mt-3">@invitationError</div> }@if (invitationLink is not null) { <div class="alert alert-success mt-3"><strong>Invitation created.</strong><br /><a href="@invitationLink">@invitationLink</a></div> }</details> }
     </section>
     }
 }
@@ -459,7 +459,7 @@ else
     private IDisposable? updateSubscription;
     private bool liveRefreshInProgress;
     private bool liveRefreshRequested;
-    private readonly OrganisationRole[] inviteRoles = [OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Approver, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
+    private readonly OrganisationRole[] inviteRoles = [OrganisationRole.ReceiptsOnly, OrganisationRole.Administrator, OrganisationRole.Accountant, OrganisationRole.Bookkeeper, OrganisationRole.Approver, OrganisationRole.Payroll, OrganisationRole.Sales, OrganisationRole.ReadOnly];
     protected override void OnInitialized() { updateSubscription = Updates.Subscribe(OrganisationUpdated); }
     protected override async Task OnParametersSetAsync()
     {
@@ -901,7 +901,7 @@ else
     private static string PermissionProfileLabel(OrganisationMembership member) =>
         member.Role == OrganisationRole.Owner
             ? "Owner (protected)"
-            : member.PermissionProfile?.Name ?? $"{member.Role} (standard)";
+            : member.PermissionProfile?.Name ?? (member.Role == OrganisationRole.ReceiptsOnly ? "Receipts only (standard)" : $"{member.Role} (standard)");
 
     private static string PermissionSummary(OrganisationPermissionProfile profile)
     {
@@ -1109,5 +1109,5 @@ else
         public bool CanAddReceipts { get; set; }
         public bool CanViewAccounts { get; set; } = true;
     }
-    private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.Bookkeeper; }
+    private sealed class InviteModel { [Required, EmailAddress] public string Email { get; set; } = string.Empty; public OrganisationRole Role { get; set; } = OrganisationRole.ReceiptsOnly; }
 }

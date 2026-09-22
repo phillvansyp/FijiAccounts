@@ -16,7 +16,7 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         .Where(o =>
             (o.OrganisationGroupId == null || o.OrganisationGroup!.Status == TenantStatus.Active) &&
             (db.OrganisationMemberships.Any(m => m.OrganisationId == o.Id && m.UserId == user &&
-                (m.Role == OrganisationRole.Owner || m.PermissionProfileId != null && m.PermissionProfile!.CanAddReceipts)) ||
+                (m.Role == OrganisationRole.Owner || (m.PermissionProfileId != null ? m.PermissionProfile!.CanAddReceipts : m.Role == OrganisationRole.ReceiptsOnly))) ||
              (!db.OrganisationMemberships.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.PermissionProfileId != null) &&
               db.ReceiptContributors.Any(m => m.OrganisationId == o.Id && m.UserId == user && m.Active))))
         .OrderBy(o => o.LegalName).ToListAsync();

@@ -28,7 +28,7 @@ public sealed class OrganisationInvitationEmailSender(IEmailDeliveryService deli
         CancellationToken cancellationToken = default)
     {
         var encodedOrganisation = WebUtility.HtmlEncode(organisationName);
-        var encodedRole = WebUtility.HtmlEncode(role.ToString());
+        var encodedRole = WebUtility.HtmlEncode(role == OrganisationRole.ReceiptsOnly ? "Receipts only" : role.ToString());
         var encodedInvitationLink = WebUtility.HtmlEncode(invitationLink);
 
         return delivery.SendAsync(

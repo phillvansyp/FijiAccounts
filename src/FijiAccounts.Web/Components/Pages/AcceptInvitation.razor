@@ -28,7 +28,7 @@ else if (Message is not null)
     <div class="alert @MessageClass">@Message</div>
     @if (AcceptedOrganisationId is Guid organisationId)
     {
-        <a class="btn btn-primary" href="o/@organisationId">Open organisation</a>
+        <a class="btn btn-primary" href="@(Invitation?.Role == OrganisationRole.ReceiptsOnly ? "/receipts" : $"/o/{organisationId}")">Open workspace</a>
     }
 }
 else if (ExistingAccount)
@@ -175,7 +175,7 @@ else
 
         await transaction.CommitAsync();
         await SignInManager.SignInAsync(user, isPersistent: false);
-        Navigation.NavigateTo($"o/{accepted.OrganisationId}");
+        Navigation.NavigateTo(Invitation.Role == OrganisationRole.ReceiptsOnly ? "/receipts" : $"o/{accepted.OrganisationId}");
     }
 
     private void SetResult(InvitationAcceptanceResult result)
