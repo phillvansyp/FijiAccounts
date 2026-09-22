@@ -156,6 +156,7 @@ public sealed class Organisation
     public int FinancialYearEndDay { get; set; } = 31;
     public DateOnly? ConversionDate { get; set; }
     public OrganisationKind Kind { get; set; }
+    [MaxLength(80)] public string? Industry { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

@@ -19,7 +19,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     string? BusinessAddress = null,
     bool IsVatRegistered = false,
     DateOnly? VatRegistrationDate = null,
-    bool? RequireTradePaymentDocuments = null);
+    bool? RequireTradePaymentDocuments = null,
+    string? Industry = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -84,10 +85,13 @@ public sealed class OrganisationSettingsService(
                 "The organisation could not be updated.");
         }
 
+        var industry = request.Industry is null ? organisation.Industry : OrganisationIndustries.Validate(request.Industry);
+
         var previous = new
         {
             organisation.LegalName,
             organisation.TradingName,
+            organisation.Industry,
             organisation.Tin,
             organisation.BusinessAddress,
             organisation.IsVatRegistered,
@@ -106,6 +110,7 @@ public sealed class OrganisationSettingsService(
         {
             LegalName = legalName,
             TradingName = tradingName,
+            Industry = industry,
             Tin = tin,
             BusinessAddress = businessAddress,
             request.IsVatRegistered,
@@ -127,6 +132,7 @@ public sealed class OrganisationSettingsService(
 
         organisation.LegalName = legalName;
         organisation.TradingName = tradingName;
+        organisation.Industry = industry;
         organisation.Tin = tin;
         organisation.BusinessAddress = businessAddress;
         organisation.IsVatRegistered = request.IsVatRegistered;

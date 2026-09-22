@@ -22,14 +22,16 @@ public sealed record CreateGroupCompanyRequest(
     string? TradingName,
     string? Tin,
     string CountryCode,
-    OrganisationKind Kind);
+    OrganisationKind Kind,
+    string? Industry = null);
 
 public sealed record CreateStandaloneCompanyRequest(
     string LegalName,
     string? TradingName,
     string? Tin,
     string CountryCode,
-    OrganisationKind Kind);
+    OrganisationKind Kind,
+    string? Industry = null);
 
 public sealed record EnterprisePostingDimension(
     Guid BranchId,
@@ -62,6 +64,7 @@ public sealed class EnterpriseStructureService(
             TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
             Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
             Kind = request.Kind,
+            Industry = OrganisationIndustries.Validate(request.Industry),
             CountryCode = jurisdiction.CountryCode,
             BaseCurrency = jurisdiction.CurrencyCode,
             TimeZoneId = jurisdiction.TimeZoneId,
@@ -93,6 +96,7 @@ public sealed class EnterpriseStructureService(
                 company.TradingName,
                 company.Tin,
                 Kind = company.Kind.ToString(),
+                company.Industry,
                 company.CountryCode,
                 company.BaseCurrency,
                 OrganisationGroupId = structure.Group.Id,
@@ -324,6 +328,7 @@ public sealed class EnterpriseStructureService(
                 TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
                 Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
                 Kind = request.Kind,
+            Industry = OrganisationIndustries.Validate(request.Industry),
                 CountryCode = jurisdiction.CountryCode,
                 BaseCurrency = jurisdiction.CurrencyCode,
                 TimeZoneId = jurisdiction.TimeZoneId,
@@ -358,6 +363,7 @@ public sealed class EnterpriseStructureService(
                 company.TradingName,
                 company.Tin,
                 Kind = company.Kind.ToString(),
+                company.Industry,
                 company.CountryCode,
                 company.BaseCurrency,
                 OrganisationGroupId = groupAccess.GroupId,

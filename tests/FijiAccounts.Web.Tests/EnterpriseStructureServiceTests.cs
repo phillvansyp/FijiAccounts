@@ -20,7 +20,7 @@ public sealed class EnterpriseStructureServiceTests
                 " New Company ",
                 " TIN-NEW ",
                 "FJ",
-                OrganisationKind.Business));
+                OrganisationKind.Business, "Technology"));
 
         var stored = await test.Db.Organisations
             .AsNoTracking()
@@ -43,6 +43,8 @@ public sealed class EnterpriseStructureServiceTests
 
         Assert.Equal("New Company Limited", stored.LegalName);
         Assert.Equal("New Company", stored.TradingName);
+        Assert.Equal("Technology", stored.Industry);
+        Assert.Equal(OrganisationKind.Business, stored.Kind);
         Assert.Equal("TIN-NEW", stored.Tin);
         Assert.Equal(test.UserId, membership.UserId);
         Assert.Equal(OrganisationRole.Owner, membership.Role);

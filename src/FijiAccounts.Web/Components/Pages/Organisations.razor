@@ -26,7 +26,8 @@ else
         {
             <a class="org-card text-decoration-none text-body" href="o/@membership.Organisation.Id">
                 <span class="badge text-bg-light">@(membership.IsClient ? "Accountant client" : membership.Organisation.Kind)</span>
-                <h2>@membership.Organisation.LegalName</h2><p>@membership.AccessLabel · @CountryName(membership.Organisation.CountryCode) · @membership.Organisation.BaseCurrency</p>
+                <h2>@membership.Organisation.LegalName</h2>
+                @if (OrganisationIndustries.Label(membership.Organisation.Industry) is string industryLabel) { <p>@industryLabel</p> }<p>@membership.AccessLabel · @CountryName(membership.Organisation.CountryCode) · @membership.Organisation.BaseCurrency</p>
             </a>
         }
     </div>
@@ -39,7 +40,8 @@ else
             <div class="mb-3"><label class="form-label">Trading name (optional)</label><input class="form-control" @bind="model.TradingName" @bind:event="oninput" /></div>
             <div class="mb-3"><label class="form-label">Country or island jurisdiction</label><InputSelect class="form-select" @bind-Value="model.CountryCode">@foreach (var jurisdiction in IslandJurisdictions.All) { <option value="@jurisdiction.CountryCode">@jurisdiction.CountryName — @jurisdiction.CurrencyCode</option> }</InputSelect><div class="form-text">Country settings determine currency, time zone, financial year and the applicable tax pack.</div></div>
             <div class="mb-3"><label class="form-label">Tax identification number (optional during setup)</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div>
-            <div class="mb-3"><label class="form-label">Organisation type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
+            <div class="mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
+            <div class="mb-3"><label class="form-label">Industry / business activity</label><InputSelect class="form-select" @bind-Value="model.Industry" ><option value="">Select an industry (optional)</option>@foreach (var industry in OrganisationIndustries.All) { <option value="@industry.Code">@industry.Label</option> }</InputSelect></div>
             <button class="btn btn-primary" type="submit">Create organisation</button>
         </EditForm>
     </div>
@@ -64,7 +66,8 @@ else
                     model.TradingName,
                     model.Tin,
                     model.CountryCode,
-                    model.Kind));
+                    model.Kind,
+                    model.Industry));
             model = new();
             await Reload();
         }
@@ -74,5 +77,5 @@ else
         }
     }
     private static string CountryName(string countryCode) => IslandJurisdictions.Get(countryCode).CountryName;
-    private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
+    private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } public string Industry { get; set; } = ""; }
 }

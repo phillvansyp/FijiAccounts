@@ -8,6 +8,25 @@ namespace FijiAccounts.Web.Tests;
 public sealed class OrganisationSettingsServiceTests
 {
     [Fact]
+    public async Task Industry_can_be_changed_preserved_and_cleared_without_changing_workspace_type()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationSettingsService(test.Db);
+        var request = Request(test.Organisation.Id);
+        await service.UpdateAsync(test.UserId, request with { Industry = "Technology" });
+        Assert.Equal("Technology", await test.Db.Organisations.AsNoTracking()
+            .Where(x => x.Id == test.Organisation.Id).Select(x => x.Industry).SingleAsync());
+        await service.UpdateAsync(test.UserId, request);
+        Assert.Equal("Technology", test.Organisation.Industry);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(test.UserId,
+            request with { Industry = "UnknownIndustry" }));
+        Assert.Equal("Technology", test.Organisation.Industry);
+        await service.UpdateAsync(test.UserId, request with { Industry = "" });
+        Assert.Null(test.Organisation.Industry);
+        Assert.Equal(OrganisationKind.Business, test.Organisation.Kind);
+    }
+
+    [Fact]
     public async Task Owner_CanUpdateBusinessDetailsAndJurisdiction()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
