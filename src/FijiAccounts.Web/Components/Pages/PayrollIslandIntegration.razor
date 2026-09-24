@@ -233,7 +233,7 @@ else
         busy = true;
         try
         {
-            var checkedPeriods = await PaymentSync.SyncAsync();
+            var checkedPeriods = await PaymentSync.SyncAsync(OrganisationId);
             message = $"Checked {checkedPeriods} PAYE and FNPF monthly payment statuses against Payroll Island.";
             messageClass = "alert-success";
         }

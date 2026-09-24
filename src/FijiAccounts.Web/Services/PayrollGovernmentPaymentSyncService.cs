@@ -13,9 +13,11 @@ public sealed class PayrollGovernmentPaymentSyncService(
     private readonly IDataProtector tokenProtector =
         protection.CreateProtector("AccountIsland.PayrollIsland.AccessToken.v1");
 
-    public async Task<int> SyncAsync(CancellationToken ct = default)
+    public async Task<int> SyncAsync(Guid? organisationId = null, CancellationToken ct = default)
     {
-        var connections = await db.PayrollIslandConnections.AsNoTracking().Where(x => x.IsActive).ToArrayAsync(ct);
+        var connections = await db.PayrollIslandConnections.AsNoTracking()
+            .Where(x => x.IsActive && (organisationId == null || x.OrganisationId == organisationId))
+            .ToArrayAsync(ct);
         var sent = 0;
         foreach (var connection in connections)
             sent += await SyncConnectionAsync(connection, ct);

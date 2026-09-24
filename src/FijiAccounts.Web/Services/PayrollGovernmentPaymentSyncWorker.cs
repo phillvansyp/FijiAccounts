@@ -11,7 +11,7 @@ public sealed class PayrollGovernmentPaymentSyncWorker(IServiceScopeFactory scop
             {
                 using var scope = scopes.CreateScope();
                 var sync = scope.ServiceProvider.GetRequiredService<PayrollGovernmentPaymentSyncService>();
-                await sync.SyncAsync(stoppingToken);
+                await sync.SyncAsync(ct: stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception error)
