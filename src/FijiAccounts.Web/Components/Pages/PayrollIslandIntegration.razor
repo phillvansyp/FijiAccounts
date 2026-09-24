@@ -8,6 +8,7 @@
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 @inject PayrollIslandIntegrationService PayrollIntegration
+@inject PayrollGovernmentPaymentSyncService PaymentSync
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
@@ -57,9 +58,9 @@ else
                     <div class="form-text">Copy this identifier from the business settings in Payroll Island.</div>
                 </div>
                 <div class="col-12 mb-3">
-                    <label class="form-label">Read-only integration token</label>
+                    <label class="form-label">Integration token</label>
                     <input class="form-control" type="password" autocomplete="new-password" @bind="model.AccessToken" @bind:event="oninput" disabled="@(!canManageConnections)" placeholder="@(connection is null ? "Paste the token from Payroll Island" : "Leave blank to keep the current token")" />
-                    <div class="form-text">Stored encrypted. The token should only allow reading finalised pay runs and payment summaries.</div>
+                    <div class="form-text">Stored encrypted. To verify government bank payments back in Payroll Island, use a key with “Read payroll and report verified bank payments” permission.</div>
                 </div>
             </div>
 
@@ -110,6 +111,12 @@ else
 
     @if (connection is not null)
     {
+        <section class="settings-card mb-3">
+            <h2>Government bank payments</h2>
+            <p>PAYE and FNPF reminders clear only when a bank statement line is reconciled to a two-line journal that debits the matching liability. The amount must equal the monthly payroll total. Include PAYE or FNPF and the wages month (for example, <code>PAYE 2026-09</code>) in the bank or journal reference. The check runs every 15 minutes.</p>
+            <p>Bank payment does not prove that a PAYE return or FNPF schedule was filed. FNU levy needs separate confirmed liability evidence and remains open.</p>
+            @if (canPost) { <button class="btn btn-outline-primary" @onclick="CheckGovernmentPayments" disabled="@busy">Check matched bank payments now</button> }
+        </section>
         <section class="settings-card mb-3">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                 <div>
@@ -220,6 +227,23 @@ else
     private Guid? confirmingImportId;
     private string? message;
     private string messageClass = "alert-success";
+
+    private async Task CheckGovernmentPayments()
+    {
+        busy = true;
+        try
+        {
+            var checkedPeriods = await PaymentSync.SyncAsync(OrganisationId);
+            message = $"Checked {checkedPeriods} PAYE and FNPF monthly payment statuses against Payroll Island.";
+            messageClass = "alert-success";
+        }
+        catch (Exception)
+        {
+            message = "Could not report bank matches. Check that the Payroll Island integration key has payment-status permission and try again.";
+            messageClass = "alert-danger";
+        }
+        finally { busy = false; }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
