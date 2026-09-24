@@ -95,6 +95,7 @@ public sealed class PayrollGovernmentPaymentSyncService(
             bankLine is not null && bankLine.Id == statement.MatchedPostedJournalLineId &&
             bankLine.LedgerAccountId == statement.BankAccountId && bankLine.Credit - bankLine.Debit == amount &&
             journal is not null && journal.OrganisationId == statement.OrganisationId &&
+            journal.EntryDate == statement.TransactionDate &&
             journal.Currency == "FJD" && journal.Lines.Count == 2 &&
             !excludedJournalIds.Contains(journal.Id) &&
             !journal.Reference.StartsWith("REV-BANK-", StringComparison.Ordinal) &&

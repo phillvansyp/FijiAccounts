@@ -21,6 +21,10 @@ public sealed class PayrollGovernmentPaymentSyncTests
             "fnpf-payment", new DateOnly(2026, 9, 1), empty));
         Assert.False(PayrollGovernmentPaymentSyncService.IsVerified(statement, 80m, liability,
             "paye-monthly", new DateOnly(2026, 8, 1), empty));
+        statement.TransactionDate = statement.TransactionDate.AddDays(1);
+        Assert.False(PayrollGovernmentPaymentSyncService.IsVerified(statement, 80m, liability,
+            "paye-monthly", new DateOnly(2026, 9, 1), empty));
+        statement.TransactionDate = statement.TransactionDate.AddDays(-1);
         statement.ReconciledAt = null;
         Assert.False(PayrollGovernmentPaymentSyncService.IsVerified(statement, 80m, liability,
             "paye-monthly", new DateOnly(2026, 9, 1), empty));
