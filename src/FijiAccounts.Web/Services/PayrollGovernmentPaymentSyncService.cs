@@ -8,7 +8,8 @@ namespace FijiAccounts.Web.Services;
 
 // A bank payment is reported only after reconciliation to the correct liability account.
 public sealed class PayrollGovernmentPaymentSyncService(
-    ApplicationDbContext db, IHttpClientFactory httpFactory, IDataProtectionProvider protection)
+    ApplicationDbContext db, IHttpClientFactory httpFactory, IDataProtectionProvider protection,
+    ILogger<PayrollGovernmentPaymentSyncService> logger)
 {
     private readonly IDataProtector tokenProtector =
         protection.CreateProtector("AccountIsland.PayrollIsland.AccessToken.v1");
@@ -20,7 +21,14 @@ public sealed class PayrollGovernmentPaymentSyncService(
             .ToArrayAsync(ct);
         var sent = 0;
         foreach (var connection in connections)
-            sent += await SyncConnectionAsync(connection, ct);
+        {
+            try { sent += await SyncConnectionAsync(connection, ct); }
+            catch (Exception error) when (organisationId is null && error is not OperationCanceledException)
+            {
+                logger.LogWarning(error, "Could not verify government payments for Account Island organisation {OrganisationId}.",
+                    connection.OrganisationId);
+            }
+        }
         return sent;
     }
 
