@@ -50,6 +50,23 @@ public sealed class PayrollIslandConnection
     public List<PayrollIslandPayRunImport> PayRuns { get; set; } = [];
 }
 
+// A declaration from Payroll Island is evidence to follow up, never a reconciled bank entry.
+public sealed class PayrollGovernmentPaymentClaim
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid ConnectionId { get; set; }
+    [MaxLength(40)] public required string DeadlineKey { get; set; }
+    public DateOnly PeriodStart { get; set; }
+    public DateOnly PaidOn { get; set; }
+    [MaxLength(160)] public string? Reference { get; set; }
+    [MaxLength(450)] public required string RecordedBy { get; set; }
+    public DateTimeOffset RecordedAtUtc { get; set; }
+    public DateTimeOffset LastSeenAtUtc { get; set; }
+    public bool ReopenedInPayrollIsland { get; set; }
+    public DateTimeOffset? BankConfirmedAtUtc { get; set; }
+}
+
 public sealed class PayrollIslandPayRunImport
 {
     public Guid Id { get; set; } = Guid.NewGuid();

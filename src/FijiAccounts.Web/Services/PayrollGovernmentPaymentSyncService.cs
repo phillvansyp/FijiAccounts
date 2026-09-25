@@ -11,6 +11,9 @@ public sealed class PayrollGovernmentPaymentSyncService(
     ApplicationDbContext db, IHttpClientFactory httpFactory, IDataProtectionProvider protection,
     ILogger<PayrollGovernmentPaymentSyncService> logger)
 {
+    private sealed record ManualPayment(string DeadlineKey, DateOnly PeriodStart, DateOnly PaidOn,
+        string? Reference, string RecordedBy, DateTimeOffset RecordedAtUtc);
+    private sealed record ManualPaymentPage(IReadOnlyList<ManualPayment> Payments);
     private readonly IDataProtector tokenProtector =
         protection.CreateProtector("AccountIsland.PayrollIsland.AccessToken.v1");
 
@@ -34,6 +37,7 @@ public sealed class PayrollGovernmentPaymentSyncService(
 
     private async Task<int> SyncConnectionAsync(PayrollIslandConnection connection, CancellationToken ct)
     {
+        await SyncManualClaimsAsync(connection, ct);
         var imports = await db.PayrollIslandPayRunImports.AsNoTracking().Include(x => x.Payments)
             .Where(x => x.ConnectionId == connection.Id).ToArrayAsync(ct);
         var latest = imports.GroupBy(x => x.ExternalPayRunId)
@@ -64,6 +68,13 @@ public sealed class PayrollGovernmentPaymentSyncService(
                 if (amount <= 0) continue;
                 var candidates = posted ? statements.Where(x => IsVerified(x, amount, accountId, key, month.Key, excluded)).ToArray() : [];
                 var match = candidates.Length == 1 ? candidates[0] : null;
+                var claim = await db.PayrollGovernmentPaymentClaims.SingleOrDefaultAsync(x =>
+                    x.ConnectionId == connection.Id && x.DeadlineKey == key && x.PeriodStart == month.Key, ct);
+                if (claim is not null)
+                {
+                    claim.BankConfirmedAtUtc = match?.ReconciledAt;
+                    await db.SaveChangesAsync(ct);
+                }
                 var update = new
                 {
                     matched = match is not null, amount,
@@ -85,6 +96,52 @@ public sealed class PayrollGovernmentPaymentSyncService(
             }
         }
         return sent;
+    }
+
+    private async Task SyncManualClaimsAsync(PayrollIslandConnection connection, CancellationToken ct)
+    {
+        var token = tokenProtector.Unprotect(connection.ProtectedAccessToken);
+        using var http = httpFactory.CreateClient();
+        var root = new Uri(connection.BaseUrl.EndsWith('/') ? connection.BaseUrl : connection.BaseUrl + "/");
+        var path = $"api/account-island/v1/organisations/{Uri.EscapeDataString(connection.PayrollOrganisationId)}/government-payments/manual";
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(root, path));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add("X-Account-Island-Contract", "2026-09-01");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        var page = await response.Content.ReadFromJsonAsync<ManualPaymentPage>(cancellationToken: ct)
+            ?? throw new InvalidOperationException("Payroll Island returned no manual payment records.");
+        var current = await db.PayrollGovernmentPaymentClaims
+            .Where(x => x.ConnectionId == connection.Id).ToListAsync(ct);
+        var seen = new HashSet<(string, DateOnly)>();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var payment in page.Payments)
+        {
+            if (payment.DeadlineKey is not ("paye-monthly" or "fnpf-payment" or "fnu-levy")) continue;
+            if (!seen.Add((payment.DeadlineKey, payment.PeriodStart)))
+                throw new InvalidOperationException("Payroll Island returned duplicate manual payment records.");
+            var claim = current.FirstOrDefault(x => x.DeadlineKey == payment.DeadlineKey && x.PeriodStart == payment.PeriodStart);
+            if (claim is null)
+            {
+                claim = new PayrollGovernmentPaymentClaim
+                {
+                    OrganisationId = connection.OrganisationId, ConnectionId = connection.Id,
+                    DeadlineKey = payment.DeadlineKey, PeriodStart = payment.PeriodStart,
+                    PaidOn = payment.PaidOn, RecordedBy = payment.RecordedBy,
+                    RecordedAtUtc = payment.RecordedAtUtc, LastSeenAtUtc = now
+                };
+                db.PayrollGovernmentPaymentClaims.Add(claim);
+            }
+            claim.PaidOn = payment.PaidOn;
+            claim.Reference = payment.Reference;
+            claim.RecordedBy = payment.RecordedBy;
+            claim.RecordedAtUtc = payment.RecordedAtUtc;
+            claim.LastSeenAtUtc = now;
+            claim.ReopenedInPayrollIsland = false;
+        }
+        foreach (var claim in current.Where(x => !seen.Contains((x.DeadlineKey, x.PeriodStart))))
+            claim.ReopenedInPayrollIsland = true;
+        await db.SaveChangesAsync(ct);
     }
 
     public static bool IsVerified(BankStatementLine statement, decimal amount, Guid liabilityAccountId,

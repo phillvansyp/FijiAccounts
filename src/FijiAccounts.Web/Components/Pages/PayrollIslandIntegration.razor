@@ -112,10 +112,28 @@ else
     @if (connection is not null)
     {
         <section class="settings-card mb-3">
-            <h2>Government bank payments</h2>
-            <p>PAYE and FNPF reminders clear only when a bank statement line is reconciled to a two-line journal that debits the matching liability. The amount must equal the monthly payroll total. Include PAYE or FNPF and the wages month (for example, <code>PAYE 2026-09</code>) in the bank or journal reference. The check runs every 15 minutes.</p>
+            <h2>Government payment follow-up</h2>
+            <p>Payments marked manually in Payroll Island appear here as awaiting confirmation. They leave its due list immediately. A declaration is not a bank reconciliation or proof that a return was filed. This connection checks for new records every 15 minutes.</p>
             <p>Bank payment does not prove that a PAYE return or FNPF schedule was filed. FNU levy needs separate confirmed liability evidence and remains open.</p>
-            @if (canPost) { <button class="btn btn-outline-primary" @onclick="CheckGovernmentPayments" disabled="@busy">Check matched bank payments now</button> }
+            @if (canPost) { <button class="btn btn-outline-primary" @onclick="CheckGovernmentPayments" disabled="@busy">Refresh payment follow-up</button> }
+            @if (paymentClaims.Count == 0)
+            {
+                <p class="text-secondary mt-3">No manually declared government payments have arrived from this Payroll Island connection.</p>
+            }
+            else
+            {
+                <div class="table-responsive mt-3"><table class="table align-middle">
+                    <thead><tr><th>Payment</th><th>Period</th><th>Paid on</th><th>Reference</th><th>Follow-up</th></tr></thead>
+                    <tbody>
+                    @foreach (var claim in paymentClaims)
+                    {
+                        <tr><td>@(claim.DeadlineKey switch { "paye-monthly" => "PAYE", "fnpf-payment" => "FNPF", _ => "FNU levy" })</td>
+                            <td>@claim.PeriodStart.ToString("MMM yyyy")</td><td>@claim.PaidOn.ToString("dd MMM yyyy")</td>
+                            <td>@(claim.Reference ?? "—")</td><td>@(claim.ReopenedInPayrollIsland ? "Reopened in Payroll Island" : claim.BankConfirmedAtUtc is not null ? "Bank confirmed" : "Awaiting confirmation")</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
         </section>
         <section class="settings-card mb-3">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
@@ -217,6 +235,7 @@ else
     private AccessibleOrganisation? access;
     private PayrollIslandConnection? connection;
     private IReadOnlyList<PayrollIslandPayRunImport> imports = [];
+    private IReadOnlyList<PayrollGovernmentPaymentClaim> paymentClaims = [];
     private List<LedgerAccount> expenseAccounts = [];
     private List<LedgerAccount> liabilityAccounts = [];
     private ConnectionModel model = new();
@@ -234,7 +253,8 @@ else
         try
         {
             var checkedPeriods = await PaymentSync.SyncAsync(OrganisationId);
-            message = $"Checked {checkedPeriods} PAYE and FNPF monthly payment statuses against Payroll Island.";
+            await Reload();
+            message = $"Payment follow-up refreshed. Checked {checkedPeriods} PAYE and FNPF bank-payment statuses.";
             messageClass = "alert-success";
         }
         catch (Exception)
@@ -266,6 +286,9 @@ else
     {
         connection = await PayrollIntegration.GetConnectionAsync(userId, OrganisationId);
         imports = await PayrollIntegration.ListImportsAsync(userId, OrganisationId);
+        paymentClaims = await Db.PayrollGovernmentPaymentClaims.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId)
+            .OrderByDescending(x => x.PaidOn).Take(100).ToListAsync();
         model = connection is null ? DefaultModel() : new ConnectionModel
         {
             BaseUrl = connection.BaseUrl,
