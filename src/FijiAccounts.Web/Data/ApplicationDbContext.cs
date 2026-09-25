@@ -145,6 +145,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<ProjectWipPosting> ProjectWipPostings => Set<ProjectWipPosting>();
     public DbSet<PayrollIslandConnection> PayrollIslandConnections =>
         Set<PayrollIslandConnection>();
+    public DbSet<PayrollGovernmentPaymentClaim> PayrollGovernmentPaymentClaims =>
+        Set<PayrollGovernmentPaymentClaim>();
     public DbSet<PayrollBankMatch> PayrollBankMatches => Set<PayrollBankMatch>();
     public DbSet<PayrollIslandPayRunImport> PayrollIslandPayRunImports =>
         Set<PayrollIslandPayRunImport>();
@@ -1385,6 +1387,12 @@ builder.Entity<FixedAsset>()
         builder.Entity<PayrollIslandConnection>()
             .HasIndex(x => x.OrganisationId)
             .IsUnique();
+        builder.Entity<PayrollGovernmentPaymentClaim>()
+            .HasIndex(x => new { x.ConnectionId, x.DeadlineKey, x.PeriodStart })
+            .IsUnique();
+        builder.Entity<PayrollGovernmentPaymentClaim>()
+            .HasOne<PayrollIslandConnection>().WithMany()
+            .HasForeignKey(x => x.ConnectionId).OnDelete(DeleteBehavior.Cascade);
         builder.Entity<PayrollIslandConnection>()
             .HasOne(x => x.Organisation)
             .WithMany()
