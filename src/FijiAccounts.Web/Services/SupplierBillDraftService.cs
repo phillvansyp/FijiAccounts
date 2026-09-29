@@ -69,6 +69,16 @@ public sealed class SupplierBillDraftService(
         await RequireAccessAsync(userId, request.OrganisationId);
         await ValidateRequestAsync(request, cancellationToken);
 
+        if (request.SupplierId is Guid supplierId &&
+            await SupplierReferenceDuplicateLookup.FindAsync(
+                db, request.OrganisationId, supplierId,
+                request.SupplierReference, request.DraftId,
+                cancellationToken) is { } duplicate)
+        {
+            throw new InvalidOperationException(
+                SupplierReferenceDuplicateLookup.Error(request.SupplierReference, duplicate));
+        }
+
         SupplierBillDraft draft;
         var created = request.DraftId is null;
         if (request.DraftId is Guid draftId)

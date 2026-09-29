@@ -9,6 +9,21 @@ namespace FijiAccounts.Web.Tests;
 public sealed class SupplierBillDraftServiceTests
 {
     [Fact]
+    public async Task SaveAsync_RejectsAnotherDraftWithSameSupplierReferenceButAllowsOwnEdit()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new SupplierBillDraftService(test.Db, test.Access);
+        var request = await RequestAsync(test);
+        var first = await service.SaveAsync(test.UserId, request);
+
+        await service.SaveAsync(test.UserId, request with { DraftId = first.Id });
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SaveAsync(test.UserId, request with { SupplierReference = "sup-001" }));
+        Assert.Contains("existing draft bill", error.Message);
+        Assert.Single(await test.Db.SupplierBillDrafts.ToListAsync());
+    }
+
+    [Fact]
     public async Task SavedDraftAttachmentCanBeReadOnlyWithinItsOrganisation()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
