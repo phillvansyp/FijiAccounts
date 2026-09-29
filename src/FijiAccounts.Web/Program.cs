@@ -261,6 +261,7 @@ builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<EmployeeReceiptService>();
+builder.Services.AddScoped<ReceiptBankPurchaseService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
 builder.Services.AddScoped<IImmutableDocumentStore>(services =>
     services.GetRequiredService<DatabaseImmutableDocumentStore>());

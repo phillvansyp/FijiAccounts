@@ -4,7 +4,14 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @using FijiAccounts.Web.Api.Mobile.V1
+@using FijiAccounts.Domain.Accounting
+@using FijiAccounts.Domain.Tax
+@using Microsoft.EntityFrameworkCore
 @inject EmployeeReceiptService Receipts
+@inject ReceiptBankPurchaseService ReceiptBankPurchases
+@inject BankReconciliationService BankReconciliation
+@inject TenantAccessService TenantAccess
+@inject ApplicationDbContext Db
 @inject MobileApiV1Service Mobile
 @inject AuthenticationStateProvider Authentication
 @inject OrganisationSelectionService OrganisationSelection
@@ -98,9 +105,44 @@ else
                         }
                         @foreach (var match in receiptMatches.BankTransactions)
                         {
-                            <p>Bank transaction: <a href="@match.Url">@match.Description</a> · @match.Date.ToString("dd MMM yyyy") · @(match.Reconciled ? "Reconciled" : "Not reconciled")</p>
+                            <p>Bank transaction: <a href="@match.Url">@match.Description</a> · @match.Date.ToString("dd MMM yyyy") · @(match.Reconciled ? "Reconciled" : "Not reconciled")
+                                @if (receipt.Status == "Submitted" && (receipt.SubmittedByUserId != user || canReviewOwnReceipt))
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-primary ms-2" disabled="@busy" @onclick="() => SelectBankMatch(receipt, match)">Use this payment</button>
+                                }
+                            </p>
                         }
                         <small>Exact total within seven days. Confirm the merchant and document before choosing a bill; a matching amount alone is not proof.</small>
+                    </div>
+                }
+                @if (selectedBankReceiptId == receipt.Id && selectedBankMatch is not null)
+                {
+                    <div class="receipt-review">
+                        <h4>Approve, post and pay with this bank transaction</h4>
+                        <p>Confirm the supplier, expense account and VAT. If this transaction was coded directly from Banking, its earlier coding will be reversed and replaced by the bill and payment in one operation.</p>
+                        <p><strong>@selectedBankMatch.Description</strong> · @selectedBankMatch.Date.ToString("dd MMM yyyy") · @receipt.Currency @receipt.TotalPaid.ToString("N2")</p>
+                        @if (bankMatchBlocked is not null) { <div class="alert alert-warning" role="alert">@bankMatchBlocked</div> }
+                        @if (bankMatchError is not null) { <div class="alert alert-danger" role="alert">@bankMatchError</div> }
+                        <label for="bank-match-supplier">Supplier</label>
+                        <select id="bank-match-supplier" class="form-select mb-2" @bind="selectedSupplierId" disabled="@busy">
+                            <option value="@Guid.Empty">Choose the supplier</option>
+                            @foreach (var supplier in bankMatchSuppliers) { <option value="@supplier.Id">@supplier.Name</option> }
+                        </select>
+                        @if (bankMatchSuppliers.Count == 0) { <p>Add this supplier in <a href="/o/@org/purchases">Purchases</a>, then return here.</p> }
+                        <label for="bank-match-account">Expense or asset account</label>
+                        <select id="bank-match-account" class="form-select mb-2" @bind="selectedExpenseAccountId" disabled="@busy">
+                            <option value="@Guid.Empty">Choose the account</option>
+                            @foreach (var account in bankMatchAccounts) { <option value="@account.Id">@account.Code · @account.Name</option> }
+                        </select>
+                        <label for="bank-match-vat">VAT treatment</label>
+                        <select id="bank-match-vat" class="form-select mb-2" @bind="selectedVatTreatment" disabled="@busy">
+                            <option value="@VatTreatment.Standard">Standard VAT</option>
+                            <option value="@VatTreatment.ZeroRated">Zero-rated</option>
+                            <option value="@VatTreatment.Exempt">Exempt</option>
+                            <option value="@VatTreatment.OutOfScope">Out of scope</option>
+                        </select>
+                        <button type="button" class="btn btn-primary" disabled="@(busy || bankMatchBlocked is not null || selectedSupplierId == Guid.Empty || selectedExpenseAccountId == Guid.Empty)" @onclick="() => CompleteBankMatch(receipt)">Approve receipt, post bill and mark paid</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@busy" @onclick="ClearBankMatch">Cancel</button>
                     </div>
                 }
                 @if (receipt.ReviewNote is not null) { <p><strong>Review note:</strong> @receipt.ReviewNote</p> }
@@ -162,6 +204,14 @@ else
     private Dictionary<Guid,string?> notes = [];
     private Dictionary<string,string> contributors = [];
     private Dictionary<string,string> submitters = [];
+    private Guid? selectedBankReceiptId;
+    private ReceiptMatchCandidate? selectedBankMatch;
+    private Guid selectedSupplierId, selectedExpenseAccountId;
+    private VatTreatment selectedVatTreatment = VatTreatment.Standard;
+    private string? bankMatchBlocked;
+    private string? bankMatchError;
+    private List<BusinessParty> bankMatchSuppliers = [];
+    private List<LedgerAccount> bankMatchAccounts = [];
     private MobileDashboardResponse? dashboard;
     protected override async Task OnInitializedAsync()
     {
@@ -182,6 +232,7 @@ else
     }
     private async Task Load()
     {
+        ClearBankMatch();
         owner = await Receipts.IsOwnerAsync(user, org);
         canReviewOwnReceipt = owner && await Receipts.CanReviewOwnReceiptAsync(user, org);
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
@@ -236,6 +287,69 @@ else
         await Receipts.ReviewAsync(user, org, receipt.Id, receipt.Version, approve, notes[receipt.Id]);
         await Load(); message = "Receipt returned with your note.";
     });
+    private void ClearBankMatch()
+    {
+        selectedBankReceiptId = null; selectedBankMatch = null; bankMatchBlocked = null;
+        bankMatchError = null;
+        selectedSupplierId = selectedExpenseAccountId = Guid.Empty;
+        bankMatchSuppliers = []; bankMatchAccounts = [];
+    }
+    private Task SelectBankMatch(EmployeeReceipt receipt, ReceiptMatchCandidate match) => Run(async () => {
+        ClearBankMatch();
+        selectedBankReceiptId = receipt.Id; selectedBankMatch = match;
+        var statement = await Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == match.Id && x.OrganisationId == org);
+        var company = await Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == org);
+        bankMatchSuppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == org && x.IsActive &&
+            (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
+        bankMatchAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == org && x.IsActive &&
+            !x.IsBankAccount && x.Code != "1150" &&
+            (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
+        selectedSupplierId = bankMatchSuppliers.FirstOrDefault(x =>
+            x.Name.Equals(receipt.Merchant, StringComparison.OrdinalIgnoreCase))?.Id ?? Guid.Empty;
+        selectedVatTreatment = receipt.AmountsIncludeVat || receipt.VatAmount > 0 ? VatTreatment.Standard : VatTreatment.OutOfScope;
+        if (!await TenantAccess.CanPostJournalsAsync(user, org))
+            bankMatchBlocked = "Your role cannot post bills and payments for this company.";
+        else if (company.RequireSupplierPaymentApproval)
+            bankMatchBlocked = "This company requires independent payment approval. Create the purchase draft, then use the payment approval workflow.";
+        else if (await BankReconciliation.IsInsideCompletedReconciliationAsync(org, statement.BankAccountId, statement.TransactionDate))
+            bankMatchBlocked = "This bank transaction is in a completed reconciliation period. It cannot be recoded automatically. Review its Connections in Banking.";
+        else if (statement.ReconciledAt is not null)
+        {
+            var matched = await Db.PostedJournalLines.AsNoTracking().Where(x => x.Id == statement.MatchedPostedJournalLineId)
+                .Select(x => new { x.PostedJournalId, x.PostedJournal.Description }).SingleOrDefaultAsync();
+            if (matched?.Description?.StartsWith("Coded from bank statement", StringComparison.OrdinalIgnoreCase) != true)
+                bankMatchBlocked = "This payment is reconciled to another journal. Review its Connections in Banking before creating a new bill.";
+            else
+            {
+                var accountIds = bankMatchAccounts.Select(a => a.Id).ToArray();
+                selectedExpenseAccountId = await Db.PostedJournalLines.AsNoTracking().Where(x =>
+                    x.PostedJournalId == matched.PostedJournalId &&
+                    accountIds.Contains(x.LedgerAccountId))
+                    .Select(x => x.LedgerAccountId).FirstOrDefaultAsync();
+            }
+        }
+    });
+    private async Task CompleteBankMatch(EmployeeReceipt receipt)
+    {
+        if (busy || selectedBankReceiptId != receipt.Id || selectedBankMatch is null) return;
+        busy = true; bankMatchError = null; message = null;
+        try
+        {
+            var bill = await ReceiptBankPurchases.ApprovePostAndPayAsync(user, org, receipt.Id, receipt.Version,
+                selectedBankMatch.Id, selectedSupplierId, selectedExpenseAccountId, selectedVatTreatment);
+            await Load();
+            message = $"Receipt approved; {bill.BillNumber} posted and paid from the matched bank transaction.";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            bankMatchError = "Your access has changed. Ask the organisation owner for help.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException)
+        {
+            bankMatchError = ex.Message;
+        }
+        finally { busy = false; }
+    }
     private Task AddEmployee() => Run(async () => { await Receipts.AddContributorAsync(user, org, employeeEmail); employeeEmail = ""; await Load(); message = "Receipt access added. The employee can sign in at /receipts."; });
     private Task RemoveEmployee(string employee) => Run(async () => { await Receipts.RemoveContributorAsync(user, org, employee); await Load(); message = "Receipt access removed. Submitted receipts remain available to owners."; });
 }
