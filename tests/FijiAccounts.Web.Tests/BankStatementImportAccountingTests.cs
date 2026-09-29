@@ -545,7 +545,7 @@ public sealed class BankStatementImportAccountingTests
         Assert.Equal(new DateOnly(2026, 6, 30), batch.LastDate);
         Assert.Equal(2, batch.LineCount);
         Assert.Equal(65m, batch.NetAmount);
-        Assert.False(batch.CanDelete);
+        Assert.True(batch.CanDelete);
         Assert.Equal(new DateOnly(2033, 12, 31), batch.RetainUntil);
         Assert.Null(batch.DocumentId);
         Assert.Null(batch.DocumentFileName);
@@ -602,14 +602,29 @@ public sealed class BankStatementImportAccountingTests
             x.EventType == "BankStatementDocumentExported" &&
             x.EntityId == document.Id.ToString()));
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.DeleteImportBatchAsync(
-                test.UserId,
-                test.Organisation.Id,
-                imported.BatchId));
-        Assert.Contains("seven-year", error.Message, StringComparison.OrdinalIgnoreCase);
+        var removed = await service.DeleteImportBatchAsync(
+            test.UserId,
+            test.Organisation.Id,
+            imported.BatchId);
+        Assert.Equal(1, removed.Deleted);
         Assert.True(await test.Db.BankStatementImportDocuments.AnyAsync(x =>
             x.ImportBatchId == imported.BatchId));
+        Assert.False(await test.Db.BankStatementLines.AnyAsync(x =>
+            x.ImportBatchId == imported.BatchId));
+        var retained = await service.GetDocumentAsync(test.UserId, test.Organisation.Id, imported.BatchId);
+        Assert.Equal(content, retained?.Content);
+        var audit = await test.Db.AuditEvents.SingleAsync(x =>
+            x.EventType == "BankStatementImportDeleted" && x.EntityId == imported.BatchId.ToString());
+        Assert.Contains("Card purchase", audit.JsonData);
+
+        var replacement = await service.ImportAsync(
+            test.UserId,
+            test.Organisation.Id,
+            bank.Id,
+            [new StatementPreviewLine(new DateOnly(2026, 2, 20), "Card purchase", "FEB-1", -25m)],
+            "PDF");
+        Assert.Equal(1, replacement.Imported);
+        Assert.NotEqual(imported.BatchId, replacement.BatchId);
     }
 
     [Fact]
