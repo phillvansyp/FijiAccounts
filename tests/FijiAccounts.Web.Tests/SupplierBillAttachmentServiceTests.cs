@@ -25,7 +25,7 @@ public sealed class SupplierBillAttachmentServiceTests
         var saved = await test.Db.SupplierBillAttachments.AsNoTracking()
             .Where(x => x.SupplierBillId == bill.Id).ToListAsync();
         Assert.Equal(2, saved.Count);
-        Assert.Single(saved.Where(x => !x.HiddenAsDuplicate));
+        Assert.Single(saved, x => !x.HiddenAsDuplicate);
         Assert.Equal(first.Id, saved.Single(x => !x.HiddenAsDuplicate).Id);
         Assert.NotNull(saved.Single(x => x.HiddenAsDuplicate).ImmutableDocumentObjectId);
         Assert.NotNull(await service.GetAsync(test.UserId, test.Organisation.Id, bill.Id, second.Id));
