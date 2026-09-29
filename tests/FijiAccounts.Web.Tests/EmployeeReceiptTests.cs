@@ -98,17 +98,44 @@ public sealed class EmployeeReceiptTests
     }
 
     [Fact]
-    public async Task OwnerCannotApproveOwnReceiptAndInvalidFilesAreRejected()
+    public async Task SoleOwnerCanCreatePurchaseDraftFromOwnReceiptAndInvalidFilesAreRejected()
     {
         await using var db = await AccountingTestDatabase.CreateAsync();
         var service = Service(db);
         var receipt = await Submit(service, db.UserId, db.Organisation.Id, Guid.NewGuid());
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, 0, true, null));
+        Assert.True(await service.CanReviewOwnReceiptAsync(db.UserId, db.Organisation.Id));
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, 0, true, null, createDraft: true);
+        var approved = (await service.ListAsync(db.UserId, db.Organisation.Id)).Single();
+        Assert.Equal("Approved", approved.Status);
+        Assert.NotNull(approved.LinkedSupplierBillDraftId);
+        Assert.Single(db.Db.SupplierBillDrafts);
+        Assert.Empty(db.Db.SupplierBills);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.SubmitAsync(db.UserId, db.Organisation.Id, Guid.NewGuid(), "Shop", "Supplies", new DateOnly(2026,1,1), 25, "FJD", false, "receipt.html", Photo));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Submit(service, "outsider", db.Organisation.Id, Guid.NewGuid()));
         var group = new OrganisationGroup { Name = "Suspended company", Status = TenantStatus.Suspended }; db.Db.OrganisationGroups.Add(group); db.Organisation.OrganisationGroup = group; await db.Db.SaveChangesAsync();
         Assert.Empty(await service.OrganisationsAsync(db.UserId));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReadAsync(db.UserId, db.Organisation.Id, receipt.Id));
+    }
+
+    [Fact]
+    public async Task SecondOwnerKeepsIndependentReviewForOwnReceipts()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        const string secondOwner = "second-owner";
+        db.Db.Users.Add(new ApplicationUser { Id = secondOwner, UserName = secondOwner,
+            Email = "second-owner@example.com", NormalizedEmail = "SECOND-OWNER@EXAMPLE.COM", EmailConfirmed = true });
+        db.Db.OrganisationMemberships.Add(new OrganisationMembership {
+            OrganisationId = db.Organisation.Id, UserId = secondOwner, Role = OrganisationRole.Owner });
+        await db.Db.SaveChangesAsync();
+        var service = Service(db);
+        var receipt = await Submit(service, db.UserId, db.Organisation.Id, Guid.NewGuid());
+
+        Assert.False(await service.CanReviewOwnReceiptAsync(db.UserId, db.Organisation.Id));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReviewAsync(
+            db.UserId, db.Organisation.Id, receipt.Id, receipt.Version, true, null, createDraft: true));
+        await service.ReviewAsync(secondOwner, db.Organisation.Id, receipt.Id, receipt.Version,
+            true, null, createDraft: true);
+        Assert.NotNull((await service.ListAsync(db.UserId, db.Organisation.Id)).Single().LinkedSupplierBillDraftId);
     }
 
     [Fact]

@@ -100,9 +100,10 @@ else
                 {
                     <p class="receipt-hint">In <a href="/o/@org/purchases?draft=@linkedDraftId">Purchases as a draft</a>. Review the supplier, VAT and expense account before posting.</p>
                 }
-                @if (owner && receipt.Status == "Submitted" && receipt.SubmittedByUserId != user)
+                @if (owner && receipt.Status == "Submitted" && (receipt.SubmittedByUserId != user || canReviewOwnReceipt))
                 {
                     <div class="receipt-review"><label for="note-@receipt.Id">Review note (required when returning)</label><input id="note-@receipt.Id" class="form-control" maxlength="1000" @bind="notes[receipt.Id]" disabled="@busy" />
+                    @if (receipt.SubmittedByUserId == user) { <p class="receipt-hint">You are the only organisation owner. Your own approval is recorded in the audit trail; the purchase still needs coding and posting.</p> }
                     <label for="purchase-route-@receipt.Id">Where should this receipt go?</label>
                     <select id="purchase-route-@receipt.Id" class="form-select" @bind="purchaseDecisions[receipt.Id]" disabled="@busy">
                         <option value="">Choose a purchase action</option>
@@ -115,8 +116,12 @@ else
                         }
                         <option value="new">No existing bill matches — create a purchase draft</option>
                     </select>
-                    <button class="btn btn-primary" disabled="@(busy || string.IsNullOrEmpty(purchaseDecisions[receipt.Id]))" @onclick="() => Approve(receipt)">@(purchaseDecisions[receipt.Id] == "new" ? "Approve and create draft" : "Approve and attach")</button>
+                    <button class="btn btn-primary" disabled="@(busy || string.IsNullOrEmpty(purchaseDecisions[receipt.Id]))" @onclick="() => Approve(receipt)">@(purchaseDecisions[receipt.Id] == "new" ? "Approve and create purchase draft" : "Approve and attach to bill")</button>
                     <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => Review(receipt, false)">Return</button></div>
+                }
+                else if (owner && receipt.Status == "Submitted" && receipt.SubmittedByUserId == user)
+                {
+                    <p class="receipt-hint">Another organisation owner must review this receipt before it can become a purchase.</p>
                 }
             </article>
         }
@@ -134,7 +139,7 @@ else
     private Guid org, requestId = Guid.NewGuid();
     private DateOnly date = DateOnly.FromDateTime(DateTime.Today);
     private decimal amount, vatAmount;
-    private bool owner, personal, amountsIncludeVat = true, busy, loading = true;
+    private bool owner, canReviewOwnReceipt, personal, amountsIncludeVat = true, busy, loading = true;
     private string? error, message;
     private IBrowserFile? file;
     private List<Organisation> organisations = [];
@@ -154,6 +159,7 @@ else
     private async Task Load()
     {
         owner = await Receipts.IsOwnerAsync(user, org);
+        canReviewOwnReceipt = owner && await Receipts.CanReviewOwnReceiptAsync(user, org);
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
         submitters = owner ? await Receipts.SubmittersAsync(user, org) : [];
         items = await Receipts.ListAsync(user, org);

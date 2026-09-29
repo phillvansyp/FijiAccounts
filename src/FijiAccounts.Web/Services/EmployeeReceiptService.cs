@@ -16,6 +16,11 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         
         (m.Organisation.OrganisationGroupId == null || m.Organisation.OrganisationGroup!.Status == TenantStatus.Active));
 
+    public async Task<bool> CanReviewOwnReceiptAsync(string user, Guid org) =>
+        await IsOwnerAsync(user, org) &&
+        await db.OrganisationMemberships.CountAsync(m =>
+            m.OrganisationId == org && m.Role == OrganisationRole.Owner) == 1;
+
     public async Task<List<Organisation>> OrganisationsAsync(string user) => await db.Organisations.AsNoTracking()
         .Where(o =>
             (o.OrganisationGroupId == null || o.OrganisationGroup!.Status == TenantStatus.Active) &&
@@ -164,7 +169,9 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         if (!await IsOwnerAsync(user, org)) throw new UnauthorizedAccessException();
         var receipt = await db.EmployeeReceipts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == org)
             ?? throw new InvalidOperationException("Receipt not found.");
-        if (receipt.SubmittedByUserId == user) throw new InvalidOperationException("Another owner must review your own receipt.");
+        var selfReview = receipt.SubmittedByUserId == user;
+        if (selfReview && !await CanReviewOwnReceiptAsync(user, org))
+            throw new InvalidOperationException("Another owner must review your own receipt.");
         if (receipt.Status != "Submitted" || receipt.Version != version) throw new InvalidOperationException("This receipt has changed. Refresh before reviewing it.");
         if (approve && (supplierBillId.HasValue == createDraft))
             throw new InvalidOperationException("Choose a confirmed purchase bill or create a new purchase draft.");
@@ -230,7 +237,7 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         receipt.Status = approve ? "Approved" : "Returned";
         receipt.ReviewNote = note?.Trim(); receipt.ReviewedByUserId = user;
         receipt.ReviewedAt = DateTimeOffset.UtcNow; receipt.Version++;
-        Audit(user, org, "ReceiptReviewed", id.ToString(), new { receipt.Status, receipt.ReviewNote,
+        Audit(user, org, "ReceiptReviewed", id.ToString(), new { receipt.Status, receipt.ReviewNote, SelfReviewed = selfReview,
             receipt.LinkedSupplierBillId, receipt.LinkedSupplierBillDraftId });
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); throw new InvalidOperationException("Another owner has already reviewed this receipt. Refresh to see their decision."); }
