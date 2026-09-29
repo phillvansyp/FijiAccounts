@@ -77,7 +77,13 @@ public sealed class BankStatementImportService(
         CancellationToken ct = default)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot import statements for this organisation.");
-        if (!await db.LedgerAccounts.AnyAsync(x => x.Id == bankAccountId && x.OrganisationId == organisationId && x.IsActive && x.IsBankAccount, ct)) throw new InvalidOperationException("Select an active bank account.");
+        var bankAccount = await db.LedgerAccounts.SingleOrDefaultAsync(
+            x => x.Id == bankAccountId && x.OrganisationId == organisationId && x.IsActive && x.IsBankAccount,
+            ct) ?? throw new InvalidOperationException("Select an active bank account.");
+        if (document is not null && Path.GetExtension(document.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            ValidatePdfAccountNumber(document.Content, bankAccount.BankAccountNumber, bankAccount.Name);
+        }
         var storedDocument = document is null
             ? null
             : CreateDocument(
@@ -804,6 +810,41 @@ if (amounts.Count == 1 &&
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool TryDate(string value, out DateOnly date) { foreach (var format in new[] { "yyyy-MM-dd", "dd/MM/yyyy", "d/M/yyyy", "dd/MM/yy", "d/M/yy", "dd-MM-yyyy", "d-M-yyyy", "dd-MM-yy", "d-M-yy", "MM/dd/yyyy", "M/d/yyyy", "dd MMM yyyy", "dd MMM yy" }) if (DateOnly.TryParseExact(value.Trim(), format, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true; return DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date); }
     private static string Hash(DateOnly date, string description, string? reference, decimal amount) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{date:yyyy-MM-dd}|{description.Trim().ToUpperInvariant()}|{reference?.Trim().ToUpperInvariant()}|{amount:F2}")));
+    internal static void ValidateStatementAccountNumber(string text, string? configuredAccountNumber, string bankAccountName)
+    {
+        var configuredDigits = new string((configuredAccountNumber ?? "").Where(char.IsDigit).ToArray());
+        if (configuredDigits.Length < 8) return;
+
+        // Some PDFs extract column headings before all their values, so the
+        // Westpac account number may not be adjacent to the "Account" label.
+        var adjacent = Regex.Match(text, @"\bAccount\s+(?<number>\d{8,16})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var statementNumber = adjacent.Success ? adjacent.Groups["number"].Value : null;
+        if (statementNumber is null && text.Contains("Westpac Fiji", StringComparison.OrdinalIgnoreCase))
+        {
+            var candidates = Regex.Matches(text, @"\b\d{10}\b")
+                .Select(match => match.Value)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (candidates.Length == 1) statementNumber = candidates[0];
+        }
+
+        if (statementNumber is not null && !statementNumber.Equals(configuredDigits, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"This statement is for account {statementNumber}, but {bankAccountName} is account {configuredDigits}. Select the matching account before importing.");
+        }
+    }
+
+    private static void ValidatePdfAccountNumber(byte[] content, string? configuredAccountNumber, string bankAccountName)
+    {
+        if (string.IsNullOrWhiteSpace(configuredAccountNumber)) return;
+        using var stream = new MemoryStream(content, writable: false);
+        using var pdf = PdfDocument.Open(stream);
+        foreach (var page in pdf.GetPages().Take(2))
+        {
+            ValidateStatementAccountNumber(ContentOrderTextExtractor.GetText(page), configuredAccountNumber, bankAccountName);
+        }
+    }
     private static string HashOccurrence(string baseHash, int occurrence) =>
         Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes($"{baseHash}|{occurrence}")));
