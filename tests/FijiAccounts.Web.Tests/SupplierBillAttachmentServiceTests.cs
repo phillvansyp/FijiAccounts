@@ -9,6 +9,50 @@ namespace FijiAccounts.Web.Tests;
 public sealed class SupplierBillAttachmentServiceTests
 {
     [Fact]
+    public async Task HideVerifiedDuplicateAsync_LeavesOneVisibleCopyAndRetainsBothRecords()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bill = await PostBillAsync(test, "SUP-DUPLICATE");
+        var service = new SupplierBillAttachmentService(test.Db, test.Access);
+        var first = await service.AddAsync(test.UserId, test.Organisation.Id, bill.Id, Attachment());
+        var second = await service.AddAsync(test.UserId, test.Organisation.Id, bill.Id, Attachment());
+
+        var candidates = await service.FindVisibleDuplicateIdsAsync(test.UserId, test.Organisation.Id, bill.Id);
+        Assert.Contains(first.Id, candidates);
+        Assert.Contains(second.Id, candidates);
+        Assert.True(await service.HideVerifiedDuplicateAsync(test.UserId, test.Organisation.Id, bill.Id, second.Id));
+
+        var saved = await test.Db.SupplierBillAttachments.AsNoTracking()
+            .Where(x => x.SupplierBillId == bill.Id).ToListAsync();
+        Assert.Equal(2, saved.Count);
+        Assert.Single(saved.Where(x => !x.HiddenAsDuplicate));
+        Assert.Equal(first.Id, saved.Single(x => !x.HiddenAsDuplicate).Id);
+        Assert.NotNull(saved.Single(x => x.HiddenAsDuplicate).ImmutableDocumentObjectId);
+        Assert.NotNull(await service.GetAsync(test.UserId, test.Organisation.Id, bill.Id, second.Id));
+        Assert.Empty(await service.FindVisibleDuplicateIdsAsync(test.UserId, test.Organisation.Id, bill.Id));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.HideVerifiedDuplicateAsync(test.UserId, test.Organisation.Id, bill.Id, first.Id));
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EntityId == bill.Id.ToString() &&
+            x.EventType == "SupplierBillDuplicateDocumentHidden"));
+    }
+
+    [Fact]
+    public async Task HideVerifiedDuplicateAsync_RejectsSameNameWithDifferentBytes()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var bill = await PostBillAsync(test, "SUP-DIFFERENT");
+        var service = new SupplierBillAttachmentService(test.Db, test.Access);
+        var first = await service.AddAsync(test.UserId, test.Organisation.Id, bill.Id, Attachment());
+        await service.AddAsync(test.UserId, test.Organisation.Id, bill.Id,
+            Attachment() with { Content = [4, 3, 2, 1] });
+
+        Assert.Empty(await service.FindVisibleDuplicateIdsAsync(test.UserId, test.Organisation.Id, bill.Id));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.HideVerifiedDuplicateAsync(test.UserId, test.Organisation.Id, bill.Id, first.Id));
+    }
+
+    [Fact]
     public async Task AddAndDeleteAsync_PersistProtectAndAuditWithoutContent()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

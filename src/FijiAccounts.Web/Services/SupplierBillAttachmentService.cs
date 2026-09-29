@@ -138,6 +138,65 @@ public sealed class SupplierBillAttachmentService(
         return true;
     }
 
+    public async Task<IReadOnlySet<Guid>> FindVisibleDuplicateIdsAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierBillId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, organisationId);
+        var attachments = await db.SupplierBillAttachments.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.SupplierBillId == supplierBillId && !x.HiddenAsDuplicate)
+            .ToListAsync(cancellationToken);
+        var groups = attachments.GroupBy(x => new
+        {
+            x.FileName,
+            x.ContentType,
+            x.OriginalSize,
+            Hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(x.Content))
+        });
+        return groups.Where(x => x.Count() > 1)
+            .SelectMany(x => x.Select(a => a.Id)).ToHashSet();
+    }
+
+    public async Task<bool> HideVerifiedDuplicateAsync(
+        string userId,
+        Guid organisationId,
+        Guid supplierBillId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, organisationId);
+        var bill = await db.SupplierBills.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Id == supplierBillId && x.OrganisationId == organisationId,
+            cancellationToken);
+        if (bill is null) return false;
+
+        var attachments = await db.SupplierBillAttachments
+            .Where(x => x.OrganisationId == organisationId &&
+                        x.SupplierBillId == supplierBillId && !x.HiddenAsDuplicate)
+            .ToListAsync(cancellationToken);
+        var attachment = attachments.SingleOrDefault(x => x.Id == attachmentId);
+        if (attachment is null) return false;
+
+        var match = attachments.FirstOrDefault(x => x.Id != attachmentId &&
+            x.FileName == attachment.FileName &&
+            x.ContentType == attachment.ContentType &&
+            x.OriginalSize == attachment.OriginalSize &&
+            x.Content.AsSpan().SequenceEqual(attachment.Content));
+        if (match is null)
+            throw new InvalidOperationException("No identical attachment was found. The original document must remain on the bill.");
+
+        attachment.HiddenAsDuplicate = true;
+        attachment.HiddenAsDuplicateAt = DateTimeOffset.UtcNow;
+        attachment.HiddenAsDuplicateByUserId = userId;
+        db.AuditEvents.Add(Audit(organisationId, userId,
+            "SupplierBillDuplicateDocumentHidden", bill, attachment));
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task RecordExportAsync(
         string userId,
         Guid organisationId,
