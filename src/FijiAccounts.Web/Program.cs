@@ -206,6 +206,7 @@ builder.Services.ConfigureApplicationCookie(options =>
 });
 
 builder.Services.AddScoped<TenantAccessService>();
+builder.Services.AddScoped<OrganisationSelectionService>();
 builder.Services.AddScoped<OrganisationInvitationService>();
 builder.Services.AddScoped<OrganisationPermissionProfileService>();
 builder.Services.AddScoped<EnterpriseStructureService>();

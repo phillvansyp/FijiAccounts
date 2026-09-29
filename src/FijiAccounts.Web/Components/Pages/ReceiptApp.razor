@@ -7,6 +7,8 @@
 @inject EmployeeReceiptService Receipts
 @inject MobileApiV1Service Mobile
 @inject AuthenticationStateProvider Authentication
+@inject OrganisationSelectionService OrganisationSelection
+@inject NavigationManager Navigation
 
 <PageTitle>Receipts · Account Island</PageTitle>
 <h1>@(owner ? "Your business at a glance" : "Your receipts")</h1>
@@ -17,6 +19,16 @@
 else if (organisations.Count == 0)
 {
     <section class="receipt-card"><h2>You’re ready to join</h2><p>Ask your organisation owner to add your verified email to receipt access. You will then be able to submit receipts without access to the company accounts.</p></section>
+}
+else if (org == Guid.Empty)
+{
+    <section class="receipt-card"><h2>Receipts are unavailable for the selected organisation</h2><p>Your company choice has not changed. Choose an organisation with receipt access below if you want to switch.</p>
+        <label for="receipt-org">Organisation</label>
+        <select id="receipt-org" class="form-select" @bind="org" @bind:after="SwitchOrganisation">
+            <option value="@Guid.Empty">Choose an organisation</option>
+            @foreach (var company in organisations) { <option value="@company.Id">@company.LegalName</option> }
+        </select>
+    </section>
 }
 else
 {
@@ -135,6 +147,7 @@ else
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "org")] public Guid? RequestedOrganisationId { get; set; }
     private string user = "", merchant = "", purpose = "", currency = "FJD", employeeEmail = "";
     private Guid org, requestId = Guid.NewGuid();
     private DateOnly date = DateOnly.FromDateTime(DateTime.Today);
@@ -153,7 +166,18 @@ else
     protected override async Task OnInitializedAsync()
     {
         user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-        try { organisations = await Receipts.OrganisationsAsync(user); org = organisations.FirstOrDefault()?.Id ?? Guid.Empty; if (org != Guid.Empty) await Load(); }
+        try
+        {
+            organisations = await Receipts.OrganisationsAsync(user);
+            var preferredId = await OrganisationSelection.GetAsync(user);
+            var selectedId = RequestedOrganisationId ?? preferredId;
+            org = selectedId is Guid id
+                ? organisations.FirstOrDefault(x => x.Id == id)?.Id ?? Guid.Empty
+                : organisations.FirstOrDefault()?.Id ?? Guid.Empty;
+            if (RequestedOrganisationId == org && org != Guid.Empty)
+                await OrganisationSelection.SelectAsync(user, org);
+            if (org != Guid.Empty) await Load();
+        }
         finally { loading = false; }
     }
     private async Task Load()
@@ -172,10 +196,12 @@ else
         dashboard = owner ? await Mobile.GetDashboardAsync(user, org) : null;
         currency = organisations.Single(x => x.Id == org).BaseCurrency;
     }
-    private Task SwitchOrganisation() => Run(async () => {
-        requestId = Guid.NewGuid(); file = null; merchant = purpose = employeeEmail = ""; amount = vatAmount = 0; personal = false; amountsIncludeVat = true;
-        await Load();
-    });
+    private async Task SwitchOrganisation()
+    {
+        if (!organisations.Any(x => x.Id == org)) return;
+        await OrganisationSelection.SelectAsync(user, org);
+        Navigation.NavigateTo($"/receipts?org={org}", forceLoad: true);
+    }
     private void ChooseFile(InputFileChangeEventArgs args) { file = args.File; error = null; }
     private async Task Run(Func<Task> action)
     {

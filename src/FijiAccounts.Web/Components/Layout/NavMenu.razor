@@ -6,6 +6,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject UserManager<ApplicationUser> UserManager
 @inject TenantAccessService TenantAccess
+@inject OrganisationSelectionService OrganisationSelection
 @inject NotificationService NotificationService
 @inject OrganisationUpdateBroker Updates
 @inject IServiceScopeFactory ScopeFactory
@@ -14,7 +15,7 @@
     <a class="brand brand-landscape" href="" aria-label="Account Island home"><img src="account-island-landscape-header.png" alt="Account Island — Escape the Admin" /></a>
     <input id="menu-toggle" class="menu-toggle" type="checkbox" aria-label="Toggle navigation" /><label class="menu-button" for="menu-toggle"><span></span><span></span><span></span></label>
     <AuthorizeView><Authorized>
-        <a href="/receipts">Receipts</a>
+        <a href="@ReceiptsUrl">Receipts</a>
         @if (accessibleOrganisations.Count > 0)
         {
             <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
@@ -33,7 +34,7 @@
                         <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, Fiji tax and financial settings</small></span></a>
                         <a class="company-action" href="@OrgUrl("team")"><span class="company-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
                     }
-                    <a class="company-action" href="/receipts"><span><b>Receipts &amp; owner overview</b><small>Employee receipts and spending review</small></span></a>
+                    <a class="company-action" href="@ReceiptsUrl"><span><b>Receipts &amp; owner overview</b><small>Employee receipts and spending review</small></span></a>
                     <a class="manage-organisations" href="organisations">Manage organisations</a>
                 </div>
             </details>
@@ -71,13 +72,13 @@
 
 @code {
     private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private string? activeUserId; private List<AccessibleOrganisation> accessibleOrganisations = []; private int unreadNotificationCount; private IDisposable? updateSubscription; private bool liveRefreshInProgress, liveRefreshRequested;
+    private string ReceiptsUrl => activeOrganisationId is Guid id ? $"/receipts?org={id}" : "/receipts";
     private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
     protected override async Task OnInitializedAsync() { updateSubscription = Updates.Subscribe(OrganisationUpdated); await UpdateContext(); Navigation.LocationChanged += LocationChanged; }
     private void LocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        ApplyLocation(e.Location);
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () => { await ApplyLocationAsync(e.Location); StateHasChanged(); });
     }
 
     private bool refreshingOrganisations;
@@ -89,7 +90,7 @@
         {
             await using var scope = ScopeFactory.CreateAsyncScope();
             accessibleOrganisations = await scope.ServiceProvider.GetRequiredService<TenantAccessService>().ListAsync(activeUserId);
-            ApplyLocation(Navigation.Uri);
+            await ApplyLocationAsync(Navigation.Uri);
         }
         finally { refreshingOrganisations = false; }
     }
@@ -99,17 +100,22 @@
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         activeUserId = UserManager.GetUserId(state.User);
         accessibleOrganisations = activeUserId is null ? [] : await TenantAccess.ListAsync(activeUserId);
-
-        ApplyLocation(Navigation.Uri);
+        activeOrganisationId = activeUserId is null ? null : await OrganisationSelection.GetAsync(activeUserId);
+        await ApplyLocationAsync(Navigation.Uri);
         unreadNotificationCount = activeOrganisationId is null || activeUserId is null
             ? 0
             : await NotificationService.GetUnreadCountAsync(activeUserId, activeOrganisationId.Value);
     }
 
-    private void ApplyLocation(string location)
+    private async Task ApplyLocationAsync(string location)
     {
         currentUrl = Navigation.ToBaseRelativePath(location);
-        var requestedOrganisationId = ExtractOrganisationId(currentUrl);
+        var requestedOrganisationId = ExtractOrganisationId(new Uri(location).AbsolutePath.TrimStart('/'));
+        if (requestedOrganisationId is null && currentUrl.StartsWith("receipts?", StringComparison.OrdinalIgnoreCase))
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(location).Query);
+            if (Guid.TryParse(query["org"], out var receiptOrganisationId)) requestedOrganisationId = receiptOrganisationId;
+        }
 
         var requestedOrganisation = requestedOrganisationId is null
             ? null
@@ -118,6 +124,7 @@
         {
             activeOrganisationId = requestedOrganisation.Organisation.Id;
             activeOrganisationName = requestedOrganisation.Organisation.LegalName;
+            if (activeUserId is not null) await OrganisationSelection.SelectAsync(activeUserId, activeOrganisationId.Value);
         }
         else if (requestedOrganisationId is null && accessibleOrganisations.Count > 0)
         {
