@@ -1,5 +1,6 @@
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
+using FijiAccounts.Domain.Tax;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -106,5 +107,51 @@ public sealed class EmployeeReceiptTests
         var group = new OrganisationGroup { Name = "Suspended company", Status = TenantStatus.Suspended }; db.Db.OrganisationGroups.Add(group); db.Organisation.OrganisationGroup = group; await db.Db.SaveChangesAsync();
         Assert.Empty(await service.OrganisationsAsync(db.UserId));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReadAsync(db.UserId, db.Organisation.Id, receipt.Id));
+    }
+
+    [Fact]
+    public async Task VatExcludedReceiptUsesGrossTotalToSuggestExistingBankAndPurchaseRecords()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var date = new DateOnly(2026, 1, 1);
+        var bill = await db.Purchasing.PostBillAsync(db.UserId,
+            new SupplierBillRequest(db.Organisation.Id, db.Supplier.Id, "RECEIPT-25", date, date,
+                [new SupplierBillLineRequest("Supplies", 1m, 25m, VatTreatment.OutOfScope, db.Account("6500").Id)]));
+        db.Db.BankStatementLines.Add(new BankStatementLine {
+            OrganisationId = db.Organisation.Id, BankAccountId = db.Account("1000").Id,
+            TransactionDate = date.AddDays(1), Description = "Hardware shop card", Amount = -25m });
+        await db.Db.SaveChangesAsync();
+
+        var service = Service(db);
+        var receipt = await service.SubmitAsync(db.UserId, db.Organisation.Id, Guid.NewGuid(),
+            "Hardware shop", "Site supplies", date, 20m, "FJD", false, "receipt.png", Photo,
+            amountsIncludeVat: false, vatAmount: 5m);
+
+        Assert.False(receipt.AmountsIncludeVat);
+        Assert.Equal(25m, receipt.TotalPaid);
+        var matches = await service.FindMatchesAsync(db.UserId, db.Organisation.Id, receipt);
+        Assert.Contains(matches.Purchases, x => x.Url.EndsWith(bill.Id.ToString()));
+        Assert.Single(matches.BankTransactions);
+        Assert.False(matches.BankTransactions[0].Reconciled);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.FindMatchesAsync("outsider", db.Organisation.Id, receipt));
+    }
+
+    [Fact]
+    public async Task ReceiptDefaultsToVatIncludedAndPersonalPaymentsDoNotSuggestCompanyBankLines()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var service = Service(db);
+        var receipt = await Submit(service, db.UserId, db.Organisation.Id, Guid.NewGuid());
+        Assert.True(receipt.AmountsIncludeVat);
+        Assert.Equal(receipt.Amount, receipt.TotalPaid);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SubmitAsync(db.UserId, db.Organisation.Id,
+            Guid.NewGuid(), "Hardware shop", "Site supplies", receipt.ReceiptDate, 25m, "FJD", true,
+            "receipt.png", Photo, amountsIncludeVat: true, vatAmount: 5m));
+        db.Db.BankStatementLines.Add(new BankStatementLine {
+            OrganisationId = db.Organisation.Id, BankAccountId = db.Account("1000").Id,
+            TransactionDate = receipt.ReceiptDate, Description = "Hardware shop", Amount = -receipt.TotalPaid });
+        await db.Db.SaveChangesAsync();
+        var matches = await service.FindMatchesAsync(db.UserId, db.Organisation.Id, receipt);
+        Assert.Empty(matches.BankTransactions);
     }
 }
