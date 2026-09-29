@@ -247,6 +247,7 @@ public sealed class PurchasingService(
 
         SupplierBillDraft? draft = null;
         PurchaseOrder? sourcePurchaseOrder = null;
+        EmployeeReceipt? sourceReceipt = null;
 
         if (draftId is Guid id)
         {
@@ -262,6 +263,23 @@ public sealed class PurchasingService(
             {
                 throw new InvalidOperationException(
                     "Supplier bill draft not found.");
+            }
+
+            sourceReceipt = await db.EmployeeReceipts.SingleOrDefaultAsync(
+                x => x.OrganisationId == request.OrganisationId && x.LinkedSupplierBillDraftId == id,
+                ct);
+            if (sourceReceipt is not null)
+            {
+                if (sourceReceipt.Currency != currency ||
+                    lines.Sum(x => x.TransactionGrossAmount) != sourceReceipt.TotalPaid)
+                    throw new InvalidOperationException(
+                        "This purchase must have the same currency and total paid as its linked receipt.");
+                var originalReceipt = await DocumentStore.ReadVerifiedAsync(
+                    request.OrganisationId, sourceReceipt.DocumentId, ct);
+                if (validatedAttachment is null ||
+                    !validatedAttachment.Content.AsSpan().SequenceEqual(originalReceipt))
+                    throw new InvalidOperationException(
+                        "Keep the original receipt attachment when posting this purchase.");
             }
 
             sourcePurchaseOrder =
@@ -415,6 +433,15 @@ public sealed class PurchasingService(
 
         if (draft is not null)
         {
+            if (sourceReceipt is not null)
+            {
+                sourceReceipt.LinkedSupplierBillDraftId = null;
+                sourceReceipt.LinkedSupplierBillId = bill.Id;
+                sourceReceipt.Version++;
+                db.AuditEvents.Add(Audit(request.OrganisationId, userId,
+                    "ReceiptPurchaseDraftPosted", nameof(EmployeeReceipt), sourceReceipt.Id,
+                    new { DraftId = draft.Id, SupplierBillId = bill.Id, bill.BillNumber }));
+            }
             var recurringGeneration =
                 await db.RecurringSupplierBillGenerations
                     .SingleOrDefaultAsync(

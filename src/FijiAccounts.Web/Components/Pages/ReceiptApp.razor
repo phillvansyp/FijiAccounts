@@ -88,15 +88,34 @@ else
                         {
                             <p>Bank transaction: <a href="@match.Url">@match.Description</a> · @match.Date.ToString("dd MMM yyyy") · @(match.Reconciled ? "Reconciled" : "Not reconciled")</p>
                         }
-                        <small>Exact total within seven days. Suggestions only; check the merchant and receipt before linking or posting anything.</small>
+                        <small>Exact total within seven days. Confirm the merchant and document before choosing a bill; a matching amount alone is not proof.</small>
                     </div>
                 }
                 @if (receipt.ReviewNote is not null) { <p><strong>Review note:</strong> @receipt.ReviewNote</p> }
-                @if (receipt.Status == "Approved") { <p class="receipt-hint">Approved for accounting review. Payment and reconciliation are recorded in Account Island.</p> }
+                @if (receipt.LinkedSupplierBillId is Guid linkedBillId)
+                {
+                    <p class="receipt-hint">Attached to <a href="/o/@org/purchases/@linkedBillId">purchase bill</a>.</p>
+                }
+                else if (receipt.LinkedSupplierBillDraftId is Guid linkedDraftId)
+                {
+                    <p class="receipt-hint">In <a href="/o/@org/purchases?draft=@linkedDraftId">Purchases as a draft</a>. Review the supplier, VAT and expense account before posting.</p>
+                }
                 @if (owner && receipt.Status == "Submitted" && receipt.SubmittedByUserId != user)
                 {
                     <div class="receipt-review"><label for="note-@receipt.Id">Review note (required when returning)</label><input id="note-@receipt.Id" class="form-control" maxlength="1000" @bind="notes[receipt.Id]" disabled="@busy" />
-                    <button class="btn btn-primary" disabled="@busy" @onclick="() => Review(receipt, true)">Approve</button>
+                    <label for="purchase-route-@receipt.Id">Where should this receipt go?</label>
+                    <select id="purchase-route-@receipt.Id" class="form-select" @bind="purchaseDecisions[receipt.Id]" disabled="@busy">
+                        <option value="">Choose a purchase action</option>
+                        @if (matches.TryGetValue(receipt.Id, out var routingMatches))
+                        {
+                            @foreach (var candidate in routingMatches.Purchases)
+                            {
+                                <option value="@candidate.Id">Attach to @candidate.Description (@candidate.Date.ToString("dd MMM yyyy"))</option>
+                            }
+                        }
+                        <option value="new">No existing bill matches — create a purchase draft</option>
+                    </select>
+                    <button class="btn btn-primary" disabled="@(busy || string.IsNullOrEmpty(purchaseDecisions[receipt.Id]))" @onclick="() => Approve(receipt)">@(purchaseDecisions[receipt.Id] == "new" ? "Approve and create draft" : "Approve and attach")</button>
                     <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => Review(receipt, false)">Return</button></div>
                 }
             </article>
@@ -121,6 +140,7 @@ else
     private List<Organisation> organisations = [];
     private List<EmployeeReceipt> items = [];
     private Dictionary<Guid, ReceiptMatchSummary> matches = [];
+    private Dictionary<Guid, string> purchaseDecisions = [];
     private Dictionary<Guid,string?> notes = [];
     private Dictionary<string,string> contributors = [];
     private Dictionary<string,string> submitters = [];
@@ -137,6 +157,7 @@ else
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
         submitters = owner ? await Receipts.SubmittersAsync(user, org) : [];
         items = await Receipts.ListAsync(user, org);
+        purchaseDecisions = items.Where(x => x.Status == "Submitted").ToDictionary(x => x.Id, _ => "");
         matches = [];
         if (owner)
             foreach (var receipt in items.Where(x => x.Status != "Returned"))
@@ -167,9 +188,19 @@ else
         requestId = Guid.NewGuid(); file = null; merchant = purpose = ""; amount = vatAmount = 0; amountsIncludeVat = true;
         await Load(); message = "Receipt submitted. You can follow its review status below.";
     });
+    private Task Approve(EmployeeReceipt receipt) => Run(async () => {
+        var decision = purchaseDecisions[receipt.Id];
+        if (decision == "new")
+            await Receipts.ReviewAsync(user, org, receipt.Id, receipt.Version, true, notes[receipt.Id], createDraft: true);
+        else if (Guid.TryParse(decision, out var billId))
+            await Receipts.ReviewAsync(user, org, receipt.Id, receipt.Version, true, notes[receipt.Id], supplierBillId: billId);
+        else
+            throw new InvalidOperationException("Choose a matching purchase bill or create a purchase draft.");
+        await Load(); message = decision == "new" ? "Receipt approved and added to Purchases as a draft. Review its coding and VAT before posting." : "Receipt approved and attached to the existing purchase bill.";
+    });
     private Task Review(EmployeeReceipt receipt, bool approve) => Run(async () => {
         await Receipts.ReviewAsync(user, org, receipt.Id, receipt.Version, approve, notes[receipt.Id]);
-        await Load(); message = approve ? "Receipt approved for accounting review." : "Receipt returned with your note.";
+        await Load(); message = "Receipt returned with your note.";
     });
     private Task AddEmployee() => Run(async () => { await Receipts.AddContributorAsync(user, org, employeeEmail); employeeEmail = ""; await Load(); message = "Receipt access added. The employee can sign in at /receipts."; });
     private Task RemoveEmployee(string employee) => Run(async () => { await Receipts.RemoveContributorAsync(user, org, employee); await Load(); message = "Receipt access removed. Submitted receipts remain available to owners."; });

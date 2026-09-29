@@ -14,6 +14,7 @@ public sealed class ReceiptContributor
 }
 
 [Index(nameof(OrganisationId), nameof(SubmittedByUserId), nameof(RequestId), IsUnique = true)]
+[Index(nameof(OrganisationId), nameof(LinkedSupplierBillDraftId), IsUnique = true)]
 public sealed class EmployeeReceipt
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -36,6 +37,8 @@ public sealed class EmployeeReceipt
     public DateTimeOffset SubmittedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ReviewedAt { get; set; }
     public Guid DocumentId { get; set; }
+    public Guid? LinkedSupplierBillId { get; set; }
+    public Guid? LinkedSupplierBillDraftId { get; set; }
     [MaxLength(255)] public required string FileName { get; set; }
     [MaxLength(80)] public required string ContentType { get; set; }
     [ConcurrencyCheck] public int Version { get; set; }

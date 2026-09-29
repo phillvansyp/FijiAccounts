@@ -1,6 +1,7 @@
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using FijiAccounts.Domain.Tax;
+using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Tests;
 
@@ -87,8 +88,9 @@ public sealed class EmployeeReceiptTests
         Assert.Null(await service.ReadAsync("employee-b", db.Organisation.Id, receipt.Id));
         Assert.Empty(await db.Access.ListAsync("employee-a"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReviewAsync("employee-a", db.Organisation.Id, receipt.Id, 0, true, null));
-        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, 0, true, null);
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, 0, true, null, createDraft: true);
         Assert.Equal("Approved", (await service.ListAsync("employee-a", db.Organisation.Id)).Single().Status);
+        Assert.NotNull((await service.ListAsync("employee-a", db.Organisation.Id)).Single().LinkedSupplierBillDraftId);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, 0, true, null));
         await service.RemoveContributorAsync(db.UserId, db.Organisation.Id, "employee-a");
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReadAsync("employee-a", db.Organisation.Id, receipt.Id));
@@ -153,5 +155,96 @@ public sealed class EmployeeReceiptTests
         await db.Db.SaveChangesAsync();
         var matches = await service.FindMatchesAsync(db.UserId, db.Organisation.Id, receipt);
         Assert.Empty(matches.BankTransactions);
+    }
+
+    [Fact]
+    public async Task ApprovalAttachesToConfirmedBillWithoutCreatingAnotherPurchase()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var service = Service(db);
+        await AddEmployeeAsync(db, service);
+        var receipt = await Submit(service, "receipt-employee", db.Organisation.Id, Guid.NewGuid());
+        var bill = await db.Purchasing.PostBillAsync(db.UserId,
+            new SupplierBillRequest(db.Organisation.Id, db.Supplier.Id, "RECEIPT-MATCH",
+                receipt.ReceiptDate, receipt.ReceiptDate,
+                [new SupplierBillLineRequest("Site supplies", 1m, 25m,
+                    VatTreatment.OutOfScope, db.Account("6500").Id)]));
+
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+            true, null, supplierBillId: bill.Id);
+
+        var approved = await db.Db.EmployeeReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal(bill.Id, approved.LinkedSupplierBillId);
+        Assert.Null(approved.LinkedSupplierBillDraftId);
+        Assert.Equal("Approved", approved.Status);
+        Assert.Single(await db.Db.SupplierBills.ToListAsync());
+        Assert.Empty(await db.Db.SupplierBillDrafts.ToListAsync());
+        var attachment = await db.Db.SupplierBillAttachments.SingleAsync(x => x.SupplierBillId == bill.Id);
+        Assert.Equal(receipt.DocumentId, attachment.ImmutableDocumentObjectId);
+        Assert.Equal(Photo, await new DatabaseImmutableDocumentStore(db.Db)
+            .ReadVerifiedAsync(db.Organisation.Id, attachment.ImmutableDocumentObjectId!.Value));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReviewAsync(db.UserId,
+            db.Organisation.Id, receipt.Id, receipt.Version, true, null, supplierBillId: bill.Id));
+    }
+
+    [Fact]
+    public async Task ApprovalCreatesEditableDraftAndDeletingItReopensReceipt()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var service = Service(db);
+        await AddEmployeeAsync(db, service);
+        var receipt = await Submit(service, "receipt-employee", db.Organisation.Id, Guid.NewGuid());
+
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+            true, null, createDraft: true);
+        var approved = await db.Db.EmployeeReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        var draft = await db.Db.SupplierBillDrafts.SingleAsync(x => x.Id == approved.LinkedSupplierBillDraftId);
+        Assert.Equal(Photo, draft.AttachmentContent);
+        Assert.Null(draft.ExpenseAccountId);
+        Assert.Empty(await db.Db.SupplierBills.ToListAsync());
+
+        var drafts = new SupplierBillDraftService(db.Db, db.Access);
+        Assert.True(await drafts.DeleteAsync(db.UserId, db.Organisation.Id, draft.Id));
+        var reopened = await db.Db.EmployeeReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal("Submitted", reopened.Status);
+        Assert.Null(reopened.LinkedSupplierBillDraftId);
+    }
+
+    [Fact]
+    public async Task PostingReceiptDraftKeepsOriginalDocumentAndLinksPostedBill()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var service = Service(db);
+        await AddEmployeeAsync(db, service);
+        var receipt = await Submit(service, "receipt-employee", db.Organisation.Id, Guid.NewGuid());
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+            true, null, createDraft: true);
+        var draft = await db.Db.SupplierBillDrafts.SingleAsync();
+        var request = new SupplierBillRequest(db.Organisation.Id, db.Supplier.Id,
+            draft.SupplierReference, draft.BillDate, draft.DueDate,
+            [new SupplierBillLineRequest(draft.Description, 1m, receipt.TotalPaid,
+                VatTreatment.OutOfScope, db.Account("6500").Id)],
+            draft.BranchId, draft.DivisionId);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.Purchasing.PostDraftBillAsync(
+            db.UserId, draft.Id, request));
+        var attachment = new SupplierBillAttachmentRequest(receipt.FileName, receipt.ContentType,
+            Photo.LongLength, Photo, false);
+        var bill = await db.Purchasing.PostDraftBillAsync(db.UserId, draft.Id, request, attachment);
+
+        var linked = await db.Db.EmployeeReceipts.AsNoTracking().SingleAsync(x => x.Id == receipt.Id);
+        Assert.Equal(bill.Id, linked.LinkedSupplierBillId);
+        Assert.Null(linked.LinkedSupplierBillDraftId);
+        Assert.False(await db.Db.SupplierBillDrafts.AnyAsync(x => x.Id == draft.Id));
+        Assert.Single(await db.Db.SupplierBillAttachments.Where(x => x.SupplierBillId == bill.Id).ToListAsync());
+    }
+
+    private static async Task AddEmployeeAsync(AccountingTestDatabase db, EmployeeReceiptService service)
+    {
+        const string user = "receipt-employee";
+        db.Db.Users.Add(new ApplicationUser { Id = user, UserName = user,
+            Email = "receipt-employee@example.com", NormalizedEmail = "RECEIPT-EMPLOYEE@EXAMPLE.COM",
+            EmailConfirmed = true });
+        await db.Db.SaveChangesAsync();
+        await service.AddContributorAsync(db.UserId, db.Organisation.Id, "receipt-employee@example.com");
     }
 }

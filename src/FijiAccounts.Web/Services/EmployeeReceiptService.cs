@@ -1,10 +1,11 @@
 using System.Text.Json;
+using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record ReceiptMatchCandidate(string Description, DateOnly Date, bool Reconciled, string Url);
+public sealed record ReceiptMatchCandidate(Guid Id, string Description, DateOnly Date, bool Reconciled, string Url);
 public sealed record ReceiptMatchSummary(IReadOnlyList<ReceiptMatchCandidate> Purchases, IReadOnlyList<ReceiptMatchCandidate> BankTransactions);
 
 public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDocumentStore storage)
@@ -132,8 +133,7 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         var purchases = bills.OrderByDescending(x => x.Supplier.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase) ||
                 receipt.Merchant.Contains(x.Supplier, StringComparison.OrdinalIgnoreCase))
             .ThenBy(x => Math.Abs(x.BillDate.DayNumber - receipt.ReceiptDate.DayNumber))
-            .Take(3)
-            .Select(x => new ReceiptMatchCandidate($"{x.Supplier} · {x.BillNumber}", x.BillDate, false,
+            .Select(x => new ReceiptMatchCandidate(x.Id, $"{x.Supplier} · {x.BillNumber}", x.BillDate, false,
                 $"/o/{org}/purchases/{x.Id}"))
             .ToList();
 
@@ -145,34 +145,95 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
             var lines = await db.BankStatementLines.AsNoTracking()
                 .Where(x => x.OrganisationId == org && x.Amount == -total &&
                     x.TransactionDate >= from && x.TransactionDate <= to)
-                .Select(x => new { x.Description, x.Reference, x.TransactionDate, x.ReconciledAt })
+                .Select(x => new { x.Id, x.Description, x.Reference, x.TransactionDate, x.ReconciledAt })
                 .ToListAsync();
             bank = lines.OrderByDescending(x => x.Description.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase) ||
                     (x.Reference != null && x.Reference.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase)))
                 .ThenBy(x => Math.Abs(x.TransactionDate.DayNumber - receipt.ReceiptDate.DayNumber))
                 .Take(3)
-                .Select(x => new ReceiptMatchCandidate(x.Description, x.TransactionDate, x.ReconciledAt is not null,
+                .Select(x => new ReceiptMatchCandidate(x.Id, x.Description, x.TransactionDate, x.ReconciledAt is not null,
                     $"/o/{org}/banking"))
                 .ToList();
         }
         return new ReceiptMatchSummary(purchases, bank);
     }
 
-    public async Task ReviewAsync(string user, Guid org, Guid id, int version, bool approve, string? note)
+    public async Task ReviewAsync(string user, Guid org, Guid id, int version, bool approve, string? note,
+        Guid? supplierBillId = null, bool createDraft = false)
     {
         if (!await IsOwnerAsync(user, org)) throw new UnauthorizedAccessException();
         var receipt = await db.EmployeeReceipts.SingleOrDefaultAsync(x => x.Id == id && x.OrganisationId == org)
             ?? throw new InvalidOperationException("Receipt not found.");
         if (receipt.SubmittedByUserId == user) throw new InvalidOperationException("Another owner must review your own receipt.");
         if (receipt.Status != "Submitted" || receipt.Version != version) throw new InvalidOperationException("This receipt has changed. Refresh before reviewing it.");
+        if (approve && (supplierBillId.HasValue == createDraft))
+            throw new InvalidOperationException("Choose a confirmed purchase bill or create a new purchase draft.");
+        if (!approve && (supplierBillId.HasValue || createDraft))
+            throw new InvalidOperationException("A returned receipt cannot be attached to a purchase.");
         if (note?.Length > 1000 || (!approve && string.IsNullOrWhiteSpace(note)))
             throw new InvalidOperationException("Give a reason when returning a receipt (up to 1,000 characters).");
+        if (approve && supplierBillId is Guid billId)
+        {
+            var from = DateOnly.FromDayNumber(Math.Max(DateOnly.MinValue.DayNumber, receipt.ReceiptDate.DayNumber - 7));
+            var to = DateOnly.FromDayNumber(Math.Min(DateOnly.MaxValue.DayNumber, receipt.ReceiptDate.DayNumber + 7));
+            var bill = await db.SupplierBills.SingleOrDefaultAsync(x => x.Id == billId && x.OrganisationId == org &&
+                x.Status != BillStatus.Voided && x.Currency == receipt.Currency &&
+                x.TransactionTotal == receipt.TotalPaid && x.BillDate >= from && x.BillDate <= to)
+                ?? throw new InvalidOperationException("The purchase bill no longer matches this receipt. Refresh and review it again.");
+            if (!await db.SupplierBillAttachments.AnyAsync(x => x.SupplierBillId == bill.Id &&
+                x.ImmutableDocumentObjectId == receipt.DocumentId))
+            {
+                var content = await storage.ReadVerifiedAsync(org, receipt.DocumentId);
+                var attachment = SupplierBillAttachmentService.CreateValidated(org, bill.Id, user,
+                    new SupplierBillAttachmentRequest(receipt.FileName, receipt.ContentType,
+                        content.LongLength, content, false));
+                attachment.ImmutableDocumentObjectId = receipt.DocumentId;
+                db.SupplierBillAttachments.Add(attachment);
+                db.AuditEvents.Add(SupplierBillAttachmentService.AddedAudit(org, user, bill, attachment));
+            }
+            receipt.LinkedSupplierBillId = bill.Id;
+        }
+        else if (approve && createDraft)
+        {
+            var organisation = await db.Organisations.SingleAsync(x => x.Id == org);
+            var division = await db.Divisions.AsNoTracking()
+                .Where(x => x.IsActive && x.Branch.IsActive && x.Branch.OrganisationId == org)
+                .OrderByDescending(x => x.Branch.IsDefault).ThenByDescending(x => x.IsDefault)
+                .Select(x => new { x.Id, x.BranchId }).FirstOrDefaultAsync()
+                ?? throw new InvalidOperationException("Set up an active branch and division before creating a purchase draft.");
+            var normalizedMerchant = receipt.Merchant.Trim().ToUpperInvariant();
+            var supplierId = await db.BusinessParties.AsNoTracking()
+                .Where(x => x.OrganisationId == org && x.IsActive && (x.Type & PartyType.Supplier) != 0 &&
+                    x.Name.ToUpper() == normalizedMerchant)
+                .Select(x => (Guid?)x.Id).FirstOrDefaultAsync();
+            var content = await storage.ReadVerifiedAsync(org, receipt.DocumentId);
+            var description = $"{receipt.Merchant}: {receipt.Purpose}";
+            var draft = new SupplierBillDraft {
+                OrganisationId = org, BranchId = division.BranchId, DivisionId = division.Id,
+                SupplierId = supplierId, SupplierReference = $"RECEIPT-{receipt.Id.ToString("N")[..12]}",
+                BillDate = receipt.ReceiptDate,
+                DueDate = PaymentTermCalculator.CalculateDueDate(receipt.ReceiptDate,
+                    organisation.DefaultSupplierBillPaymentTermType, organisation.DefaultSupplierBillDueDays),
+                Currency = receipt.Currency,
+                ExchangeRateToBase = receipt.Currency == organisation.BaseCurrency ? 1m : 0m,
+                Description = description[..Math.Min(description.Length, 300)],
+                Quantity = 1m, UnitPrice = receipt.Amount, AmountsIncludeVat = receipt.AmountsIncludeVat,
+                VatTreatment = receipt.AmountsIncludeVat || receipt.VatAmount > 0 ? VatTreatment.Standard : VatTreatment.OutOfScope,
+                AttachmentFileName = receipt.FileName, AttachmentContentType = receipt.ContentType,
+                AttachmentOriginalSize = content.LongLength, AttachmentContent = content,
+                CreatedByUserId = user
+            };
+            db.SupplierBillDrafts.Add(draft);
+            receipt.LinkedSupplierBillDraftId = draft.Id;
+            Audit(user, org, "ReceiptPurchaseDraftCreated", id.ToString(), new { DraftId = draft.Id, receipt.TotalPaid });
+        }
         receipt.Status = approve ? "Approved" : "Returned";
         receipt.ReviewNote = note?.Trim(); receipt.ReviewedByUserId = user;
         receipt.ReviewedAt = DateTimeOffset.UtcNow; receipt.Version++;
-        Audit(user, org, "ReceiptReviewed", id.ToString(), new { receipt.Status, receipt.ReviewNote });
+        Audit(user, org, "ReceiptReviewed", id.ToString(), new { receipt.Status, receipt.ReviewNote,
+            receipt.LinkedSupplierBillId, receipt.LinkedSupplierBillDraftId });
         try { await db.SaveChangesAsync(); }
-        catch (DbUpdateConcurrencyException) { db.Entry(receipt).State = EntityState.Detached; throw new InvalidOperationException("Another owner has already reviewed this receipt. Refresh to see their decision."); }
+        catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); throw new InvalidOperationException("Another owner has already reviewed this receipt. Refresh to see their decision."); }
     }
 
     public async Task<(EmployeeReceipt Receipt, byte[] Content)?> ReadAsync(string user, Guid org, Guid id)
