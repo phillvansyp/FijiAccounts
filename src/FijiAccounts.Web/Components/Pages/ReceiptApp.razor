@@ -44,8 +44,13 @@ else
         </div>
         <label for="receipt-purpose">What was it for?</label><textarea id="receipt-purpose" class="form-control mb-3" maxlength="1000" @bind="purpose" disabled="@busy"></textarea>
         <label for="receipt-paid">Who paid?</label><select id="receipt-paid" class="form-select mb-3" @bind="personal" disabled="@busy"><option value="false">Company card or company money</option><option value="true">I paid personally — reimbursement requested</option></select>
-        <label for="receipt-file">Take a photo or choose a receipt (JPEG, PNG or PDF, up to 10 MB)</label>
-        <InputFile @key="requestId" id="receipt-file" class="form-control mb-3" accept="image/jpeg,image/png,application/pdf" OnChange="ChooseFile" disabled="@busy" />
+        <label class="receipt-drop-zone @(busy ? "is-busy" : null)">
+            <InputFile @key="requestId" id="receipt-file" class="receipt-drop-input" accept="image/jpeg,image/png,application/pdf" OnChange="ChooseFile" disabled="@busy" aria-label="Drop a receipt here or choose a photo, JPEG, PNG or PDF" />
+            <strong>Drop a receipt here</strong>
+            <span>or click to take a photo or choose a file</span>
+            <small>JPEG, PNG or PDF · up to 10 MB</small>
+        </label>
+        @if (file is not null) { <p class="receipt-selected-file" role="status">Selected: @file.Name (@((file.Size / 1024.0).ToString("N0")) KB)</p> }
         <button class="btn btn-primary" disabled="@(busy || file is null)" @onclick="Submit">@(busy ? "Please wait…" : "Submit receipt")</button>
         <p class="receipt-hint">Submitting saves the receipt for review. It does not create a payment or post an expense.</p>
     </section>
