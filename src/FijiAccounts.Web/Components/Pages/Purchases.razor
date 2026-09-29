@@ -31,6 +31,35 @@
 else
 {
     <div class="page-heading"><div><p class="eyebrow">Money out</p><h1>Supplier bills</h1><p class="page-intro">Capture expenses, see what is due, and record supplier payments.</p></div><div class="d-flex gap-2"><button type="button" class="btn btn-primary" @onclick="StartNewBill">+ New bill</button>@if (bills.Count > 0) { <a class="btn btn-outline-primary" href="o/@OrganisationId/purchases/@bills[0].Id">View latest bill</a> }</div></div>
+    @if (showBillForm && !canPost)
+    {
+        <div class="alert alert-warning" role="alert">You need permission to create supplier bills for this organisation.</div>
+    }
+    else if (showBillForm && suppliers.Count == 0)
+    {
+        <section class="setup-card mb-4" aria-label="Add a supplier before creating a bill">
+            <h2>Add a supplier to start your bill</h2>
+            <p>@access.Organisation.LegalName has no suppliers yet. Enter the supplier's name here, then complete the bill below.</p>
+            @if (supplierSetupError is not null) { <div class="alert alert-danger" role="alert">@supplierSetupError</div> }
+            @if (canManageContacts)
+            {
+                <div class="d-flex flex-wrap align-items-end gap-2">
+                    <div class="flex-grow-1"><label class="form-label" for="quick-supplier-name">Supplier name</label><input id="quick-supplier-name" class="form-control" maxlength="160" @bind="supplierName" @bind:event="oninput" disabled="@creatingSupplier" /></div>
+                    <button type="button" class="btn btn-primary" @onclick="CreateSupplierForBill" disabled="@(creatingSupplier || string.IsNullOrWhiteSpace(supplierName))">@(creatingSupplier ? "Adding supplier…" : "Add supplier and continue")</button>
+                </div>
+            }
+            else { <p>Ask an organisation owner to add a supplier, then return to this page.</p> }
+            <a href="o/@OrganisationId/contacts/suppliers">Open supplier contacts for full details</a>
+        </section>
+    }
+    else if (showBillForm && expenseAccounts.Count == 0)
+    {
+        <div class="alert alert-warning" role="alert">Set up an expense account before creating a bill. <a href="o/@OrganisationId/accounts">Open chart of accounts</a></div>
+    }
+    else if (showBillForm && editingDraftId is null && editingRecurringBillId is null)
+    {
+        <div class="alert alert-info" role="status">The new bill form is open below. <a href="#draft-editor">Go to bill form</a></div>
+    }
     <div class="bill-summary">
         <article><span>Total bills</span><strong>@access.Organisation.BaseCurrency @bills.Sum(x => x.Total).ToString("N2")</strong><small>@bills.Count bill@(bills.Count == 1 ? "" : "s")</small></article>
         <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @bills.Where(x => x.Status != BillStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Still to pay</small></article>
@@ -246,7 +275,7 @@ else
     @if (showBillForm && editingDraftId is null && editingRecurringBillId is null && canPost && suppliers.Count > 0 && expenseAccounts.Count > 0)
     {
         @supplierBillEditor
-    }    else if (showBillForm && suppliers.Count == 0) { <div class="alert alert-info">Add a supplier first. <a href="o/@OrganisationId/contacts">Open contacts</a></div> }
+    }
 
     <div class="d-flex flex-wrap gap-2 mb-3">
         @if (canPost)
@@ -650,7 +679,7 @@ else
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost, canManageContacts, creatingSupplier; private string supplierName = ""; private string? supplierSetupError; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
 protected override async Task OnParametersSetAsync()
 {
         billRegisterSearch = ReferenceSearch ?? string.Empty;
@@ -677,6 +706,8 @@ protected override async Task OnParametersSetAsync()
         await TenantAccess.CanPostJournalsAsync(
             userId,
             OrganisationId);
+
+    canManageContacts = await TenantAccess.CanManageContactsAsync(userId, OrganisationId);
 
     currencies = await CurrencyService.ListAsync(userId, OrganisationId);
 
@@ -920,7 +951,43 @@ protected override async Task OnParametersSetAsync()
             bill.Currency,
             bill.BillDate) ?? 0m;
     }
-private void StartNewBill() { ResetBillForm(); status = null; showBillForm = true; }
+private void StartNewBill() { ResetBillForm(); status = null; supplierSetupError = null; showBillForm = true; }
+private async Task CreateSupplierForBill()
+{
+    if (!canPost || !canManageContacts || access is null || creatingSupplier) return;
+    supplierSetupError = null;
+    if (string.IsNullOrWhiteSpace(supplierName)) { supplierSetupError = "Enter the supplier's name."; return; }
+    creatingSupplier = true;
+    try
+    {
+        var normalizedName = supplierName.Trim().ToUpperInvariant();
+        if (await Db.BusinessParties.AsNoTracking().AnyAsync(x =>
+            x.OrganisationId == OrganisationId && x.IsActive && x.Name.ToUpper() == normalizedName))
+        {
+            supplierSetupError = "A contact with this name already exists. Open Contacts to review its supplier role.";
+            return;
+        }
+        var organisation = access.Organisation;
+        var created = await BusinessParties.CreateAsync(userId, new CreateBusinessPartyRequest(
+            OrganisationId, supplierName.Trim(), null, null, PartyType.Supplier,
+            null, null, null, null,
+            organisation.DefaultSalesInvoicePaymentTermType, organisation.DefaultSalesInvoiceDueDays,
+            organisation.DefaultSupplierBillPaymentTermType, organisation.DefaultSupplierBillDueDays,
+            DefaultPurchaseCurrency: organisation.BaseCurrency));
+        suppliers.Add(created);
+        suppliers = suppliers.OrderBy(x => x.Name).ToList();
+        bill.SupplierId = created.Id;
+        await ApplySelectedSupplierDefaults();
+        supplierName = "";
+        statusClass = "alert-success";
+        status = $"{created.Name} added. Complete the new bill below.";
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DomainException)
+    {
+        supplierSetupError = ex.Message;
+    }
+    finally { creatingSupplier = false; }
+}
 private void CloseBillForm() { ResetBillForm(); showBillForm = false; }
 private void ToggleRecurringBill()
 {
