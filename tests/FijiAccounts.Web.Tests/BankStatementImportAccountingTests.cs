@@ -7,6 +7,38 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BankStatementImportAccountingTests
 {
     [Fact]
+    public void PdfStatementAccountNumber_RejectsDifferentBankAccount()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            BankStatementImportService.ValidateStatementAccountNumber(
+                "Statement 17 Account 9808295118 Statement Ends 30 Jun 2025",
+                "9808420807",
+                "JCR Debit Card"));
+
+        Assert.Contains("9808295118", error.Message);
+        Assert.Contains("9808420807", error.Message);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            BankStatementImportService.ValidateStatementAccountNumber(
+                "Statement of Account Account Customer (CIF) Westpac Fiji 17 (Page 1 of 4) 9808295118 754189",
+                "9808420807",
+                "JCR Debit Card"));
+    }
+
+    [Fact]
+    public void PdfStatementAccountNumber_AllowsMatchingOrUnidentifiedAccount()
+    {
+        BankStatementImportService.ValidateStatementAccountNumber(
+            "Statement 6 Account 9808420807 Statement Ends 30 Jun 2025",
+            "9808420807",
+            "JCR Debit Card");
+        BankStatementImportService.ValidateStatementAccountNumber(
+            "Statement Ends 30 Jun 2025",
+            "9808420807",
+            "JCR Debit Card");
+    }
+
+    [Fact]
     public async Task ImportAsync_ValidLines_PersistsExactValuesAndBatchMetadata()
     {
         await using var test =
