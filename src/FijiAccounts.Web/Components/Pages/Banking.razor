@@ -176,7 +176,7 @@ else
     {
         <section class="add-bank import-panel">
             <h2>Statement import history</h2>
-            <p>Delete a complete import if the wrong statement was uploaded. Fiji imports inside the seven-year retention period and imports containing reconciled transactions are locked.</p>
+            <p>Redo an incorrect upload while its transactions are unreconciled. The original statement and a record of the removed lines remain available for audit. Reconciled imports are locked.</p>
 
             @if (statementImports.Count == 0)
             {
@@ -228,18 +228,14 @@ else
                                         @if (confirmingImportBatchId == item.BatchId)
                                         {
                                             <div class="d-flex justify-content-end align-items-center gap-2">
-                                                <span class="text-danger">Delete all @item.LineCount lines?</span>
+                                                <span class="text-danger">Remove @item.LineCount unreconciled lines and re-upload? The original statement is retained.</span>
                                                 <button type="button" class="btn btn-sm btn-danger" disabled="@deletingImport" @onclick="() => DeleteStatementImport(item.BatchId)">Confirm</button>
                                                 <button type="button" class="btn btn-sm btn-outline-secondary" disabled="@deletingImport" @onclick="CancelImportDeletion">Cancel</button>
                                             </div>
                                         }
                                         else if (item.CanDelete)
                                         {
-                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => BeginImportDeletion(item.BatchId)">Delete import</button>
-                                        }
-                                        else if (item.RetainUntil is not null)
-                                        {
-                                            <span class="text-muted">Protected until @item.RetainUntil.Value.ToString("dd MMM yyyy")</span>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginImportDeletion(item.BatchId)">Redo upload</button>
                                         }
                                         else
                                         {
@@ -1780,13 +1776,18 @@ await Reload();
 
         try
         {
+            var bankAccountId = statementImports.Single(x => x.BatchId == batchId).BankAccountId;
             var result = await StatementImport.DeleteImportBatchAsync(
                 userId,
                 OrganisationId,
                 batchId);
             confirmingImportBatchId = null;
             statusClass = "alert-success";
-            status = $"Deleted statement import containing {result.Deleted} transaction{(result.Deleted == 1 ? "" : "s")}.";
+            status = $"Removed {result.Deleted} unreconciled transaction{(result.Deleted == 1 ? "" : "s")}. The original statement and audit record are retained. Choose the corrected statement to upload now.";
+            showImport = true;
+            showImportHistory = false;
+            importBankAccountId = bankAccountId;
+            ResetStatementSelection();
             await Reload();
         }
         catch (Exception ex)

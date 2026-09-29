@@ -195,6 +195,11 @@ public sealed class BankStatementImportService(
                 x.OrganisationId == organisationId &&
                 x.ImportBatchId != null)
             .ToListAsync(ct);
+        var completedPeriods = await db.BankReconciliationSessions
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.IsCompleted)
+            .Select(x => new { x.BankAccountId, x.StatementStartDate, x.StatementEndDate })
+            .ToListAsync(ct);
 
         var batchIds = importedLines
             .Select(x => x.ImportBatchId!.Value)
@@ -237,7 +242,11 @@ public sealed class BankStatementImportService(
                     group.Count(),
                     group.Sum(x => x.Amount),
                     group.Min(x => x.ImportedAt),
-                    protectedUntil is null && group.All(x =>
+                    !completedPeriods.Any(period =>
+                        period.BankAccountId == group.First().BankAccountId &&
+                        period.StatementStartDate <= lastDate &&
+                        period.StatementEndDate >= group.Min(x => x.TransactionDate)) &&
+                    group.All(x =>
                         x.ReconciledAt == null &&
                         x.MatchedPostedJournalLineId == null),
                     documents.GetValueOrDefault(group.Key)?.Id,
@@ -300,20 +309,6 @@ public sealed class BankStatementImportService(
                 "This import cannot be deleted because it is inside a completed reconciliation period.");
         }
 
-        var organisation = await db.Organisations
-            .AsNoTracking()
-            .SingleAsync(x => x.Id == organisationId, ct);
-        var retainUntil = RecordRetentionPolicy.RetainUntil(
-            lastDate,
-            organisation.FinancialYearEndMonth,
-            organisation.FinancialYearEndDay);
-        if (organisation.CountryCode.Equals("FJ", StringComparison.OrdinalIgnoreCase) &&
-            RecordRetentionPolicy.IsProtected(retainUntil))
-        {
-            throw new InvalidOperationException(
-                RecordRetentionPolicy.ProtectedMessage(retainUntil));
-        }
-
         var document = await db.BankStatementImportDocuments
             .SingleOrDefaultAsync(x =>
                 x.OrganisationId == organisationId &&
@@ -329,6 +324,17 @@ public sealed class BankStatementImportService(
             LastDate = lastDate,
             NetAmount = lines.Sum(x => x.Amount),
             ImportedAt = lines.Min(x => x.ImportedAt),
+            RemovedForReupload = true,
+            Lines = lines.Select(x => new
+            {
+                x.Id,
+                x.TransactionDate,
+                x.Description,
+                x.Reference,
+                x.Amount,
+                x.SourceHash,
+                x.ImportedAt
+            }).ToArray(),
             StatementDocument = document is null
                 ? null
                 : new
@@ -336,15 +342,14 @@ public sealed class BankStatementImportService(
                     document.Id,
                     document.FileName,
                     document.ContentType,
-                    document.OriginalSize
+                    document.OriginalSize,
+                    document.ImmutableDocumentObjectId
                 }
         };
 
         db.BankStatementLines.RemoveRange(lines);
-        if (document is not null)
-        {
-            db.BankStatementImportDocuments.Remove(document);
-        }
+        // Keep the original statement and a complete audit snapshot. Only its
+        // unreconciled, derived lines are removed so the upload can be redone.
         db.AuditEvents.Add(new AuditEvent
         {
             OrganisationId = organisationId,
