@@ -24,6 +24,10 @@ public sealed class EmployeeReceipt
     [MaxLength(1000)] public required string Purpose { get; set; }
     public DateOnly ReceiptDate { get; set; }
     public decimal Amount { get; set; }
+    public bool AmountsIncludeVat { get; set; } = true;
+    public decimal VatAmount { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public decimal TotalPaid => Amount + (AmountsIncludeVat ? 0 : VatAmount);
     [MaxLength(3)] public required string Currency { get; set; }
     public bool PaidPersonally { get; set; }
     [MaxLength(32)] public string Status { get; set; } = "Submitted";

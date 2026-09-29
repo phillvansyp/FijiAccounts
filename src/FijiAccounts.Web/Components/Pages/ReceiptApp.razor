@@ -39,8 +39,14 @@ else
         <div class="receipt-grid">
             <div><label for="receipt-merchant">Merchant</label><input id="receipt-merchant" class="form-control" maxlength="160" @bind="merchant" disabled="@busy" /></div>
             <div><label for="receipt-date">Receipt date</label><InputDate id="receipt-date" class="form-control" @bind-Value="date" disabled="@busy" /></div>
-            <div><label for="receipt-amount">Total paid</label><InputNumber id="receipt-amount" class="form-control" @bind-Value="amount" min="0.01" step="0.01" disabled="@busy" /></div>
+            <div><label for="receipt-amount">@(amountsIncludeVat ? "Total paid (VAT included)" : "Amount excluding VAT")</label><InputNumber id="receipt-amount" class="form-control" @bind-Value="amount" min="0.01" step="0.01" disabled="@busy" /></div>
             <div><label for="receipt-currency">Currency</label><input id="receipt-currency" class="form-control" maxlength="3" @bind="currency" disabled="@busy" /></div>
+            <div><label for="receipt-vat-basis">VAT basis</label><select id="receipt-vat-basis" class="form-select" @bind="amountsIncludeVat" disabled="@busy"><option value="true">VAT included</option><option value="false">VAT excluded</option></select></div>
+            @if (!amountsIncludeVat)
+            {
+                <div><label for="receipt-vat-amount">VAT amount</label><InputNumber id="receipt-vat-amount" class="form-control" @bind-Value="vatAmount" min="0" step="0.01" disabled="@busy" /><small>Enter 0 if no VAT is charged.</small></div>
+                <div><strong>Total paid: @currency @((amount + vatAmount).ToString("N2"))</strong></div>
+            }
         </div>
         <label for="receipt-purpose">What was it for?</label><textarea id="receipt-purpose" class="form-control mb-3" maxlength="1000" @bind="purpose" disabled="@busy"></textarea>
         <label for="receipt-paid">Who paid?</label><select id="receipt-paid" class="form-select mb-3" @bind="personal" disabled="@busy"><option value="false">Company card or company money</option><option value="true">I paid personally — reimbursement requested</option></select>
@@ -60,11 +66,31 @@ else
         @foreach (var receipt in items)
         {
             <article class="receipt-item" @key="receipt.Id">
-                <div class="receipt-heading"><h3>@receipt.Merchant</h3><strong>@receipt.Currency @receipt.Amount.ToString("N2")</strong></div>
+                <div class="receipt-heading"><h3>@receipt.Merchant</h3><strong>@receipt.Currency @receipt.TotalPaid.ToString("N2")</strong></div>
                 <p>@receipt.ReceiptDate.ToString("dd MMM yyyy") · <span class="receipt-status">@receipt.Status</span> · @(receipt.PaidPersonally ? "Paid personally" : "Company paid")</p>
+                <p class="receipt-hint">@(receipt.AmountsIncludeVat ? "VAT included" : $"VAT excluded: {receipt.Currency} {receipt.Amount:N2} + VAT {receipt.Currency} {receipt.VatAmount:N2}")</p>
                 <p>@receipt.Purpose</p>
                 @if (owner) { <p class="receipt-hint">Submitted by @(receipt.SubmittedByUserId == user ? "you" : submitters.GetValueOrDefault(receipt.SubmittedByUserId, "Previous contributor"))</p> }
                 <a href="/api/receipts/@org/@receipt.Id/file">Download receipt</a>
+                @if (owner && receipt.Status != "Returned" && matches.TryGetValue(receipt.Id, out var receiptMatches))
+                {
+                    <div class="receipt-matches">
+                        <strong>Possible matches for @receipt.Currency @receipt.TotalPaid.ToString("N2")</strong>
+                        @if (receiptMatches.Purchases.Count == 0 && receiptMatches.BankTransactions.Count == 0)
+                        {
+                            <p>@(receipt.PaidPersonally ? "No matching purchase bill found. Company bank transactions are not checked for personally paid receipts." : "No matching purchase bill or bank transaction found by amount and date.")</p>
+                        }
+                        @foreach (var match in receiptMatches.Purchases)
+                        {
+                            <p>Purchase bill: <a href="@match.Url">@match.Description</a> · @match.Date.ToString("dd MMM yyyy")</p>
+                        }
+                        @foreach (var match in receiptMatches.BankTransactions)
+                        {
+                            <p>Bank transaction: <a href="@match.Url">@match.Description</a> · @match.Date.ToString("dd MMM yyyy") · @(match.Reconciled ? "Reconciled" : "Not reconciled")</p>
+                        }
+                        <small>Exact total within seven days. Suggestions only; check the merchant and receipt before linking or posting anything.</small>
+                    </div>
+                }
                 @if (receipt.ReviewNote is not null) { <p><strong>Review note:</strong> @receipt.ReviewNote</p> }
                 @if (receipt.Status == "Approved") { <p class="receipt-hint">Approved for accounting review. Payment and reconciliation are recorded in Account Island.</p> }
                 @if (owner && receipt.Status == "Submitted" && receipt.SubmittedByUserId != user)
@@ -88,12 +114,13 @@ else
     private string user = "", merchant = "", purpose = "", currency = "FJD", employeeEmail = "";
     private Guid org, requestId = Guid.NewGuid();
     private DateOnly date = DateOnly.FromDateTime(DateTime.Today);
-    private decimal amount;
-    private bool owner, personal, busy, loading = true;
+    private decimal amount, vatAmount;
+    private bool owner, personal, amountsIncludeVat = true, busy, loading = true;
     private string? error, message;
     private IBrowserFile? file;
     private List<Organisation> organisations = [];
     private List<EmployeeReceipt> items = [];
+    private Dictionary<Guid, ReceiptMatchSummary> matches = [];
     private Dictionary<Guid,string?> notes = [];
     private Dictionary<string,string> contributors = [];
     private Dictionary<string,string> submitters = [];
@@ -110,12 +137,16 @@ else
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
         submitters = owner ? await Receipts.SubmittersAsync(user, org) : [];
         items = await Receipts.ListAsync(user, org);
+        matches = [];
+        if (owner)
+            foreach (var receipt in items.Where(x => x.Status != "Returned"))
+                matches[receipt.Id] = await Receipts.FindMatchesAsync(user, org, receipt);
         notes = items.ToDictionary(x => x.Id, x => x.ReviewNote);
         dashboard = owner ? await Mobile.GetDashboardAsync(user, org) : null;
         currency = organisations.Single(x => x.Id == org).BaseCurrency;
     }
     private Task SwitchOrganisation() => Run(async () => {
-        requestId = Guid.NewGuid(); file = null; merchant = purpose = employeeEmail = ""; amount = 0; personal = false;
+        requestId = Guid.NewGuid(); file = null; merchant = purpose = employeeEmail = ""; amount = vatAmount = 0; personal = false; amountsIncludeVat = true;
         await Load();
     });
     private void ChooseFile(InputFileChangeEventArgs args) { file = args.File; error = null; }
@@ -132,8 +163,8 @@ else
         if (file is null) return;
         using var stream = file.OpenReadStream(EmployeeReceiptService.MaximumBytes);
         using var buffer = new MemoryStream(); await stream.CopyToAsync(buffer);
-        await Receipts.SubmitAsync(user, org, requestId, merchant, purpose, date, amount, currency.Trim().ToUpperInvariant(), personal, file.Name, buffer.ToArray());
-        requestId = Guid.NewGuid(); file = null; merchant = purpose = ""; amount = 0;
+        await Receipts.SubmitAsync(user, org, requestId, merchant, purpose, date, amount, currency.Trim().ToUpperInvariant(), personal, file.Name, buffer.ToArray(), amountsIncludeVat, amountsIncludeVat ? 0 : vatAmount);
+        requestId = Guid.NewGuid(); file = null; merchant = purpose = ""; amount = vatAmount = 0; amountsIncludeVat = true;
         await Load(); message = "Receipt submitted. You can follow its review status below.";
     });
     private Task Review(EmployeeReceipt receipt, bool approve) => Run(async () => {

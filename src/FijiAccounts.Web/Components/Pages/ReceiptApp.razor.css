@@ -5,3 +5,6 @@ h1{font-size:clamp(1.8rem,4vw,2.5rem);font-weight:700;color:#083d4a}h2{font-size
 .receipt-drop-zone ::deep .receipt-drop-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 .receipt-drop-zone small{color:#526879}
 .receipt-selected-file{margin:-.25rem 0 1rem;color:#086757;overflow-wrap:anywhere}
+.receipt-matches{margin:1rem 0;padding:1rem;border:1px solid #dce6e9;border-radius:12px;background:#f7fbfa}
+.receipt-matches p{margin:.4rem 0}
+.receipt-matches small{color:#546c76}

@@ -4,6 +4,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
+public sealed record ReceiptMatchCandidate(string Description, DateOnly Date, bool Reconciled, string Url);
+public sealed record ReceiptMatchSummary(IReadOnlyList<ReceiptMatchCandidate> Purchases, IReadOnlyList<ReceiptMatchCandidate> BankTransactions);
+
 public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDocumentStore storage)
 {
     public const int MaximumBytes = 10 * 1024 * 1024;
@@ -75,7 +78,8 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
     }
 
     public async Task<EmployeeReceipt> SubmitAsync(string user, Guid org, Guid request, string merchant,
-        string purpose, DateOnly date, decimal amount, string currency, bool personal, string filename, byte[] content)
+        string purpose, DateOnly date, decimal amount, string currency, bool personal, string filename, byte[] content,
+        bool amountsIncludeVat = true, decimal vatAmount = 0)
     {
         await RequireAccess(user, org);
         if (request == Guid.Empty) throw new InvalidOperationException("A submission reference is required.");
@@ -88,6 +92,9 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
             throw new InvalidOperationException("Enter the merchant, purpose, receipt date and a positive amount with up to two decimal places.");
         if (currency.Length != 3 || !currency.All(c => c is >= 'A' and <= 'Z'))
             throw new InvalidOperationException("Enter a three-letter currency, for example FJD.");
+        if (vatAmount < 0 || vatAmount > 999999999 || decimal.Round(vatAmount, 2) != vatAmount ||
+            (amountsIncludeVat && vatAmount != 0) || amount + vatAmount > 999999999)
+            throw new InvalidOperationException("Enter a valid VAT amount with up to two decimal places, or leave it at zero when VAT is included.");
         if (string.IsNullOrWhiteSpace(filename) || filename.Length > 255 || Path.GetFileName(filename) != filename ||
             content.Length < 8 || content.Length > MaximumBytes)
             throw new InvalidOperationException("Choose a receipt photo or PDF up to 10 MB.");
@@ -102,11 +109,53 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         var stored = storage.Stage(org, user, content);
         var receipt = new EmployeeReceipt { OrganisationId = org, SubmittedByUserId = user, RequestId = request,
             Merchant = merchant.Trim(), Purpose = purpose.Trim(), ReceiptDate = date, Amount = amount, Currency = currency,
+            AmountsIncludeVat = amountsIncludeVat, VatAmount = vatAmount,
             PaidPersonally = personal, DocumentId = stored.Id, FileName = filename, ContentType = type };
         db.EmployeeReceipts.Add(receipt);
-        Audit(user, org, "ReceiptSubmitted", receipt.Id.ToString(), new { receipt.Merchant, receipt.Amount, receipt.Currency, personal });
+        Audit(user, org, "ReceiptSubmitted", receipt.Id.ToString(), new { receipt.Merchant, receipt.Amount, receipt.Currency, amountsIncludeVat, vatAmount, personal });
         await db.SaveChangesAsync();
         return receipt;
+    }
+
+    public async Task<ReceiptMatchSummary> FindMatchesAsync(string user, Guid org, EmployeeReceipt receipt)
+    {
+        if (!await IsOwnerAsync(user, org) || receipt.OrganisationId != org) throw new UnauthorizedAccessException();
+        var from = DateOnly.FromDayNumber(Math.Max(DateOnly.MinValue.DayNumber, receipt.ReceiptDate.DayNumber - 7));
+        var to = DateOnly.FromDayNumber(Math.Min(DateOnly.MaxValue.DayNumber, receipt.ReceiptDate.DayNumber + 7));
+        var total = receipt.TotalPaid;
+        var bills = await db.SupplierBills.AsNoTracking()
+            .Where(x => x.OrganisationId == org && x.Status != BillStatus.Voided &&
+                x.Currency == receipt.Currency && x.TransactionTotal == total &&
+                x.BillDate >= from && x.BillDate <= to)
+            .Select(x => new { x.Id, x.BillNumber, x.BillDate, Supplier = x.Supplier.Name })
+            .ToListAsync();
+        var purchases = bills.OrderByDescending(x => x.Supplier.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase) ||
+                receipt.Merchant.Contains(x.Supplier, StringComparison.OrdinalIgnoreCase))
+            .ThenBy(x => Math.Abs(x.BillDate.DayNumber - receipt.ReceiptDate.DayNumber))
+            .Take(3)
+            .Select(x => new ReceiptMatchCandidate($"{x.Supplier} · {x.BillNumber}", x.BillDate, false,
+                $"/o/{org}/purchases/{x.Id}"))
+            .ToList();
+
+        var bank = new List<ReceiptMatchCandidate>();
+        var baseCurrency = await db.Organisations.AsNoTracking().Where(x => x.Id == org)
+            .Select(x => x.BaseCurrency).SingleAsync();
+        if (!receipt.PaidPersonally && receipt.Currency == baseCurrency)
+        {
+            var lines = await db.BankStatementLines.AsNoTracking()
+                .Where(x => x.OrganisationId == org && x.Amount == -total &&
+                    x.TransactionDate >= from && x.TransactionDate <= to)
+                .Select(x => new { x.Description, x.Reference, x.TransactionDate, x.ReconciledAt })
+                .ToListAsync();
+            bank = lines.OrderByDescending(x => x.Description.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase) ||
+                    (x.Reference != null && x.Reference.Contains(receipt.Merchant, StringComparison.OrdinalIgnoreCase)))
+                .ThenBy(x => Math.Abs(x.TransactionDate.DayNumber - receipt.ReceiptDate.DayNumber))
+                .Take(3)
+                .Select(x => new ReceiptMatchCandidate(x.Description, x.TransactionDate, x.ReconciledAt is not null,
+                    $"/o/{org}/banking"))
+                .ToList();
+        }
+        return new ReceiptMatchSummary(purchases, bank);
     }
 
     public async Task ReviewAsync(string user, Guid org, Guid id, int version, bool approve, string? note)
