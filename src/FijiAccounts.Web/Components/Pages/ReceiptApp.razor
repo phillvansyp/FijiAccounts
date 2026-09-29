@@ -74,7 +74,7 @@ else
     </section>
     <section class="receipt-card">
         <div class="receipt-heading"><h2>@(owner ? "Receipt inbox" : "My submissions")</h2><button class="btn btn-outline-secondary" disabled="@busy" @onclick="Load">Refresh</button></div>
-        @if (items.Count == 0) { <p>No receipts yet. Your submissions will appear here.</p> }
+        @if (items.Count == 0) { <p>No receipts awaiting purchase posting. Posted receipts are available on their purchase bills.</p> }
         @foreach (var receipt in items)
         {
             <article class="receipt-item" @key="receipt.Id">
@@ -186,7 +186,9 @@ else
         canReviewOwnReceipt = owner && await Receipts.CanReviewOwnReceiptAsync(user, org);
         contributors = owner ? await Receipts.ContributorsAsync(user, org) : [];
         submitters = owner ? await Receipts.SubmittersAsync(user, org) : [];
-        items = await Receipts.ListAsync(user, org);
+        // A posted purchase bill owns its supporting receipt; keep drafts visible until posting succeeds.
+        items = (await Receipts.ListAsync(user, org))
+            .Where(x => x.LinkedSupplierBillId is null).ToList();
         purchaseDecisions = items.Where(x => x.Status == "Submitted").ToDictionary(x => x.Id, _ => "");
         matches = [];
         if (owner)
