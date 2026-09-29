@@ -190,6 +190,24 @@ public sealed class SupplierBillDraftService(
             recurringGeneration.SupplierBillDraftId = null;
         }
 
+        var sourceReceipt = await db.EmployeeReceipts.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId && x.LinkedSupplierBillDraftId == draftId,
+            cancellationToken);
+        if (sourceReceipt is not null)
+        {
+            sourceReceipt.LinkedSupplierBillDraftId = null;
+            sourceReceipt.Status = "Submitted";
+            sourceReceipt.ReviewNote = null;
+            sourceReceipt.ReviewedByUserId = null;
+            sourceReceipt.ReviewedAt = null;
+            sourceReceipt.Version++;
+            db.AuditEvents.Add(new AuditEvent {
+                OrganisationId = organisationId, UserId = userId,
+                EventType = "ReceiptPurchaseDraftDeleted", EntityType = nameof(EmployeeReceipt),
+                EntityId = sourceReceipt.Id.ToString(),
+                JsonData = JsonSerializer.Serialize(new { DraftId = draftId }) });
+        }
+
         db.SupplierBillDrafts.Remove(draft);
         db.AuditEvents.Add(Audit(
             organisationId,
