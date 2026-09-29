@@ -97,6 +97,49 @@ public static class SupplierBillAttachmentEndpoints
             })
             .RequireAuthorization();
 
+        endpoints.MapGet(
+            "/api/o/{organisationId:guid}/purchases/drafts/{draftId:guid}/attachment",
+            async (Guid organisationId, Guid draftId, SupplierBillDraftService drafts,
+                ClaimsPrincipal principal, HttpContext http, CancellationToken cancellationToken) =>
+            {
+                var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (userId is null) return Results.Unauthorized();
+                var attachment = await drafts.ReadAttachmentAsync(
+                    userId, organisationId, draftId, cancellationToken);
+                if (attachment is null) return Results.NotFound();
+
+                byte[] content;
+                if (attachment.IsCompressed)
+                {
+                    try
+                    {
+                        using var input = new MemoryStream(attachment.Content);
+                        using var brotli = new BrotliStream(input, CompressionMode.Decompress);
+                        using var output = new MemoryStream();
+                        await brotli.CopyToAsync(output, cancellationToken);
+                        content = output.ToArray();
+                    }
+                    catch (InvalidDataException)
+                    {
+                        return Results.Problem("The stored attachment could not be opened.");
+                    }
+                }
+                else content = attachment.Content;
+
+                if (content.LongLength != attachment.OriginalSize)
+                    return Results.Problem("The stored attachment is incomplete.");
+
+                var isPdf = attachment.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) &&
+                    content.AsSpan().StartsWith("%PDF-"u8);
+                http.Response.Headers.CacheControl = "private, no-store";
+                http.Response.Headers.XContentTypeOptions = "nosniff";
+                return isPdf
+                    ? Results.File(content, "application/pdf", enableRangeProcessing: true)
+                    : Results.File(content, "application/octet-stream", attachment.FileName,
+                        enableRangeProcessing: true);
+            })
+            .RequireAuthorization();
+
         return endpoints;
     }
 }

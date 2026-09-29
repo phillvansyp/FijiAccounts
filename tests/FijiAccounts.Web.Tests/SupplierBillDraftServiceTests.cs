@@ -9,6 +9,26 @@ namespace FijiAccounts.Web.Tests;
 public sealed class SupplierBillDraftServiceTests
 {
     [Fact]
+    public async Task SavedDraftAttachmentCanBeReadOnlyWithinItsOrganisation()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new SupplierBillDraftService(test.Db, test.Access);
+        var draft = await service.SaveAsync(test.UserId, await RequestAsync(test));
+
+        var attachment = await service.ReadAttachmentAsync(
+            test.UserId, test.Organisation.Id, draft.Id);
+
+        Assert.NotNull(attachment);
+        Assert.Equal("invoice.pdf", attachment.FileName);
+        Assert.Equal([1, 2, 3, 4], attachment.Content);
+        Assert.Null(await service.ReadAttachmentAsync(test.UserId, Guid.NewGuid(), draft.Id));
+        Assert.Null(await service.ReadAttachmentAsync("another-user", test.Organisation.Id, draft.Id));
+        Assert.Single(await test.Db.AuditEvents.Where(x =>
+            x.EntityId == draft.Id.ToString() &&
+            x.EventType == "SupplierBillDraftDocumentExported").ToListAsync());
+    }
+
+    [Fact]
     public async Task SaveAsync_CreatesUpdatesAndSuppressesUnchangedAuditNoise()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

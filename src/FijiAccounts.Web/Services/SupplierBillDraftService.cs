@@ -31,10 +31,36 @@ public sealed record SaveSupplierBillDraftRequest(
     string? Currency = null,
     decimal? ExchangeRateToBase = null);
 
+public sealed record SupplierBillDraftAttachment(
+    string FileName, string ContentType, long OriginalSize, bool IsCompressed, byte[] Content);
+
 public sealed class SupplierBillDraftService(
     ApplicationDbContext db,
     TenantAccessService access)
 {
+    public async Task<SupplierBillDraftAttachment?> ReadAttachmentAsync(
+        string userId, Guid organisationId, Guid draftId,
+        CancellationToken cancellationToken = default)
+    {
+        var draft = await db.SupplierBillDrafts.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Id == draftId && x.OrganisationId == organisationId,
+            cancellationToken);
+        if (draft?.AttachmentContent is null || draft.BranchId is not Guid branchId ||
+            draft.DivisionId is not Guid divisionId ||
+            !await access.CanAccessDimensionAsync(userId, organisationId, branchId, divisionId, cancellationToken))
+            return null;
+
+        db.AuditEvents.Add(Audit(organisationId, userId, "SupplierBillDraftDocumentExported",
+            draft.Id, new { draft.AttachmentFileName }));
+        await db.SaveChangesAsync(cancellationToken);
+        return new SupplierBillDraftAttachment(
+            draft.AttachmentFileName ?? "attachment",
+            draft.AttachmentContentType ?? "application/octet-stream",
+            draft.AttachmentOriginalSize ?? draft.AttachmentContent.LongLength,
+            draft.AttachmentIsCompressed,
+            draft.AttachmentContent);
+    }
+
     public async Task<SupplierBillDraft> SaveAsync(
         string userId,
         SaveSupplierBillDraftRequest request,
