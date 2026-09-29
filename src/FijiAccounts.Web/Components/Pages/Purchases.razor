@@ -124,6 +124,7 @@ else
 
             <EditForm Model="bill"
                       OnValidSubmit="SubmitBill"
+                      OnInvalidSubmit="InvalidBill"
                       FormName="supplier-bill">
                 <DataAnnotationsValidator />
                 <ValidationSummary />
@@ -198,7 +199,7 @@ else
                 </div>
             }
             <div class="mb-3"><label class="form-label">Description</label><input class="form-control" @bind="bill.Description" @bind:event="oninput" /></div>
-            <div class="row align-items-end"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><input type="number" step="0.0001" class="form-control" @bind="bill.Quantity" @bind:event="oninput" /></div><div class="col-md-3 mb-3"><label class="form-label d-block">Price entry</label><div class="btn-group btn-group-sm mb-2 w-100" role="group" aria-label="Choose whether entered prices include VAT"><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-outline-secondary" : "btn-primary")" aria-pressed="@(!bill.AmountsIncludeVat)" @onclick="() => SetBillPriceEntryMode(false)">VAT exclusive</button><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-primary" : "btn-outline-secondary")" aria-pressed="@bill.AmountsIncludeVat" @onclick="() => SetBillPriceEntryMode(true)">VAT included</button></div><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><input type="number" step="0.01" class="form-control" @bind="bill.UnitPrice" @bind:event="oninput" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div></div>
+            <div class="row align-items-end"><div class="col-md-3 mb-3"><label class="form-label">Quantity</label><input type="number" step="0.0001" class="form-control" @bind="bill.Quantity" @bind:event="oninput" /></div><div class="col-md-3 mb-3"><label class="form-label d-block">Price entry</label><div class="btn-group btn-group-sm mb-2 w-100" role="group" aria-label="Choose whether entered prices include VAT"><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-outline-secondary" : "btn-primary")" aria-pressed="@(!bill.AmountsIncludeVat)" @onclick="() => SetBillPriceEntryMode(false)">VAT exclusive</button><button type="button" class="btn @(bill.AmountsIncludeVat ? "btn-primary" : "btn-outline-secondary")" aria-pressed="@bill.AmountsIncludeVat" @onclick="() => SetBillPriceEntryMode(true)">VAT included</button></div><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><input type="number" step="0.01" class="form-control" @bind="bill.UnitPrice" @bind:event="oninput" /></div><div class="col-md-3 mb-3"><label class="form-label">VAT</label><InputSelect class="form-select" @bind-Value="bill.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="bill.ExpenseAccountId"><option value="@Guid.Empty">Choose an account</option>@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div></div>
             <div class="row border rounded bg-light py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="bill.ProjectId" @bind-Value:after="() => BillProjectChanged(bill)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="bill.ProjectCostCodeId" disabled="@(bill.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(bill.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div>
             @for (var index = 0; index < additionalBillLines.Count; index++) { var line = additionalBillLines[index]; var captured = index; <div class="row border-top pt-3 mt-2"><div class="col-md-4 mb-3"><label class="form-label">Additional description</label><input class="form-control" @bind="line.Description" @bind:event="oninput" /></div><div class="col-md-2 mb-3"><label class="form-label">Quantity</label><input type="number" step="0.0001" class="form-control" @bind="line.Quantity" @bind:event="oninput" /></div><div class="col-md-2 mb-3"><label class="form-label">Unit price @(bill.AmountsIncludeVat ? "incl." : "excl.") VAT</label><input type="number" step="0.01" class="form-control" @bind="line.UnitPrice" @bind:event="oninput" /></div><div class="col-md-2 mb-3"><label class="form-label">Tax</label><InputSelect class="form-select" @bind-Value="line.VatTreatment">@foreach (var item in Enum.GetValues<VatTreatment>()) { <option value="@item">@item</option> }</InputSelect></div><div class="col-md-2 mb-3"><label class="form-label">Account</label><InputSelect class="form-select" @bind-Value="line.ExpenseAccountId">@foreach (var account in expenseAccounts) { <option value="@account.Id">@account.Code</option> }</InputSelect><button type="button" class="btn btn-sm btn-link text-danger" @onclick="() => RemoveBillLine(captured)">Remove</button></div></div><div class="row bg-light rounded py-2 mb-3"><div class="col-md-6"><label class="form-label">Project</label><InputSelect class="form-select" @bind-Value="line.ProjectId" @bind-Value:after="() => BillProjectChanged(line)"><option value="">No project</option>@foreach (var project in EligibleProjects) { <option value="@project.Id">@project.ProjectNumber &mdash; @project.Name</option> }</InputSelect></div><div class="col-md-6"><label class="form-label">Cost code</label><InputSelect class="form-select" @bind-Value="line.ProjectCostCodeId" disabled="@(line.ProjectId is null)"><option value="">No cost code</option>@foreach (var costCode in CostCodes(line.ProjectId)) { <option value="@costCode.Id">@costCode.Code &mdash; @costCode.Name</option> }</InputSelect></div></div> }
             @if (!isRecurringBill)
@@ -234,6 +235,9 @@ else
                     }
                 </div>
             }
+            @if (!canPost) { <div class="alert alert-warning" role="status">Your access to this company does not include posting supplier bills. Ask an owner to grant posting access.</div> }
+            @if (expenseAccounts.Count == 0) { <div class="alert alert-warning" role="status">This company has no active expense account available for bills. <a href="/o/@OrganisationId/accounts">Open the chart of accounts</a> to set one up.</div> }
+            @if (billEditorError is not null) { <div class="alert alert-danger" role="alert">@billEditorError</div> }
             <div class="d-flex justify-content-between align-items-center">
                 <button type="button"
                         class="btn btn-outline-primary"
@@ -254,7 +258,7 @@ else
                             @(editingDraftId is null ? "Save draft" : "Update draft")
                         </button>
 
-                        <button class="btn btn-primary">
+                        <button class="btn btn-primary" disabled="@(!canPost || expenseAccounts.Count == 0)">
                             Approve and post bill
                         </button>
                     }
@@ -684,7 +688,7 @@ else
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
-private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost, canManageContacts, creatingSupplier; private string supplierName = ""; private string? supplierSetupError; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
+private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost, canManageContacts, creatingSupplier; private string supplierName = ""; private string? supplierSetupError; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? billEditorError; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
 protected override async Task OnParametersSetAsync()
 {
         billRegisterSearch = ReferenceSearch ?? string.Empty;
@@ -956,7 +960,7 @@ protected override async Task OnParametersSetAsync()
             bill.Currency,
             bill.BillDate) ?? 0m;
     }
-private void StartNewBill() { ResetBillForm(); status = null; supplierSetupError = null; showBillForm = true; }
+private void StartNewBill() { ResetBillForm(); status = null; billEditorError = null; supplierSetupError = null; showBillForm = true; }
 private async Task CreateSupplierForBill()
 {
     if (!canPost || !canManageContacts || access is null || creatingSupplier) return;
@@ -1312,7 +1316,7 @@ private void ToggleRecurringBill()
         try { additionalBillLines = JsonSerializer.Deserialize<List<DraftLineData>>(draft.AdditionalLinesJson)?.Select(x => new BillLineModel { Description = x.Description, Quantity = x.Quantity, UnitPrice = x.UnitPrice, VatTreatment = x.VatTreatment, ExpenseAccountId = x.ExpenseAccountId, ProductItemId = x.ProductItemId, ProjectId = x.ProjectId, ProjectCostCodeId = x.ProjectCostCodeId }).ToList() ?? []; }
         catch (JsonException) { additionalBillLines = []; }
         pendingAttachment = draft.AttachmentContent is null ? null : new PendingAttachment(draft.AttachmentFileName ?? "attachment", draft.AttachmentContentType ?? "application/octet-stream", draft.AttachmentOriginalSize ?? draft.AttachmentContent.LongLength, draft.AttachmentContent, draft.AttachmentIsCompressed);
-        attachmentError = null; documentReadMessage = null; status = null;
+        attachmentError = null; documentReadMessage = null; status = null; billEditorError = null;
     }
     private async Task DeleteDraft(Guid id)
     {
@@ -1676,6 +1680,17 @@ private void ToggleRecurringBill()
     }
     private async Task SubmitBill()
     {
+        billEditorError = null;
+        if (!canPost)
+        {
+            billEditorError = "You do not have permission to post supplier bills for this company.";
+            return;
+        }
+        if (bill.ExpenseAccountId == Guid.Empty || additionalBillLines.Any(x => x.ExpenseAccountId == Guid.Empty))
+        {
+            billEditorError = "Choose an expense or asset account for every bill line before posting.";
+            return;
+        }
         if (isRecurringBill)
         {
             await CreateRecurringBill();
@@ -1758,13 +1773,24 @@ private void ToggleRecurringBill()
             var hadAttachment =
                 pendingAttachment is not null;
 
-            await BusinessParties.LearnSupplierPurchaseDefaultsAsync(
-                userId,
-                new LearnSupplierPurchaseDefaultsRequest(
-                    OrganisationId,
-                    bill.SupplierId,
-                    bill.ExpenseAccountId,
-                    bill.VatTreatment));
+            string? supplierDefaultsWarning = null;
+            if (canManageContacts)
+            {
+                try
+                {
+                    await BusinessParties.LearnSupplierPurchaseDefaultsAsync(
+                        userId,
+                        new LearnSupplierPurchaseDefaultsRequest(
+                            OrganisationId,
+                            bill.SupplierId,
+                            bill.ExpenseAccountId,
+                            bill.VatTreatment));
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or DbUpdateException)
+                {
+                    supplierDefaultsWarning = " Supplier defaults could not be updated.";
+                }
+            }
 
             ResetBillForm();
             showBillForm = false;
@@ -1779,7 +1805,7 @@ private void ToggleRecurringBill()
                 $"{result.BillNumber} posted for {result.Currency} {result.TransactionTotal:N2} ({access?.Organisation.BaseCurrency} {result.Total:N2})" +
                 (hadAttachment
                     ? " with its attachment."
-                    : ".");
+                    : ".") + supplierDefaultsWarning;
         }
         catch (Exception ex)
             when (ex is InvalidOperationException
@@ -1792,8 +1818,11 @@ private void ToggleRecurringBill()
 
             status =
                 ex.Message;
+            billEditorError = ex.Message;
         }
     }
+    private void InvalidBill(Microsoft.AspNetCore.Components.Forms.EditContext context) =>
+        billEditorError = string.Join(" ", context.GetValidationMessages().Distinct());
     private async Task PayBill() { try { var request = new SupplierPaymentRequest(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId); if (access?.Organisation.RequireSupplierPaymentApproval == true) { var result = await Purchasing.RequestPaymentApprovalAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} submitted for approval for ${result.Amount:N2}."; } else { var result = await Purchasing.PayBillAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; } await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
     private int OverdueCount => bills.Count(IsOverdue);
