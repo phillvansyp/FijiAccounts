@@ -549,12 +549,17 @@ else
                                 </td>
 
                                 <td class="text-center">
-                                    <button type="button"
-                                            class="bill-file-link"
-                                            @onclick="() => EditDraft(item)">
-                                        <span>@(item.AttachmentContent is null ? 0 : 1)</span>
-                                        <span aria-hidden="true">&#128196;</span>
-                                    </button>
+                                    @if (item.AttachmentContent is not null)
+                                    {
+                                        <a class="bill-file-link"
+                                           href="/api/o/@OrganisationId/purchases/drafts/@item.Id/attachment"
+                                           target="_blank" rel="noopener"
+                                           aria-label="Open attached receipt for @item.SupplierReference"
+                                           title="Open attached receipt">
+                                            <span>1</span><span aria-hidden="true">&#128196;</span>
+                                        </a>
+                                    }
+                                    else { <span class="bill-register-file">0</span> }
                                 </td>
                             </tr>
 
