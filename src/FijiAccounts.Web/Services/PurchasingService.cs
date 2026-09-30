@@ -482,7 +482,8 @@ public sealed class PurchasingService(
         return bill;
     }
 
-    public async Task<SupplierPayment> PayBillAsync(string userId, SupplierPaymentRequest request, CancellationToken ct = default)
+    public async Task<SupplierPayment> PayBillAsync(string userId, SupplierPaymentRequest request, CancellationToken ct = default,
+        Guid? connectingStatementLineId = null)
     {
         if (!await access.CanPostJournalsAsync(userId, request.OrganisationId))
         {
@@ -495,7 +496,7 @@ public sealed class PurchasingService(
                 "Supplier payment approval is enabled. Submit this payment for independent approval.");
         }
 
-        return await PostPaymentAsync(userId, request, null, ct);
+        return await PostPaymentAsync(userId, request, null, ct, connectingStatementLineId);
     }
 
     public async Task<SupplierPaymentApproval> RequestPaymentApprovalAsync(
@@ -726,7 +727,8 @@ public sealed class PurchasingService(
         string userId,
         SupplierPaymentRequest request,
         SupplierPaymentApproval? approval,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? connectingStatementLineId = null)
     {
         if (approval is null &&
             !await access.CanPostJournalsAsync(userId, request.OrganisationId))
@@ -736,7 +738,20 @@ public sealed class PurchasingService(
         await using var transaction = db.Database.CurrentTransaction is null
             ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
-        if (request.StatementLineId is null)
+        if (connectingStatementLineId is Guid connectingId)
+        {
+            if (db.Database.CurrentTransaction is null || request.StatementLineId is not null ||
+                !await db.BankStatementLines.AnyAsync(x =>
+                    x.Id == connectingId && x.OrganisationId == request.OrganisationId &&
+                    x.BankAccountId == request.BankAccountId &&
+                    x.TransactionDate == request.Date && x.ReconciledAt == null &&
+                    x.Amount < 0 && -x.Amount >= request.Amount, ct))
+            {
+                throw new InvalidOperationException(
+                    "This bill payment must be connected to its selected, unreconciled bank line.");
+            }
+        }
+        if (request.StatementLineId is null && connectingStatementLineId is null)
         {
             var matchingCodedStatement = await db.BankStatementLines
                 .AsNoTracking()

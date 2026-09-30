@@ -389,6 +389,55 @@ public sealed class BankReconciliationSessionService(
         return session;
     }
 
+    public async Task<BankReconciliationSession> ReopenAsync(
+        string userId,
+        Guid organisationId,
+        Guid sessionId,
+        string reason,
+        CancellationToken ct = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot reconcile bank accounts for this organisation.");
+        }
+
+        var trimmedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedReason) || trimmedReason.Length > 500)
+        {
+            throw new InvalidOperationException(
+                "Enter a reason of up to 500 characters to reopen this reconciliation.");
+        }
+
+        var session = await db.BankReconciliationSessions.SingleOrDefaultAsync(
+            x => x.Id == sessionId && x.OrganisationId == organisationId, ct)
+            ?? throw new InvalidOperationException("Reconciliation session not found.");
+
+        if (!session.IsCompleted)
+        {
+            throw new InvalidOperationException("This reconciliation is already in progress.");
+        }
+
+        if (await db.AccountingPeriods.AnyAsync(
+                x => x.OrganisationId == organisationId && x.IsLocked &&
+                     x.StartsOn <= session.StatementEndDate &&
+                     x.EndsOn >= session.StatementStartDate, ct))
+        {
+            throw new InvalidOperationException(
+                "Unlock the accounting period before reopening this reconciliation.");
+        }
+
+        var previous = Evidence(session);
+        session.IsCompleted = false;
+        session.CompletedAt = null;
+        session.CompletedByUserId = null;
+        db.AuditEvents.Add(Audit(
+            organisationId, userId, "BankReconciliationSessionReopened", session,
+            new { Reason = trimmedReason, Old = previous, New = Evidence(session) }));
+        await db.SaveChangesAsync(ct);
+        return session;
+    }
+
     private async Task<decimal> LedgerBalanceAsync(
         Guid organisationId,
         Guid bankAccountId,

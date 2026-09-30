@@ -434,7 +434,13 @@ else
                             </td>
 
                             <td>
-                                @if (session.IsCompleted)
+                                @if (session.IsCompleted && changedCompletedSessionIds.Contains(session.Id))
+                                {
+                                    <span class="badge text-bg-warning" title="The posted ledger changed after this reconciliation was completed. Review and reopen it before relying on the saved result.">
+                                        Needs review
+                                    </span>
+                                }
+                                else if (session.IsCompleted)
                                 {
                                     <span class="badge text-bg-success">
                                         Completed
@@ -449,6 +455,13 @@ else
                             </td>
 
                             <td class="text-end">
+                                @if (session.IsCompleted && canReconcile)
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-warning"
+                                            @onclick="() => BeginReopenReconciliationSession(session.Id)">
+                                        Reopen
+                                    </button>
+                                }
                                 @if (!session.IsCompleted && canReconcile)
                                 {
                                     <div class="d-flex gap-2 justify-content-end">
@@ -473,6 +486,24 @@ else
                                 }
                             </td>
                         </tr>
+
+                        @if (reopeningReconciliationSessionId == session.Id)
+                        {
+                            <tr>
+                                <td colspan="7" class="p-3 bg-light">
+                                    <label class="form-label" for="reopen-reason">Reason for reopening</label>
+                                    <input id="reopen-reason" class="form-control" maxlength="500"
+                                           @bind="reopeningReconciliationReason" @bind:event="oninput" />
+                                    <div class="d-flex gap-2 mt-2">
+                                        <button type="button" class="btn btn-warning"
+                                                disabled="@string.IsNullOrWhiteSpace(reopeningReconciliationReason)"
+                                                @onclick="ConfirmReopenReconciliationSession">Confirm reopen</button>
+                                        <button type="button" class="btn btn-outline-secondary"
+                                                @onclick="CancelReopenReconciliationSession">Cancel</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
 
                         @if (showReconciliationSession &&
                              editingReconciliationSessionId == session.Id)
@@ -505,6 +536,17 @@ else
                        @bind:after="OnReconciliationSearchChanged"
                        placeholder="Search client/payee, amount, reference or transaction type" />
                 <small class="text-muted">Examples: Rentokil, 281.25, money out, debit card, reconciled.</small>
+            </div>
+            <div>
+                <label class="form-label" for="reconciliation-status">Status</label>
+                <InputSelect id="reconciliation-status"
+                             class="form-select"
+                             @bind-Value="reconciliationStatusFilter"
+                             @bind:after="OnReconciliationStatusChanged">
+                    <option value="all">All bank items</option>
+                    <option value="unmatched">Unmatched only</option>
+                    <option value="reconciled">Reconciled only</option>
+                </InputSelect>
             </div>
             <div>
                 <label class="form-label" for="reconciliation-bank-account">Account</label>
@@ -546,6 +588,36 @@ else
                 </button>
             }
         </div>
+        @if (ReconciliationSearchAmount is decimal searchedAmount)
+        {
+            var matchingBills = MatchingOutstandingSupplierBills(searchedAmount).ToList();
+            var matchingInvoices = MatchingOutstandingSalesInvoices(searchedAmount).ToList();
+            <div class="alert alert-info mx-3 mt-3 mb-0">
+                <strong>Unmatched documents for @access!.Organisation.BaseCurrency @searchedAmount.ToString("N2")</strong>
+                @if (matchingBills.Count == 0 && matchingInvoices.Count == 0)
+                {
+                    <span class="d-block">No unpaid bills or invoices have this outstanding amount.</span>
+                }
+                else
+                {
+                    <span class="d-block mb-2">These documents still need a matching bank transaction.</span>
+                    @foreach (var bill in matchingBills)
+                    {
+                        <div class="d-flex flex-wrap justify-content-between gap-2 border-top py-2">
+                            <span><strong>Bill to pay</strong> · @bill.Supplier.Name · @bill.SupplierReference · @bill.BillDate.ToString("dd MMM yyyy")</span>
+                            <span><strong>@access.Organisation.BaseCurrency @Outstanding(bill).ToString("N2")</strong> · <a href="@($"/o/{OrganisationId}/purchases/{bill.Id}")">Open bill</a></span>
+                        </div>
+                    }
+                    @foreach (var invoice in matchingInvoices)
+                    {
+                        <div class="d-flex flex-wrap justify-content-between gap-2 border-top py-2">
+                            <span><strong>Invoice awaiting payment</strong> · @invoice.Customer.Name · @invoice.InvoiceNumber · @invoice.IssueDate.ToString("dd MMM yyyy")</span>
+                            <span><strong>@access.Organisation.BaseCurrency @Outstanding(invoice).ToString("N2")</strong> · <a href="@($"/o/{OrganisationId}/sales/{invoice.Id}")">Open invoice</a></span>
+                        </div>
+                    }
+                }
+            </div>
+        }
         @if (!VisibleStatementLines.Any()) { <div class="empty-state"><strong>No statement lines</strong><span>@(HasActiveReconciliationFilters ? "No statement lines match the selected filters." : "Add a statement line to begin reconciling.")</span></div> }
         else { @foreach (var item in VisibleStatementLines) { var match = SuggestedMatch(item); var codedAccount = CodedAccount(item); var vat = CodedVat(item); <div class="statement-row"><span class="reconcile-state @(item.ReconciledAt is not null ? "done" : null)">@(item.ReconciledAt is not null ? "OK" : "!")</span><div><strong>@if (StatementDocumentLink(item) is string documentUrl) { <a href="@documentUrl" title="Open invoice or bill">@item.Description</a> } else { @item.Description }</strong>@if (statementDocuments.TryGetValue(item.Id, out var linkedDocuments) && linkedDocuments.Count > 1) { @foreach (var document in linkedDocuments) { <small><a href="@document.Url">@document.Label</a></small> } }<small>@item.TransactionDate.ToString("dd MMM yyyy") - @item.BankAccount.Name - @(item.Reference ?? "No reference")</small></div><b class="@(item.Amount >= 0 ? "money-in" : "money-out")">$@item.Amount.ToString("N2")</b><div class="coded-account"><small>Coded to</small>@if (codedAccount is not null) { <strong>@codedAccount.Code - @codedAccount.Name</strong><small class="included-vat">Included VAT: @(vat.Amount > 0 ? $"${vat.Amount:N2}" : "-")</small> } else { <span>-</span> }</div><div class="match-action"><a class="btn btn-sm btn-outline-primary" href="@($"/o/{OrganisationId}/payments/statement/{item.Id}")">Connections</a>@if (item.ReconciledAt is not null) { <span>Reconciled</span>@if (canReconcile && codedAccount is not null) { <button type="button" class="edit-coding" title="Change coding" aria-label="Change coding" @onclick="() => ChangeCoding(item)">Edit</button> } } else if (match is not null) { <div><small>Suggested match</small><strong class="d-block">@match.PostedJournal.EntryDate.ToString("dd MMM yyyy") - $@Math.Abs(match.Debit - match.Credit).ToString("N2")</strong><small class="d-block">@match.LedgerAccount.Name - @match.Description</small></div><button class="btn btn-sm btn-primary" @onclick="() => Reconcile(item.Id, match.Id)">Match</button> } else if (canReconcile && SuggestedSupplierBill(item) is null) { <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => BeginCoding(item)">Code transaction</button> } else { <span>@(SuggestedSupplierBill(item) is not null ? "Existing bill found" : "No exact match")</span> }@if (item.MatchedPostedJournalLineId is not null) { <span class="matched-marker" title="Matched" aria-label="Matched">M</span> }</div></div>
             @if (changedStatementId == item.Id && status is not null)
@@ -857,7 +929,9 @@ else
     private const int ReconciliationPageSize = 25;
     private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private Guid[] accessibleDivisionIds = []; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<Branch> branches = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
     private List<BankReconciliationSession> reconciliationSessions = [];
+    private HashSet<Guid> changedCompletedSessionIds = [];
     private string reconciliationSearch = string.Empty;
+    private string reconciliationStatusFilter = "all";
     private DateOnly? reconciliationDateFrom;
     private DateOnly? reconciliationDateTo;
     private List<PostedJournalLine> matchTransactions = [];
@@ -872,10 +946,12 @@ private ReconciliationSessionModel reconciliationModel = new();
 private bool showReconciliationSession;
 private bool savingReconciliationSession;
 private Guid? editingReconciliationSessionId;
+private Guid? reopeningReconciliationSessionId;
+private string reopeningReconciliationReason = string.Empty;
 private string? reconciliationStatus;
 private string reconciliationStatusClass = "alert-success";
     [SupplyParameterFromQuery(Name = "bankView")] public string? BankViewState { get; set; }
-    private sealed record BankView(Guid? Account, DateOnly? From, DateOnly? To, string Search, int Page);
+    private sealed record BankView(Guid? Account, DateOnly? From, DateOnly? To, string Search, int Page, string? Status = null);
     private void RestoreBankView()
     {
         if (string.IsNullOrEmpty(BankViewState)) return;
@@ -885,13 +961,14 @@ private string reconciliationStatusClass = "alert-success";
             selectedBankAccountId = view.Account;
             reconciliationDateFrom = view.From; reconciliationDateTo = view.To;
             reconciliationSearch = view.Search ?? string.Empty; reconciliationPage = Math.Max(1, view.Page);
+            reconciliationStatusFilter = view.Status is "unmatched" or "reconciled" ? view.Status : "all";
         } catch (System.Text.Json.JsonException) { }
     }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (access is not null)
             await NavigationJS.InvokeVoidAsync("accountIslandNavigation.saveBankView", System.Text.Json.JsonSerializer.Serialize(
-                new BankView(selectedBankAccountId, reconciliationDateFrom, reconciliationDateTo, reconciliationSearch, reconciliationPage)));
+                new BankView(selectedBankAccountId, reconciliationDateFrom, reconciliationDateTo, reconciliationSearch, reconciliationPage, reconciliationStatusFilter)));
     }
     protected override async Task OnParametersSetAsync() { RestoreBankView(); var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
     private async Task Reload()
@@ -934,15 +1011,20 @@ private string reconciliationStatusClass = "alert-success";
             x.OrganisationId == OrganisationId)
         .ToListAsync();
 
-// Keep displayed balances current after bill payments or coding corrections.
-var sessionBankIds = loadedReconciliationSessions.Where(x => !x.IsCompleted).Select(x => x.BankAccountId).Distinct().ToArray();
+// Show the current ledger for every period, including completed periods whose
+// saved balance may have changed after later bank corrections.
+var sessionBankIds = loadedReconciliationSessions.Select(x => x.BankAccountId).Distinct().ToArray();
 var sessionLines = await Db.PostedJournalLines.AsNoTracking()
     .Where(x => x.PostedJournal.OrganisationId == OrganisationId && sessionBankIds.Contains(x.LedgerAccountId))
     .Select(x => new { x.LedgerAccountId, x.PostedJournal.EntryDate, x.Debit, x.Credit }).ToListAsync();
-foreach (var session in loadedReconciliationSessions.Where(x => !x.IsCompleted))
+changedCompletedSessionIds = [];
+foreach (var session in loadedReconciliationSessions)
 {
-    session.LedgerBalance = sessionLines.Where(x => x.LedgerAccountId == session.BankAccountId && x.EntryDate <= session.StatementEndDate)
+    var currentLedgerBalance = sessionLines.Where(x => x.LedgerAccountId == session.BankAccountId && x.EntryDate <= session.StatementEndDate)
         .Sum(x => x.Debit - x.Credit);
+    if (session.IsCompleted && Math.Abs(session.LedgerBalance - currentLedgerBalance) > 0.01m)
+        changedCompletedSessionIds.Add(session.Id);
+    session.LedgerBalance = currentLedgerBalance;
     session.Difference = Math.Round(session.ClosingStatementBalance - session.LedgerBalance, 2, MidpointRounding.AwayFromZero);
 }
 reconciliationSessions =
@@ -978,6 +1060,15 @@ reconciliationSessions =
         if (reconciliationDateTo is DateOnly dateTo)
         {
             query = query.Where(x => x.TransactionDate <= dateTo);
+        }
+
+        if (reconciliationStatusFilter == "unmatched")
+        {
+            query = query.Where(x => x.ReconciledAt == null);
+        }
+        else if (reconciliationStatusFilter == "reconciled")
+        {
+            query = query.Where(x => x.ReconciledAt != null);
         }
 
         if (!string.IsNullOrWhiteSpace(reconciliationSearch))
@@ -2082,9 +2173,15 @@ await Reload();
         await Reload();
     }
 
+    private async Task OnReconciliationStatusChanged()
+    {
+        await OnReconciliationSearchChanged();
+    }
+
     private async Task ClearReconciliationFilters()
     {
         reconciliationSearch = string.Empty;
+        reconciliationStatusFilter = "all";
         selectedBankAccountId = null;
         reconciliationDateFrom = null;
         reconciliationDateTo = null;
@@ -2093,9 +2190,37 @@ await Reload();
 
     private bool HasActiveReconciliationFilters =>
         !string.IsNullOrWhiteSpace(reconciliationSearch) ||
+        reconciliationStatusFilter != "all" ||
         selectedBankAccountId is not null ||
         reconciliationDateFrom is not null ||
         reconciliationDateTo is not null;
+
+    private decimal? ReconciliationSearchAmount
+    {
+        get
+        {
+            var normalized = reconciliationSearch.Trim().Replace("$", string.Empty).Replace(",", string.Empty);
+            return decimal.TryParse(
+                normalized,
+                System.Globalization.NumberStyles.Number | System.Globalization.NumberStyles.AllowLeadingSign,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var amount)
+                ? Math.Abs(Math.Round(amount, 2, MidpointRounding.AwayFromZero))
+                : null;
+        }
+    }
+
+    private IEnumerable<SupplierBill> MatchingOutstandingSupplierBills(decimal amount) =>
+        outstandingSupplierBills
+            .Where(x => Math.Abs(Outstanding(x) - amount) <= 0.01m)
+            .OrderByDescending(x => x.BillDate)
+            .ThenBy(x => x.Supplier.Name);
+
+    private IEnumerable<SalesInvoice> MatchingOutstandingSalesInvoices(decimal amount) =>
+        outstandingSalesInvoices
+            .Where(x => Math.Abs(Outstanding(x) - amount) <= 0.01m)
+            .OrderByDescending(x => x.IssueDate)
+            .ThenBy(x => x.Customer.Name);
 
     private async Task ChangeReconciliationPage(int page)
     {
@@ -2340,6 +2465,38 @@ private async Task CompleteReconciliationSession(Guid sessionId)
     catch (Exception ex)
         when (ex is InvalidOperationException
               or UnauthorizedAccessException)
+    {
+        reconciliationStatusClass = "alert-danger";
+        reconciliationStatus = ex.Message;
+    }
+}
+
+private void BeginReopenReconciliationSession(Guid sessionId)
+{
+    reconciliationStatus = null;
+    reopeningReconciliationSessionId = sessionId;
+    reopeningReconciliationReason = string.Empty;
+}
+
+private void CancelReopenReconciliationSession()
+{
+    reopeningReconciliationSessionId = null;
+    reopeningReconciliationReason = string.Empty;
+}
+
+private async Task ConfirmReopenReconciliationSession()
+{
+    if (reopeningReconciliationSessionId is not Guid sessionId) return;
+    try
+    {
+        await ReconciliationSessions.ReopenAsync(
+            userId, OrganisationId, sessionId, reopeningReconciliationReason);
+        CancelReopenReconciliationSession();
+        reconciliationStatusClass = "alert-success";
+        reconciliationStatus = "Bank reconciliation reopened. Review its lines and complete it again after the correction.";
+        await Reload();
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
     {
         reconciliationStatusClass = "alert-danger";
         reconciliationStatus = ex.Message;

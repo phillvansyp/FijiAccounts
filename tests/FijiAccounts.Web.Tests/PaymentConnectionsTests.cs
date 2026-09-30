@@ -112,6 +112,31 @@ public sealed class PaymentConnectionsTests
     }
 
     [Fact]
+    public async Task ExplicitStatementMatchAllowsAnotherCodedLineWithSameDateAndAmount()
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var selected = await Statement(t, -100);
+        var other = await Statement(t, -100);
+        await t.BankCoding.PostAndReconcileAsync(t.UserId,
+            new(t.Organisation.Id, selected.Id, "6500", "Selected payment", VatTreatment.OutOfScope));
+        await t.BankCoding.PostAndReconcileAsync(t.UserId,
+            new(t.Organisation.Id, other.Id, "6500", "Other payment", VatTreatment.OutOfScope));
+        var bill = await Bill(t, 100);
+        var original = (await t.Db.BankStatementLines.AsNoTracking()
+            .SingleAsync(x => x.Id == selected.Id)).MatchedPostedJournalLineId;
+
+        await Service(t).ConnectAsync(t.UserId,
+            new(t.Organisation.Id, selected.Id, original, [], [new(bill.Id, 100)]));
+
+        Assert.Equal(-200, await t.AccountBalanceAsync("1000"));
+        Assert.Equal(0, await t.AccountBalanceAsync("2000"));
+        Assert.NotNull((await t.Db.BankStatementLines.AsNoTracking()
+            .SingleAsync(x => x.Id == other.Id)).ReconciledAt);
+        Assert.Single((await Service(t).ReadAsync(t.UserId, t.Organisation.Id))
+            .Payments, x => x.StatementId == selected.Id && x.DocumentIds.Contains(bill.Id));
+    }
+
+    [Fact]
     public async Task LaterAllocationFailureRollsBackCodingReversalAndEarlierPayment()
     {
         await using var t = await AccountingTestDatabase.CreateAsync();

@@ -8,6 +8,34 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BankReconciliationSessionServiceHardeningTests
 {
     [Fact]
+    public async Task ReopenAsync_RequiresReasonAndRecordsAuditEvidence()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BankReconciliationSessionService(test.Db, test.Access);
+        var session = await service.CreateAsync(test.UserId, Request(test));
+        await service.CompleteAsync(test.UserId, test.Organisation.Id, session.Id);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ReopenAsync(test.UserId, test.Organisation.Id, session.Id, " "));
+        Assert.True(session.IsCompleted);
+
+        await service.ReopenAsync(
+            test.UserId, test.Organisation.Id, session.Id,
+            "Correct a matched supplier payment");
+
+        Assert.False(session.IsCompleted);
+        Assert.Null(session.CompletedAt);
+        Assert.Null(session.CompletedByUserId);
+        var audit = Assert.Single(await AuditsAsync(test, session.Id),
+            x => x.EventType == "BankReconciliationSessionReopened");
+        using var evidence = JsonDocument.Parse(audit.JsonData);
+        Assert.Equal("Correct a matched supplier payment",
+            evidence.RootElement.GetProperty("Reason").GetString());
+        Assert.True(evidence.RootElement.GetProperty("Old").GetProperty("IsCompleted").GetBoolean());
+        Assert.False(evidence.RootElement.GetProperty("New").GetProperty("IsCompleted").GetBoolean());
+    }
+
+    [Fact]
     public async Task CreateAndCompleteAsync_RecordOldAndNewAuditEvidence()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
