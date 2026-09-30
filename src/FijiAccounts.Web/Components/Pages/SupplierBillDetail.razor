@@ -127,8 +127,8 @@ else
                                         {
                                             <button type="button"
                                                     class="attachment-delete"
-                                                    disabled="@AttachmentDeletionProtected"
-                                                    title="@(AttachmentDeletionProtected ? RecordRetentionPolicy.ProtectedMessage(AttachmentRetainUntil) : "Delete attachment")"
+                                                    disabled="@(AttachmentDeletionProtected && !duplicateAttachmentIds.Contains(attachment.Id))"
+                                                    title="@(AttachmentDeletionProtected ? (duplicateAttachmentIds.Contains(attachment.Id) ? "Remove verified extra copy from this bill; original retained" : RecordRetentionPolicy.ProtectedMessage(AttachmentRetainUntil)) : "Delete attachment")"
                                                     @onclick="() => DeleteDocument(attachment.Id)">
                                                 ×
                                             </button>
@@ -1142,6 +1142,7 @@ else
     private bool showReinstatement;
     private bool showCredit;
     private bool showAttachmentMenu;
+    private IReadOnlySet<Guid> duplicateAttachmentIds = new HashSet<Guid>();
     private bool uploadingDocument;
     private bool documentDropZoneRegistered;
     private ElementReference documentDropZone;
@@ -1339,12 +1340,17 @@ private async Task RecordPayment()
             .ThenInclude(x => x.Project)
             .Include(x => x.Lines)
             .ThenInclude(x => x.ProjectCostCode)
-            .Include(x => x.Attachments)
+            .Include(x => x.Attachments.Where(a => !a.HiddenAsDuplicate))
             .SingleOrDefaultAsync(
                 x => x.Id == BillId &&
                      x.OrganisationId == OrganisationId &&
                      x.DivisionId != null &&
                      accessibleDivisionIds.Contains(x.DivisionId.Value));
+
+        duplicateAttachmentIds = bill is null || !canManage || !AttachmentDeletionProtected
+            ? new HashSet<Guid>()
+            : await BillAttachments.FindVisibleDuplicateIdsAsync(
+                userId, OrganisationId, BillId);
 
         bankAccounts =
     await Db.LedgerAccounts
@@ -1523,11 +1529,11 @@ creditReversals =
             var attachment = bill?.Attachments.SingleOrDefault(
                 x => x.Id == attachmentId);
             if (attachment is null ||
-                !await BillAttachments.DeleteAsync(
-                    userId,
-                    OrganisationId,
-                    BillId,
-                    attachmentId))
+                !(AttachmentDeletionProtected
+                    ? await BillAttachments.HideVerifiedDuplicateAsync(
+                        userId, OrganisationId, BillId, attachmentId)
+                    : await BillAttachments.DeleteAsync(
+                        userId, OrganisationId, BillId, attachmentId)))
             {
                 throw new InvalidOperationException(
                     "The attachment could not be found.");
@@ -1536,7 +1542,9 @@ creditReversals =
             var fileName = attachment.FileName;
 
             statusClass = "alert-success";
-            status = $"{fileName} removed.";
+            status = AttachmentDeletionProtected
+                ? $"Extra copy of {fileName} removed from the bill. Its retained record remains available for audit."
+                : $"{fileName} removed.";
 
             await Reload();
 

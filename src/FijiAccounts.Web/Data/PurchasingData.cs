@@ -127,6 +127,10 @@ public sealed class SupplierBillAttachment
     public required byte[] Content { get; set; }
     public Guid? ImmutableDocumentObjectId { get; set; }
     public ImmutableDocumentObject? ImmutableDocumentObject { get; set; }
+    // A verified extra copy stays in the retained record but is omitted from the bill's active attachments.
+    public bool HiddenAsDuplicate { get; set; }
+    public DateTimeOffset? HiddenAsDuplicateAt { get; set; }
+    [MaxLength(450)] public string? HiddenAsDuplicateByUserId { get; set; }
     public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string UploadedByUserId { get; set; }
 }
