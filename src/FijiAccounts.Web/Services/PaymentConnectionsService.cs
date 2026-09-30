@@ -116,7 +116,8 @@ public sealed class PaymentConnectionsService(ApplicationDbContext db, TenantAcc
                     if (statement.Amount < 0)
                         journalId = (await purchasing.PayBillAsync(userId, new(request.OrganisationId, allocation.DocumentId,
                             statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
-                            TransactionAmount: allocation.TransactionAmount), ct)).PostedJournalId;
+                            TransactionAmount: allocation.TransactionAmount), ct,
+                            connectingStatementLineId: statement.Id)).PostedJournalId;
                     else
                         journalId = (await receipts.RecordAsync(userId, new(request.OrganisationId, allocation.DocumentId,
                             statement.TransactionDate, statement.Reference ?? "Bank allocation", allocation.Amount, statement.BankAccountId,
