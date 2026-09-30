@@ -113,19 +113,13 @@ public sealed class PurchasingService(
         if (request.DueDate < request.BillDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter a valid bill date, due date and at least one line.");
         if (!await db.BusinessParties.AnyAsync(x => x.Id == request.SupplierId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0, ct)) throw new InvalidOperationException("Select an active supplier in this organisation.");
         var supplierReference = request.SupplierReference.Trim();
-        var duplicateBill = await db.SupplierBills
-            .AsNoTracking()
-            .Where(x =>
-                x.OrganisationId == request.OrganisationId &&
-                x.SupplierId == request.SupplierId &&
-                x.SupplierReference == supplierReference &&
-                x.Status != BillStatus.Voided)
-            .Select(x => new { x.BillNumber, x.Status })
-            .SingleOrDefaultAsync(ct);
+        var duplicateBill = await SupplierReferenceDuplicateLookup.FindAsync(
+            db, request.OrganisationId, request.SupplierId,
+            supplierReference, draftId, ct);
         if (duplicateBill is not null)
         {
             throw new InvalidOperationException(
-                $"Supplier reference {supplierReference} has already been used for {duplicateBill.BillNumber} ({duplicateBill.Status.ToString().ToLowerInvariant()}). Enter a different supplier reference.");
+                SupplierReferenceDuplicateLookup.Error(supplierReference, duplicateBill));
         }
         var expenseIds = request.Lines.Select(x => x.ExpenseAccountId).Distinct().ToArray();
         var expenses = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && expenseIds.Contains(x.Id) && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).ToDictionaryAsync(x => x.Id, ct);

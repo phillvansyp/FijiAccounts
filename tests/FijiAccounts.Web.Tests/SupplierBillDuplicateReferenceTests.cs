@@ -18,9 +18,26 @@ public sealed class SupplierBillDuplicateReferenceTests
             () => test.Purchasing.PostBillAsync(test.UserId, request));
 
         Assert.Equal(
-            $"Supplier reference 93091439 has already been used for {original.BillNumber} (posted). Enter a different supplier reference.",
+            $"Supplier reference 93091439 already exists on {original.BillNumber} for this supplier. Open the existing bill or enter a different reference.",
             exception.Message);
         Assert.Equal(journalCount, await test.Db.PostedJournals.CountAsync());
+    }
+
+    [Fact]
+    public async Task Lookup_MatchesCaseAndWhitespaceButIgnoresVoidedBills()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var request = Request(test) with { SupplierReference = "INV-AbC" };
+        var bill = await test.Purchasing.PostBillAsync(test.UserId, request);
+
+        var match = await SupplierReferenceDuplicateLookup.FindAsync(
+            test.Db, test.Organisation.Id, test.Supplier.Id, " inv-abc ");
+        Assert.Equal(bill.Id, match?.Id);
+
+        await test.Purchasing.VoidBillAsync(test.UserId, test.Organisation.Id,
+            bill.Id, new DateOnly(2026, 6, 24), "Incorrect VAT amount");
+        Assert.Null(await SupplierReferenceDuplicateLookup.FindAsync(
+            test.Db, test.Organisation.Id, test.Supplier.Id, "INV-ABC"));
     }
 
     [Fact]
