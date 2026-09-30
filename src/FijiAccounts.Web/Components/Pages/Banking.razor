@@ -449,6 +449,13 @@ else
                             </td>
 
                             <td class="text-end">
+                                @if (session.IsCompleted && canReconcile)
+                                {
+                                    <button type="button" class="btn btn-sm btn-outline-warning"
+                                            @onclick="() => BeginReopenReconciliationSession(session.Id)">
+                                        Reopen
+                                    </button>
+                                }
                                 @if (!session.IsCompleted && canReconcile)
                                 {
                                     <div class="d-flex gap-2 justify-content-end">
@@ -473,6 +480,24 @@ else
                                 }
                             </td>
                         </tr>
+
+                        @if (reopeningReconciliationSessionId == session.Id)
+                        {
+                            <tr>
+                                <td colspan="7" class="p-3 bg-light">
+                                    <label class="form-label" for="reopen-reason">Reason for reopening</label>
+                                    <input id="reopen-reason" class="form-control" maxlength="500"
+                                           @bind="reopeningReconciliationReason" @bind:event="oninput" />
+                                    <div class="d-flex gap-2 mt-2">
+                                        <button type="button" class="btn btn-warning"
+                                                disabled="@string.IsNullOrWhiteSpace(reopeningReconciliationReason)"
+                                                @onclick="ConfirmReopenReconciliationSession">Confirm reopen</button>
+                                        <button type="button" class="btn btn-outline-secondary"
+                                                @onclick="CancelReopenReconciliationSession">Cancel</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
 
                         @if (showReconciliationSession &&
                              editingReconciliationSessionId == session.Id)
@@ -872,6 +897,8 @@ private ReconciliationSessionModel reconciliationModel = new();
 private bool showReconciliationSession;
 private bool savingReconciliationSession;
 private Guid? editingReconciliationSessionId;
+private Guid? reopeningReconciliationSessionId;
+private string reopeningReconciliationReason = string.Empty;
 private string? reconciliationStatus;
 private string reconciliationStatusClass = "alert-success";
     [SupplyParameterFromQuery(Name = "bankView")] public string? BankViewState { get; set; }
@@ -2340,6 +2367,38 @@ private async Task CompleteReconciliationSession(Guid sessionId)
     catch (Exception ex)
         when (ex is InvalidOperationException
               or UnauthorizedAccessException)
+    {
+        reconciliationStatusClass = "alert-danger";
+        reconciliationStatus = ex.Message;
+    }
+}
+
+private void BeginReopenReconciliationSession(Guid sessionId)
+{
+    reconciliationStatus = null;
+    reopeningReconciliationSessionId = sessionId;
+    reopeningReconciliationReason = string.Empty;
+}
+
+private void CancelReopenReconciliationSession()
+{
+    reopeningReconciliationSessionId = null;
+    reopeningReconciliationReason = string.Empty;
+}
+
+private async Task ConfirmReopenReconciliationSession()
+{
+    if (reopeningReconciliationSessionId is not Guid sessionId) return;
+    try
+    {
+        await ReconciliationSessions.ReopenAsync(
+            userId, OrganisationId, sessionId, reopeningReconciliationReason);
+        CancelReopenReconciliationSession();
+        reconciliationStatusClass = "alert-success";
+        reconciliationStatus = "Bank reconciliation reopened. Review its lines and complete it again after the correction.";
+        await Reload();
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
     {
         reconciliationStatusClass = "alert-danger";
         reconciliationStatus = ex.Message;
