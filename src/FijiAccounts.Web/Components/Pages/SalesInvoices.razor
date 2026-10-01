@@ -467,7 +467,7 @@ else
                 .Include(x => x.Lines)
                 .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
                 .OrderByDescending(x => x.SequenceNumber)
-                .Take(ReferenceSearch is null ? 100 : int.MaxValue)
+                
                 .ToListAsync();
 
         invoiceMatchLinks.Clear();
