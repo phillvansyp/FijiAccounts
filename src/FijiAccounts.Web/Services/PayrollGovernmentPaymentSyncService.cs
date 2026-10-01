@@ -25,7 +25,14 @@ public sealed class PayrollGovernmentPaymentSyncService(
         var sent = 0;
         foreach (var connection in connections)
         {
-            try { sent += await SyncConnectionAsync(connection, ct); }
+            try
+            {
+                var updated = await SyncConnectionAsync(connection, ct);
+                sent += updated;
+                logger.LogInformation(
+                    "Government payment verification completed for organisation {OrganisationId}: {Count} monthly status updates.",
+                    connection.OrganisationId, updated);
+            }
             catch (Exception error) when (organisationId is null && error is not OperationCanceledException)
             {
                 logger.LogWarning(error, "Could not verify government payments for Account Island organisation {OrganisationId}.",
@@ -47,7 +54,9 @@ public sealed class PayrollGovernmentPaymentSyncService(
             .ToArray();
         if (months.Length == 0) return 0;
 
-        var statements = await db.BankStatementLines.AsNoTracking()
+        // The matched line also belongs to PostedJournal.Lines. Resolve that shared
+        // identity without tracking financial evidence in this write-capable context.
+        var statements = await db.BankStatementLines.AsNoTrackingWithIdentityResolution()
             .Include(x => x.MatchedPostedJournalLine).ThenInclude(x => x!.PostedJournal).ThenInclude(x => x.Lines)
             .Where(x => x.OrganisationId == connection.OrganisationId && x.Amount < 0 &&
                 x.ReconciledAt != null && x.MatchedPostedJournalLineId != null)
