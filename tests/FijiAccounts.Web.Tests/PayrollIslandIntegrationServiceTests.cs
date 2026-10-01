@@ -298,10 +298,13 @@ public sealed class PayrollIslandIntegrationServiceTests
     [InlineData("WAGES EMP0000", -800, 28, true)]
     [InlineData("Employee Person1", -800, 28, false)]
     [InlineData("Employee Person0", -799, 28, false)]
+    [InlineData("Employee Person0", -799.80, 28, true)]
+    [InlineData("Employee Person0", -800.20, 28, true)]
+    [InlineData("Employee Person0", -799.79, 28, false)]
     [InlineData("Employee Person0", 800, 28, false)]
     [InlineData("Employee Person0", -800, 26, false)]
     [InlineData("Employee Person01", -800, 28, false)]
-    public void Automatic_matching_requires_employee_identity_exact_amount_and_nearby_date(string name, decimal amount, int day, bool expected)
+    public void Automatic_matching_requires_employee_identity_amount_within_rounding_tolerance_and_nearby_date(string name, decimal amount, int day, bool expected)
     {
         var statement = new BankStatementLine { Description = name, Amount = amount, TransactionDate = new(2026, 8, day) };
         Assert.Equal(expected, PayrollBankMatchingService.Matches(DetailedRun().Employees![0], statement));

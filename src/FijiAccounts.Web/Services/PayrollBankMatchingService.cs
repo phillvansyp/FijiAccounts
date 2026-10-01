@@ -9,9 +9,12 @@ namespace FijiAccounts.Web.Services;
 public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAccessService access,
     JournalPostingService posting, BankReconciliationService reconciliation)
 {
+    public const decimal AutomaticRoundingTolerance = 0.20m;
+
     // Both sides must have a unique candidate. Amount alone is never an employee identity.
     public static bool Matches(PayrollEmployeeDetail employee, BankStatementLine statement) =>
-        employee.NetPay > 0 && statement.Amount == -employee.NetPay &&
+        employee.NetPay > 0 && Math.Abs(Math.Abs(statement.Amount) - employee.NetPay) <= AutomaticRoundingTolerance &&
+        statement.Amount < 0 &&
         Math.Abs(statement.TransactionDate.DayNumber - employee.PaymentDate.DayNumber) <= 1 &&
         ContainsEmployeeIdentity(statement.Description + " " + statement.Reference, employee, false);
 
@@ -29,7 +32,8 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
 
     private static bool MatchesWithUniqueGivenName(PayrollEmployeeDetail employee, BankStatementLine statement,
         IReadOnlySet<string> uniqueGivenNames) =>
-        employee.NetPay > 0 && statement.Amount == -employee.NetPay &&
+        employee.NetPay > 0 && Math.Abs(Math.Abs(statement.Amount) - employee.NetPay) <= AutomaticRoundingTolerance &&
+        statement.Amount < 0 &&
         Math.Abs(statement.TransactionDate.DayNumber - employee.PaymentDate.DayNumber) <= 1 &&
         ContainsEmployeeIdentity(statement.Description + " " + statement.Reference, employee,
             uniqueGivenNames.Contains(GivenName(employee)));
@@ -77,7 +81,8 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
                      candidates.Count(x => x.Run.ConnectionId == c.Run.ConnectionId && x.Employee.PaymentId == c.Employee.PaymentId) == 1))
         {
             var row = match.Statement;
-            var amount = match.Employee.NetPay;
+            var expectedAmount = match.Employee.NetPay;
+            var amount = Math.Abs(match.Statement.Amount);
             var existing = await db.PostedJournalLines.Include(x => x.PostedJournal).ThenInclude(x => x.Lines)
                 .Where(x => x.PostedJournal.OrganisationId == organisationId && x.LedgerAccountId == row.BankAccountId &&
                     x.PostedJournal.EntryDate == row.TransactionDate).ToListAsync(ct);
@@ -116,7 +121,8 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
             db.PayrollBankMatches.Add(link);
             db.AuditEvents.Add(new AuditEvent { OrganisationId = organisationId, UserId = userId,
                 EventType = "PayrollPaymentAutomaticallyMatched", EntityType = nameof(PayrollBankMatch), EntityId = link.Id.ToString(),
-                JsonData = JsonSerializer.Serialize(new { match.Run.Id, match.Run.Revision, match.Employee.PaymentId, StatementId = row.Id, amount }) });
+                JsonData = JsonSerializer.Serialize(new { match.Run.Id, match.Run.Revision, match.Employee.PaymentId,
+                    StatementId = row.Id, amount, expectedAmount, variance = amount - expectedAmount }) });
             await db.SaveChangesAsync(ct);
             matched++;
         }
