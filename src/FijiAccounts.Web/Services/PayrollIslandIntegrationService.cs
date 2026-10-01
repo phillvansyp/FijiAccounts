@@ -218,16 +218,12 @@ public sealed class PayrollIslandIntegrationService(
                     "Payroll Island returned an invalid sync cursor.");
             }
             var result = await ImportAsync(userId, organisationId, connection, page, cancellationToken);
-            if (connection.AutomaticallySyncAndPostPayRuns && page.PayRuns.Count > 0)
+            if (connection.AutomaticallySyncAndPostPayRuns)
             {
-                var deliveredRuns = page.PayRuns
-                    .Select(x => new { ExternalPayRunId = x.ExternalPayRunId.Trim(), x.Revision })
-                    .ToArray();
                 var ready = await db.PayrollIslandPayRunImports
                     .Where(x => x.ConnectionId == connection.Id && x.Status == PayrollIslandImportStatus.ReadyToPost)
                     .OrderBy(x => x.PaymentDate)
                     .ToListAsync(cancellationToken);
-                ready = ready.Where(x => deliveredRuns.Any(y => y.ExternalPayRunId == x.ExternalPayRunId && y.Revision == x.Revision)).ToList();
                 foreach (var payRun in ready)
                     await PostPayRunAsync(userId, organisationId, payRun.Id, cancellationToken);
             }

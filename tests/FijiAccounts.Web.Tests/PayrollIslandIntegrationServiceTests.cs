@@ -87,6 +87,33 @@ public sealed class PayrollIslandIntegrationServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_AutomaticallyPostsExistingReadyBacklogWhenEnabled()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var client = new FakePayrollIslandClient(Page(PayRun()));
+        var service = Service(test, client);
+        await ConnectAsync(test, service);
+        await service.SyncAsync(test.UserId, test.Organisation.Id);
+        Assert.Equal(
+            PayrollIslandImportStatus.ReadyToPost,
+            (await test.Db.PayrollIslandPayRunImports.AsNoTracking().SingleAsync()).Status);
+
+        var wages = test.Account("6000").Id;
+        var liability = test.Account("2200").Id;
+        await service.SaveConnectionAsync(test.UserId, test.Organisation.Id,
+            Request("https://payroll.example.test", wages, liability) with
+            { AutomaticallySyncAndPostPayRuns = true });
+        client.Page = Page();
+
+        await service.SyncAsync(test.UserId, test.Organisation.Id);
+
+        var imported = await test.Db.PayrollIslandPayRunImports.AsNoTracking().SingleAsync();
+        Assert.Equal(PayrollIslandImportStatus.Posted, imported.Status);
+        Assert.NotNull(imported.PostedJournalId);
+        Assert.Single(await test.Db.PostedJournals.ToListAsync());
+    }
+
+    [Fact]
     public async Task SyncAsync_PostedRevisionCreatesCorrectionReviewInsteadOfAnotherJournal()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
