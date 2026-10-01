@@ -23,6 +23,15 @@ public class AccountingTests
         new JournalEntry(Guid.NewGuid(), DateOnly.FromDateTime(DateTime.UtcNow), "BAD",
         [new("1100", "Debit", 100m, 0m), new("4000", "Credit", 0m, 99m)]));
 
+    [Fact]
+    public void Journal_with_fractional_cent_lines_is_rejected() => Assert.Throws<DomainException>(() =>
+        new JournalEntry(Guid.NewGuid(), DateOnly.FromDateTime(DateTime.UtcNow), "SUBCENT",
+        [
+            new("1100", "First debit", 0.005m, 0m),
+            new("1100", "Second debit", 0.005m, 0m),
+            new("4000", "Credit", 0m, 0.01m)
+        ]));
+
     [Theory]
     [InlineData(2025, 7, 31, 15.00)]
     [InlineData(2025, 8, 1, 12.50)]

@@ -9,6 +9,11 @@ public sealed record JournalLine(string AccountCode, string Description, decimal
         if (string.IsNullOrWhiteSpace(AccountCode)) throw new DomainException("Every journal line needs an account.");
         if (Debit < 0 || Credit < 0) throw new DomainException("Debit and credit amounts cannot be negative.");
         if ((Debit == 0) == (Credit == 0)) throw new DomainException("A journal line must contain either a debit or a credit.");
+        if (Debit != decimal.Round(Debit, 2, MidpointRounding.AwayFromZero) ||
+            Credit != decimal.Round(Credit, 2, MidpointRounding.AwayFromZero))
+        {
+            throw new DomainException("Journal amounts cannot contain fractions of a cent.");
+        }
     }
 }
 
