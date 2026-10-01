@@ -243,7 +243,8 @@ else
     private IReadOnlyList<PayrollGovernmentPaymentClaim> paymentClaims = [];
     private List<LedgerAccount> expenseAccounts = [];
     private List<LedgerAccount> liabilityAccounts = [];
-    private ConnectionModel model = new();
+    [SupplyParameterFromForm(FormName = "payroll-island-connection")]
+    private ConnectionModel model { get; set; } = null!;
     private string userId = "";
     private bool canManageConnections;
     private bool canPost;
@@ -294,18 +295,21 @@ else
         paymentClaims = await Db.PayrollGovernmentPaymentClaims.AsNoTracking()
             .Where(x => x.OrganisationId == OrganisationId)
             .OrderByDescending(x => x.PaidOn).Take(100).ToListAsync();
-        model = connection is null ? DefaultModel() : new ConnectionModel
+        if (model is null)
         {
-            BaseUrl = connection.BaseUrl,
-            PayrollOrganisationId = connection.PayrollOrganisationId,
-            WagesExpenseAccountId = connection.WagesExpenseAccountId,
-            EmployerContributionsExpenseAccountId = connection.EmployerContributionsExpenseAccountId,
-            NetWagesPayableAccountId = connection.NetWagesPayableAccountId,
-            PayePayableAccountId = connection.PayePayableAccountId,
-            FnpfPayableAccountId = connection.FnpfPayableAccountId,
-            OtherDeductionsPayableAccountId = connection.OtherDeductionsPayableAccountId,
-            AutomaticallySyncAndPostPayRuns = connection.AutomaticallySyncAndPostPayRuns
-        };
+            model = connection is null ? DefaultModel() : new ConnectionModel
+            {
+                BaseUrl = connection.BaseUrl,
+                PayrollOrganisationId = connection.PayrollOrganisationId,
+                WagesExpenseAccountId = connection.WagesExpenseAccountId,
+                EmployerContributionsExpenseAccountId = connection.EmployerContributionsExpenseAccountId,
+                NetWagesPayableAccountId = connection.NetWagesPayableAccountId,
+                PayePayableAccountId = connection.PayePayableAccountId,
+                FnpfPayableAccountId = connection.FnpfPayableAccountId,
+                OtherDeductionsPayableAccountId = connection.OtherDeductionsPayableAccountId,
+                AutomaticallySyncAndPostPayRuns = connection.AutomaticallySyncAndPostPayRuns
+            };
+        }
     }
 
     private ConnectionModel DefaultModel()
@@ -342,6 +346,7 @@ else
                     model.OtherDeductionsPayableAccountId,
                     model.AutomaticallySyncAndPostPayRuns));
             message = "Payroll Island connection saved.";
+            model = null!;
             await Reload();
         });
     }
