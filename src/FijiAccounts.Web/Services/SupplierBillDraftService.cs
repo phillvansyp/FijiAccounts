@@ -36,7 +36,7 @@ public sealed record SupplierBillDraftAttachment(
 
 public sealed class SupplierBillDraftService(
     ApplicationDbContext db,
-    TenantAccessService access)
+    TenantAccessService access, OrganisationUpdateBroker? updates = null)
 {
     public async Task<SupplierBillDraftAttachment?> ReadAttachmentAsync(
         string userId, Guid organisationId, Guid draftId,
@@ -257,6 +257,7 @@ public sealed class SupplierBillDraftService(
             }));
         await db.SaveChangesAsync(cancellationToken);
 
+        if (sourceReceipt is not null) updates?.Publish(organisationId);
         return true;
     }
 

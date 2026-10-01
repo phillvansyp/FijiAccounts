@@ -13,6 +13,61 @@ public sealed class EmployeeReceiptTests
         service.SubmitAsync(user, org, request, "Hardware shop", "Site supplies", new DateOnly(2026, 1, 1), 25m, "FJD", true, "receipt.png", Photo);
 
     [Fact]
+    public async Task PendingReviewCountIsOwnerOnlyAndTracksReviewAndReopening()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var broker = new OrganisationUpdateBroker(Microsoft.Extensions.Logging.Abstractions.NullLogger<OrganisationUpdateBroker>.Instance);
+        var service = new EmployeeReceiptService(db.Db, new DatabaseImmutableDocumentStore(db.Db), broker);
+        await AddEmployeeAsync(db, service);
+        var published = new List<Guid>();
+        using var subscription = broker.Subscribe(published.Add);
+        Assert.Equal(0, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+        var request = Guid.NewGuid();
+        var receipt = await Submit(service, "receipt-employee", db.Organisation.Id, request);
+        await Submit(service, "receipt-employee", db.Organisation.Id, request);
+        Assert.Single(published);
+        Assert.Equal(1, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+        Assert.Equal(0, await service.GetPendingReviewCountAsync("receipt-employee", db.Organisation.Id));
+        Assert.Equal(0, await service.GetPendingReviewCountAsync("outsider", db.Organisation.Id));
+        Assert.Equal(0, await service.GetPendingReviewCountAsync(db.UserId, Guid.NewGuid()));
+
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+            true, null, createDraft: true);
+        Assert.Equal(0, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+        Assert.Equal(2, published.Count);
+        var draft = await db.Db.SupplierBillDrafts.SingleAsync();
+        var drafts = new SupplierBillDraftService(db.Db, db.Access, broker);
+        Assert.True(await drafts.DeleteAsync(db.UserId, db.Organisation.Id, draft.Id));
+        Assert.Equal(1, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+        Assert.Equal(3, published.Count);
+        await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+            false, "Please provide a clearer receipt");
+        Assert.Equal(0, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+        Assert.Equal(4, published.Count);
+        Assert.All(published, org => Assert.Equal(db.Organisation.Id, org));
+    }
+
+    [Fact]
+    public async Task ReviewInsideTransactionDoesNotPublishBeforeCommit()
+    {
+        await using var db = await AccountingTestDatabase.CreateAsync();
+        var broker = new OrganisationUpdateBroker(Microsoft.Extensions.Logging.Abstractions.NullLogger<OrganisationUpdateBroker>.Instance);
+        var service = new EmployeeReceiptService(db.Db, new DatabaseImmutableDocumentStore(db.Db), broker);
+        var receipt = await Submit(service, db.UserId, db.Organisation.Id, Guid.NewGuid());
+        var published = new List<Guid>();
+        using var subscription = broker.Subscribe(published.Add);
+        await using (var transaction = await db.Db.Database.BeginTransactionAsync())
+        {
+            await service.ReviewAsync(db.UserId, db.Organisation.Id, receipt.Id, receipt.Version,
+                false, "Check receipt");
+            Assert.Empty(published);
+            await transaction.RollbackAsync();
+        }
+        db.Db.ChangeTracker.Clear();
+        Assert.Equal(1, await service.GetPendingReviewCountAsync(db.UserId, db.Organisation.Id));
+    }
+
+    [Fact]
     public async Task ReceiptsOnlyInvitationGrantsSubmissionWithoutAnyLedgerAccess()
     {
         await using var db = await AccountingTestDatabase.CreateAsync();

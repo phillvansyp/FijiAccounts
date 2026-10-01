@@ -13,7 +13,7 @@ public sealed class ReceiptBankPurchaseService(
     BankTransactionCodingService bankCoding,
     BankReconciliationService reconciliation,
     PurchasingService purchasing,
-    TenantAccessService access)
+    TenantAccessService access, OrganisationUpdateBroker? updates = null)
 {
     public async Task<SupplierBill> ApprovePostAndPayAsync(
         string userId, Guid organisationId, Guid receiptId, int receiptVersion,
@@ -117,6 +117,7 @@ public sealed class ReceiptBankPurchaseService(
             });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+            updates?.Publish(organisationId);
             return bill;
         }
         catch

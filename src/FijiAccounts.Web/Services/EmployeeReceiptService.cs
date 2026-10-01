@@ -8,9 +8,15 @@ namespace FijiAccounts.Web.Services;
 public sealed record ReceiptMatchCandidate(Guid Id, string Description, DateOnly Date, bool Reconciled, string Url);
 public sealed record ReceiptMatchSummary(IReadOnlyList<ReceiptMatchCandidate> Purchases, IReadOnlyList<ReceiptMatchCandidate> BankTransactions);
 
-public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDocumentStore storage)
+public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDocumentStore storage,
+    OrganisationUpdateBroker? updates = null)
 {
     public const int MaximumBytes = 10 * 1024 * 1024;
+    public async Task<int> GetPendingReviewCountAsync(string user, Guid org) =>
+        await IsOwnerAsync(user, org)
+            ? await db.EmployeeReceipts.CountAsync(x => x.OrganisationId == org && x.Status == "Submitted")
+            : 0;
+
     public Task<bool> IsOwnerAsync(string user, Guid org) => db.OrganisationMemberships.AnyAsync(m =>
         m.UserId == user && m.OrganisationId == org && m.Role == OrganisationRole.Owner &&
         
@@ -120,6 +126,7 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
         db.EmployeeReceipts.Add(receipt);
         Audit(user, org, "ReceiptSubmitted", receipt.Id.ToString(), new { receipt.Merchant, receipt.Amount, receipt.Currency, amountsIncludeVat, vatAmount, personal });
         await db.SaveChangesAsync();
+        updates?.Publish(org);
         return receipt;
     }
 
@@ -241,6 +248,7 @@ public sealed class EmployeeReceiptService(ApplicationDbContext db, IImmutableDo
             receipt.LinkedSupplierBillId, receipt.LinkedSupplierBillDraftId });
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateConcurrencyException) { db.ChangeTracker.Clear(); throw new InvalidOperationException("Another owner has already reviewed this receipt. Refresh to see their decision."); }
+        if (db.Database.CurrentTransaction is null) updates?.Publish(org);
     }
 
     public async Task<(EmployeeReceipt Receipt, byte[] Content)?> ReadAsync(string user, Guid org, Guid id)
