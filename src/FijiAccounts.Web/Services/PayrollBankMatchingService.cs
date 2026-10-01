@@ -11,9 +11,28 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
 {
     // Both sides must have a unique candidate. Amount alone is never an employee identity.
     public static bool Matches(PayrollEmployeeDetail employee, BankStatementLine statement) =>
-        employee.NetPay > 0 && statement.Amount == -employee.NetPay && statement.TransactionDate == employee.PaymentDate &&
-        (ContainsIdentity(statement.Description + " " + statement.Reference, employee.EmployeeId) ||
-         (employee.Name != employee.EmployeeId && ContainsIdentity(statement.Description + " " + statement.Reference, employee.Name)));
+        employee.NetPay > 0 && statement.Amount == -employee.NetPay &&
+        Math.Abs(statement.TransactionDate.DayNumber - employee.PaymentDate.DayNumber) <= 1 &&
+        ContainsEmployeeIdentity(statement.Description + " " + statement.Reference, employee, false);
+
+    private static bool ContainsEmployeeIdentity(string text, PayrollEmployeeDetail employee, bool allowGivenName)
+    {
+        if (ContainsIdentity(text, employee.EmployeeId) ||
+            (employee.Name != employee.EmployeeId && ContainsIdentity(text, employee.Name))) return true;
+        if (!allowGivenName) return false;
+        var givenName = Regex.Split(employee.Name.Trim(), @"\s+").FirstOrDefault();
+        return !string.IsNullOrWhiteSpace(givenName) && ContainsIdentity(text, givenName);
+    }
+
+    private static string GivenName(PayrollEmployeeDetail employee) =>
+        Regex.Split(employee.Name.Trim(), @"\s+").FirstOrDefault()?.ToUpperInvariant() ?? "";
+
+    private static bool MatchesWithUniqueGivenName(PayrollEmployeeDetail employee, BankStatementLine statement,
+        IReadOnlySet<string> uniqueGivenNames) =>
+        employee.NetPay > 0 && statement.Amount == -employee.NetPay &&
+        Math.Abs(statement.TransactionDate.DayNumber - employee.PaymentDate.DayNumber) <= 1 &&
+        ContainsEmployeeIdentity(statement.Description + " " + statement.Reference, employee,
+            uniqueGivenNames.Contains(GivenName(employee)));
 
     private static bool ContainsIdentity(string text, string identity)
     {
@@ -39,6 +58,9 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
         var employees = runs.Where(x => x.Currency == organisation.Organisation.BaseCurrency)
             .SelectMany(run => PayrollEmployeeDetail.Read(run).Select(employee => new { Run = run, Employee = employee }))
             .Where(x => !links.Any(l => l.ConnectionId == x.Run.ConnectionId && l.ExternalPaymentId == x.Employee.PaymentId)).ToList();
+        var uniqueGivenNames = employees.GroupBy(x => GivenName(x.Employee))
+            .Where(x => x.Key.Length >= 4 && x.Select(y => y.Employee.EmployeeId).Distinct().Count() == 1)
+            .Select(x => x.Key).ToHashSet(StringComparer.Ordinal);
         var statements = await db.BankStatementLines.Where(x => x.OrganisationId == organisationId &&
             x.Amount < 0 && (x.ReconciledAt != null || x.MatchedPostedJournalLineId == null) &&
             x.BankAccount.IsActive).ToListAsync(ct);
@@ -47,7 +69,7 @@ public sealed class PayrollBankMatchingService(ApplicationDbContext db, TenantAc
         statements = statements.Where(s => !links.Any(l => l.BankStatementLineId == s.Id) &&
             (s.ReconciledAt != null || (!closed.Any(p => p.BankAccountId == s.BankAccountId && s.TransactionDate >= p.StatementStartDate && s.TransactionDate <= p.StatementEndDate) &&
             !locked.Any(p => s.TransactionDate >= p.StartsOn && s.TransactionDate <= p.EndsOn)))).ToList();
-        var candidates = employees.SelectMany(e => statements.Where(s => Matches(e.Employee, s))
+        var candidates = employees.SelectMany(e => statements.Where(s => MatchesWithUniqueGivenName(e.Employee, s, uniqueGivenNames))
             .Select(s => new { e.Run, e.Employee, Statement = s })).ToList();
         var excludedJournals = await BankCodingHistory.UnmatchableJournalIdsAsync(db, organisationId, ct);
         var matched = 0;

@@ -220,6 +220,7 @@ builder.Services.AddHttpClient<IPayrollIslandClient, PayrollIslandHttpClient>(cl
     client.MaxResponseContentBufferSize = 5 * 1024 * 1024;
 });
 builder.Services.AddScoped<PayrollIslandIntegrationService>();
+builder.Services.AddHostedService<PayrollIslandPayRunSyncWorker>();
 builder.Services.AddScoped<PayrollGovernmentPaymentSyncService>();
 builder.Services.AddHostedService<PayrollGovernmentPaymentSyncWorker>();
 builder.Services.AddScoped<PayrollServiceBillingService>();

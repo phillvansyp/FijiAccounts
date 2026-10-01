@@ -18,7 +18,8 @@ public sealed record PayrollIslandConnectionRequest(
     Guid NetWagesPayableAccountId,
     Guid PayePayableAccountId,
     Guid FnpfPayableAccountId,
-    Guid OtherDeductionsPayableAccountId);
+    Guid OtherDeductionsPayableAccountId,
+    bool AutomaticallySyncAndPostPayRuns = false);
 
 public sealed record PayrollIslandSyncResult(int Imported, int Skipped, string? NextCursor);
 
@@ -141,6 +142,7 @@ public sealed class PayrollIslandIntegrationService(
                 PayePayableAccountId = request.PayePayableAccountId,
                 FnpfPayableAccountId = request.FnpfPayableAccountId,
                 OtherDeductionsPayableAccountId = request.OtherDeductionsPayableAccountId,
+                AutomaticallySyncAndPostPayRuns = request.AutomaticallySyncAndPostPayRuns,
                 CreatedByUserId = userId,
                 UpdatedByUserId = userId
             };
@@ -159,6 +161,7 @@ public sealed class PayrollIslandIntegrationService(
             connection.PayePayableAccountId = request.PayePayableAccountId;
             connection.FnpfPayableAccountId = request.FnpfPayableAccountId;
             connection.OtherDeductionsPayableAccountId = request.OtherDeductionsPayableAccountId;
+            connection.AutomaticallySyncAndPostPayRuns = request.AutomaticallySyncAndPostPayRuns;
             connection.IsActive = true;
             connection.UpdatedAt = DateTimeOffset.UtcNow;
             connection.UpdatedByUserId = userId;
@@ -215,6 +218,19 @@ public sealed class PayrollIslandIntegrationService(
                     "Payroll Island returned an invalid sync cursor.");
             }
             var result = await ImportAsync(userId, organisationId, connection, page, cancellationToken);
+            if (connection.AutomaticallySyncAndPostPayRuns && page.PayRuns.Count > 0)
+            {
+                var deliveredRuns = page.PayRuns
+                    .Select(x => new { ExternalPayRunId = x.ExternalPayRunId.Trim(), x.Revision })
+                    .ToArray();
+                var ready = await db.PayrollIslandPayRunImports
+                    .Where(x => x.ConnectionId == connection.Id && x.Status == PayrollIslandImportStatus.ReadyToPost)
+                    .OrderBy(x => x.PaymentDate)
+                    .ToListAsync(cancellationToken);
+                ready = ready.Where(x => deliveredRuns.Any(y => y.ExternalPayRunId == x.ExternalPayRunId && y.Revision == x.Revision)).ToList();
+                foreach (var payRun in ready)
+                    await PostPayRunAsync(userId, organisationId, payRun.Id, cancellationToken);
+            }
             if (!string.IsNullOrWhiteSpace(page.NextCursor))
             {
                 connection.LastSyncCursor = page.NextCursor.Trim();

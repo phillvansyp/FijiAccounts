@@ -40,6 +40,7 @@ public sealed class PayrollIslandConnection
     public Guid FnpfPayableAccountId { get; set; }
     public Guid OtherDeductionsPayableAccountId { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool AutomaticallySyncAndPostPayRuns { get; set; }
     [MaxLength(500)] public string? LastSyncCursor { get; set; }
     public DateTimeOffset? LastSyncedAt { get; set; }
     [MaxLength(1000)] public string? LastSyncError { get; set; }

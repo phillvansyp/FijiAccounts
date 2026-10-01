@@ -102,6 +102,11 @@ else
                     </InputSelect>
                 </div>
             </div>
+            <div class="form-check mb-3">
+                <InputCheckbox class="form-check-input" @bind-Value="model.AutomaticallySyncAndPostPayRuns" disabled="@(!canManageConnections)" />
+                <label class="form-check-label">Automatically sync and post finalised pay runs</label>
+                <div class="form-text">Checks Payroll Island every 15 minutes. New finalised runs are posted to the mapped payroll accounts, then unique employee bank payments are coded and reconciled automatically.</div>
+            </div>
             @if (canManageConnections)
             {
                 <button class="btn btn-primary" disabled="@busy">@(connection is null ? "Connect Payroll Island" : "Save connection")</button>
@@ -139,7 +144,7 @@ else
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                 <div>
                     <h2>Payroll imports</h2>
-                    <p class="mb-1">Finalised runs arrive as drafts. Posting remains a deliberate Account Island action.</p>
+                    <p class="mb-1">@(connection.AutomaticallySyncAndPostPayRuns ? "New finalised runs are posted automatically and matched to unique employee bank payments." : "Finalised runs arrive as drafts. Posting remains a deliberate Account Island action.")</p>
                     <small class="text-secondary">
                         Last sync: @(connection.LastSyncedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm") ?? "Not yet synchronised")
                     </small>
@@ -298,7 +303,8 @@ else
             NetWagesPayableAccountId = connection.NetWagesPayableAccountId,
             PayePayableAccountId = connection.PayePayableAccountId,
             FnpfPayableAccountId = connection.FnpfPayableAccountId,
-            OtherDeductionsPayableAccountId = connection.OtherDeductionsPayableAccountId
+            OtherDeductionsPayableAccountId = connection.OtherDeductionsPayableAccountId,
+            AutomaticallySyncAndPostPayRuns = connection.AutomaticallySyncAndPostPayRuns
         };
     }
 
@@ -333,7 +339,8 @@ else
                     model.NetWagesPayableAccountId,
                     model.PayePayableAccountId,
                     model.FnpfPayableAccountId,
-                    model.OtherDeductionsPayableAccountId));
+                    model.OtherDeductionsPayableAccountId,
+                    model.AutomaticallySyncAndPostPayRuns));
             message = "Payroll Island connection saved.";
             await Reload();
         });
@@ -412,5 +419,6 @@ else
         public Guid PayePayableAccountId { get; set; }
         public Guid FnpfPayableAccountId { get; set; }
         public Guid OtherDeductionsPayableAccountId { get; set; }
+        public bool AutomaticallySyncAndPostPayRuns { get; set; } = true;
     }
 }
