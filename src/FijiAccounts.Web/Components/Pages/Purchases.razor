@@ -221,10 +221,11 @@ else
                         <InputFile @key="billAttachmentInputKey"
                                    class="bill-file-input"
                                    OnChange="SelectBillAttachment"
-                                   accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv"
+                                   accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.eml,.msg"
                                    disabled="@isReadingBillAttachment" />
-                        <strong>@(isReadingBillAttachment ? "Reading attachment..." : "Drop the supplier invoice or receipt here")</strong>
-                        <span>or click to choose one file. Searchable PDFs and CSV files will be read to prefill the form. Maximum 10 MB.</span>
+                        <strong>@(isReadingBillAttachment ? "Reading attachment..." : "Drop the supplier invoice, receipt or email here")</strong>
+                        <span>or click to choose one file. Emails (.eml and Outlook .msg) are saved with the bill. Searchable PDFs and CSV files will be read to prefill the form. Maximum 10 MB.</span>
+                        <span>If your email app does not support dragging files, save the email as .eml or .msg first, then drop it here.</span>
                     </label>
                     @if (pendingAttachment is not null)
                     {
@@ -698,7 +699,7 @@ else
     [SupplyParameterFromQuery(Name = "draft")]
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
-    private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv" };
+    private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".eml", ".msg" };
 private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost, canManageContacts, creatingSupplier; private string supplierName = ""; private string? supplierSetupError; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? billEditorError; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
 private SupplierReferenceMatch? referenceMatch;
 protected override async Task OnParametersSetAsync()
@@ -1097,13 +1098,13 @@ private void ToggleRecurringBill()
         if (args.FileCount != 1)
         {
             pendingAttachment = null;
-            attachmentError = "Drop or choose one supplier invoice at a time.";
+            attachmentError = "Drop or choose one invoice, receipt or email file at a time.";
             ResetBillAttachmentInput();
             return;
         }
 
         var file = args.File;
-        if (!AllowedAttachmentExtensions.Contains(Path.GetExtension(file.Name))) { pendingAttachment = null; attachmentError = "Choose a PDF, image, Office document or CSV file."; ResetBillAttachmentInput(); return; }
+        if (!AllowedAttachmentExtensions.Contains(Path.GetExtension(file.Name))) { pendingAttachment = null; attachmentError = "Choose a PDF, image, Office document, CSV or email (.eml or .msg) file."; ResetBillAttachmentInput(); return; }
         if (file.Size > MaxAttachmentBytes) { pendingAttachment = null; attachmentError = "The attachment must be 10 MB or smaller."; ResetBillAttachmentInput(); return; }
         try
         {
@@ -1120,7 +1121,13 @@ private void ToggleRecurringBill()
             await using (var brotli = new BrotliStream(compressed, CompressionLevel.SmallestSize, leaveOpen: true)) await brotli.WriteAsync(originalBytes);
             var compressedBytes = compressed.ToArray();
             var useCompression = compressedBytes.Length < originalBytes.Length;
-            pendingAttachment = new(Path.GetFileName(file.Name), string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType, originalBytes.LongLength, useCompression ? compressedBytes : originalBytes, useCompression);
+            var contentType = Path.GetExtension(file.Name).ToLowerInvariant() switch
+            {
+                ".eml" => "message/rfc822",
+                ".msg" => "application/vnd.ms-outlook",
+                _ => string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType
+            };
+            pendingAttachment = new(Path.GetFileName(file.Name), contentType, originalBytes.LongLength, useCompression ? compressedBytes : originalBytes, useCompression);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException)
         {
@@ -1149,6 +1156,11 @@ private void ToggleRecurringBill()
                 text = extracted.ToString();
             }
             else if (extension.Equals(".csv", StringComparison.OrdinalIgnoreCase)) text = Encoding.UTF8.GetString(content);
+            else if (extension.Equals(".eml", StringComparison.OrdinalIgnoreCase) || extension.Equals(".msg", StringComparison.OrdinalIgnoreCase))
+            {
+                documentReadMessage = "Email attached. The original email, including any embedded attachments, will be saved with the bill. Email contents are not used to prefill the form. Please enter and check the bill details before posting.";
+                return;
+            }
             else
             {
                 documentReadMessage = "File attached. Automatic prefilling currently supports searchable PDFs and CSV files. Please enter and check the bill details before posting.";
