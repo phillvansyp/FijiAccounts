@@ -24,6 +24,9 @@
     <PackageReference Include="OpenIddict.EntityFrameworkCore" Version="7.6.0" />
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="PdfPig" Version="0.1.11" />
+    <!-- Security pins: transitive versions from PDFsharp/OpenIddict are affected by October 2026 advisories. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" NoWarn="NU1510" />
   </ItemGroup>
 
   <ItemGroup>
