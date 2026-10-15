@@ -6,6 +6,7 @@ public sealed class FixedAsset
 {
     public Guid Id { get; set; } = Guid.NewGuid(); public Guid OrganisationId { get; set; } public Organisation Organisation { get; set; } = null!;
     [MaxLength(40)] public required string AssetNumber { get; set; } [MaxLength(160)] public required string Name { get; set; }
+    [MaxLength(20)] public string? VehicleRegistration { get; set; }
     public DateOnly AcquisitionDate { get; set; } public decimal Cost { get; set; } public decimal ResidualValue { get; set; } public int UsefulLifeMonths { get; set; }
     public Guid AssetAccountId { get; set; } public LedgerAccount AssetAccount { get; set; } = null!; public Guid DepreciationExpenseAccountId { get; set; } public LedgerAccount DepreciationExpenseAccount { get; set; } = null!; public Guid AccumulatedDepreciationAccountId { get; set; } public LedgerAccount AccumulatedDepreciationAccount { get; set; } = null!;
     public Guid? AcquisitionJournalId { get; set; }

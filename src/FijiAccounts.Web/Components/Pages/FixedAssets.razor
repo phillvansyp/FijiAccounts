@@ -59,10 +59,18 @@ else
                 <ValidationSummary />
 
                 <div class="row">
-                    <div class="col-md-6 mb-3">
+                    <div class="col-md-3 mb-3">
                         <label class="form-label">Name</label>
                         <input class="form-control"
                                @bind="model.Name"
+                               @bind:event="oninput" />
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label class="form-label">Vehicle registration <span class="text-muted">(optional)</span></label>
+                        <input class="form-control text-uppercase"
+                               maxlength="20"
+                               @bind="model.VehicleRegistration"
                                @bind:event="oninput" />
                     </div>
 
@@ -213,6 +221,10 @@ else
                                     <small class="d-block text-muted">
                                         @asset.AssetAccount.Code — @asset.AssetAccount.Name
                                     </small>
+                                    @if (!string.IsNullOrWhiteSpace(asset.VehicleRegistration))
+                                    {
+                                        <small class="d-block text-muted">Registration @asset.VehicleRegistration</small>
+                                    }
                                 </td>
 
                                 <td>
@@ -741,7 +753,8 @@ model.ResidualValue ?? 0m,
                         model.AssetAccountId,
                         model.ExpenseAccountId,
                         model.AccumulatedAccountId,
-                        model.AcquisitionBankAccountId));
+                        model.AcquisitionBankAccountId,
+                        model.VehicleRegistration));
 
             messageClass = "alert-success";
             message =
@@ -976,6 +989,9 @@ private string DisposalGainLossText(FixedAsset asset)
         [Required]
         [StringLength(160)]
         public string Name { get; set; } = "";
+
+        [StringLength(20)]
+        public string? VehicleRegistration { get; set; }
 
         public DateOnly AcquisitionDate { get; set; } =
             DateOnly.FromDateTime(DateTime.Today);

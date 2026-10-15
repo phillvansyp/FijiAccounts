@@ -8,11 +8,13 @@
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 @inject PayrollIslandIntegrationService PayrollIntegration
+@inject NzPayInboundIntegrationService NzPayIntegration
 @inject PayrollGovernmentPaymentSyncService PaymentSync
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
 
 <PageTitle>Payroll Island integration · Account Island</PageTitle>
 
@@ -26,7 +28,7 @@ else
         <div>
             <p class="eyebrow">Connected services</p>
             <h1>Payroll Island</h1>
-            <p>Import finalised pay runs as controlled accounting journals and track wage, PAYE and FNPF payments.</p>
+            <p>Import finalised pay runs as controlled accounting journals and track wage, PAYE and @(IsNz ? "KiwiSaver" : "FNPF") payments.</p>
         </div>
         <span class="tax-pack @(connection?.IsActive == true ? "enabled" : "pending")">
             @(connection?.IsActive == true ? "Connected" : "Not connected")
@@ -36,6 +38,115 @@ else
     @if (message is not null)
     {
         <div class="alert @messageClass">@message</div>
+    }
+
+    @if (IsNz)
+    {
+        <section class="settings-card mb-3">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h2>Connect NZ Pay to Account Island</h2>
+                    <p class="mb-1">This gives NZ Pay read-only access to this organisation's active fixed assets and permission to submit FBT journals for approval.</p>
+                    <small class="text-secondary">The connection cannot post journals. A person with journal authority must approve each draft here.</small>
+                </div>
+                <span class="tax-pack @(inboundCredential is null ? "pending" : "enabled")">@(inboundCredential is null ? "Not connected" : "Ready for NZ Pay")</span>
+            </div>
+
+            <dl class="mt-3 mb-3">
+                <div><dt>Account Island address</dt><dd><code>@AccountIslandAddress</code></dd></div>
+                <div><dt>Organisation ID</dt><dd><code>@OrganisationId</code></dd></div>
+                <div><dt>Permissions</dt><dd>Read fixed assets · Create FBT journal drafts</dd></div>
+                @if (inboundCredential is not null)
+                {
+                    <div><dt>Current token</dt><dd><code>@inboundCredential.TokenPrefix…</code> · created @inboundCredential.CreatedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd></div>
+                    <div><dt>Last used</dt><dd>@(inboundCredential.LastUsedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm") ?? "Not used yet")</dd></div>
+                }
+            </dl>
+
+            @if (!string.IsNullOrWhiteSpace(issuedNzPayToken))
+            {
+                <div class="alert alert-warning">
+                    <strong>Copy this token now.</strong> It is shown once and Account Island stores only its fingerprint.
+                    <input class="form-control font-monospace mt-2" readonly value="@issuedNzPayToken" aria-label="NZ Pay connection token" />
+                    <p class="mb-0 mt-2">In NZ Pay, open <strong>Settings → Connected apps → Account Island</strong> and enter the address, organisation ID and token shown here.</p>
+                </div>
+            }
+
+            @if (canManageConnections)
+            {
+                @if (confirmCredentialRotation)
+                {
+                    <div class="alert alert-warning">
+                        Replacing the token disconnects NZ Pay until the new token is saved there.
+                        <div class="d-flex gap-2 mt-2">
+                            <button class="btn btn-primary" @onclick="GenerateNzPayCredential" disabled="@busy">Replace token</button>
+                            <button class="btn btn-outline-secondary" @onclick="() => confirmCredentialRotation = false" disabled="@busy">Cancel</button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <button class="btn btn-outline-primary" @onclick="PrepareNzPayCredential" disabled="@busy">@(inboundCredential is null ? "Create NZ Pay token" : "Replace NZ Pay token")</button>
+                }
+            }
+        </section>
+
+        <section class="settings-card mb-3">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h2>NZ Pay FBT journal approvals</h2>
+                    <p class="mb-0">Review the period, amount and account lines received from NZ Pay before posting.</p>
+                </div>
+                <span>@inboundDrafts.Count(x => x.Status == NzPayFbtJournalStatus.AwaitingApproval) awaiting approval</span>
+            </div>
+            @if (inboundDrafts.Count == 0)
+            {
+                <div class="empty-state mt-3"><strong>No NZ Pay FBT journals</strong><span>Drafts sent from NZ Pay will appear here.</span></div>
+            }
+            else
+            {
+                <div class="table-responsive mt-3"><table class="table align-middle">
+                    <thead><tr><th>Received</th><th>Reference</th><th>Date</th><th>Accounts</th><th class="text-end">Amount</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var draft in inboundDrafts)
+                    {
+                        <tr>
+                            <td>@draft.ReceivedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</td>
+                            <td><strong>@draft.Reference</strong><small class="d-block text-secondary">@draft.Description</small></td>
+                            <td>@draft.EntryDate.ToString("dd MMM yyyy")</td>
+                            <td>@foreach (var line in draft.Lines) { <small class="d-block">@line.LedgerAccount.Code · @line.Description · @(line.Debit > 0 ? $"Dr {line.Debit:N2}" : $"Cr {line.Credit:N2}")</small> }</td>
+                            <td class="text-end">@draft.Currency @draft.Amount.ToString("N2")</td>
+                            <td>@(draft.Status == NzPayFbtJournalStatus.AwaitingApproval ? "Awaiting approval" : draft.Status.ToString())</td>
+                            <td class="text-end">
+                                @if (draft.Status == NzPayFbtJournalStatus.AwaitingApproval && canPost)
+                                {
+                                    @if (rejectingInboundDraftId == draft.Id)
+                                    {
+                                        <div class="d-flex align-items-center justify-content-end gap-2 flex-wrap">
+                                            <span class="small">Reject this draft?</span>
+                                            <button class="btn btn-sm btn-danger" @onclick="() => RejectNzPayDraft(draft.Id)" disabled="@busy">Reject</button>
+                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => rejectingInboundDraftId = null" disabled="@busy">Cancel</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex justify-content-end gap-2 flex-wrap">
+                                            <button class="btn btn-sm btn-primary" @onclick="() => ApproveNzPayDraft(draft.Id)" disabled="@busy">Approve and post</button>
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => rejectingInboundDraftId = draft.Id" disabled="@busy">Reject</button>
+                                        </div>
+                                    }
+                                }
+                                else if (draft.PostedJournalId is Guid journalId)
+                                {
+                                    <a class="btn btn-sm btn-outline-secondary" href="o/@OrganisationId/journals/@journalId">View journal</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+        </section>
     }
 
     <section class="settings-card mb-3">
@@ -72,7 +183,7 @@ else
                     </InputSelect>
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Employer FNPF expense</label>
+                    <label class="form-label">Employer @(IsNz ? "KiwiSaver" : "FNPF") expense</label>
                     <InputSelect class="form-select" @bind-Value="model.EmployerContributionsExpenseAccountId" disabled="@(!canManageConnections)">
                         @foreach (var account in expenseAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
                     </InputSelect>
@@ -90,7 +201,7 @@ else
                     </InputSelect>
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">FNPF payable</label>
+                    <label class="form-label">@(IsNz ? "KiwiSaver" : "FNPF") payable</label>
                     <InputSelect class="form-select" @bind-Value="model.FnpfPayableAccountId" disabled="@(!canManageConnections)">
                         @foreach (var account in liabilityAccounts) { <option value="@account.Id">@AccountLabel(account)</option> }
                     </InputSelect>
@@ -116,6 +227,8 @@ else
 
     @if (connection is not null)
     {
+        @if (!IsNz)
+        {
         <section class="settings-card mb-3">
             <h2>Government payment follow-up</h2>
             <p>Payments marked manually in Payroll Island appear here as awaiting confirmation. They leave its due list immediately. A declaration is not a bank reconciliation or proof that a return was filed. This connection checks for new records every 15 minutes.</p>
@@ -140,6 +253,7 @@ else
                 </table></div>
             }
         </section>
+        }
         <section class="settings-card mb-3">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                 <div>
@@ -184,9 +298,9 @@ else
                                             <summary>Review breakdown</summary>
                                             <dl class="mt-2 mb-2">
                                                 <div><dt>Period</dt><dd>@item.PeriodStart.ToString("dd MMM") – @item.PeriodEnd.ToString("dd MMM yyyy")</dd></div>
-                                                <div><dt>Employer FNPF</dt><dd>@Money(item.EmployerFnpf)</dd></div>
+                                                <div><dt>Employer @(IsNz ? "KiwiSaver" : "FNPF")</dt><dd>@Money(item.EmployerFnpf)</dd></div>
                                                 <div><dt>Employee PAYE</dt><dd>@Money(item.EmployeePaye)</dd></div>
-                                                <div><dt>Employee FNPF</dt><dd>@Money(item.EmployeeFnpf)</dd></div>
+                                                <div><dt>Employee @(IsNz ? "KiwiSaver" : "FNPF")</dt><dd>@Money(item.EmployeeFnpf)</dd></div>
                                                 <div><dt>Other deductions</dt><dd>@Money(item.OtherDeductions)</dd></div>
                                             </dl>
                                             @foreach (var payment in item.Payments.OrderBy(x => x.DueDate).ThenBy(x => x.Kind))
@@ -239,6 +353,8 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access;
     private PayrollIslandConnection? connection;
+    private NzPayApiCredential? inboundCredential;
+    private IReadOnlyList<NzPayFbtJournalDraft> inboundDrafts = [];
     private IReadOnlyList<PayrollIslandPayRunImport> imports = [];
     private IReadOnlyList<PayrollGovernmentPaymentClaim> paymentClaims = [];
     private List<LedgerAccount> expenseAccounts = [];
@@ -250,6 +366,9 @@ else
     private bool canPost;
     private bool busy;
     private Guid? confirmingImportId;
+    private Guid? rejectingInboundDraftId;
+    private bool confirmCredentialRotation;
+    private string? issuedNzPayToken;
     private string? message;
     private string messageClass = "alert-success";
 
@@ -292,6 +411,11 @@ else
     {
         connection = await PayrollIntegration.GetConnectionAsync(userId, OrganisationId);
         imports = await PayrollIntegration.ListImportsAsync(userId, OrganisationId);
+        if (IsNz)
+        {
+            inboundCredential = await NzPayIntegration.GetActiveCredentialAsync(userId, OrganisationId);
+            inboundDrafts = await NzPayIntegration.ListDraftsAsync(userId, OrganisationId);
+        }
         paymentClaims = await Db.PayrollGovernmentPaymentClaims.AsNoTracking()
             .Where(x => x.OrganisationId == OrganisationId)
             .OrderByDescending(x => x.PaidOn).Take(100).ToListAsync();
@@ -361,6 +485,46 @@ else
         });
     }
 
+    private async Task PrepareNzPayCredential()
+    {
+        if (inboundCredential is null) await GenerateNzPayCredential();
+        else confirmCredentialRotation = true;
+    }
+
+    private async Task GenerateNzPayCredential()
+    {
+        await Run(async () =>
+        {
+            var issued = await NzPayIntegration.RotateCredentialAsync(userId, OrganisationId);
+            issuedNzPayToken = issued.Token;
+            confirmCredentialRotation = false;
+            message = "NZ Pay connection token created. Copy it now and save it in NZ Pay.";
+            await Reload();
+        });
+    }
+
+    private async Task ApproveNzPayDraft(Guid draftId)
+    {
+        await Run(async () =>
+        {
+            var journal = await NzPayIntegration.ApproveDraftAsync(userId, OrganisationId, draftId);
+            rejectingInboundDraftId = null;
+            message = $"NZ Pay FBT journal {journal.SequenceNumber} approved and posted.";
+            await Reload();
+        });
+    }
+
+    private async Task RejectNzPayDraft(Guid draftId)
+    {
+        await Run(async () =>
+        {
+            await NzPayIntegration.RejectDraftAsync(userId, OrganisationId, draftId);
+            rejectingInboundDraftId = null;
+            message = "NZ Pay FBT journal rejected. Nothing was posted to the ledger.";
+            await Reload();
+        });
+    }
+
     private async Task Post(Guid importId)
     {
         await Run(async () =>
@@ -396,6 +560,8 @@ else
     }
 
     private string Money(decimal value) => $"{access!.Organisation.BaseCurrency} {value:N2}";
+    private bool IsNz => string.Equals(access?.Organisation.CountryCode, "NZ", StringComparison.OrdinalIgnoreCase);
+    private string AccountIslandAddress => Navigation.BaseUri.TrimEnd('/');
     private static string AccountLabel(LedgerAccount account) => $"{account.Code} · {account.Name}";
     private static string PaymentKindLabel(PayrollPaymentKind kind) => kind switch
     {

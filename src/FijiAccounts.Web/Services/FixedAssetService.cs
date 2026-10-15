@@ -16,7 +16,8 @@ public sealed record FixedAssetRequest(
     Guid AssetAccountId,
     Guid DepreciationExpenseAccountId,
     Guid AccumulatedDepreciationAccountId,
-    Guid? AcquisitionBankAccountId = null);
+    Guid? AcquisitionBankAccountId = null,
+    string? VehicleRegistration = null);
 
 public sealed record FixedAssetDisposalRequest(
     Guid OrganisationId,
@@ -40,6 +41,12 @@ public sealed class FixedAssetService(ApplicationDbContext db, TenantAccessServi
     {
         throw new UnauthorizedAccessException(
             "You cannot maintain fixed assets for this organisation.");
+    }
+
+    if (request.VehicleRegistration?.Trim().Length > 20)
+    {
+        throw new InvalidOperationException(
+            "Vehicle registration cannot exceed 20 characters.");
     }
 
     var ids = new[]
@@ -142,6 +149,9 @@ var assetNumber =
             OrganisationId = request.OrganisationId,
             AssetNumber = assetNumber,
             Name = request.Name.Trim(),
+            VehicleRegistration = string.IsNullOrWhiteSpace(request.VehicleRegistration)
+                ? null
+                : request.VehicleRegistration.Trim().ToUpperInvariant(),
             AcquisitionDate = request.AcquisitionDate,
             Cost = request.Cost,
             ResidualValue = request.ResidualValue,

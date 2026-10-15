@@ -1,4 +1,5 @@
 using FijiAccounts.Web.Components;
+using FijiAccounts.Web;
 using FijiAccounts.Domain.Fiscalisation;
 using FijiAccounts.Web.Components.Account;
 using FijiAccounts.Web.Api.Mobile.V1;
@@ -220,6 +221,7 @@ builder.Services.AddHttpClient<IPayrollIslandClient, PayrollIslandHttpClient>(cl
     client.MaxResponseContentBufferSize = 5 * 1024 * 1024;
 });
 builder.Services.AddScoped<PayrollIslandIntegrationService>();
+builder.Services.AddScoped<NzPayInboundIntegrationService>();
 builder.Services.AddHostedService<PayrollIslandPayRunSyncWorker>();
 builder.Services.AddScoped<PayrollGovernmentPaymentSyncService>();
 builder.Services.AddHostedService<PayrollGovernmentPaymentSyncWorker>();
@@ -367,6 +369,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapMobileApiV1();
 PayrollServiceBillingService.Map(app);
+app.MapNzPayIntegrationEndpoints();
 
 if (mobileAuthenticationEnabled)
 {

@@ -152,6 +152,9 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         Set<PayrollIslandPayRunImport>();
     public DbSet<PayrollIslandPaymentRecord> PayrollIslandPaymentRecords =>
         Set<PayrollIslandPaymentRecord>();
+    public DbSet<NzPayApiCredential> NzPayApiCredentials => Set<NzPayApiCredential>();
+    public DbSet<NzPayFbtJournalDraft> NzPayFbtJournalDrafts => Set<NzPayFbtJournalDraft>();
+    public DbSet<NzPayFbtJournalDraftLine> NzPayFbtJournalDraftLines => Set<NzPayFbtJournalDraftLine>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -1387,6 +1390,56 @@ builder.Entity<FixedAsset>()
         builder.Entity<PayrollIslandConnection>()
             .HasIndex(x => x.OrganisationId)
             .IsUnique();
+        builder.Entity<NzPayApiCredential>()
+            .HasIndex(x => new { x.OrganisationId, x.TokenSha256 })
+            .IsUnique();
+        builder.Entity<NzPayApiCredential>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasIndex(x => new { x.OrganisationId, x.IdempotencyKey })
+            .IsUnique();
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasIndex(x => new { x.OrganisationId, x.ExternalJournalId })
+            .IsUnique();
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasIndex(x => new { x.OrganisationId, x.Status, x.ReceivedAt });
+        builder.Entity<NzPayFbtJournalDraft>()
+            .Property(x => x.Amount)
+            .HasPrecision(18, 2);
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasOne(x => x.Credential)
+            .WithMany()
+            .HasForeignKey(x => x.CredentialId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<NzPayFbtJournalDraft>()
+            .HasOne(x => x.PostedJournal)
+            .WithMany()
+            .HasForeignKey(x => x.PostedJournalId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<NzPayFbtJournalDraftLine>()
+            .Property(x => x.Debit)
+            .HasPrecision(18, 2);
+        builder.Entity<NzPayFbtJournalDraftLine>()
+            .Property(x => x.Credit)
+            .HasPrecision(18, 2);
+        builder.Entity<NzPayFbtJournalDraftLine>()
+            .HasOne(x => x.Draft)
+            .WithMany(x => x.Lines)
+            .HasForeignKey(x => x.DraftId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<NzPayFbtJournalDraftLine>()
+            .HasOne(x => x.LedgerAccount)
+            .WithMany()
+            .HasForeignKey(x => x.LedgerAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<PayrollGovernmentPaymentClaim>()
             .HasIndex(x => new { x.ConnectionId, x.DeadlineKey, x.PeriodStart })
             .IsUnique();

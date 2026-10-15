@@ -1373,6 +1373,10 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<int>("UsefulLifeMonths")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("VehicleRegistration")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("AccumulatedDepreciationAccountId");
@@ -2271,6 +2275,187 @@ namespace FijiAccounts.Web.Migrations
                     b.HasIndex("OrganisationId", "IsRead", "CreatedAtTicks", "Id");
 
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayApiCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RevokedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenPrefix")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganisationId", "TokenSha256")
+                        .IsUnique();
+
+                    b.ToTable("NzPayApiCredentials");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayFbtJournalDraft", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssetReferencesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CredentialId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DecidedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("EntryDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalJournalId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("PostedJournalId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialId");
+
+                    b.HasIndex("PostedJournalId");
+
+                    b.HasIndex("OrganisationId", "ExternalJournalId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganisationId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("OrganisationId", "Status", "ReceivedAt");
+
+                    b.ToTable("NzPayFbtJournalDrafts");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayFbtJournalDraftLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Credit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Debit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DraftId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("LedgerAccountId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DraftId");
+
+                    b.HasIndex("LedgerAccountId");
+
+                    b.ToTable("NzPayFbtJournalDraftLines");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.Organisation", b =>
@@ -7492,6 +7677,62 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayApiCredential", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
+                        .WithMany()
+                        .HasForeignKey("OrganisationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organisation");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayFbtJournalDraft", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.NzPayApiCredential", "Credential")
+                        .WithMany()
+                        .HasForeignKey("CredentialId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
+                        .WithMany()
+                        .HasForeignKey("OrganisationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.PostedJournal", "PostedJournal")
+                        .WithMany()
+                        .HasForeignKey("PostedJournalId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Credential");
+
+                    b.Navigation("Organisation");
+
+                    b.Navigation("PostedJournal");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayFbtJournalDraftLine", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.NzPayFbtJournalDraft", "Draft")
+                        .WithMany("Lines")
+                        .HasForeignKey("DraftId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.LedgerAccount", "LedgerAccount")
+                        .WithMany()
+                        .HasForeignKey("LedgerAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Draft");
+
+                    b.Navigation("LedgerAccount");
+                });
+
             modelBuilder.Entity("FijiAccounts.Web.Data.Organisation", b =>
                 {
                     b.HasOne("FijiAccounts.Web.Data.OrganisationGroup", "OrganisationGroup")
@@ -9200,6 +9441,11 @@ namespace FijiAccounts.Web.Migrations
             modelBuilder.Entity("FijiAccounts.Web.Data.GroupLedgerAccount", b =>
                 {
                     b.Navigation("Mappings");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.NzPayFbtJournalDraft", b =>
+                {
+                    b.Navigation("Lines");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.OrganisationGroup", b =>
