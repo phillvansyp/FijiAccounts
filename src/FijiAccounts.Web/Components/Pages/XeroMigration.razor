@@ -7,6 +7,7 @@
 @using Microsoft.AspNetCore.Identity
 @inject XeroMigrationService MigrationService
 @inject XeroConnectionService XeroConnection
+@inject XeroImportPreparationService ImportPreparation
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -226,7 +227,77 @@ else
 
     <section class="migration-card">
         <div class="section-heading">
-            <div><p class="step-label">Steps 3 and 4</p><h2>Staging, reconciliation and cutover</h2></div>
+            <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
+            <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
+        </div>
+        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island.</p>
+        <div class="import-actions">
+            @if (canPrepare && migration is not null)
+            {
+                <button type="button" class="btn btn-primary" @onclick="PrepareImport" disabled="@preparingImport">@(preparingImport ? "Checking Xero records..." : "Prepare and check import")</button>
+                <button type="button" class="btn btn-secondary" @onclick="ImportMasterData" disabled="@(preparingImport || workspace.SourceRecordCount == 0)">Add accounts, contacts, currencies and items</button>
+            }
+        </div>
+        <div class="import-summary">
+            <div><strong>@workspace.DatasetCount</strong><span>datasets indexed</span></div>
+            <div><strong>@workspace.ReadyCount</strong><span>records ready</span></div>
+            <div><strong>@workspace.ImportedCount</strong><span>master records added</span></div>
+            <div class="@(workspace.BlockingCount > 0 ? "summary-danger" : string.Empty)"><strong>@workspace.BlockingCount</strong><span>blocking issues</span></div>
+            <div class="@(workspace.WarningCount > 0 ? "summary-warning" : string.Empty)"><strong>@workspace.WarningCount</strong><span>warnings</span></div>
+        </div>
+
+        @if (workspace.Mappings.Count > 0)
+        {
+            var unresolvedMappings = workspace.Mappings.Where(x => x.Status == XeroMigrationMappingStatus.Suggested).ToList();
+            <details class="mapping-panel" open="@(unresolvedMappings.Count > 0)">
+                <summary><strong>Mapping decisions</strong><span>@unresolvedMappings.Count awaiting a choice · @workspace.Mappings.Count(x => x.Status == XeroMigrationMappingStatus.Confirmed) confirmed</span></summary>
+                @if (unresolvedMappings.Count == 0)
+                {
+                    <p class="empty-state">All discovered Xero values have a confirmed destination.</p>
+                }
+                else
+                {
+                    <div class="mapping-list">
+                        @foreach (var mapping in unresolvedMappings)
+                        {
+                            <div class="mapping-row">
+                                <div><small>@MappingKindLabel(mapping.Kind)</small><strong>@mapping.SourceName</strong></div>
+                                <select class="form-select" value="@MappingSelection(mapping.Id)" @onchange="args => mappingSelections[mapping.Id] = args.Value?.ToString() ?? string.Empty" disabled="@preparingImport">
+                                    <option value="">Choose an Account Island destination</option>
+                                    @foreach (var target in Targets(mapping.Kind))
+                                    {
+                                        <option value="@target.Value">@target.Label</option>
+                                    }
+                                </select>
+                                <button type="button" class="btn btn-secondary" @onclick="() => SaveMapping(mapping)" disabled="@(preparingImport || string.IsNullOrWhiteSpace(MappingSelection(mapping.Id)))">Confirm</button>
+                                <button type="button" class="btn btn-link" @onclick="() => IgnoreMapping(mapping)" disabled="@preparingImport">Exclude</button>
+                            </div>
+                        }
+                    </div>
+                }
+            </details>
+        }
+
+        @if (workspace.Issues.Count > 0)
+        {
+            <details class="issue-panel" open>
+                <summary><strong>Items requiring attention</strong><span>@workspace.BlockingCount blocking · @workspace.WarningCount warnings</span></summary>
+                <div class="issue-list">
+                    @foreach (var issue in workspace.Issues)
+                    {
+                        <div class="issue @issue.Severity.ToString().ToLowerInvariant()">
+                            <strong>@(issue.Severity == XeroMigrationIssueSeverity.Blocking ? "Must fix" : issue.Severity.ToString())</strong>
+                            <span>@issue.Message</span>
+                        </div>
+                    }
+                </div>
+            </details>
+        }
+    </section>
+
+    <section class="migration-card">
+        <div class="section-heading">
+            <div><p class="step-label">Step 4</p><h2>Reconciliation and cutover</h2></div>
             <span>@CompletedChecks of 7 controls complete</span>
         </div>
         <div class="control-warning">
@@ -243,8 +314,8 @@ else
             @Check("GST agrees", "The GST control accounts agree to the last filed return and the next unfiled period.", nameof(model.GstReconciled), model.GstReconciled)
         </div>
         <label class="option-card approval mt-3">
-            <InputCheckbox class="form-check-input" @bind-Value="model.ManagementApproved" disabled="@(!canApprove || !AllChecksComplete || busy)" />
-            <span><strong>Management approves the cutover</strong><small>This becomes available only after all seven controls have been completed.</small></span>
+            <InputCheckbox class="form-check-input" @bind-Value="model.ManagementApproved" disabled="@(!canApprove || !CutoverCanBeApproved || busy)" />
+            <span><strong>Management approves the cutover</strong><small>This becomes available after all seven controls are complete and the prepared import has no blocking issues.</small></span>
         </label>
         @if (canPrepare && migration is not null)
         {
@@ -261,12 +332,15 @@ else
     private List<XeroMigrationFile> files = [];
     private MigrationModel model = new();
     private XeroConnectionStatus? connectionStatus;
+    private XeroImportWorkspace workspace = new(0, 0, 0, 0, 0, 0, 0, [], [], null);
+    private readonly Dictionary<XeroMigrationMappingKind, IReadOnlyList<XeroMappingTarget>> mappingTargets = [];
+    private readonly Dictionary<Guid, string> mappingSelections = [];
     private string userId = string.Empty;
     private string selectedCategory = XeroMigrationService.Categories[0];
     private string selectedTenantId = string.Empty;
     private string? message;
     private string messageClass = "alert-success";
-    private bool loading = true, busy, uploading, syncing, canPrepare, canApprove;
+    private bool loading = true, busy, uploading, syncing, preparingImport, canPrepare, canApprove;
     private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
     private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
     private int SuppliedRequiredCount => XeroMigrationService.RequiredCategories.Count(category => files.Any(x => x.Category == category));
@@ -277,6 +351,8 @@ else
         .ToList() ?? [];
     private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
     private bool AllChecksComplete => CompletedChecks == 7;
+    private bool CutoverCanBeApproved => AllChecksComplete &&
+        (workspace.SourceRecordCount == 0 || workspace.BlockingCount == 0);
     private string StatusLabel => migration?.Status switch
     {
         XeroMigrationStatus.ReadyForImport => "Exports ready",
@@ -304,6 +380,7 @@ else
             canApprove = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            await ReloadWorkspace();
             selectedTenantId = connectionStatus.TenantId?.ToString() ?? string.Empty;
             ApplyMigration();
             if (string.Equals(XeroResult, "connected", StringComparison.OrdinalIgnoreCase))
@@ -344,7 +421,7 @@ else
         busy = true; message = null;
         try
         {
-            if (!AllChecksComplete) model.ManagementApproved = false;
+            if (!CutoverCanBeApproved) model.ManagementApproved = false;
             migration = await MigrationService.SaveAsync(userId, OrganisationId, new(
                 model.SourceOrganisationName, model.CutoverDate, model.IncludeFullHistory,
                 model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled,
@@ -424,6 +501,101 @@ else
         finally { syncing = false; }
     }
 
+    private async Task PrepareImport()
+    {
+        preparingImport = true; message = null;
+        try
+        {
+            var result = await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            await ReloadWorkspace();
+            message = result.BlockingCount == 0
+                ? $"Checked {result.SourceRecordCount:N0} Xero records. The staged import has no blocking issues."
+                : $"Checked {result.SourceRecordCount:N0} Xero records. Resolve {result.BlockingCount} blocking issue(s) shown below.";
+            messageClass = result.BlockingCount == 0 ? "alert-success" : "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
+    private async Task ImportMasterData()
+    {
+        preparingImport = true; message = null;
+        try
+        {
+            var count = await ImportPreparation.ImportMasterDataAsync(userId, OrganisationId);
+            await ReloadWorkspace();
+            message = count == 0
+                ? "No new accounts, contacts, currencies or items needed to be added."
+                : $"Added {count:N0} Xero master record(s) to Account Island and refreshed their mappings.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
+    private async Task ReloadWorkspace()
+    {
+        workspace = await ImportPreparation.GetWorkspaceAsync(userId, OrganisationId);
+        mappingSelections.Clear();
+        mappingTargets.Clear();
+        foreach (var kind in workspace.Mappings.Where(x => x.Status == XeroMigrationMappingStatus.Suggested).Select(x => x.Kind).Distinct())
+            mappingTargets[kind] = await ImportPreparation.GetMappingTargetsAsync(userId, OrganisationId, kind);
+    }
+
+    private IReadOnlyList<XeroMappingTarget> Targets(XeroMigrationMappingKind kind) =>
+        mappingTargets.GetValueOrDefault(kind) ?? [];
+    private string MappingSelection(Guid mappingId) => mappingSelections.GetValueOrDefault(mappingId) ?? string.Empty;
+    private static string MappingKindLabel(XeroMigrationMappingKind kind) => kind switch
+    {
+        XeroMigrationMappingKind.TaxRate => "GST rate",
+        XeroMigrationMappingKind.TrackingCategory => "Tracking category",
+        XeroMigrationMappingKind.TrackingOption => "Tracking option",
+        XeroMigrationMappingKind.AssetType => "Fixed asset account",
+        _ => kind.ToString()
+    };
+
+    private async Task SaveMapping(XeroMigrationMapping mapping)
+    {
+        var selected = MappingSelection(mapping.Id);
+        var target = Targets(mapping.Kind).FirstOrDefault(x => x.Value == selected);
+        if (target is null) return;
+        preparingImport = true; message = null;
+        try
+        {
+            await ImportPreparation.ConfirmMappingAsync(userId, OrganisationId, mapping.Id, target.Id, target.Label, false);
+            await ReloadWorkspace();
+            message = $"Mapping saved for {mapping.SourceName}."; messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
+    private async Task IgnoreMapping(XeroMigrationMapping mapping)
+    {
+        preparingImport = true; message = null;
+        try
+        {
+            await ImportPreparation.ConfirmMappingAsync(userId, OrganisationId, mapping.Id, null, null, true);
+            await ReloadWorkspace();
+            message = $"{mapping.SourceName} will be excluded and remains listed as a warning.";
+            messageClass = "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
     private RenderFragment Check(string title, string detail, string property, bool value) => builder =>
     {
         var sequence = 0;
@@ -439,7 +611,7 @@ else
     private void SetCheck(string property, bool value)
     {
         typeof(MigrationModel).GetProperty(property)?.SetValue(model, value);
-        if (!AllChecksComplete) model.ManagementApproved = false;
+        if (!CutoverCanBeApproved) model.ManagementApproved = false;
     }
 
     private static string FormatSize(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:N1} MB" : $"{Math.Max(1, bytes / 1024d):N0} KB";

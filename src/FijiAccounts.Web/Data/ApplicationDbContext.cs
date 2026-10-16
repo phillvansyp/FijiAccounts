@@ -159,6 +159,10 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<XeroMigrationFile> XeroMigrationFiles => Set<XeroMigrationFile>();
     public DbSet<XeroConnection> XeroConnections => Set<XeroConnection>();
     public DbSet<XeroApiSnapshot> XeroApiSnapshots => Set<XeroApiSnapshot>();
+    public DbSet<XeroMigrationRecord> XeroMigrationRecords => Set<XeroMigrationRecord>();
+    public DbSet<XeroMigrationMapping> XeroMigrationMappings => Set<XeroMigrationMapping>();
+    public DbSet<XeroMigrationIssue> XeroMigrationIssues => Set<XeroMigrationIssue>();
+    public DbSet<XeroMigrationImportRun> XeroMigrationImportRuns => Set<XeroMigrationImportRun>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -214,6 +218,48 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .WithMany()
             .HasForeignKey(x => x.ImmutableDocumentObjectId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroMigrationRecord>()
+            .HasIndex(x => new { x.XeroMigrationId, x.DatasetKey, x.ExternalId })
+            .IsUnique();
+        builder.Entity<XeroMigrationRecord>()
+            .HasIndex(x => new { x.OrganisationId, x.Status });
+        builder.Entity<XeroMigrationRecord>()
+            .HasOne(x => x.Migration)
+            .WithMany(x => x.Records)
+            .HasForeignKey(x => x.XeroMigrationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroMigrationRecord>()
+            .HasOne(x => x.Snapshot)
+            .WithMany()
+            .HasForeignKey(x => x.XeroApiSnapshotId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroMigrationMapping>()
+            .HasIndex(x => new { x.XeroMigrationId, x.Kind, x.SourceKey })
+            .IsUnique();
+        builder.Entity<XeroMigrationMapping>()
+            .HasOne(x => x.Migration)
+            .WithMany(x => x.Mappings)
+            .HasForeignKey(x => x.XeroMigrationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroMigrationIssue>()
+            .HasIndex(x => new { x.XeroMigrationId, x.IsResolved, x.Severity });
+        builder.Entity<XeroMigrationIssue>()
+            .HasOne(x => x.Migration)
+            .WithMany(x => x.Issues)
+            .HasForeignKey(x => x.XeroMigrationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroMigrationIssue>()
+            .HasOne(x => x.Record)
+            .WithMany()
+            .HasForeignKey(x => x.XeroMigrationRecordId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroMigrationImportRun>()
+            .HasIndex(x => new { x.XeroMigrationId, x.StartedAt });
+        builder.Entity<XeroMigrationImportRun>()
+            .HasOne(x => x.Migration)
+            .WithMany(x => x.ImportRuns)
+            .HasForeignKey(x => x.XeroMigrationId)
+            .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<ImmutableDocumentIntegrityScan>()
             .HasIndex(x => new { x.OrganisationId, x.CompletedAtTicks });
         builder.Entity<YearEndHandoverPackSnapshot>()

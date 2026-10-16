@@ -264,6 +264,7 @@ builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<XeroMigrationService>();
+builder.Services.AddScoped<XeroImportPreparationService>();
 builder.Services.Configure<XeroApiOptions>(builder.Configuration.GetSection(XeroApiOptions.SectionName));
 builder.Services.AddHttpClient<XeroApiClient>(client =>
 {

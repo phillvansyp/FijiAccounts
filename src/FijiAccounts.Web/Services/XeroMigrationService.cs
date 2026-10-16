@@ -116,7 +116,13 @@ public sealed class XeroMigrationService(
         migration.FixedAssetsReconciled = request.FixedAssetsReconciled;
         migration.GstReconciled = request.GstReconciled;
         migration.Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
-        migration.ManagementApproved = request.ManagementApproved && AllChecksComplete(migration);
+        var preparedRecordsExist = !created && await db.XeroMigrationRecords
+            .AnyAsync(x => x.XeroMigrationId == migration.Id, cancellationToken);
+        var hasBlockingImportIssues = preparedRecordsExist && await db.XeroMigrationIssues
+            .AnyAsync(x => x.XeroMigrationId == migration.Id && !x.IsResolved &&
+                           x.Severity == XeroMigrationIssueSeverity.Blocking, cancellationToken);
+        migration.ManagementApproved = request.ManagementApproved && AllChecksComplete(migration) &&
+                                       !hasBlockingImportIssues;
         migration.UpdatedAt = DateTimeOffset.UtcNow;
         migration.UpdatedByUserId = userId;
         migration.Status = CalculateStatus(migration);

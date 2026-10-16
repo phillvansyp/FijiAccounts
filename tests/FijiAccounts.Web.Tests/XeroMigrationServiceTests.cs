@@ -103,6 +103,67 @@ public sealed class XeroMigrationServiceTests
     }
 
     [Fact]
+    public async Task PreparedMigrationWithBlockingImportIssueCannotBeApproved()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var service = Service(test);
+        var cutover = new DateOnly(2026, 11, 1);
+        var migration = await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover));
+        var retained = new DatabaseImmutableDocumentStore(test.Db).Stage(
+            test.Organisation.Id, test.UserId, "{}"u8.ToArray());
+        var snapshot = new XeroApiSnapshot
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            DatasetKey = "sales-invoices",
+            DisplayName = "Sales invoices",
+            Endpoint = "Invoices",
+            ImmutableDocumentObjectId = retained.Id,
+            Sha256 = retained.Sha256,
+            Size = 2,
+            RetrievedByUserId = test.UserId
+        };
+        test.Db.XeroApiSnapshots.Add(snapshot);
+        test.Db.XeroMigrationRecords.Add(new XeroMigrationRecord
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            XeroApiSnapshotId = snapshot.Id,
+            DatasetKey = "sales-invoices",
+            ExternalId = "invoice-1",
+            DisplayName = "INV-1",
+            SourceHash = new string('1', 64),
+            PreparedByUserId = test.UserId
+        });
+        test.Db.XeroMigrationIssues.Add(new XeroMigrationIssue
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            Code = "LIVE_IMPORT_PENDING",
+            Severity = XeroMigrationIssueSeverity.Blocking,
+            Message = "One invoice still needs conversion."
+        });
+        await test.Db.SaveChangesAsync();
+
+        var result = await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover) with
+        {
+            XeroEntryStopped = true,
+            TrialBalanceReconciled = true,
+            ReceivablesReconciled = true,
+            PayablesReconciled = true,
+            BankReconciled = true,
+            FixedAssetsReconciled = true,
+            GstReconciled = true,
+            ManagementApproved = true
+        });
+
+        Assert.False(result.ManagementApproved);
+        Assert.NotEqual(XeroMigrationStatus.ApprovedForCutover, result.Status);
+    }
+
+    [Fact]
     public async Task AccountantCanPrepareButCannotGiveManagementApproval()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
