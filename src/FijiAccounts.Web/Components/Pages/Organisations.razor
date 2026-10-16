@@ -26,7 +26,7 @@ else
         {
             <a class="org-card text-decoration-none text-body" href="o/@membership.Organisation.Id">
                 <span class="badge text-bg-light">@(membership.IsClient ? "Accountant client" : membership.Organisation.Kind)</span>
-                <h2>@membership.Organisation.LegalName</h2>
+                <h2>@OrganisationDisplay.NameWithCountry(membership.Organisation)</h2>
                 @if (OrganisationIndustries.Label(membership.Organisation.Industry) is string industryLabel) { <p>@industryLabel</p> }<p>@membership.AccessLabel · @CountryName(membership.Organisation.CountryCode) · @membership.Organisation.BaseCurrency</p>
             </a>
         }

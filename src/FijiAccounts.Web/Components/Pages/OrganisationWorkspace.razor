@@ -35,7 +35,7 @@ else
 {
     @if (!IsTeamPage)
     {
-    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><a href="organisations">All organisations</a><h1>@access.Organisation.LegalName</h1><p>@access.AccessLabel · @access.Organisation.BaseCurrency · @(access.IsClient ? "Accountant client" : "Direct access")</p></div></div><div class="banner-actions"><a href="help?from=o/@OrganisationId">Dashboard help</a><a class="primary-action" href="o/@OrganisationId/sales">＋ New invoice</a></div></section>
+    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><a href="organisations">All organisations</a><h1>@OrganisationDisplay.NameWithCountry(access.Organisation)</h1><p>@access.AccessLabel · @access.Organisation.BaseCurrency · @(access.IsClient ? "Accountant client" : "Direct access")</p></div></div><div class="banner-actions"><a href="help?from=o/@OrganisationId">Dashboard help</a><a class="primary-action" href="o/@OrganisationId/sales">＋ New invoice</a></div></section>
 
     <section class="dashboard-intro"><div><span class="eyebrow">Business overview</span><h2>Your finances, without the fog.</h2><p>Live balances and the work that needs attention, drawn directly from the ledger.</p></div><span class="as-at">As at @DateTime.Today.ToString("dd MMM yyyy")</span></section>
     <section class="kpi-grid">
@@ -283,7 +283,7 @@ else
     }
     @if (IsTeamPage)
     {
-    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><a href="o/@OrganisationId">← Organisation overview</a><h1>Team &amp; permissions</h1><p>@access.Organisation.LegalName · Manage users, permission profiles and access</p></div></div><div class="banner-actions"><a href="o/@OrganisationId/settings">Organisation settings</a></div></section>
+    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><a href="o/@OrganisationId">← Organisation overview</a><h1>Team &amp; permissions</h1><p>@OrganisationDisplay.NameWithCountry(access.Organisation) · Manage users, permission profiles and access</p></div></div><div class="banner-actions"><a href="o/@OrganisationId/settings">Organisation settings</a></div></section>
     <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Permission profile</th><th>Branch / division access</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@PermissionProfileLabel(member)</td><td>@DimensionAccessLabel(member)</td></tr> }</tbody></table></div>
     @if (canManageTeam)
     {

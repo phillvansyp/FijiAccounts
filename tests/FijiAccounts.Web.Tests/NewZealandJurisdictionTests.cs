@@ -7,6 +7,22 @@ namespace FijiAccounts.Web.Tests;
 
 public sealed class NewZealandJurisdictionTests
 {
+    [Theory]
+    [InlineData("FJ", "JCR 2006 Limited (Fiji)")]
+    [InlineData("NZ", "JCR 2006 Limited (NZ)")]
+    public void Organisation_display_name_includes_clear_country_tag(
+        string countryCode,
+        string expected)
+    {
+        var organisation = new Organisation
+        {
+            LegalName = "JCR 2006 Limited",
+            CountryCode = countryCode
+        };
+
+        Assert.Equal(expected, OrganisationDisplay.NameWithCountry(organisation));
+    }
+
     [Fact]
     public async Task Creating_New_Zealand_company_applies_local_defaults_and_chart()
     {

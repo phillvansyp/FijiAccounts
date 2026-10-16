@@ -54,7 +54,7 @@ else
                     <InputSelect class="form-select" @bind-Value="sourceCompanyId">
                         @foreach (var company in setup.Companies)
                         {
-                            <option value="@company.Id">@company.LegalName</option>
+                            <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode)</option>
                         }
                     </InputSelect>
                 </div>
@@ -101,7 +101,7 @@ else
         @foreach (var company in setup.Companies)
         {
             <details class="border rounded p-3 mb-2" open="@(company.Id == setup.Companies[0].Id)">
-                <summary><strong>@company.LegalName</strong> · @CompanyMappedCount(company.Id) of @CompanyAccountCount(company.Id) mapped</summary>
+                <summary><strong>@OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode)</strong> · @CompanyMappedCount(company.Id) of @CompanyAccountCount(company.Id) mapped</summary>
                 <div class="table-responsive mt-3">
                     <table class="table align-middle mb-0">
                         <thead><tr><th>Company account</th><th>Type</th><th>Canonical group account</th></tr></thead>
@@ -144,8 +144,8 @@ else
                     <DataAnnotationsValidator />
                     <ValidationSummary />
                     <div class="row">
-                        <div class="col-md-3 mb-2"><label class="form-label">Company</label><InputSelect class="form-select" @bind-Value="partnerModel.OrganisationId" @bind-Value:after="ResetPartnerAccounts">@foreach (var company in setup.Companies) { <option value="@company.Id">@company.LegalName</option> }</InputSelect></div>
-                        <div class="col-md-3 mb-2"><label class="form-label">Counterparty</label><InputSelect class="form-select" @bind-Value="partnerModel.CounterpartyOrganisationId">@foreach (var company in setup.Companies.Where(x => x.Id != partnerModel.OrganisationId)) { <option value="@company.Id">@company.LegalName</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Company</label><InputSelect class="form-select" @bind-Value="partnerModel.OrganisationId" @bind-Value:after="ResetPartnerAccounts">@foreach (var company in setup.Companies) { <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode)</option> }</InputSelect></div>
+                        <div class="col-md-3 mb-2"><label class="form-label">Counterparty</label><InputSelect class="form-select" @bind-Value="partnerModel.CounterpartyOrganisationId">@foreach (var company in setup.Companies.Where(x => x.Id != partnerModel.OrganisationId)) { <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode)</option> }</InputSelect></div>
                         <div class="col-md-3 mb-2"><label class="form-label">Due from / receivable</label><InputSelect class="form-select" @bind-Value="partnerModel.ReceivableAccountId">@AccountOptions(AccountType.Asset)</InputSelect></div>
                         <div class="col-md-3 mb-2"><label class="form-label">Due to / payable</label><InputSelect class="form-select" @bind-Value="partnerModel.PayableAccountId">@AccountOptions(AccountType.Liability)</InputSelect></div>
                         <div class="col-md-3 mb-2"><label class="form-label">Intercompany revenue</label><InputSelect class="form-select" @bind-Value="partnerModel.RevenueAccountId">@AccountOptions(AccountType.Revenue)</InputSelect></div>
@@ -308,7 +308,7 @@ else
         setup?.Mappings.FirstOrDefault(x => x.LedgerAccountId == ledgerAccountId)?.GroupLedgerAccountId.ToString() ?? "";
     private int CompanyAccountCount(Guid companyId) => setup?.CompanyAccounts.Count(x => x.OrganisationId == companyId) ?? 0;
     private int CompanyMappedCount(Guid companyId) => setup?.CompanyAccounts.Count(account => account.OrganisationId == companyId && setup.Mappings.Any(mapping => mapping.LedgerAccountId == account.Id)) ?? 0;
-    private string CompanyName(Guid companyId) => setup?.Companies.FirstOrDefault(x => x.Id == companyId)?.LegalName ?? "Unknown company";
+    private string CompanyName(Guid companyId) => setup?.Companies.FirstOrDefault(x => x.Id == companyId) is GroupSetupCompany company ? OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode) : "Unknown company";
     private string AccountName(Guid accountId)
     {
         var account = setup?.CompanyAccounts.FirstOrDefault(x => x.Id == accountId);

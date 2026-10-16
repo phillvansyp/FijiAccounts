@@ -689,7 +689,8 @@ public sealed class IntercompanyReconciliationService(
                     .Select(company => new GroupSetupCompany(
                         company.Id,
                         company.LegalName,
-                        company.BaseCurrency))
+                        company.BaseCurrency,
+                        company.CountryCode))
                     .ToList()
             })
             .SingleOrDefaultAsync(cancellationToken)

@@ -64,7 +64,7 @@ else
                     {
                         <tr>
                             <td>
-                                <strong>@company.LegalName</strong>
+                                <strong>@OrganisationDisplay.NameWithCountry(company)</strong>
                                 @if (company.Id == OrganisationId)
                                 {
                                     <span class="badge text-bg-light ms-1">Current</span>

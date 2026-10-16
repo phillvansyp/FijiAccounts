@@ -74,7 +74,7 @@ else
                         <select class="form-select" @bind="counterpartyOrganisationId">
                             @foreach (var company in CounterpartyCompanies())
                             {
-                                <option value="@company.Id">@company.LegalName</option>
+                                <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company.LegalName, company.CountryCode)</option>
                             }
                         </select>
                     </div>

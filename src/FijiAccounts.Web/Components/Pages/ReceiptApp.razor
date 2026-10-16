@@ -33,7 +33,7 @@ else if (org == Guid.Empty)
         <label for="receipt-org">Organisation</label>
         <select id="receipt-org" class="form-select" @bind="org" @bind:after="SwitchOrganisation">
             <option value="@Guid.Empty">Choose an organisation</option>
-            @foreach (var company in organisations) { <option value="@company.Id">@company.LegalName</option> }
+            @foreach (var company in organisations) { <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company)</option> }
         </select>
     </section>
 }
@@ -41,7 +41,7 @@ else
 {
     <label for="receipt-org">Organisation</label>
     <select id="receipt-org" class="form-select mb-4" @bind="org" @bind:after="SwitchOrganisation" disabled="@busy">
-        @foreach (var company in organisations) { <option value="@company.Id">@company.LegalName</option> }
+        @foreach (var company in organisations) { <option value="@company.Id">@OrganisationDisplay.NameWithCountry(company)</option> }
     </select>
     @if (owner && dashboard is not null)
     {

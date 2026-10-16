@@ -5,7 +5,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record GroupSetupCompany(Guid Id, string LegalName, string BaseCurrency);
+public sealed record GroupSetupCompany(
+    Guid Id,
+    string LegalName,
+    string BaseCurrency,
+    string CountryCode = "FJ");
 
 public sealed record GroupSetupLedgerAccount(
     Guid Id,
@@ -564,7 +568,8 @@ public sealed class GroupAccountMappingService(ApplicationDbContext db)
                     .Select(company => new GroupSetupCompany(
                         company.Id,
                         company.LegalName,
-                        company.BaseCurrency))
+                        company.BaseCurrency,
+                        company.CountryCode))
                     .ToList()
             })
             .SingleOrDefaultAsync(cancellationToken)

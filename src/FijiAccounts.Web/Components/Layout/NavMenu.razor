@@ -18,20 +18,20 @@
 
         @if (accessibleOrganisations.Count > 0)
         {
-            <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
+            <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@ActiveOrganisationDisplayName</span></summary>
                 <div class="org-panel">
                     @if (activeOrganisationId is not null)
                     {
-                        <div class="active-company"><span class="org-avatar">@OrganisationInitials(activeOrganisationName!)</span><b>@activeOrganisationName</b></div>
+                        <div class="active-company"><span class="org-avatar">@OrganisationInitials(activeOrganisationName!)</span><b>@ActiveOrganisationDisplayName</b></div>
                     }
                     @if (accessibleOrganisations.Count > 1)
                     {
                         <strong>Organisations</strong>
-                        @foreach (var item in accessibleOrganisations.Where(x => x.Organisation.Id != activeOrganisationId)) { <a href="o/@item.Organisation.Id"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span><b>@item.Organisation.LegalName</b><small>@(item.IsClient ? "Accountant client" : item.AccessLabel)</small></span></a> }
+                        @foreach (var item in accessibleOrganisations.Where(x => x.Organisation.Id != activeOrganisationId)) { <a href="o/@item.Organisation.Id"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span><b>@OrganisationDisplay.NameWithCountry(item.Organisation)</b><small>@(item.IsClient ? "Accountant client" : item.AccessLabel)</small></span></a> }
                     }
                     @if (activeOrganisationId is not null)
                     {
-                        <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, Fiji tax and financial settings</small></span></a>
+                        <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
                         <a class="company-action" href="@OrgUrl("team")"><span class="company-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
                     }
 
@@ -76,6 +76,9 @@
 
 @code {
     private string currentUrl = string.Empty; private Guid? activeOrganisationId; private string? activeOrganisationName; private string? activeUserId; private List<AccessibleOrganisation> accessibleOrganisations = []; private int unreadNotificationCount, pendingReceiptCount; private IDisposable? updateSubscription; private bool liveRefreshInProgress, liveRefreshRequested;
+    private Organisation ActiveOrganisation => accessibleOrganisations.FirstOrDefault(x => x.Organisation.Id == activeOrganisationId)?.Organisation ?? accessibleOrganisations[0].Organisation;
+    private string ActiveOrganisationDisplayName => OrganisationDisplay.NameWithCountry(ActiveOrganisation);
+    private string ActiveCountryTag => OrganisationDisplay.CountryTag(ActiveOrganisation.CountryCode);
     private string ReceiptsUrl => activeOrganisationId is Guid id ? $"/receipts?org={id}" : "/receipts";
     private string SearchUrl => activeOrganisationId is null ? "help" : $"o/{activeOrganisationId}/search";
     private string ContextHelpUrl => $"help?from={Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri))}";
