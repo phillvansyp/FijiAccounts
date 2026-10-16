@@ -31,17 +31,24 @@ public sealed class XeroMigrationService(
     public const int MaximumBytes = 25 * 1024 * 1024;
     public static readonly string[] Categories =
     [
-        "General ledger", "Trial balance", "Chart of accounts", "Contacts",
-        "Sales invoices and credit notes", "Bills and supplier credits",
-        "Bank statements and reconciliation", "Fixed assets", "Inventory items",
-        "GST returns", "Document attachments", "Other evidence"
+        "General ledger", "Trial balance", "Balance Sheet and Profit & Loss",
+        "Chart of accounts", "Contacts", "Sales invoices, credits and allocations",
+        "Bills, supplier credits and allocations", "Receivable Invoice Detail",
+        "Payable Invoice Detail", "Bank statements and reconciliation",
+        "Fixed assets and depreciation reconciliation", "GST returns and reconciliation",
+        "Payroll history reports", "Inventory items", "Budgets", "Tracking categories",
+        "Quotes and purchase orders", "Repeating transactions", "Document attachments",
+        "Other evidence"
     ];
 
     public static readonly string[] RequiredCategories =
     [
-        "General ledger", "Trial balance", "Chart of accounts", "Contacts",
-        "Sales invoices and credit notes", "Bills and supplier credits",
-        "Bank statements and reconciliation", "Fixed assets", "GST returns"
+        "General ledger", "Trial balance", "Balance Sheet and Profit & Loss",
+        "Chart of accounts", "Contacts", "Sales invoices, credits and allocations",
+        "Bills, supplier credits and allocations", "Receivable Invoice Detail",
+        "Payable Invoice Detail", "Bank statements and reconciliation",
+        "Fixed assets and depreciation reconciliation", "GST returns and reconciliation",
+        "Payroll history reports"
     ];
 
     public async Task<XeroMigration?> GetAsync(
