@@ -2539,6 +2539,10 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<long>("NextSupplierCreditNoteNumber")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Nzbn")
+                        .HasMaxLength(13)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("OrganisationGroupId")
                         .HasColumnType("TEXT");
 

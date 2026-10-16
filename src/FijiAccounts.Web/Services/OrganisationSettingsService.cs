@@ -20,7 +20,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     bool IsVatRegistered = false,
     DateOnly? VatRegistrationDate = null,
     bool? RequireTradePaymentDocuments = null,
-    string? Industry = null);
+    string? Industry = null,
+    string? Nzbn = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -43,12 +44,13 @@ public sealed class OrganisationSettingsService(
 
         var legalName = RequiredText(request.LegalName, 160, "legal name");
         var tradingName = OptionalText(request.TradingName, 80, "trading name");
-        var tin = OptionalText(request.Tin, 32, "tax identification number");
         var businessAddress = OptionalText(request.BusinessAddress, 500, "business address");
         var countryCode = (await db.Organisations.AsNoTracking()
             .Where(x => x.Id == request.OrganisationId)
             .Select(x => x.CountryCode)
             .SingleOrDefaultAsync(cancellationToken)) ?? "";
+        var tin = OrganisationIdentifierValidation.NormaliseTaxIdentifier(countryCode, request.Tin);
+        var nzbn = OrganisationIdentifierValidation.NormaliseNzbn(countryCode, request.Nzbn);
         if (request.IsVatRegistered &&
             string.Equals(countryCode, "FJ", StringComparison.OrdinalIgnoreCase))
         {
@@ -93,6 +95,7 @@ public sealed class OrganisationSettingsService(
             organisation.TradingName,
             organisation.Industry,
             organisation.Tin,
+            organisation.Nzbn,
             organisation.BusinessAddress,
             organisation.IsVatRegistered,
             organisation.VatRegistrationDate,
@@ -112,6 +115,7 @@ public sealed class OrganisationSettingsService(
             TradingName = tradingName,
             Industry = industry,
             Tin = tin,
+            Nzbn = nzbn,
             BusinessAddress = businessAddress,
             request.IsVatRegistered,
             request.VatRegistrationDate,
@@ -134,6 +138,7 @@ public sealed class OrganisationSettingsService(
         organisation.TradingName = tradingName;
         organisation.Industry = industry;
         organisation.Tin = tin;
+        organisation.Nzbn = nzbn;
         organisation.BusinessAddress = businessAddress;
         organisation.IsVatRegistered = request.IsVatRegistered;
         organisation.VatRegistrationDate = request.IsVatRegistered

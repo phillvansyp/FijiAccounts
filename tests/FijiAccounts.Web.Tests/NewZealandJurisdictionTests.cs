@@ -17,9 +17,10 @@ public sealed class NewZealandJurisdictionTests
                 new CreateStandaloneCompanyRequest(
                     "Aotearoa Trading Limited",
                     null,
-                    "123-456-789",
+                    "091-160-412",
                     "NZ",
-                    OrganisationKind.Business));
+                    OrganisationKind.Business,
+                    Nzbn: "9429-000-000-000"));
 
         var stored = await test.Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == company.Id);
         var accounts = await test.Db.LedgerAccounts.AsNoTracking()
@@ -31,9 +32,30 @@ public sealed class NewZealandJurisdictionTests
         Assert.Equal("GST", stored.TaxLabel);
         Assert.Equal(3, stored.FinancialYearEndMonth);
         Assert.Equal(31, stored.FinancialYearEndDay);
+        Assert.Equal("091-160-412", stored.Tin);
+        Assert.Equal("9429000000000", stored.Nzbn);
         Assert.Contains(accounts, x => x.Code == "1150" && x.Name == "GST Receivable");
         Assert.Contains(accounts, x => x.Code == "2100" && x.Name == "GST Payable");
     }
+
+    [Theory]
+    [InlineData("091-160-412", true)]
+    [InlineData("91160412", true)]
+    [InlineData("123-456-789", false)]
+    [InlineData("not-an-ird", false)]
+    public void New_Zealand_IRD_number_validation_matches_the_official_checksum(
+        string value,
+        bool expected) =>
+        Assert.Equal(expected, OrganisationIdentifierValidation.IsValidIrdNumber(value));
+
+    [Theory]
+    [InlineData("9429000000000", true)]
+    [InlineData("9429000000001", false)]
+    [InlineData("1234567890128", false)]
+    public void NZBN_validation_requires_a_13_digit_New_Zealand_GLN(
+        string value,
+        bool expected) =>
+        Assert.Equal(expected, OrganisationIdentifierValidation.IsValidNzbn(value));
 
     [Fact]
     public async Task New_Zealand_invoice_posts_at_fifteen_percent_and_populates_GST101_workpaper()

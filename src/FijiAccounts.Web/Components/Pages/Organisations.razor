@@ -39,7 +39,11 @@ else
             <div class="mb-3"><label class="form-label">Legal name</label><input class="form-control" @bind="model.LegalName" @bind:event="oninput" /></div>
             <div class="mb-3"><label class="form-label">Trading name (optional)</label><input class="form-control" @bind="model.TradingName" @bind:event="oninput" /></div>
             <div class="mb-3"><label class="form-label">Country or island jurisdiction</label><InputSelect class="form-select" @bind-Value="model.CountryCode">@foreach (var jurisdiction in IslandJurisdictions.All) { <option value="@jurisdiction.CountryCode">@jurisdiction.CountryName — @jurisdiction.CurrencyCode</option> }</InputSelect><div class="form-text">Country settings determine currency, time zone, financial year and the applicable tax pack.</div></div>
-            <div class="mb-3"><label class="form-label">Tax identification number (optional during setup)</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div>
+            <div class="mb-3"><label class="form-label">@(model.CountryCode == "NZ" ? "IRD number (optional during setup)" : "Tax identification number (optional during setup)")</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div>
+            @if (model.CountryCode == "NZ")
+            {
+                <div class="mb-3"><label class="form-label">NZBN (optional)</label><input class="form-control" inputmode="numeric" maxlength="13" @bind="model.Nzbn" @bind:event="oninput" /><div class="form-text">Enter the organisation's 13-digit New Zealand Business Number.</div></div>
+            }
             <div class="mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
             <div class="mb-3"><label class="form-label">Industry / business activity</label><InputSelect class="form-select" @bind-Value="model.Industry" ><option value="">Select an industry (optional)</option>@foreach (var industry in OrganisationIndustries.All) { <option value="@industry.Code">@industry.Label</option> }</InputSelect></div>
             <button class="btn btn-primary" type="submit">Create organisation</button>
@@ -67,7 +71,8 @@ else
                     model.Tin,
                     model.CountryCode,
                     model.Kind,
-                    model.Industry));
+                    model.Industry,
+                    model.Nzbn));
             model = new();
             await Reload();
         }
@@ -77,5 +82,5 @@ else
         }
     }
     private static string CountryName(string countryCode) => IslandJurisdictions.Get(countryCode).CountryName;
-    private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } public string Industry { get; set; } = ""; }
+    private sealed class CreateOrganisationModel { [Required, StringLength(160)] public string LegalName { get; set; } = string.Empty; [StringLength(80)] public string? TradingName { get; set; } [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } public string Industry { get; set; } = ""; }
 }

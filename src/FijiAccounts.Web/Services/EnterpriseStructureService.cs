@@ -23,7 +23,8 @@ public sealed record CreateGroupCompanyRequest(
     string? Tin,
     string CountryCode,
     OrganisationKind Kind,
-    string? Industry = null);
+    string? Industry = null,
+    string? Nzbn = null);
 
 public sealed record CreateStandaloneCompanyRequest(
     string LegalName,
@@ -31,7 +32,8 @@ public sealed record CreateStandaloneCompanyRequest(
     string? Tin,
     string CountryCode,
     OrganisationKind Kind,
-    string? Industry = null);
+    string? Industry = null,
+    string? Nzbn = null);
 
 public sealed record EnterprisePostingDimension(
     Guid BranchId,
@@ -62,7 +64,8 @@ public sealed class EnterpriseStructureService(
         {
             LegalName = NormaliseCompanyName(request.LegalName),
             TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
-            Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
+            Tin = OrganisationIdentifierValidation.NormaliseTaxIdentifier(jurisdiction.CountryCode, request.Tin),
+            Nzbn = OrganisationIdentifierValidation.NormaliseNzbn(jurisdiction.CountryCode, request.Nzbn),
             Kind = request.Kind,
             Industry = OrganisationIndustries.Validate(request.Industry),
             CountryCode = jurisdiction.CountryCode,
@@ -95,6 +98,7 @@ public sealed class EnterpriseStructureService(
                 company.LegalName,
                 company.TradingName,
                 company.Tin,
+                company.Nzbn,
                 Kind = company.Kind.ToString(),
                 company.Industry,
                 company.CountryCode,
@@ -326,7 +330,8 @@ public sealed class EnterpriseStructureService(
                 OrganisationGroupId = groupAccess.GroupId,
                 LegalName = legalName,
                 TradingName = NormaliseOptionalText(request.TradingName, 80, "trading name"),
-                Tin = NormaliseOptionalText(request.Tin, 32, "tax identification number"),
+                Tin = OrganisationIdentifierValidation.NormaliseTaxIdentifier(jurisdiction.CountryCode, request.Tin),
+                Nzbn = OrganisationIdentifierValidation.NormaliseNzbn(jurisdiction.CountryCode, request.Nzbn),
                 Kind = request.Kind,
             Industry = OrganisationIndustries.Validate(request.Industry),
                 CountryCode = jurisdiction.CountryCode,
@@ -362,6 +367,7 @@ public sealed class EnterpriseStructureService(
                 company.LegalName,
                 company.TradingName,
                 company.Tin,
+                company.Nzbn,
                 Kind = company.Kind.ToString(),
                 company.Industry,
                 company.CountryCode,
