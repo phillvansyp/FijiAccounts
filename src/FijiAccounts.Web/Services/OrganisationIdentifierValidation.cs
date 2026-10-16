@@ -42,6 +42,36 @@ public static class OrganisationIdentifierValidation
         return digits;
     }
 
+    public static string? NormaliseNzCompanyNumber(string countryCode, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (!string.Equals(countryCode, "NZ", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "A New Zealand company number can only be recorded for a New Zealand organisation.");
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Any(character => !char.IsDigit(character) && character is not ' ' and not '-'))
+        {
+            throw new InvalidOperationException(
+                "Enter the Companies Register number using digits only.");
+        }
+
+        var digits = new string(trimmed.Where(char.IsDigit).ToArray());
+        if (digits.Length is < 1 or > 10)
+        {
+            throw new InvalidOperationException(
+                "Enter a valid New Zealand company number of up to 10 digits.");
+        }
+
+        return digits;
+    }
+
     public static bool IsValidIrdNumber(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;

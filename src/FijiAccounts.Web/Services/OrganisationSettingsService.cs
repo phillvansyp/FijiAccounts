@@ -21,7 +21,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     DateOnly? VatRegistrationDate = null,
     bool? RequireTradePaymentDocuments = null,
     string? Industry = null,
-    string? Nzbn = null);
+    string? Nzbn = null,
+    string? NzCompanyNumber = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -51,6 +52,9 @@ public sealed class OrganisationSettingsService(
             .SingleOrDefaultAsync(cancellationToken)) ?? "";
         var tin = OrganisationIdentifierValidation.NormaliseTaxIdentifier(countryCode, request.Tin);
         var nzbn = OrganisationIdentifierValidation.NormaliseNzbn(countryCode, request.Nzbn);
+        var nzCompanyNumber = OrganisationIdentifierValidation.NormaliseNzCompanyNumber(
+            countryCode,
+            request.NzCompanyNumber);
         if (request.IsVatRegistered &&
             string.Equals(countryCode, "FJ", StringComparison.OrdinalIgnoreCase))
         {
@@ -96,6 +100,7 @@ public sealed class OrganisationSettingsService(
             organisation.Industry,
             organisation.Tin,
             organisation.Nzbn,
+            organisation.NzCompanyNumber,
             organisation.BusinessAddress,
             organisation.IsVatRegistered,
             organisation.VatRegistrationDate,
@@ -116,6 +121,7 @@ public sealed class OrganisationSettingsService(
             Industry = industry,
             Tin = tin,
             Nzbn = nzbn,
+            NzCompanyNumber = nzCompanyNumber,
             BusinessAddress = businessAddress,
             request.IsVatRegistered,
             request.VatRegistrationDate,
@@ -139,6 +145,7 @@ public sealed class OrganisationSettingsService(
         organisation.Industry = industry;
         organisation.Tin = tin;
         organisation.Nzbn = nzbn;
+        organisation.NzCompanyNumber = nzCompanyNumber;
         organisation.BusinessAddress = businessAddress;
         organisation.IsVatRegistered = request.IsVatRegistered;
         organisation.VatRegistrationDate = request.IsVatRegistered

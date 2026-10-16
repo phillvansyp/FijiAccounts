@@ -103,6 +103,7 @@ else
                         @if (companyModel.CountryCode == "NZ")
                         {
                             <div class="col-md-4 mb-3"><label class="form-label">NZBN (optional)</label><input class="form-control" inputmode="numeric" maxlength="13" @bind="companyModel.Nzbn" @bind:event="oninput" /></div>
+                            <div class="col-md-4 mb-3"><label class="form-label">NZ company number (optional)</label><input class="form-control" inputmode="numeric" maxlength="10" @bind="companyModel.NzCompanyNumber" @bind:event="oninput" /><div class="form-text">Companies Register number.</div></div>
                         }
                         <div class="col-md-4 mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="companyModel.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
                         <div class="col-md-6 mb-3"><label class="form-label">Industry / business activity</label><InputSelect class="form-select" @bind-Value="companyModel.Industry" ><option value="">Select an industry (optional)</option>@foreach (var industry in OrganisationIndustries.All) { <option value="@industry.Code">@industry.Label</option> }</InputSelect></div>
@@ -143,6 +144,7 @@ else
                 @if (access.Organisation.CountryCode == "NZ")
                 {
                     <div class="mb-3"><label class="form-label">NZBN</label><input class="form-control" inputmode="numeric" maxlength="13" @bind="model.Nzbn" @bind:event="oninput" disabled="@(!canManage)" /><div class="form-text">The organisation's 13-digit New Zealand Business Number.</div></div>
+                    <div class="mb-3"><label class="form-label">NZ company number</label><input class="form-control" inputmode="numeric" maxlength="10" @bind="model.NzCompanyNumber" @bind:event="oninput" disabled="@(!canManage)" /><div class="form-text">The number issued by the New Zealand Companies Register. Leave blank for entities that are not registered companies.</div></div>
                 }
                 <div class="mb-3"><label class="form-label">Business address</label><textarea class="form-control" @bind="model.BusinessAddress" @bind:event="oninput" disabled="@(!canManage)"></textarea><div class="form-text">Printed on customer documents where required.</div></div>
                 @if (string.Equals(access.Organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase))
@@ -595,7 +597,8 @@ else
                     model.VatRegistrationDate,
                     model.RequireTradePaymentDocuments,
                     model.Industry,
-                    model.Nzbn));
+                    model.Nzbn,
+                    model.NzCompanyNumber));
             model = ModelFrom(stored);
             access = access with { Organisation = stored };
             statusClass = "alert-success";
@@ -728,7 +731,8 @@ else
                             companyModel.CountryCode,
                             companyModel.Kind,
                             companyModel.Industry,
-                            companyModel.Nzbn));
+                            companyModel.Nzbn,
+                            companyModel.NzCompanyNumber));
                 companyModel = new();
                 status = $"{company.LegalName} added to {groupName}.";
             });
@@ -902,11 +906,11 @@ else
         }
     }
 
-    private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Industry = organisation.Industry ?? "", Tin = organisation.Tin, Nzbn = organisation.Nzbn, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval, RequireTradePaymentDocuments = organisation.RequireTradePaymentDocuments };
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } public bool RequireTradePaymentDocuments { get; set; } }
+    private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Industry = organisation.Industry ?? "", Tin = organisation.Tin, Nzbn = organisation.Nzbn, NzCompanyNumber = organisation.NzCompanyNumber, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval, RequireTradePaymentDocuments = organisation.RequireTradePaymentDocuments };
+    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [StringLength(10)] public string? NzCompanyNumber { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } public bool RequireTradePaymentDocuments { get; set; } }
     private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
-    private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
+    private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [StringLength(10)] public string? NzCompanyNumber { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
     private sealed class BranchModel { [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
     private sealed class DivisionModel { [Required] public Guid BranchId { get; set; } [Required, StringLength(20)] public string Code { get; set; } = ""; [Required, StringLength(120)] public string Name { get; set; } = ""; }
     private sealed class CurrencyModel { [Required, StringLength(3, MinimumLength = 3)] public string Code { get; set; } = ""; [Required, StringLength(80)] public string Name { get; set; } = ""; }

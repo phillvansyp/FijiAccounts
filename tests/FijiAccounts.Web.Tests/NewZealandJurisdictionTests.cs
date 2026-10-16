@@ -20,7 +20,8 @@ public sealed class NewZealandJurisdictionTests
                     "091-160-412",
                     "NZ",
                     OrganisationKind.Business,
-                    Nzbn: "9429-000-000-000"));
+                    Nzbn: "9429-000-000-000",
+                    NzCompanyNumber: "1-862-844"));
 
         var stored = await test.Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == company.Id);
         var accounts = await test.Db.LedgerAccounts.AsNoTracking()
@@ -34,6 +35,7 @@ public sealed class NewZealandJurisdictionTests
         Assert.Equal(31, stored.FinancialYearEndDay);
         Assert.Equal("091-160-412", stored.Tin);
         Assert.Equal("9429000000000", stored.Nzbn);
+        Assert.Equal("1862844", stored.NzCompanyNumber);
         Assert.Contains(accounts, x => x.Code == "1150" && x.Name == "GST Receivable");
         Assert.Contains(accounts, x => x.Code == "2100" && x.Name == "GST Payable");
     }
@@ -56,6 +58,17 @@ public sealed class NewZealandJurisdictionTests
         string value,
         bool expected) =>
         Assert.Equal(expected, OrganisationIdentifierValidation.IsValidNzbn(value));
+
+    [Theory]
+    [InlineData("1862844", "1862844")]
+    [InlineData("1-862-844", "1862844")]
+    [InlineData("104799", "104799")]
+    public void New_Zealand_company_number_is_normalised(
+        string value,
+        string expected) =>
+        Assert.Equal(
+            expected,
+            OrganisationIdentifierValidation.NormaliseNzCompanyNumber("NZ", value));
 
     [Fact]
     public async Task New_Zealand_invoice_posts_at_fifteen_percent_and_populates_GST101_workpaper()
