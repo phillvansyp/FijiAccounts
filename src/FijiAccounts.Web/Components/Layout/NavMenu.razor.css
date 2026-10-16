@@ -18,6 +18,10 @@
 
 .mega-menu a.receipt-menu-link{align-items:center}
 
+.nav-label{display:none}
+.primary-links ::deep>a,.module-menu>summary{position:relative;justify-content:center;min-width:52px;padding-left:.8rem;padding-right:.8rem}
+.nav-badge{position:absolute;top:11px;right:4px;margin:0!important;font-size:.64rem}
+
 /* The complete desktop menu is wider than a typical laptop viewport.  Move it
    behind the menu button before it can push the actions off screen. */
 @media(max-width:1500px){
@@ -28,7 +32,7 @@
     .org-name{max-width:105px}
 }
 
-@media(max-width:1380px){
+@media(max-width:850px){
     .nav-inner{width:100%;padding-left:.75rem;padding-right:.75rem}
     .menu-button{display:flex;flex:none;flex-direction:column;gap:4px;padding:.65rem;cursor:pointer;border-radius:.55rem}
     .menu-button:hover{background:rgba(255,255,255,.09)}
@@ -36,6 +40,9 @@
     .primary-links{display:none;position:absolute;left:0;right:0;top:72px;height:auto;max-height:calc(100dvh - 72px);margin:0;padding:.65rem;background:#073b4c;overflow-y:auto;overscroll-behavior:contain;box-shadow:0 14px 24px rgba(7,35,48,.2)}
     .menu-toggle:checked~.primary-links{display:flex;flex-direction:column;align-items:stretch}
     .primary-links ::deep>a,.module-menu>summary{height:auto;min-height:44px;padding:.75rem .9rem;border:0;border-radius:.45rem}
+    .primary-links ::deep>a,.module-menu>summary{justify-content:flex-start;gap:.8rem}
+    .nav-label{display:inline}
+    .nav-badge{position:static;margin-left:auto!important}
     .mega-menu{position:static;width:auto;max-width:none;margin:.25rem .5rem .6rem;box-shadow:none}
     .mega-menu:before{display:none}
     .org-switch{margin-left:0}
