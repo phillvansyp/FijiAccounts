@@ -24,6 +24,19 @@ public sealed class NewZealandJurisdictionTests
     }
 
     [Fact]
+    public void Workspace_identifier_is_stable_and_includes_country()
+    {
+        var organisation = new Organisation
+        {
+            Id = Guid.Parse("12ab34cd-5678-4abc-9def-1234567890ab"),
+            LegalName = "JCR 2006 Limited",
+            CountryCode = "NZ"
+        };
+
+        Assert.Equal("AI-NZ-12AB34CD", OrganisationDisplay.WorkspaceId(organisation));
+    }
+
+    [Fact]
     public async Task Creating_New_Zealand_company_applies_local_defaults_and_chart()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

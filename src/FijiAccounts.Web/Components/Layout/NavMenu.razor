@@ -16,37 +16,6 @@
     <input id="menu-toggle" class="menu-toggle" type="checkbox" aria-label="Toggle navigation" /><label class="menu-button" for="menu-toggle"><span></span><span></span><span></span></label>
     <AuthorizeView><Authorized>
 
-        @if (accessibleOrganisations.Count > 0)
-        {
-            <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="Change workspace" aria-label="Change workspace"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-switch-copy"><small>Workspace</small><span class="org-name">@ActiveOrganisationDisplayName</span></span><span class="org-switch-arrow" aria-hidden="true">⌄</span></summary>
-                <div class="org-panel workspace-panel">
-                    <div class="workspace-heading">
-                        <div><span class="workspace-kicker">Account Island workspaces</span><strong>Where would you like to work?</strong><small>Each workspace keeps its country, currency and tax settings together.</small></div>
-                        <a class="manage-organisations" href="organisations">Manage all</a>
-                    </div>
-                    <div class="workspace-grid">
-                        @foreach (var item in accessibleOrganisations)
-                        {
-                            var isCurrentOrganisation = item.Organisation.Id == activeOrganisationId;
-                            <a class="workspace-card @(isCurrentOrganisation ? "is-current" : null)" href="o/@item.Organisation.Id" aria-current="@(isCurrentOrganisation ? "page" : null)">
-                                <span class="workspace-card-top"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span></span>
-                                <b>@item.Organisation.LegalName</b>
-                                <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
-                                <span class="workspace-card-action">@(isCurrentOrganisation ? "Open now" : "Switch workspace →")</span>
-                            </a>
-                        }
-                    </div>
-                    @if (activeOrganisationId is not null)
-                    {
-                        <div class="workspace-tools">
-                            <a href="@OrgUrl("settings")"><span class="workspace-tool-icon" aria-hidden="true">⚙</span><span><b>Workspace settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
-                            <a href="@OrgUrl("team")"><span class="workspace-tool-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
-                        </div>
-                    }
-                </div>
-            </details>
-        }
-        else { <div class="org-switch"><a href="organisations"><span class="org-avatar">+</span><span class="org-name">Create organisation</span></a></div> }
         @if (activeOrganisationId is not null)
         {
             <div class="primary-links">
@@ -76,7 +45,40 @@
     <div class="nav-actions">
         @if (activeOrganisationId is not null) { <details class="quick-menu"><summary title="Quick create">+</summary><div class="action-panel"><strong>Quick create</strong><a href="@OrgUrl("sales/new")"><span>↗</span> Sales invoice</a><a href="@OrgUrl("quotes")"><span>↗</span> Quote</a><a href="@OrgUrl("purchases")"><span>↙</span> Supplier bill</a><a href="@OrgUrl("receipts")"><span>✓</span> Customer receipt</a><a href="@OrgUrl("journals")"><span>☰</span> Manual journal</a></div></details> }
         <a class="icon-link" href="@SearchUrl" title="Search this organisation">⌕</a><a class="icon-link" href="@ContextHelpUrl" title="Help for this page">?</a>
-        <AuthorizeView><Authorized><details class="profile-menu"><summary><span class="avatar">@Initial(context.User.Identity?.Name)</span></summary><div class="profile-panel"><div class="profile-email">@context.User.Identity?.Name</div><a href="accountant/work">Review work</a><a href="Account/Manage">Profile &amp; security</a><a href="organisations">Switch organisation</a><AuthorizeView Roles="@PlatformAdminAccessService.RoleName"><Authorized Context="platformContext"><a href="platform">Platform administration</a></Authorized></AuthorizeView><a href="help">Help centre</a><form action="Account/Logout" method="post"><AntiforgeryToken /><input type="hidden" name="ReturnUrl" value="@currentUrl" /><button type="submit">Sign out</button></form></div></details></Authorized><NotAuthorized><a class="signin-link" href="Account/Login">Sign in</a><a class="join-link" href="Account/Register">Get started</a></NotAuthorized></AuthorizeView>
+        <AuthorizeView><Authorized>
+            @if (accessibleOrganisations.Count > 0)
+            {
+                <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="@($"Change workspace · {ActiveOrganisationDisplayName} · {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")" aria-label="@($"Change workspace. Current workspace {ActiveOrganisationDisplayName}, ID {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
+                    <div class="org-panel workspace-panel">
+                        <div class="workspace-heading">
+                            <div><span class="workspace-kicker">Account Island workspaces</span><strong>Where would you like to work?</strong><small>Each workspace has a unique ID and keeps its country, currency and tax settings together.</small></div>
+                            <a class="manage-organisations" href="organisations">Manage all</a>
+                        </div>
+                        <div class="workspace-grid">
+                            @foreach (var item in accessibleOrganisations)
+                            {
+                                var isCurrentOrganisation = item.Organisation.Id == activeOrganisationId;
+                                <a class="workspace-card @(isCurrentOrganisation ? "is-current" : null)" href="o/@item.Organisation.Id" aria-current="@(isCurrentOrganisation ? "page" : null)">
+                                    <span class="workspace-card-top"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
+                                    <b>@item.Organisation.LegalName</b>
+                                    <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
+                                    <span class="workspace-card-action">@(isCurrentOrganisation ? "Open now" : "Switch workspace →")</span>
+                                </a>
+                            }
+                        </div>
+                        @if (activeOrganisationId is not null)
+                        {
+                            <div class="workspace-tools">
+                                <a href="@OrgUrl("settings")"><span class="workspace-tool-icon" aria-hidden="true">⚙</span><span><b>Workspace settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
+                                <a href="@OrgUrl("team")"><span class="workspace-tool-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
+                            </div>
+                        }
+                    </div>
+                </details>
+            }
+            else { <div class="org-switch"><a href="organisations" title="Create organisation" aria-label="Create organisation"><span class="org-avatar">+</span></a></div> }
+            <details class="profile-menu"><summary><span class="avatar">@Initial(context.User.Identity?.Name)</span></summary><div class="profile-panel"><div class="profile-email">@context.User.Identity?.Name</div><a href="accountant/work">Review work</a><a href="Account/Manage">Profile &amp; security</a><a href="organisations">Switch organisation</a><AuthorizeView Roles="@PlatformAdminAccessService.RoleName"><Authorized Context="platformContext"><a href="platform">Platform administration</a></Authorized></AuthorizeView><a href="help">Help centre</a><form action="Account/Logout" method="post"><AntiforgeryToken /><input type="hidden" name="ReturnUrl" value="@currentUrl" /><button type="submit">Sign out</button></form></div></details>
+        </Authorized><NotAuthorized><a class="signin-link" href="Account/Login">Sign in</a><a class="join-link" href="Account/Register">Get started</a></NotAuthorized></AuthorizeView>
     </div>
 </nav></header>
 

@@ -74,18 +74,17 @@
 /* Account Island workspace switcher: a centred card tray rather than a
    conventional organisation dropdown. */
 .org-picker>summary{
-    max-width:245px;
-    padding:.35rem .65rem .35rem .4rem;
-    gap:.6rem;
+    width:42px;
+    height:42px;
+    justify-content:center;
+    padding:0;
+    gap:0;
     border:1px solid rgba(168,240,220,.32);
     border-radius:999px;
     background:#0d5265;
 }
 .org-picker>summary:hover,.org-picker[open]>summary{background:#14677a;border-color:#a8f0dc}
-.org-switch-copy{display:flex;min-width:0;flex:1;flex-direction:column;line-height:1.1}
-.org-switch-copy>small{color:#a8f0dc;font-size:.58rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
-.org-switch-arrow{color:#a8f0dc;font-size:1rem;line-height:1;transition:transform .18s ease}
-.org-picker[open] .org-switch-arrow{transform:rotate(180deg)}
+.org-picker>summary .org-avatar{width:30px;height:30px;border-radius:50%}
 .workspace-panel{
     position:fixed;
     top:82px;
@@ -115,7 +114,9 @@
 .workspace-card.is-current{border:2px solid #0b8f6d;background:linear-gradient(145deg,#fff,#e4f8f1)}
 .workspace-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem}
 .workspace-card .org-avatar{width:38px;height:38px;border-radius:.7rem}
+.workspace-card-identifiers{display:flex;align-items:flex-end;gap:.3rem;flex-direction:column}
 .country-tag{display:inline-flex;align-items:center;min-height:25px;padding:.2rem .55rem;color:#0b6954;background:#dff5ee;border-radius:999px;font-size:.7rem;font-weight:850;text-transform:uppercase}
+.workspace-id{color:#607681;font-size:.6rem;font-weight:850;letter-spacing:.06em}
 .workspace-card>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1rem}
 .workspace-card>small{margin-top:.18rem;color:#6b7f89}
 .workspace-card-action{margin-top:auto;padding-top:.85rem;color:#087f5b;font-size:.76rem;font-weight:850}
@@ -133,8 +134,8 @@
 }
 
 @media(max-width:700px){
-    .org-switch-copy{display:none}
-    .org-picker>summary{padding:.35rem .45rem}
+    .org-picker>summary{width:36px;height:36px;padding:0}
+    .org-picker>summary .org-avatar{width:27px;height:27px}
     .workspace-panel{top:68px;width:calc(100vw - .75rem);max-height:calc(100dvh - 74px)}
     .workspace-heading{padding:1rem}
     .workspace-heading small{display:none}

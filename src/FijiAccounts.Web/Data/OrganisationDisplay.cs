@@ -15,4 +15,7 @@ public static class OrganisationDisplay
 
     public static string NameWithCountry(string legalName, string countryCode) =>
         $"{legalName} ({CountryTag(countryCode)})";
+
+    public static string WorkspaceId(Organisation organisation) =>
+        $"AI-{organisation.CountryCode.ToUpperInvariant()}-{organisation.Id:N}"[..14].ToUpperInvariant();
 }
