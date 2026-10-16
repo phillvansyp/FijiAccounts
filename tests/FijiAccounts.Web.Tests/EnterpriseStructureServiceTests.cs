@@ -411,6 +411,44 @@ public sealed class EnterpriseStructureServiceTests
     }
 
     [Fact]
+    public async Task GroupOwner_CanCreateCompanyWithSameLegalNameInAnotherJurisdiction()
+    {
+        await using var test =
+            await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        var newZealandCompany =
+            await service.AddCompanyAsync(
+                test.UserId,
+                new CreateGroupCompanyRequest(
+                    test.Organisation.Id,
+                    test.Organisation.LegalName,
+                    "New Zealand operation",
+                    "094-717-205",
+                    "NZ",
+                    OrganisationKind.Business,
+                    Nzbn: "9429033884974",
+                    NzCompanyNumber: "1862844"));
+
+        Assert.Equal("NZ", newZealandCompany.CountryCode);
+        Assert.Equal(test.Organisation.LegalName, newZealandCompany.LegalName);
+        Assert.Equal("1862844", newZealandCompany.NzCompanyNumber);
+        Assert.Equal(2, await test.Db.Organisations.CountAsync());
+
+        var duplicate = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddCompanyAsync(
+                test.UserId,
+                new CreateGroupCompanyRequest(
+                    test.Organisation.Id,
+                    test.Organisation.LegalName,
+                    null,
+                    null,
+                    "NZ",
+                    OrganisationKind.Business)));
+        Assert.Contains("jurisdiction", duplicate.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task LegacyOwnerWithoutGroupMembership_CanManageGroup()
     {
         await using var test =

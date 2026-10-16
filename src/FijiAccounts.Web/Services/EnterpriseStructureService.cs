@@ -321,11 +321,12 @@ public sealed class EnterpriseStructureService(
         if (await db.Organisations.AnyAsync(
                 x =>
                     x.OrganisationGroupId == groupAccess.GroupId &&
+                    x.CountryCode == jurisdiction.CountryCode &&
                     x.LegalName == legalName,
                 ct))
         {
             throw new InvalidOperationException(
-                "A company with that legal name already exists in the group.");
+                "A company with that legal name and jurisdiction already exists in the group.");
         }
 
         var company =

@@ -15,6 +15,7 @@
 @inject TransactionCurrencyService CurrencyService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
 
 <PageTitle>Organisation settings · Account Island</PageTitle>
 @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
@@ -95,6 +96,10 @@ else
                           class="mt-3">
                     <DataAnnotationsValidator />
                     <ValidationSummary />
+                    @if (companyStatus is not null)
+                    {
+                        <div class="alert @companyStatusClass" role="alert">@companyStatus</div>
+                    }
                     <div class="row">
                         <div class="col-md-6 mb-3"><label class="form-label">Legal name</label><input class="form-control" @bind="companyModel.LegalName" @bind:event="oninput" /></div>
                         <div class="col-md-6 mb-3"><label class="form-label">Trading name (optional)</label><input class="form-control" @bind="companyModel.TradingName" @bind:event="oninput" /></div>
@@ -108,7 +113,9 @@ else
                         <div class="col-md-4 mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="companyModel.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
                         <div class="col-md-6 mb-3"><label class="form-label">Industry / business activity</label><InputSelect class="form-select" @bind-Value="companyModel.Industry" ><option value="">Select an industry (optional)</option>@foreach (var industry in OrganisationIndustries.All) { <option value="@industry.Code">@industry.Label</option> }</InputSelect></div>
                     </div>
-                    <button class="btn btn-primary">Create company</button>
+                    <button class="btn btn-primary" type="submit" disabled="@creatingCompany">
+                        @(creatingCompany ? "Creating company…" : "Create company")
+                    </button>
                 </EditForm>
             </details>
         }
@@ -520,7 +527,7 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
-    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private OrganisationBranding? branding; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked, uploadingLogo, refreshingRates; private int logoInputKey; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private CurrencyModel currencyModel = new(); private RateModel rateModel = new(); private IReadOnlyList<CurrencyOption> currencies = []; private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private EnterpriseGroupDetails? groupDetails; private OrganisationBranding? branding; private bool canManage, canManageGroup, canChangeJurisdiction, wipAccountsLocked, uploadingLogo, refreshingRates, creatingCompany; private int logoInputKey; private SettingsModel model = new(); private WipAccountsModel wipModel = new(); private GroupModel groupModel = new(); private CompanyModel companyModel = new(); private BranchModel branchModel = new(); private DivisionModel divisionModel = new(); private CurrencyModel currencyModel = new(); private RateModel rateModel = new(); private IReadOnlyList<CurrencyOption> currencies = []; private List<Branch> branches = []; private List<LedgerAccount> assetAccounts = []; private List<LedgerAccount> liabilityAccounts = []; private List<LedgerAccount> recognitionRevenueAccounts = []; private HashSet<Guid> accessibleCompanyIds = []; private IslandJurisdiction jurisdiction = IslandJurisdictions.All[0]; private string groupName = "Organisation group"; private string selectedCountry = "FJ"; private string userId = ""; private string? status, companyStatus; private string statusClass = "alert-success"; private string companyStatusClass = "alert-danger";
     private IReadOnlyList<Organisation> GroupCompanies => groupDetails?.Companies ?? (access is null ? [] : [access.Organisation]);
     private string FinancialYearEnd => new DateOnly(2000, access!.Organisation.FinancialYearEndMonth, access.Organisation.FinancialYearEndDay).ToString("dd MMMM");
     private string? LogoDataUrl => branding is null ? null : $"data:{branding.LogoContentType};base64,{Convert.ToBase64String(branding.LogoContent)}";
@@ -715,27 +722,38 @@ else
 
     private async Task CreateCompany()
     {
-        if (!canManageGroup) return;
+        if (!canManageGroup || creatingCompany) return;
 
-        await RunHierarchyChange(
-            async () =>
-            {
-                var company =
-                    await EnterpriseStructures.AddCompanyAsync(
-                        userId,
-                        new CreateGroupCompanyRequest(
-                            OrganisationId,
-                            companyModel.LegalName,
-                            companyModel.TradingName,
-                            companyModel.Tin,
-                            companyModel.CountryCode,
-                            companyModel.Kind,
-                            companyModel.Industry,
-                            companyModel.Nzbn,
-                            companyModel.NzCompanyNumber));
-                companyModel = new();
-                status = $"{company.LegalName} added to {groupName}.";
-            });
+        companyStatus = null;
+        creatingCompany = true;
+        try
+        {
+            var company =
+                await EnterpriseStructures.AddCompanyAsync(
+                    userId,
+                    new CreateGroupCompanyRequest(
+                        OrganisationId,
+                        companyModel.LegalName,
+                        companyModel.TradingName,
+                        companyModel.Tin,
+                        companyModel.CountryCode,
+                        companyModel.Kind,
+                        companyModel.Industry,
+                        companyModel.Nzbn,
+                        companyModel.NzCompanyNumber));
+            companyModel = new();
+            await LoadHierarchy();
+            Navigation.NavigateTo($"/o/{company.Id}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            companyStatusClass = "alert-danger";
+            companyStatus = $"Company was not created: {ex.Message}";
+        }
+        finally
+        {
+            creatingCompany = false;
+        }
     }
 
     private async Task CreateBranch()
