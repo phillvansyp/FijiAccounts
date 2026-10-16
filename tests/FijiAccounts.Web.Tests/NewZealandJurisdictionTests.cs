@@ -37,6 +37,34 @@ public sealed class NewZealandJurisdictionTests
     }
 
     [Fact]
+    public void Duplicate_workspace_initials_use_country_to_stay_distinct()
+    {
+        var fiji = new Organisation
+        {
+            Id = Guid.Parse("11111111-1111-4111-8111-111111111111"),
+            LegalName = "JCR 2006 Limited",
+            CountryCode = "FJ"
+        };
+        var newZealand = new Organisation
+        {
+            Id = Guid.Parse("22222222-2222-4222-8222-222222222222"),
+            LegalName = "JCR 2006 Limited",
+            CountryCode = "NZ"
+        };
+        var boss = new Organisation
+        {
+            Id = Guid.Parse("33333333-3333-4333-8333-333333333333"),
+            LegalName = "BOSS PTE Ltd",
+            CountryCode = "FJ"
+        };
+        var organisations = new[] { fiji, newZealand, boss };
+
+        Assert.Equal("JF", OrganisationDisplay.WorkspaceBadge(fiji, organisations));
+        Assert.Equal("JN", OrganisationDisplay.WorkspaceBadge(newZealand, organisations));
+        Assert.Equal("BP", OrganisationDisplay.WorkspaceBadge(boss, organisations));
+    }
+
+    [Fact]
     public async Task Creating_New_Zealand_company_applies_local_defaults_and_chart()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

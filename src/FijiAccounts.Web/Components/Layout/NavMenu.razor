@@ -48,7 +48,7 @@
         <AuthorizeView><Authorized>
             @if (accessibleOrganisations.Count > 0)
             {
-                <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="@($"Change workspace · {ActiveOrganisationDisplayName} · {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")" aria-label="@($"Change workspace. Current workspace {ActiveOrganisationDisplayName}, ID {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span></summary>
+                <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="@($"Change workspace · {ActiveOrganisationDisplayName} · {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")" aria-label="@($"Change workspace. Current workspace {ActiveOrganisationDisplayName}, ID {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(ActiveOrganisation, accessibleOrganisations.Select(x => x.Organisation))</span></summary>
                     <div class="org-panel workspace-panel">
                         <div class="workspace-heading">
                             <div><span class="workspace-kicker">Account Island workspaces</span><strong>Where would you like to work?</strong><small>Each workspace has a unique ID and keeps its country, currency and tax settings together.</small></div>
@@ -59,7 +59,7 @@
                             {
                                 var isCurrentOrganisation = item.Organisation.Id == activeOrganisationId;
                                 <a class="workspace-card @(isCurrentOrganisation ? "is-current" : null)" href="o/@item.Organisation.Id" aria-current="@(isCurrentOrganisation ? "page" : null)">
-                                    <span class="workspace-card-top"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
+                                    <span class="workspace-card-top"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(item.Organisation, accessibleOrganisations.Select(x => x.Organisation))</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
                                     <b>@item.Organisation.LegalName</b>
                                     <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
                                     <span class="workspace-card-action">@(isCurrentOrganisation ? "Open now" : "Switch workspace →")</span>
@@ -156,7 +156,6 @@
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
     private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
     private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();
-    private static string OrganisationInitials(string name) { var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries); return words.Length > 1 ? string.Concat(words.Take(2).Select(x => char.ToUpperInvariant(x[0]))) : name[..Math.Min(2, name.Length)].ToUpperInvariant(); }
     private void OrganisationUpdated(Guid organisationId) { if (organisationId != activeOrganisationId) return; _ = InvokeAsync(RefreshNavigationCountsAsync); }
     private async Task RefreshNavigationCountsAsync()
     {
