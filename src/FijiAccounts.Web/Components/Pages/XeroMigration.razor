@@ -1,0 +1,330 @@
+@page "/o/{OrganisationId:guid}/migration/xero"
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@inject XeroMigrationService MigrationService
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Xero migration · Account Island</PageTitle>
+
+@if (loading)
+{
+    <p role="status">Loading Xero migration...</p>
+}
+else if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else if (!IsNz)
+{
+    <div class="alert alert-warning">This Xero migration workspace is available for New Zealand organisations.</div>
+}
+else
+{
+    <div class="migration-heading">
+        <div>
+            <p class="eyebrow">Accounting · data migration</p>
+            <h1>Move from Xero</h1>
+            <p>@OrganisationName · A controlled move of the complete accounting record into Account Island.</p>
+        </div>
+        <span class="status-pill @StatusClass">@StatusLabel</span>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass" role="status">@message</div>
+    }
+
+    <section class="migration-overview">
+        <div><span>1</span><strong>Set the cutover</strong><small>Choose the first live day in Account Island.</small></div>
+        <div><span>2</span><strong>Collect Xero exports</strong><small>Retain source data and its file fingerprint.</small></div>
+        <div><span>3</span><strong>Import to staging</strong><small>Map and validate without changing the live ledger.</small></div>
+        <div><span>4</span><strong>Reconcile and approve</strong><small>Prove every control balance before go-live.</small></div>
+    </section>
+
+    <section class="migration-card">
+        <div class="section-heading">
+            <div><p class="step-label">Step 1</p><h2>Migration setup</h2></div>
+            <span>@(migration is null ? "Not saved" : "Last updated " + migration.UpdatedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm"))</span>
+        </div>
+        <EditForm Model="model" OnValidSubmit="Save" FormName="xero-migration-setup">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <div class="setup-grid">
+                <div>
+                    <label class="form-label">Name shown in Xero</label>
+                    <InputText class="form-control" @bind-Value="model.SourceOrganisationName" disabled="@(!canPrepare || busy)" />
+                    <small>Used to confirm that every export belongs to the correct organisation.</small>
+                </div>
+                <div>
+                    <label class="form-label">First live day in Account Island</label>
+                    <InputDate class="form-control" @bind-Value="model.CutoverDate" disabled="@(!canPrepare || busy)" />
+                    <small>Choose the day after the final Xero reporting date. Opening balances are dated the day before.</small>
+                </div>
+            </div>
+            <label class="option-card mt-3">
+                <InputCheckbox class="form-check-input" @bind-Value="model.IncludeFullHistory" disabled="@(!canPrepare || busy)" />
+                <span><strong>Bring across full transaction history</strong><small>Recommended for JCR 2006 Limited. Open invoices, bills, contacts, bank history, assets and archived evidence remain individually traceable.</small></span>
+            </label>
+            <div class="mt-3">
+                <label class="form-label">Migration notes</label>
+                <InputTextArea class="form-control" rows="3" @bind-Value="model.Notes" disabled="@(!canPrepare || busy)" />
+            </div>
+            @if (canPrepare)
+            {
+                <button class="btn btn-primary mt-3" disabled="@busy">@(busy ? "Saving..." : "Save migration setup")</button>
+            }
+        </EditForm>
+    </section>
+
+    <section class="migration-card">
+        <div class="section-heading">
+            <div><p class="step-label">Step 2</p><h2>Export everything from Xero</h2></div>
+            <span>@SuppliedRequiredCount of @XeroMigrationService.RequiredCategories.Length required sets supplied</span>
+        </div>
+        <div class="source-instructions">
+            <div>
+                <strong>In Xero, export these first</strong>
+                <ol>
+                    <li>General Ledger for all available dates, with all columns and currencies.</li>
+                    <li>Trial Balance at the final Xero date and at each prior financial year end.</li>
+                    <li>Chart of Accounts, Contacts, invoices, bills, credit notes and payments.</li>
+                    <li>Bank Reconciliation reports plus statements for every bank, card and loan account.</li>
+                    <li>Fixed Asset Reconciliation, asset list, inventory items and every filed GST return.</li>
+                    <li>Download document attachments and keep the original Xero exports unchanged.</li>
+                </ol>
+            </div>
+            <div class="source-note">
+                <strong>Payroll</strong>
+                <p>Employee payroll moves to NZ Pay. Account Island receives the historical payroll journals and liability balances, while payroll reports stay in the retained evidence pack.</p>
+            </div>
+        </div>
+
+        @if (migration is null)
+        {
+            <div class="alert alert-info mb-0">Save Step 1 before uploading exports.</div>
+        }
+        else
+        {
+            <div class="upload-panel">
+                <div>
+                    <label class="form-label">What are you adding?</label>
+                    <select class="form-select" @bind="selectedCategory" disabled="@(!canPrepare || uploading)">
+                        @foreach (var category in XeroMigrationService.Categories)
+                        {
+                            <option value="@category">@category</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">Xero export</label>
+                    <InputFile class="form-control" accept=".csv,.xlsx,.pdf,.zip" OnChange="Upload" disabled="@(!canPrepare || uploading)" />
+                    <small>CSV, XLSX, PDF or ZIP up to 25 MB. Uploading stores evidence only; it does not post to the ledger.</small>
+                </div>
+            </div>
+        }
+
+        <div class="dataset-grid">
+            @foreach (var category in XeroMigrationService.Categories)
+            {
+                var categoryFiles = files.Where(x => x.Category == category).OrderByDescending(x => x.UploadedAt).ToList();
+                var required = XeroMigrationService.RequiredCategories.Contains(category);
+                <article class="dataset @(categoryFiles.Count > 0 ? "supplied" : string.Empty)">
+                    <div>
+                        <span class="dataset-check">@(categoryFiles.Count > 0 ? "✓" : "○")</span>
+                        <div><strong>@category</strong><small>@(required ? "Required" : "If used")</small></div>
+                    </div>
+                    @foreach (var file in categoryFiles)
+                    {
+                        <a href="/api/o/@OrganisationId/xero-migration/files/@file.Id" title="SHA-256 @file.Sha256">
+                            @file.FileName <small>· @FormatSize(file.Size) · @file.UploadedAt.ToLocalTime().ToString("dd MMM yyyy")</small>
+                        </a>
+                    }
+                </article>
+            }
+        </div>
+    </section>
+
+    <section class="migration-card">
+        <div class="section-heading">
+            <div><p class="step-label">Steps 3 and 4</p><h2>Staging, reconciliation and cutover</h2></div>
+            <span>@CompletedChecks of 7 controls complete</span>
+        </div>
+        <div class="control-warning">
+            <strong>Nothing goes live until these checks pass.</strong>
+            <span>Imports are first matched and validated in staging. Any duplicate, missing account, invalid tax treatment or control difference must be resolved before approval.</span>
+        </div>
+        <div class="checklist">
+            @Check("Xero entry has stopped", "No transactions are entered into Xero after the final export.", nameof(model.XeroEntryStopped), model.XeroEntryStopped)
+            @Check("Trial Balance agrees", "Total debits and credits, and every account balance, agree at the final Xero date.", nameof(model.TrialBalanceReconciled), model.TrialBalanceReconciled)
+            @Check("Receivables agree", "Open customer invoices and credits agree to the aged receivables control total.", nameof(model.ReceivablesReconciled), model.ReceivablesReconciled)
+            @Check("Payables agree", "Open supplier bills and credits agree to the aged payables control total.", nameof(model.PayablesReconciled), model.PayablesReconciled)
+            @Check("Banks agree", "Every bank, card and loan agrees to its final reconciled statement balance.", nameof(model.BankReconciled), model.BankReconciled)
+            @Check("Fixed assets agree", "Cost, accumulated depreciation and net book value agree to Xero.", nameof(model.FixedAssetsReconciled), model.FixedAssetsReconciled)
+            @Check("GST agrees", "The GST control accounts agree to the last filed return and the next unfiled period.", nameof(model.GstReconciled), model.GstReconciled)
+        </div>
+        <label class="option-card approval mt-3">
+            <InputCheckbox class="form-check-input" @bind-Value="model.ManagementApproved" disabled="@(!canApprove || !AllChecksComplete || busy)" />
+            <span><strong>Management approves the cutover</strong><small>This becomes available only after all seven controls have been completed.</small></span>
+        </label>
+        @if (canPrepare && migration is not null)
+        {
+            <button class="btn btn-primary mt-3" @onclick="Save" disabled="@busy">Save reconciliation progress</button>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private AccessibleOrganisation? access;
+    private FijiAccounts.Web.Data.XeroMigration? migration;
+    private List<XeroMigrationFile> files = [];
+    private MigrationModel model = new();
+    private string userId = string.Empty;
+    private string selectedCategory = XeroMigrationService.Categories[0];
+    private string? message;
+    private string messageClass = "alert-success";
+    private bool loading = true, busy, uploading, canPrepare, canApprove;
+    private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
+    private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
+    private int SuppliedRequiredCount => XeroMigrationService.RequiredCategories.Count(category => files.Any(x => x.Category == category));
+    private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
+    private bool AllChecksComplete => CompletedChecks == 7;
+    private string StatusLabel => migration?.Status switch
+    {
+        XeroMigrationStatus.ReadyForImport => "Exports ready",
+        XeroMigrationStatus.Reconciliation => "Reconciliation in progress",
+        XeroMigrationStatus.ApprovedForCutover => "Approved for cutover",
+        XeroMigrationStatus.Complete => "Migration complete",
+        _ => "Preparing exports"
+    };
+    private string StatusClass => migration?.Status switch
+    {
+        XeroMigrationStatus.ApprovedForCutover or XeroMigrationStatus.Complete => "complete",
+        XeroMigrationStatus.Reconciliation => "progress",
+        _ => "preparing"
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        access = string.IsNullOrWhiteSpace(userId) ? null : await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null)
+        {
+            canPrepare = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+            canApprove = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+        }
+        loading = false;
+    }
+
+    private void ApplyMigration()
+    {
+        files = migration?.Files.OrderByDescending(x => x.UploadedAt).ToList() ?? [];
+        model = migration is null
+            ? new MigrationModel { SourceOrganisationName = access?.Organisation.LegalName ?? string.Empty, IncludeFullHistory = true }
+            : new MigrationModel
+            {
+                SourceOrganisationName = migration.SourceOrganisationName,
+                CutoverDate = migration.CutoverDate,
+                IncludeFullHistory = migration.IncludeFullHistory,
+                XeroEntryStopped = migration.XeroEntryStopped,
+                TrialBalanceReconciled = migration.TrialBalanceReconciled,
+                ReceivablesReconciled = migration.ReceivablesReconciled,
+                PayablesReconciled = migration.PayablesReconciled,
+                BankReconciled = migration.BankReconciled,
+                FixedAssetsReconciled = migration.FixedAssetsReconciled,
+                GstReconciled = migration.GstReconciled,
+                ManagementApproved = migration.ManagementApproved,
+                Notes = migration.Notes
+            };
+    }
+
+    private async Task Save()
+    {
+        busy = true; message = null;
+        try
+        {
+            if (!AllChecksComplete) model.ManagementApproved = false;
+            migration = await MigrationService.SaveAsync(userId, OrganisationId, new(
+                model.SourceOrganisationName, model.CutoverDate, model.IncludeFullHistory,
+                model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled,
+                model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled,
+                model.GstReconciled, model.ManagementApproved, model.Notes));
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+            message = model.ManagementApproved ? "Cutover approval recorded in the audit trail." : "Migration setup saved.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { busy = false; }
+    }
+
+    private async Task Upload(InputFileChangeEventArgs args)
+    {
+        uploading = true; message = null;
+        try
+        {
+            using var stream = args.File.OpenReadStream(XeroMigrationService.MaximumBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            await MigrationService.AddFileAsync(userId, OrganisationId, selectedCategory, args.File.Name, args.File.ContentType, buffer.ToArray());
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+            message = $"{args.File.Name} retained under {selectedCategory}.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { uploading = false; }
+    }
+
+    private RenderFragment Check(string title, string detail, string property, bool value) => builder =>
+    {
+        var sequence = 0;
+        builder.OpenElement(sequence++, "label"); builder.AddAttribute(sequence++, "class", "check-item");
+        builder.OpenElement(sequence++, "input"); builder.AddAttribute(sequence++, "type", "checkbox"); builder.AddAttribute(sequence++, "checked", value);
+        builder.AddAttribute(sequence++, "disabled", !canPrepare || busy);
+        builder.AddAttribute(sequence++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => SetCheck(property, args.Value is true || args.Value?.ToString() == "true")));
+        builder.CloseElement();
+        builder.OpenElement(sequence++, "span"); builder.OpenElement(sequence++, "strong"); builder.AddContent(sequence++, title); builder.CloseElement();
+        builder.OpenElement(sequence++, "small"); builder.AddContent(sequence++, detail); builder.CloseElement(); builder.CloseElement(); builder.CloseElement();
+    };
+
+    private void SetCheck(string property, bool value)
+    {
+        typeof(MigrationModel).GetProperty(property)?.SetValue(model, value);
+        if (!AllChecksComplete) model.ManagementApproved = false;
+    }
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:N1} MB" : $"{Math.Max(1, bytes / 1024d):N0} KB";
+
+    private sealed class MigrationModel
+    {
+        [Required, StringLength(160, MinimumLength = 2)] public string SourceOrganisationName { get; set; } = string.Empty;
+        public DateOnly? CutoverDate { get; set; }
+        public bool IncludeFullHistory { get; set; } = true;
+        public bool XeroEntryStopped { get; set; }
+        public bool TrialBalanceReconciled { get; set; }
+        public bool ReceivablesReconciled { get; set; }
+        public bool PayablesReconciled { get; set; }
+        public bool BankReconciled { get; set; }
+        public bool FixedAssetsReconciled { get; set; }
+        public bool GstReconciled { get; set; }
+        public bool ManagementApproved { get; set; }
+        [StringLength(1000)] public string? Notes { get; set; }
+    }
+}

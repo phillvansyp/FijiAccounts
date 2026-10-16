@@ -263,6 +263,7 @@ builder.Services.AddScoped<CustomerReceiptService>();
 builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
+builder.Services.AddScoped<XeroMigrationService>();
 builder.Services.AddScoped<EmployeeReceiptService>();
 builder.Services.AddScoped<ReceiptBankPurchaseService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
@@ -405,6 +406,16 @@ app.MapGet("/api/o/{organisationId:guid}/registration-documents/{documentId:guid
         http.Response.Headers.CacheControl = "private, no-store";
         http.Response.Headers["X-Content-Type-Options"] = "nosniff";
         return Results.File(content, "application/pdf");
+    }).RequireAuthorization();
+app.MapGet("/api/o/{organisationId:guid}/xero-migration/files/{fileId:guid}",
+    async (Guid organisationId, Guid fileId, XeroMigrationService migrations, System.Security.Claims.ClaimsPrincipal principal, HttpContext http) =>
+    {
+        var user = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var file = user is null ? null : await migrations.ReadFileAsync(user, organisationId, fileId);
+        if (file is null) return Results.NotFound();
+        http.Response.Headers.CacheControl = "private, no-store";
+        http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return Results.File(file.Content, file.ContentType, file.FileName);
     }).RequireAuthorization();
 app.MapBankStatementDocumentEndpoints();
 app.MapYearEndHandoverPackEndpoints();
