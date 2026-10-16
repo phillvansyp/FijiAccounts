@@ -304,3 +304,41 @@ img,svg{max-width:100%}
     background: #fff1dd;
     color: #8a5200;
 }
+
+/* =========================================================
+   RESPONSIVE APPLICATION SHELL
+   Keep dense accounting screens inside the device viewport.
+   ========================================================= */
+html,body,#app{width:100%;max-width:100%;min-width:0}
+body{overflow-x:clip}
+.page-content :is(section,article,form,fieldset,.card,.setup-card,.detail-card,.row,.col){min-width:0}
+.page-content :is(input,select,textarea,.form-control,.form-select){max-width:100%}
+.page-content :is(h1,h2,h3,p,small,strong,span,label){overflow-wrap:anywhere}
+
+@media(max-width:1180px){
+    .report-heading,.page-heading,.workspace-heading,.card-heading,.list-heading,.section-heading{flex-wrap:wrap}
+    .report-controls{align-items:stretch;flex-direction:column}
+    .report-controls form{width:100%;align-items:stretch!important;flex-wrap:wrap}
+    .report-controls form>div{flex:1 1 165px;min-width:0}
+    .report-controls>span{margin-left:0;white-space:normal}
+    .statement-fields{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .setup-card,.detail-card,.work-card,.quick-card{padding:1.15rem}
+}
+
+@media(max-width:900px){
+    .page-content .table{display:block;width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .page-content .table>:not(caption)>*>*{white-space:nowrap}
+    .statement-fields{grid-template-columns:1fr 1fr}
+    .comparison-strip,.report-bottom-bar{align-items:flex-start;flex-direction:column}
+    .report-bottom-bar>div{width:100%;flex-wrap:wrap}
+}
+
+@media(max-width:650px){
+    .statement-fields{grid-template-columns:1fr}
+    .page-content h1{font-size:clamp(1.65rem,8vw,2.15rem)}
+    .page-content h2{font-size:clamp(1.2rem,6vw,1.55rem)}
+    .setup-card,.detail-card,.work-card,.quick-card,.context-help{padding:1rem}
+    .heading-actions,.banner-actions,.detail-actions,.report-bottom-bar>div{width:100%}
+    .heading-actions>* ,.banner-actions>* ,.detail-actions>*{flex:1 1 auto}
+    .selected-attachment{align-items:flex-start;flex-direction:column}
+}

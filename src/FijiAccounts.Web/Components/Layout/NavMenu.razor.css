@@ -17,3 +17,49 @@
 @media(max-width:800px){.nav-inner{width:100%;padding-left:.5rem;padding-right:.5rem}}
 
 .mega-menu a.receipt-menu-link{align-items:center}
+
+/* The complete desktop menu is wider than a typical laptop viewport.  Move it
+   behind the menu button before it can push the actions off screen. */
+@media(max-width:1500px){
+    .brand span:last-child{display:none}
+    .brand-landscape{width:155px;flex-basis:155px}
+    .brand-landscape img{width:155px}
+    .primary-links ::deep>a,.module-menu>summary{padding-left:.5rem;padding-right:.5rem}
+    .org-name{max-width:105px}
+}
+
+@media(max-width:1380px){
+    .nav-inner{width:100%;padding-left:.75rem;padding-right:.75rem}
+    .menu-button{display:flex;flex:none;flex-direction:column;gap:4px;padding:.65rem;cursor:pointer;border-radius:.55rem}
+    .menu-button:hover{background:rgba(255,255,255,.09)}
+    .menu-button span{width:21px;height:2px;background:#fff}
+    .primary-links{display:none;position:absolute;left:0;right:0;top:72px;height:auto;max-height:calc(100dvh - 72px);margin:0;padding:.65rem;background:#073b4c;overflow-y:auto;overscroll-behavior:contain;box-shadow:0 14px 24px rgba(7,35,48,.2)}
+    .menu-toggle:checked~.primary-links{display:flex;flex-direction:column;align-items:stretch}
+    .primary-links ::deep>a,.module-menu>summary{height:auto;min-height:44px;padding:.75rem .9rem;border:0;border-radius:.45rem}
+    .mega-menu{position:static;width:auto;max-width:none;margin:.25rem .5rem .6rem;box-shadow:none}
+    .mega-menu:before{display:none}
+    .org-switch{margin-left:0}
+    .nav-actions{gap:.3rem}
+}
+
+@media(max-width:700px){
+    .app-header{height:64px}
+    .primary-links{top:64px;max-height:calc(100dvh - 64px)}
+    .brand-landscape{width:130px;height:58px;flex-basis:130px}
+    .brand-landscape img{width:130px}
+    .org-picker>summary{padding:.4rem .5rem}
+    .org-name{display:none}
+    .quick-menu{display:none}
+    .icon-link,.avatar{width:36px;height:36px}
+    .nav-actions{margin-left:auto;gap:.2rem}
+    .org-panel{left:-70px;width:min(370px,calc(100vw - 1rem))}
+}
+
+@media(max-width:430px){
+    .nav-inner{gap:.3rem;padding-left:.4rem;padding-right:.4rem}
+    .brand-landscape{width:112px;flex-basis:112px}
+    .brand-landscape img{width:112px}
+    .org-picker>summary{padding:.35rem}
+    .org-picker>summary .org-avatar{width:26px;height:26px}
+    .nav-actions .icon-link:first-of-type{display:none}
+}
