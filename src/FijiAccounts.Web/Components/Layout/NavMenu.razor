@@ -18,24 +18,31 @@
 
         @if (accessibleOrganisations.Count > 0)
         {
-            <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-name">@ActiveOrganisationDisplayName</span></summary>
-                <div class="org-panel">
+            <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="Change workspace" aria-label="Change workspace"><span class="org-avatar">@OrganisationInitials(activeOrganisationName ?? accessibleOrganisations[0].Organisation.LegalName)</span><span class="org-switch-copy"><small>Workspace</small><span class="org-name">@ActiveOrganisationDisplayName</span></span><span class="org-switch-arrow" aria-hidden="true">⌄</span></summary>
+                <div class="org-panel workspace-panel">
+                    <div class="workspace-heading">
+                        <div><span class="workspace-kicker">Account Island workspaces</span><strong>Where would you like to work?</strong><small>Each workspace keeps its country, currency and tax settings together.</small></div>
+                        <a class="manage-organisations" href="organisations">Manage all</a>
+                    </div>
+                    <div class="workspace-grid">
+                        @foreach (var item in accessibleOrganisations)
+                        {
+                            var isCurrentOrganisation = item.Organisation.Id == activeOrganisationId;
+                            <a class="workspace-card @(isCurrentOrganisation ? "is-current" : null)" href="o/@item.Organisation.Id" aria-current="@(isCurrentOrganisation ? "page" : null)">
+                                <span class="workspace-card-top"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span></span>
+                                <b>@item.Organisation.LegalName</b>
+                                <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
+                                <span class="workspace-card-action">@(isCurrentOrganisation ? "Open now" : "Switch workspace →")</span>
+                            </a>
+                        }
+                    </div>
                     @if (activeOrganisationId is not null)
                     {
-                        <div class="active-company"><span class="org-avatar">@OrganisationInitials(activeOrganisationName!)</span><b>@ActiveOrganisationDisplayName</b></div>
+                        <div class="workspace-tools">
+                            <a href="@OrgUrl("settings")"><span class="workspace-tool-icon" aria-hidden="true">⚙</span><span><b>Workspace settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
+                            <a href="@OrgUrl("team")"><span class="workspace-tool-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
+                        </div>
                     }
-                    @if (accessibleOrganisations.Count > 1)
-                    {
-                        <strong>Organisations</strong>
-                        @foreach (var item in accessibleOrganisations.Where(x => x.Organisation.Id != activeOrganisationId)) { <a href="o/@item.Organisation.Id"><span class="org-avatar">@OrganisationInitials(item.Organisation.LegalName)</span><span><b>@OrganisationDisplay.NameWithCountry(item.Organisation)</b><small>@(item.IsClient ? "Accountant client" : item.AccessLabel)</small></span></a> }
-                    }
-                    @if (activeOrganisationId is not null)
-                    {
-                        <a class="company-action" href="@OrgUrl("settings")"><span class="company-icon">⚙</span><span><b>Organisation settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
-                        <a class="company-action" href="@OrgUrl("team")"><span class="company-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
-                    }
-
-                    <a class="manage-organisations" href="organisations">Manage organisations</a>
                 </div>
             </details>
         }
