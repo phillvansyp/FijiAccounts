@@ -264,6 +264,13 @@ builder.Services.AddScoped<PaymentConnectionsService>();
 builder.Services.AddScoped<BusinessPartyDocumentService>();
 builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<XeroMigrationService>();
+builder.Services.Configure<XeroApiOptions>(builder.Configuration.GetSection(XeroApiOptions.SectionName));
+builder.Services.AddHttpClient<XeroApiClient>(client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(2);
+    client.MaxResponseContentBufferSize = 30 * 1024 * 1024;
+});
+builder.Services.AddScoped<XeroConnectionService>();
 builder.Services.AddScoped<EmployeeReceiptService>();
 builder.Services.AddScoped<ReceiptBankPurchaseService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();
@@ -371,6 +378,7 @@ if (app.Environment.IsDevelopment())
 app.MapMobileApiV1();
 PayrollServiceBillingService.Map(app);
 app.MapNzPayIntegrationEndpoints();
+app.MapXeroIntegrationEndpoints();
 
 if (mobileAuthenticationEnabled)
 {

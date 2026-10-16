@@ -64,6 +64,7 @@ public sealed class XeroMigrationService(
         return await db.Set<XeroMigration>()
             .AsNoTracking()
             .Include(x => x.Files)
+            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
     }
 

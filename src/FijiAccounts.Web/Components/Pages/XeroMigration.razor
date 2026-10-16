@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @inject XeroMigrationService MigrationService
+@inject XeroConnectionService XeroConnection
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -84,12 +85,82 @@ else
 
     <section class="migration-card">
         <div class="section-heading">
-            <div><p class="step-label">Step 2</p><h2>Export everything from Xero</h2></div>
+            <div><p class="step-label">Step 2</p><h2>Connect Xero and collect the evidence</h2></div>
             <span>@SuppliedRequiredCount of @XeroMigrationService.RequiredCategories.Length required sets supplied</span>
         </div>
+        <div class="xero-connect-panel">
+            @if (connectionStatus is null || !connectionStatus.IsConfigured)
+            {
+                <div>
+                    <strong>Xero connection awaiting setup</strong>
+                    <p>Add the Xero app ID, secret and approved callback address to the deployment settings. The export upload below remains available.</p>
+                </div>
+            }
+            else if (!connectionStatus.IsConnected)
+            {
+                <div>
+                    <strong>Connect using read-only access</strong>
+                    <p>Account Island will copy supported accounting records into staging. It cannot create or change anything in Xero.</p>
+                </div>
+                @if (canApprove && migration is not null)
+                {
+                    <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+                }
+                else
+                {
+                    <span class="status-pill preparing">An owner or administrator connects Xero</span>
+                }
+            }
+            else
+            {
+                <div>
+                    <strong>@(connectionStatus.TenantName ?? "Xero connected")</strong>
+                    <p>@(connectionStatus.LastSyncedAt is null ? "No data copied yet." : "Last copied " + connectionStatus.LastSyncedAt.Value.ToLocalTime().ToString("dd MMM yyyy HH:mm"))</p>
+                </div>
+                @if (connectionStatus.TenantId is null && connectionStatus.AvailableTenants.Count > 0)
+                {
+                    <div class="tenant-choice">
+                        <select class="form-select" @bind="selectedTenantId" disabled="@busy">
+                            <option value="">Choose the Xero organisation</option>
+                            @foreach (var tenant in connectionStatus.AvailableTenants)
+                            {
+                                <option value="@tenant.TenantId">@tenant.TenantName</option>
+                            }
+                        </select>
+                        <button type="button" class="btn btn-secondary" @onclick="ChooseTenant" disabled="@(busy || string.IsNullOrWhiteSpace(selectedTenantId))">Use this organisation</button>
+                    </div>
+                }
+                else if (canPrepare)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="SyncXero" disabled="@syncing">@(syncing ? "Copying from Xero..." : "Copy data from Xero")</button>
+                }
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(connectionStatus?.LastSyncError))
+        {
+            <details class="alert alert-warning">
+                <summary>Some Xero datasets need follow-up</summary>
+                <p class="mb-0 mt-2">@connectionStatus.LastSyncError</p>
+            </details>
+        }
+
+        @if (LatestSnapshots.Count > 0)
+        {
+            <div class="api-snapshot-grid">
+                @foreach (var snapshot in LatestSnapshots)
+                {
+                    <a href="/api/o/@OrganisationId/xero-migration/snapshots/@snapshot.Id" title="SHA-256 @snapshot.Sha256">
+                        <strong>@snapshot.DisplayName</strong>
+                        <span>@snapshot.RecordCount records · @snapshot.RetrievedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                    </a>
+                }
+            </div>
+        }
+
         <div class="source-instructions">
             <div>
-                <strong>In Xero, export these first</strong>
+                <strong>Export these control records from Xero</strong>
                 <ol>
                     <li>General Ledger for all available dates, with all columns and currencies.</li>
                     <li>Trial Balance at the final Xero date and at each prior financial year end.</li>
@@ -184,18 +255,26 @@ else
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
+    [SupplyParameterFromQuery(Name = "xero")] public string? XeroResult { get; set; }
     private AccessibleOrganisation? access;
     private FijiAccounts.Web.Data.XeroMigration? migration;
     private List<XeroMigrationFile> files = [];
     private MigrationModel model = new();
+    private XeroConnectionStatus? connectionStatus;
     private string userId = string.Empty;
     private string selectedCategory = XeroMigrationService.Categories[0];
+    private string selectedTenantId = string.Empty;
     private string? message;
     private string messageClass = "alert-success";
-    private bool loading = true, busy, uploading, canPrepare, canApprove;
+    private bool loading = true, busy, uploading, syncing, canPrepare, canApprove;
     private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
     private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
     private int SuppliedRequiredCount => XeroMigrationService.RequiredCategories.Count(category => files.Any(x => x.Category == category));
+    private List<XeroApiSnapshot> LatestSnapshots => migration?.ApiSnapshots
+        .GroupBy(x => x.DatasetKey)
+        .Select(group => group.OrderByDescending(x => x.RetrievedAt).First())
+        .OrderBy(x => x.DisplayName)
+        .ToList() ?? [];
     private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
     private bool AllChecksComplete => CompletedChecks == 7;
     private string StatusLabel => migration?.Status switch
@@ -224,7 +303,16 @@ else
             canPrepare = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
             canApprove = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             migration = await MigrationService.GetAsync(userId, OrganisationId);
+            connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            selectedTenantId = connectionStatus.TenantId?.ToString() ?? string.Empty;
             ApplyMigration();
+            if (string.Equals(XeroResult, "connected", StringComparison.OrdinalIgnoreCase))
+            {
+                message = connectionStatus.TenantId is null
+                    ? "Xero is connected. Choose the organisation to import."
+                    : $"{connectionStatus.TenantName} is connected and ready to copy.";
+                messageClass = "alert-success";
+            }
         }
         loading = false;
     }
@@ -293,6 +381,47 @@ else
             message = ex.Message; messageClass = "alert-danger";
         }
         finally { uploading = false; }
+    }
+
+    private async Task ChooseTenant()
+    {
+        if (!Guid.TryParse(selectedTenantId, out var tenantId)) return;
+        busy = true; message = null;
+        try
+        {
+            await XeroConnection.SelectTenantAsync(userId, OrganisationId, tenantId);
+            connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            message = $"{connectionStatus.TenantName} selected for this migration.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { busy = false; }
+    }
+
+    private async Task SyncXero()
+    {
+        syncing = true; message = null;
+        try
+        {
+            var result = await XeroConnection.SyncAsync(userId, OrganisationId);
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            ApplyMigration();
+            message = result.Failures.Count == 0
+                ? $"Copied {result.ImportedRecords:N0} records from {result.ImportedDatasets} Xero datasets into staging."
+                : $"Copied {result.ImportedRecords:N0} records from {result.ImportedDatasets} datasets. {result.Failures.Count} unavailable datasets are listed for follow-up.";
+            if (result.ReconciliationReset)
+                message += " Previous reconciliation approval was cleared because the source data changed.";
+            messageClass = result.ImportedDatasets > 0 ? "alert-success" : "alert-danger";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or XeroApiException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { syncing = false; }
     }
 
     private RenderFragment Check(string title, string detail, string property, bool value) => builder =>

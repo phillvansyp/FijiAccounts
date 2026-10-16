@@ -53,6 +53,22 @@ Email__Smtp__Username=example-user
 Email__Smtp__Password=replace-me
 ```
 
+## Xero migration connection
+
+Create an OAuth 2.0 web app in the Xero Developer portal and register the exact
+production callback address, including the public port when one is present:
+
+```text
+https://app.accountisland.com:8443/api/integrations/xero/callback
+```
+
+Add `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, and `XERO_REDIRECT_URI` to GitHub's
+`production` environment secrets. All three are required to enable **Connect
+Xero**. The deployment writes them to the protected server environment file;
+the client secret must never be committed to the repository. The integration
+requests read-only accounting permissions and stores Xero access and refresh
+tokens using the application's persistent data-protection keys.
+
 ## Off-host backups and operations alerts
 
 Off-host replication is disabled until all destination secrets are configured

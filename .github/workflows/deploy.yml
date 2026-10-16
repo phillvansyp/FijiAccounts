@@ -204,6 +204,49 @@ jobs:
           update_setting Email__Smtp__Password "$EMAIL_SMTP_PASSWORD"
           echo "Production email settings provisioned."
 
+      - name: Provision Xero migration connection
+        shell: bash
+        env:
+          XERO_CLIENT_ID: ${{ secrets.XERO_CLIENT_ID }}
+          XERO_CLIENT_SECRET: ${{ secrets.XERO_CLIENT_SECRET }}
+          XERO_REDIRECT_URI: ${{ secrets.XERO_REDIRECT_URI }}
+        run: |
+          set -euo pipefail
+          env_file="$DEPLOY_DIR/config/app.env"
+          values=("$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" "$XERO_REDIRECT_URI")
+          configured=0
+          for value in "${values[@]}"; do
+            if [ -n "$value" ]; then
+              configured=$((configured + 1))
+            fi
+          done
+          if [ "$configured" -eq 0 ]; then
+            echo "Xero connection secrets are not configured; preserving existing server settings."
+            exit 0
+          fi
+          if [ "$configured" -ne "${#values[@]}" ]; then
+            echo "Xero connection secrets are incomplete." >&2
+            exit 1
+          fi
+          update_setting() {
+            key="$1"
+            value="${2%%$'\n'*}"
+            value="${value%$'\r'}"
+            temp_file="$(mktemp)"
+            awk -F= -v key="$key" '$1 != key' "$env_file" > "$temp_file"
+            printf '%s=%s\n' "$key" "$value" >> "$temp_file"
+            install -m 0600 "$temp_file" "$env_file"
+            rm -f "$temp_file"
+          }
+          if [[ "$XERO_REDIRECT_URI" != https://* ]]; then
+            echo "Xero redirect URI must use HTTPS." >&2
+            exit 1
+          fi
+          update_setting Xero__ClientId "$XERO_CLIENT_ID"
+          update_setting Xero__ClientSecret "$XERO_CLIENT_SECRET"
+          update_setting Xero__RedirectUri "$XERO_REDIRECT_URI"
+          echo "Xero migration connection settings provisioned."
+
       - name: Back up and deploy
         id: deployment
         shell: bash

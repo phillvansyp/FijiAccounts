@@ -157,6 +157,8 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<NzPayFbtJournalDraftLine> NzPayFbtJournalDraftLines => Set<NzPayFbtJournalDraftLine>();
     public DbSet<XeroMigration> XeroMigrations => Set<XeroMigration>();
     public DbSet<XeroMigrationFile> XeroMigrationFiles => Set<XeroMigrationFile>();
+    public DbSet<XeroConnection> XeroConnections => Set<XeroConnection>();
+    public DbSet<XeroApiSnapshot> XeroApiSnapshots => Set<XeroApiSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -188,6 +190,26 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .HasForeignKey(x => x.XeroMigrationId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<XeroMigrationFile>()
+            .HasOne(x => x.ImmutableDocumentObject)
+            .WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroConnection>()
+            .HasIndex(x => x.OrganisationId)
+            .IsUnique();
+        builder.Entity<XeroConnection>()
+            .HasOne(x => x.Organisation)
+            .WithMany()
+            .HasForeignKey(x => x.OrganisationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroApiSnapshot>()
+            .HasIndex(x => new { x.XeroMigrationId, x.DatasetKey, x.RetrievedAt });
+        builder.Entity<XeroApiSnapshot>()
+            .HasOne(x => x.Migration)
+            .WithMany(x => x.ApiSnapshots)
+            .HasForeignKey(x => x.XeroMigrationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroApiSnapshot>()
             .HasOne(x => x.ImmutableDocumentObject)
             .WithMany()
             .HasForeignKey(x => x.ImmutableDocumentObjectId)
@@ -1622,6 +1644,8 @@ builder.Entity<FixedAsset>()
     ChangeTracker.Entries<ImmutableDocumentObject>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<XeroMigrationFile>()
+        .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+    ChangeTracker.Entries<XeroApiSnapshot>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
     ChangeTracker.Entries<ImmutableDocumentIntegrityScan>()
         .Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
