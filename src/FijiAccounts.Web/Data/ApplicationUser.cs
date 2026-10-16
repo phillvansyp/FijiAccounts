@@ -6,5 +6,6 @@ namespace FijiAccounts.Web.Data;
 public class ApplicationUser : IdentityUser
 {
     public Guid? LastSelectedOrganisationId { get; set; }
+    public DateTimeOffset? PasskeyEnrollmentDismissedAt { get; set; }
 }
 

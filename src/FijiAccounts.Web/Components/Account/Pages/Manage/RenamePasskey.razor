@@ -40,6 +40,9 @@
     [Parameter]
     public string? Id { get; set; }
 
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
+
     [SupplyParameterFromForm]
     private InputModel Input { get; set; } = default!;
 
@@ -83,7 +86,9 @@
             return;
         }
 
-        RedirectManager.RedirectToWithStatus("Account/Manage/Passkeys", "Passkey updated successfully.", HttpContext);
+        RedirectManager.RedirectToWithStatus(
+            string.IsNullOrWhiteSpace(ReturnUrl) ? "Account/Manage/Passkeys" : ReturnUrl,
+            "Biometric or passkey login is ready.", HttpContext);
     }
 
     private sealed class InputModel

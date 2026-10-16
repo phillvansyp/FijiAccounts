@@ -49,7 +49,7 @@
                 <hr />
                 <div class="d-flex flex-column">
                     <span class="text-secondary mx-auto mt-2">OR</span>
-                    <PasskeySubmit Operation="PasskeyOperation.Request" Name="Input.Passkey" EmailName="Input.Email" class="btn btn-link mx-auto">Log in with a passkey</PasskeySubmit>
+                    <PasskeySubmit Operation="PasskeyOperation.Request" Name="Input.Passkey" EmailName="Input.Email" class="btn btn-link mx-auto">Use fingerprint, face, PIN or passkey</PasskeySubmit>
                 </div>
                 <hr />
                 <div>
@@ -143,9 +143,23 @@
                     .Select(x => (Guid?)x.OrganisationId)
                     .SingleOrDefaultAsync();
 
+                var destination = demoOrganisationId is not null
+                    ? $"o/{demoOrganisationId.Value}"
+                    : ReturnUrl;
+                if (isPasswordSignIn && user.PasskeyEnrollmentDismissedAt is null &&
+                    (await UserManager.GetPasskeysAsync(user)).Count == 0)
+                {
+                    RedirectManager.RedirectTo("Account/Manage/Passkeys", new()
+                    {
+                        ["setup"] = true,
+                        ["returnUrl"] = destination
+                    });
+                    return;
+                }
+
                 if (demoOrganisationId is not null)
                 {
-                    RedirectManager.RedirectTo($"o/{demoOrganisationId.Value}");
+                    RedirectManager.RedirectTo(destination);
                     return;
                 }
             }

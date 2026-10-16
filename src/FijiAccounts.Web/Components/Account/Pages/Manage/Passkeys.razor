@@ -9,11 +9,19 @@
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityRedirectManager RedirectManager
 
-<PageTitle>Manage your passkeys</PageTitle>
+<PageTitle>@(Setup ? "Set up biometric login" : "Manage your passkeys")</PageTitle>
 
-<h3>Manage your passkeys</h3>
+<h3>@(Setup ? "Set up faster, safer login" : "Manage your passkeys")</h3>
 
 <StatusMessage />
+
+@if (Setup)
+{
+    <div class="alert alert-info" role="status">
+        <strong>Use your fingerprint, face or device PIN next time.</strong>
+        <p class="mb-0 mt-2">Account Island uses a passkey stored securely by this device. Your biometric information stays on the device and is never sent to Account Island.</p>
+    </div>
+}
 
 @if (currentPasskeys is { Count: > 0 })
 {
@@ -54,10 +62,19 @@ else
     }
     else
     {
-        <PasskeySubmit Operation="PasskeyOperation.Create" Name="Input" class="btn btn-primary">Add a new passkey</PasskeySubmit>
+        <PasskeySubmit Operation="PasskeyOperation.Create" Name="Input" class="btn btn-primary">@(Setup ? "Set up biometric or passkey login" : "Add a new passkey")</PasskeySubmit>
     }
 
 </form>
+
+@if (Setup)
+{
+    <form @formname="skip-passkey-setup" @onsubmit="SkipPasskeySetup" method="post" class="mt-3">
+        <AntiforgeryToken />
+        <button type="submit" class="btn btn-link">Not now — continue to Account Island</button>
+    </form>
+    <p class="text-secondary mt-3"><small>A supported browser and a device screen lock are required. Windows may use Windows Hello; Apple and Android devices may use Face ID, Touch ID or their device PIN.</small></p>
+}
 
 @code {
     private const int MaxPasskeyCount = 100;
@@ -76,6 +93,12 @@ else
 
     [SupplyParameterFromForm(FormName = "add-passkey")]
     private PasskeyInputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery(Name = "setup")]
+    private bool Setup { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrl { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
@@ -132,7 +155,31 @@ else
 
         // Immediately prompt the user to enter a name for the credential
         var credentialIdBase64Url = Base64Url.EncodeToString(attestationResult.Passkey.CredentialId);
-        RedirectManager.RedirectTo($"Account/Manage/RenamePasskey/{credentialIdBase64Url}");
+        RedirectManager.RedirectTo($"Account/Manage/RenamePasskey/{credentialIdBase64Url}", new()
+        {
+            ["returnUrl"] = Setup ? ReturnUrl : null
+        });
+    }
+
+    private async Task SkipPasskeySetup()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        user.PasskeyEnrollmentDismissedAt = DateTimeOffset.UtcNow;
+        var result = await UserManager.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            RedirectManager.RedirectToWithStatus(
+                "Account/Manage/Passkeys",
+                "Error: The biometric login preference could not be saved.",
+                HttpContext);
+            return;
+        }
+        RedirectManager.RedirectTo(ReturnUrl);
     }
 
     private async Task UpdatePasskey()

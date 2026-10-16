@@ -173,6 +173,9 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("PasskeyEnrollmentDismissedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PasswordHash")
                         .HasColumnType("TEXT");
 
