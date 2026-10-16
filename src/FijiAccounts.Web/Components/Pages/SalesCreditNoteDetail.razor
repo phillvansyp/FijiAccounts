@@ -21,7 +21,6 @@
 else
 {
     <div class="detail-actions no-print">
-        <a href="o/@OrganisationId/sales/@credit.SalesInvoiceId">← Invoice @credit.SalesInvoice.InvoiceNumber</a>
         @if (credit.Status == SalesCreditNoteStatus.Draft && canPost)
         {
             <button class="btn btn-primary" @onclick="PostDraft">@PostButtonLabel</button>

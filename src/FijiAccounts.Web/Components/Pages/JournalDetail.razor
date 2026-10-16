@@ -26,11 +26,6 @@ else
     <div class="journal-page">
 
         <div class="journal-toolbar no-print">
-            <a class="back-link"
-               href="/o/@OrganisationId/general-ledger">
-                &larr; General ledger
-            </a>
-
             <button class="btn btn-outline-secondary"
                     onclick="window.print()">
                 Print journal
@@ -342,20 +337,10 @@ else
 
     .journal-toolbar {
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-end;
         align-items: center;
         gap: 1rem;
         margin-bottom: 1rem;
-    }
-
-    .back-link {
-        color: #0d6efd;
-        text-decoration: none;
-        font-size: .9rem;
-    }
-
-    .back-link:hover {
-        text-decoration: underline;
     }
 
     .journal-document,

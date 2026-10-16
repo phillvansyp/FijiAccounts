@@ -18,7 +18,6 @@
 }
 else
 {
-    <p><a href="platform">← Tenant overview</a></p>
     <div class="settings-heading">
         <div><p class="eyebrow">Platform tenant</p><h1>@tenant.Name</h1><p>@tenant.Companies.Count companies · @tenant.DistinctUserCount users · @tenant.PresentationCurrency presentation currency</p></div>
         <div><span class="badge @(tenant.Status == TenantStatus.Active ? "text-bg-success" : "text-bg-warning")">@tenant.Status</span>@if (tenant.IsDemo) { <span class="badge text-bg-info ms-2">Demo</span> }</div>

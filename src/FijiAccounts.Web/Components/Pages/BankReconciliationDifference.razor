@@ -18,7 +18,6 @@ else if (report is null)
 }
 else
 {
-    <a href="@BankUrl()">← Back to bank reconciliation</a>
     <section class="card p-4 mt-3">
         <h1>Reconciliation difference</h1>
         <p>@report.Session.BankAccount.Name · @report.Session.StatementStartDate.ToString("dd MMM yyyy") – @report.Session.StatementEndDate.ToString("dd MMM yyyy")</p>

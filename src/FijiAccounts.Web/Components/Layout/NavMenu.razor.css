@@ -13,7 +13,8 @@
 .org-panel .company-action{margin-top:.25rem}
 .company-icon{display:grid;place-items:center;width:30px;flex:none;font-size:1.35rem;color:#073b4c}
 .primary-links:has(.module-menu[open]) ::deep>a.active{color:#dceef1;background:transparent;border-bottom-color:transparent}
-.nav-inner{width:100%;margin:0;padding-left:clamp(.5rem,1.2vw,1.5rem);padding-right:clamp(.5rem,1.2vw,1.5rem)}
+.nav-inner{position:relative;width:100%;margin:0;padding-left:clamp(.5rem,1.2vw,1.5rem);padding-right:clamp(.5rem,1.2vw,1.5rem)}
+@media(min-width:1051px){.primary-links{position:absolute;left:50%;margin-left:0;transform:translateX(-50%)}}
 @media(max-width:800px){.nav-inner{width:100%;padding-left:.5rem;padding-right:.5rem}}
 
 .mega-menu a.receipt-menu-link{align-items:center}
@@ -32,7 +33,7 @@
     .org-name{max-width:105px}
 }
 
-@media(max-width:850px){
+@media(max-width:1050px){
     .nav-inner{width:100%;padding-left:.75rem;padding-right:.75rem}
     .menu-button{display:flex;flex:none;flex-direction:column;gap:4px;padding:.65rem;cursor:pointer;border-radius:.55rem}
     .menu-button:hover{background:rgba(255,255,255,.09)}

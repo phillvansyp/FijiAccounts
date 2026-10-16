@@ -61,7 +61,6 @@
         </fieldset>
     </EditForm>
 }
-else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back to document</a> }
 
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
@@ -70,7 +69,7 @@ else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back t
     private bool IsSales => InvoiceId is not null;
     private string ReturnUrl => $"/o/{OrganisationId}/{(IsSales ? "sales" : "purchases")}/{InvoiceId ?? BillId}";
     private string userId = "", documentNumber = "", baseCurrency = "";
-    private bool ready, loaded, saving;
+    private bool ready, saving;
     private string? error;
     private EditModel model = new();
     private List<BusinessParty> parties = [];
@@ -88,7 +87,7 @@ else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back t
 
     protected override async Task OnParametersSetAsync()
     {
-        ready = false; loaded = false; error = null;
+        ready = false; error = null;
         try
         {
             userId = Users.GetUserId((await Authentication.GetAuthenticationStateAsync()).User)!;
@@ -125,7 +124,6 @@ else if (loaded) { <a class="btn btn-outline-secondary" href="@ReturnUrl">Back t
             ready = true;
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { error = ex.Message; }
-        finally { loaded = true; }
     }
 
     private async Task CheckDimension(Guid? branchId, Guid? divisionId)

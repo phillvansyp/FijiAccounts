@@ -14,7 +14,7 @@
 @if (access is null || customer is null) { <div class="alert alert-danger">Customer not found or access denied.</div> }
 else
 {
-    <div class="detail-actions no-print"><a href="o/@OrganisationId/contacts">← Contacts</a><div><button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
+    <div class="detail-actions no-print justify-content-end"><div><button class="btn btn-outline-secondary" onclick="window.print()">Print / Save PDF</button></div></div>
     <section class="report-controls no-print"><EditForm Model="period" OnValidSubmit="Load" FormName="statement-period"><div><label class="form-label">From</label><InputDate class="form-control" @bind-Value="period.From" /></div><div><label class="form-label">To</label><InputDate class="form-control" @bind-Value="period.To" /></div><button class="btn btn-primary">Update statement</button></EditForm><span>@access.Organisation.BaseCurrency</span></section>
     @if (error is not null) { <div class="alert alert-danger">@error</div> }
     <article class="invoice-document statement-document"><header><div><span class="document-brand">Account Island</span><h1>Customer Statement</h1></div><div class="document-number"><strong>@customer.Name</strong><span>@period.From.ToString("dd MMM yyyy") – @period.To.ToString("dd MMM yyyy")</span></div></header>
