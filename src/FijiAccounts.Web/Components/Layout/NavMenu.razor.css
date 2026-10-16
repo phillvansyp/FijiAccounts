@@ -6,6 +6,9 @@
 .profile-menu>summary{list-style:none}
 .brand-landscape{width:220px;height:64px;flex:0 0 220px;overflow:hidden;justify-content:center}.brand-landscape img{display:block;width:220px;height:auto;max-width:none}@media(max-width:1100px){.brand-landscape{width:155px;flex-basis:155px}.brand-landscape img{width:155px}}@media(max-width:480px){.brand-landscape{width:125px;flex-basis:125px}.brand-landscape img{width:125px}}
 .profile-menu>summary::marker{content:""}
+.profile-panel .install-app-action{align-items:center;gap:.55rem;font-weight:750;color:#087f5b}
+.profile-panel .install-app-action:not([hidden]){display:flex}
+.profile-panel .install-app-action span{font-size:1.05rem}
 .org-panel{width:370px;max-height:calc(100vh - 92px);overflow:auto}
 .active-company{display:flex;align-items:center;gap:.8rem;padding:.7rem .7rem .9rem;border-bottom:1px solid #e7eef1;color:#073b4c;font-size:1rem}
 .active-company .org-avatar{width:42px;height:42px;font-size:.9rem;flex:none}
