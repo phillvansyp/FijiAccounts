@@ -58,21 +58,20 @@
                             @foreach (var item in accessibleOrganisations)
                             {
                                 var isCurrentOrganisation = item.Organisation.Id == activeOrganisationId;
-                                <a class="workspace-card @(isCurrentOrganisation ? "is-current" : null)" href="o/@item.Organisation.Id" aria-current="@(isCurrentOrganisation ? "page" : null)">
-                                    <span class="workspace-card-top"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(item.Organisation, accessibleOrganisations.Select(x => x.Organisation))</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
-                                    <b>@item.Organisation.LegalName</b>
-                                    <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
-                                    <span class="workspace-card-action">@(isCurrentOrganisation ? "Open now" : "Switch workspace →")</span>
-                                </a>
+                                <article class="workspace-card-shell @(isCurrentOrganisation ? "is-current" : null)">
+                                    <a class="workspace-card" href="@OrganisationUrl(item.Organisation.Id)" aria-current="@(isCurrentOrganisation ? "page" : null)">
+                                        <span class="workspace-card-top"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(item.Organisation, accessibleOrganisations.Select(x => x.Organisation))</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
+                                        <b>@item.Organisation.LegalName</b>
+                                        <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
+                                        <span class="workspace-card-action">@(isCurrentOrganisation ? "Open company" : "Switch to company →")</span>
+                                    </a>
+                                    <div class="workspace-card-tools" aria-label="@($"Manage {OrganisationDisplay.NameWithCountry(item.Organisation)}")">
+                                        <a href="@OrganisationUrl(item.Organisation.Id, "settings")" title="@($"Open settings for {OrganisationDisplay.NameWithCountry(item.Organisation)}")"><span class="workspace-tool-icon" aria-hidden="true">⚙</span><span><b>Settings</b><small>@OrganisationDisplay.CountryTag(item.Organisation.CountryCode) · @item.Organisation.BaseCurrency</small></span></a>
+                                        <a href="@OrganisationUrl(item.Organisation.Id, "team")" title="@($"Manage the team for {OrganisationDisplay.NameWithCountry(item.Organisation)}")"><span class="workspace-tool-icon" aria-hidden="true">👥</span><span><b>Team</b><small>Users &amp; permissions</small></span></a>
+                                    </div>
+                                </article>
                             }
                         </div>
-                        @if (activeOrganisationId is not null)
-                        {
-                            <div class="workspace-tools">
-                                <a href="@OrgUrl("settings")"><span class="workspace-tool-icon" aria-hidden="true">⚙</span><span><b>Workspace settings</b><small>Business, @ActiveCountryTag tax and financial settings</small></span></a>
-                                <a href="@OrgUrl("team")"><span class="workspace-tool-icon" aria-hidden="true">👥</span><span><b>Team &amp; permissions</b><small>Users, roles and accountant access</small></span></a>
-                            </div>
-                        }
                     </div>
                 </details>
             }
@@ -154,7 +153,8 @@
         await RefreshNavigationCountsAsync();
     }
     private static Guid? ExtractOrganisationId(string path) { var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries); return parts.Length > 1 && parts[0].Equals("o", StringComparison.OrdinalIgnoreCase) && Guid.TryParse(parts[1], out var id) ? id : null; }
-    private string OrgUrl(string? module = null) => activeOrganisationId is null ? "organisations" : module is null ? $"o/{activeOrganisationId}" : $"o/{activeOrganisationId}/{module}";
+    private static string OrganisationUrl(Guid organisationId, string? module = null) => module is null ? $"/o/{organisationId}" : $"/o/{organisationId}/{module}";
+    private string OrgUrl(string? module = null) => activeOrganisationId is null ? "/organisations" : OrganisationUrl(activeOrganisationId.Value, module);
     private static string Initial(string? name) => string.IsNullOrWhiteSpace(name) ? "U" : name[..1].ToUpperInvariant();
     private void OrganisationUpdated(Guid organisationId) { if (organisationId != activeOrganisationId) return; _ = InvokeAsync(RefreshNavigationCountsAsync); }
     private async Task RefreshNavigationCountsAsync()

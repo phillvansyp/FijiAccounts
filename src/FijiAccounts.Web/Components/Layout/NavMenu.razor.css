@@ -113,9 +113,11 @@
 .workspace-heading .manage-organisations{display:inline-flex;flex:none;margin:0;padding:.65rem .85rem;border:1px solid #b9d9d0;border-radius:999px;background:#fff;color:#087f5b;font-weight:800;text-decoration:none}
 .workspace-heading .manage-organisations:hover{background:#dff5ee}
 .workspace-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;padding:.2rem 1.4rem 1.35rem}
-.workspace-card{display:flex;min-width:0;min-height:176px;flex-direction:column;padding:1rem;color:#17324d;text-decoration:none;border:1px solid #d1e3de;border-radius:1rem;background:#fff;box-shadow:0 5px 16px rgba(7,59,76,.06);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
-.workspace-card:hover{color:#17324d;transform:translateY(-2px);border-color:#20c997;box-shadow:0 12px 24px rgba(7,59,76,.13)}
-.workspace-card.is-current{border:2px solid #0b8f6d;background:linear-gradient(145deg,#fff,#e4f8f1)}
+.workspace-card-shell{display:flex;min-width:0;flex-direction:column;overflow:hidden;border:1px solid #d1e3de;border-radius:1rem;background:#fff;box-shadow:0 5px 16px rgba(7,59,76,.06);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.workspace-card-shell:hover{transform:translateY(-2px);border-color:#20c997;box-shadow:0 12px 24px rgba(7,59,76,.13)}
+.workspace-card-shell.is-current{border:2px solid #0b8f6d;background:linear-gradient(145deg,#fff,#e4f8f1)}
+.workspace-card{display:flex;min-width:0;min-height:176px;flex-direction:column;padding:1rem;color:#17324d;text-decoration:none;background:transparent}
+.workspace-card:hover{color:#17324d}
 .workspace-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem}
 .workspace-card .org-avatar{width:38px;height:38px;border-radius:.7rem}
 .workspace-card-identifiers{display:flex;align-items:flex-end;gap:.3rem;flex-direction:column}
@@ -124,13 +126,13 @@
 .workspace-card>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1rem}
 .workspace-card>small{margin-top:.18rem;color:#6b7f89}
 .workspace-card-action{margin-top:auto;padding-top:.85rem;color:#087f5b;font-size:.76rem;font-weight:850}
-.workspace-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;padding:1rem 1.4rem 1.35rem;border-top:1px solid #d4e7e1;background:#e9f5f1}
-.workspace-tools>a{display:flex;align-items:center;gap:.75rem;padding:.75rem;color:#17324d;text-decoration:none;border-radius:.8rem}
-.workspace-tools>a:hover{background:#fff}
-.workspace-tools>a>span:last-child{display:flex;min-width:0;flex-direction:column}
-.workspace-tools b{font-size:.86rem}
-.workspace-tools small{color:#6b7f89;font-size:.72rem}
-.workspace-tool-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:.7rem;background:#fff;color:#073b4c;font-size:1.1rem;box-shadow:0 3px 10px rgba(7,59,76,.08)}
+.workspace-card-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.35rem;padding:.65rem;border-top:1px solid #d4e7e1;background:#e9f5f1}
+.workspace-card-tools>a{display:flex;min-width:0;align-items:center;gap:.45rem;padding:.5rem;color:#17324d;text-decoration:none;border-radius:.65rem}
+.workspace-card-tools>a:hover{background:#fff}
+.workspace-card-tools>a>span:last-child{display:flex;min-width:0;flex-direction:column}
+.workspace-card-tools b{font-size:.72rem}
+.workspace-card-tools small{overflow:hidden;color:#6b7f89;font-size:.62rem;text-overflow:ellipsis;white-space:nowrap}
+.workspace-tool-icon{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:.6rem;background:#fff;color:#073b4c;font-size:.9rem;box-shadow:0 3px 10px rgba(7,59,76,.08)}
 
 @media(max-width:850px){
     .workspace-panel{top:78px;width:min(680px,calc(100vw - 1rem));max-height:calc(100dvh - 86px)}
@@ -147,5 +149,4 @@
     .workspace-heading .manage-organisations{padding:.5rem .65rem;font-size:.78rem}
     .workspace-grid{grid-template-columns:1fr;padding:.1rem 1rem 1rem}
     .workspace-card{min-height:148px}
-    .workspace-tools{grid-template-columns:1fr;padding:.75rem 1rem 1rem}
 }
