@@ -49,7 +49,7 @@
             @if (accessibleOrganisations.Count > 0)
             {
                 <details class="org-switch org-picker" name="account-island-top-menu"><summary @onclick="RefreshOrganisationListAsync" title="@($"Change workspace · {ActiveOrganisationDisplayName} · {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")" aria-label="@($"Change workspace. Current workspace {ActiveOrganisationDisplayName}, ID {OrganisationDisplay.WorkspaceId(ActiveOrganisation)}")"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(ActiveOrganisation, accessibleOrganisations.Select(x => x.Organisation))</span></summary>
-                    <div class="org-panel workspace-panel">
+                    <div class="org-panel workspace-panel" onclick="if (event.target.closest('a')) this.closest('details').removeAttribute('open')">
                         <div class="workspace-heading">
                             <div><span class="workspace-kicker">Account Island workspaces</span><strong>Where would you like to work?</strong><small>Each workspace has a unique ID and keeps its country, currency and tax settings together.</small></div>
                             <a class="manage-organisations" href="organisations">Manage all</a>
