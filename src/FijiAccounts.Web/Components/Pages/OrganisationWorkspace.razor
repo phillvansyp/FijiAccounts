@@ -283,7 +283,7 @@ else
     }
     @if (IsTeamPage)
     {
-    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><h1>Team &amp; permissions</h1><p>@OrganisationDisplay.NameWithCountry(access.Organisation) · Manage users, permission profiles and access</p></div></div><div class="banner-actions"><a href="o/@OrganisationId/settings">Organisation settings</a></div></section>
+    <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><span class="eyebrow">Team &amp; permissions · @OrganisationDisplay.WorkspaceId(access.Organisation)</span><h1>@OrganisationDisplay.NameWithCountry(access.Organisation)</h1><p>Manage users, permission profiles and access for this company only. A user added here receives no access to another company.</p></div></div><div class="banner-actions"><a href="/o/@OrganisationId/settings">Workspace settings</a></div></section>
     <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Permission profile</th><th>Branch / division access</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@PermissionProfileLabel(member)</td><td>@DimensionAccessLabel(member)</td></tr> }</tbody></table></div>
     @if (canManageTeam)
     {

@@ -21,7 +21,7 @@
 @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
 else
 {
-    <div class="settings-heading"><div><p class="eyebrow">Organisation</p><h1>Business settings</h1><p>Identity, regional accounting and compliance configuration.</p></div><span class="tax-pack @(jurisdiction.TaxPackEnabled ? "enabled" : "pending")">@(jurisdiction.TaxPackEnabled ? "Tax pack enabled" : "Tax pack pending verification")</span></div>
+    <div class="settings-heading"><div><p class="eyebrow">Workspace settings · @OrganisationDisplay.WorkspaceId(access.Organisation)</p><h1>@OrganisationDisplay.NameWithCountry(access.Organisation)</h1><p>Identity, regional accounting and compliance configuration for this company only. Changes made here cannot alter another company.</p></div><span class="tax-pack @(jurisdiction.TaxPackEnabled ? "enabled" : "pending")">@OrganisationDisplay.CountryTag(access.Organisation.CountryCode) · @access.Organisation.BaseCurrency · @(jurisdiction.TaxPackEnabled ? "Tax pack enabled" : "Tax pack pending verification")</span></div>
     @if (status is not null) { <div class="alert @statusClass">@status</div> }
     @if (canManage) { <OrganisationDocuments OrganisationId="OrganisationId" /> }
     <section class="settings-card mb-3">
