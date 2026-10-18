@@ -128,6 +128,26 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task CurrentAssetIsNotClassifiedAsBankAndRerunRepairsExistingClassification()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"receivables","Code":"674","Name":"Accounts receivable","Type":"CURRENT","Status":"ACTIVE"}]}
+            """);
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(1, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
+        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "674");
+        Assert.False(account.IsBankAccount);
+
+        account.IsBankAccount = true;
+        await test.Db.SaveChangesAsync();
+        Assert.Equal(0, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
+        Assert.False((await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "674")).IsBankAccount);
+    }
+
+    [Fact]
     public async Task ActiveXeroBankAccountReactivatesMatchingAccountIslandAccount()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

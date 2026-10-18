@@ -265,6 +265,11 @@ public sealed class XeroImportPreparationService(
                 if (record is null) continue;
                 if (record.Status == XeroMigrationRecordStatus.Imported)
                 {
+                    // Re-running the master import also refreshes account metadata.
+                    // This lets importer corrections repair classifications without
+                    // creating a second account or changing the source identity.
+                    if (snapshot.DatasetKey == "accounts")
+                        await ImportAccountAsync(organisationId, source, cancellationToken);
                     // A record that was previously retained as unusable can become importable
                     // after the importer gains support for that Xero shape. Remove only that
                     // stale retention note; preserve genuine source-change review messages.
@@ -578,7 +583,7 @@ public sealed class XeroImportPreparationService(
             {
                 OrganisationId = organisationId, Code = code[..Math.Min(code.Length, 20)],
                 Name = name[..Math.Min(name.Length, 160)], Type = AccountTypeFor(xeroType),
-                IsBankAccount = xeroType is "BANK" or "CURRENT" or "CREDITCARD",
+                IsBankAccount = xeroType is "BANK" or "CREDITCARD",
                 BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank,
                 BankAccountNumber = NullIfBlank(Text(source, "BankAccountNumber")),
                 IsActive = !Text(source, "Status").Equals("ARCHIVED", StringComparison.OrdinalIgnoreCase)
@@ -590,7 +595,7 @@ public sealed class XeroImportPreparationService(
             var xeroType = Text(source, "Type");
             account.Name = name[..Math.Min(name.Length, 160)];
             account.Type = AccountTypeFor(xeroType);
-            account.IsBankAccount = xeroType is "BANK" or "CURRENT" or "CREDITCARD";
+            account.IsBankAccount = xeroType is "BANK" or "CREDITCARD";
             account.BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank;
             account.BankAccountNumber = NullIfBlank(Text(source, "BankAccountNumber")) ?? account.BankAccountNumber;
             account.IsActive = !Text(source, "Status").Equals("ARCHIVED", StringComparison.OrdinalIgnoreCase);
