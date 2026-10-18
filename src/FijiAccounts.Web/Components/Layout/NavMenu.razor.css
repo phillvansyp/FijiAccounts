@@ -123,7 +123,7 @@
 .workspace-card-identifiers{display:flex;align-items:flex-end;gap:.3rem;flex-direction:column}
 .country-tag{display:inline-flex;align-items:center;min-height:25px;padding:.2rem .55rem;color:#0b6954;background:#dff5ee;border-radius:999px;font-size:.7rem;font-weight:850;text-transform:uppercase}
 .workspace-id{color:#607681;font-size:.6rem;font-weight:850;letter-spacing:.06em}
-.workspace-card>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1rem}
+.workspace-card-name{display:block;color:#17324d;font-size:1rem;font-weight:850;line-height:1.25;overflow-wrap:anywhere;white-space:normal}
 .workspace-card>small{margin-top:.18rem;color:#6b7f89}
 .workspace-card-action{margin-top:auto;padding-top:.85rem;color:#087f5b;font-size:.76rem;font-weight:850}
 .workspace-card-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.35rem;padding:.65rem;border-top:1px solid #d4e7e1;background:#e9f5f1}

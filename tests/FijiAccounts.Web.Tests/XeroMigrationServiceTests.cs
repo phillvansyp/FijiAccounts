@@ -71,6 +71,8 @@ public sealed class XeroMigrationServiceTests
         await test.Db.SaveChangesAsync();
         var service = Service(test);
         var cutover = new DateOnly(2026, 11, 1);
+        await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover));
+        await AddRequiredExportsAsync(test, service);
 
         var approved = await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover) with
         {
@@ -103,7 +105,7 @@ public sealed class XeroMigrationServiceTests
     }
 
     [Fact]
-    public async Task PreparedMigrationWithBlockingImportIssueCannotBeApproved()
+    public async Task LiveImportPendingDoesNotPreventApprovalNeededToRunCutover()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         test.Organisation.CountryCode = "NZ";
@@ -111,6 +113,7 @@ public sealed class XeroMigrationServiceTests
         var service = Service(test);
         var cutover = new DateOnly(2026, 11, 1);
         var migration = await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover));
+        await AddRequiredExportsAsync(test, service);
         var retained = new DatabaseImmutableDocumentStore(test.Db).Stage(
             test.Organisation.Id, test.UserId, "{}"u8.ToArray());
         var snapshot = new XeroApiSnapshot
@@ -159,8 +162,8 @@ public sealed class XeroMigrationServiceTests
             ManagementApproved = true
         });
 
-        Assert.False(result.ManagementApproved);
-        Assert.NotEqual(XeroMigrationStatus.ApprovedForCutover, result.Status);
+        Assert.True(result.ManagementApproved);
+        Assert.Equal(XeroMigrationStatus.ApprovedForCutover, result.Status);
     }
 
     [Fact]
@@ -208,6 +211,13 @@ public sealed class XeroMigrationServiceTests
 
     private static XeroMigrationService Service(AccountingTestDatabase test) =>
         new(test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
+
+    private static async Task AddRequiredExportsAsync(AccountingTestDatabase test, XeroMigrationService service)
+    {
+        foreach (var category in XeroMigrationService.RequiredCategories)
+            await service.AddFileAsync(test.UserId, test.Organisation.Id, category,
+                $"{Guid.NewGuid():N}.csv", "text/csv", "A,B\n1,2"u8.ToArray());
+    }
 
     private static SaveXeroMigrationRequest Request(DateOnly cutoverDate) => new(
         "JCR 2006 Limited", cutoverDate, true, false, false, false, false, false, false, false, false, null);

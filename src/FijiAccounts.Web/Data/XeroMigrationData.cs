@@ -49,7 +49,13 @@ public enum XeroMigrationRecordStatus
     Unsupported = 3,
     Imported = 4,
     Skipped = 5,
-    Failed = 6
+    Failed = 6,
+    /// <summary>
+    /// The source object is retained in the immutable Xero archive but is not
+    /// replayed into the live ledger.  Cutover balances replace historical
+    /// posting so the opening position is not counted twice.
+    /// </summary>
+    Archived = 7
 }
 
 public enum XeroMigrationMappingKind

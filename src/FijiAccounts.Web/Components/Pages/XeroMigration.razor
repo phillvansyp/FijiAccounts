@@ -8,6 +8,7 @@
 @inject XeroMigrationService MigrationService
 @inject XeroConnectionService XeroConnection
 @inject XeroImportPreparationService ImportPreparation
+@inject XeroCutoverImportService CutoverImport
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -172,6 +173,7 @@ else
                     <li>Fixed Asset Reconciliation and asset list for each year, every filed GST return, and annual payroll activity reports.</li>
                     <li>If used, export inventory, budgets and tracking categories. Retain quotes, purchase orders, repeating templates and document attachments separately.</li>
                     <li>Keep every original Xero export unchanged.</li>
+                    <li>Before the final copy, allocate or refund any unallocated credit notes, prepayments and overpayments so the opening customer and supplier ledgers can be recreated exactly.</li>
                 </ol>
             </div>
             <div class="source-note">
@@ -230,12 +232,13 @@ else
             <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
             <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
         </div>
-        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island.</p>
+        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. Upload the final Trial Balance as CSV: the CSV is used to create the opening journal, while PDF or XLSX copies remain supporting evidence.</p>
         <div class="import-actions">
             @if (canPrepare && migration is not null)
             {
                 <button type="button" class="btn btn-primary" @onclick="PrepareImport" disabled="@preparingImport">@(preparingImport ? "Checking Xero records..." : "Prepare and check import")</button>
                 <button type="button" class="btn btn-secondary" @onclick="ImportMasterData" disabled="@(preparingImport || workspace.SourceRecordCount == 0)">Add accounts, contacts, currencies and items</button>
+                <button type="button" class="btn btn-secondary" @onclick="BuildCutover" disabled="@(preparingImport || workspace.SourceRecordCount == 0 || migration?.ManagementApproved != true)">Create approved live cutover</button>
             }
         </div>
         <div class="import-summary">
@@ -320,6 +323,10 @@ else
         @if (canPrepare && migration is not null)
         {
             <button class="btn btn-primary mt-3" @onclick="Save" disabled="@busy">Save reconciliation progress</button>
+            @if (migration.ManagementApproved && migration.Status != XeroMigrationStatus.Complete && canApprove)
+            {
+                <button class="btn btn-success mt-3 ms-2" @onclick="CompleteMigration" disabled="@busy">Complete migration</button>
+            }
         }
     </section>
 }
@@ -352,7 +359,8 @@ else
     private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
     private bool AllChecksComplete => CompletedChecks == 7;
     private bool CutoverCanBeApproved => AllChecksComplete &&
-        (workspace.SourceRecordCount == 0 || workspace.BlockingCount == 0);
+        SuppliedRequiredCount == XeroMigrationService.RequiredCategories.Length &&
+        !workspace.Issues.Any(x => x.Severity == XeroMigrationIssueSeverity.Blocking && x.Code != "LIVE_IMPORT_PENDING");
     private string StatusLabel => migration?.Status switch
     {
         XeroMigrationStatus.ReadyForImport => "Exports ready",
@@ -537,6 +545,42 @@ else
             message = ex.Message; messageClass = "alert-danger";
         }
         finally { preparingImport = false; }
+    }
+
+    private async Task BuildCutover()
+    {
+        preparingImport = true; message = null;
+        try
+        {
+            var result = await CutoverImport.BuildAsync(userId, OrganisationId);
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+            await ReloadWorkspace();
+            message = $"Created the balanced opening journal with {result.OpeningBalanceLines:N0} lines, added {result.OpenSalesInvoices:N0} open customer invoice(s), {result.OpenSupplierBills:N0} open supplier bill(s), and {result.FixedAssets:N0} fixed asset(s), and retained {result.ArchivedSourceRecords:N0} historical source record(s).";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
+    private async Task CompleteMigration()
+    {
+        busy = true; message = null;
+        try
+        {
+            migration = await MigrationService.CompleteAsync(userId, OrganisationId);
+            ApplyMigration();
+            message = "The Xero migration is complete. Account Island is now the live accounting record from the cutover date.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { busy = false; }
     }
 
     private async Task ReloadWorkspace()

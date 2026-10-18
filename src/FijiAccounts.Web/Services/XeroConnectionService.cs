@@ -248,12 +248,19 @@ public sealed class XeroConnectionService(
             throw new InvalidOperationException("Choose which Xero organisation to import.");
         }
         var accessToken = await GetAccessTokenAsync(connection, userId, cancellationToken);
-        var definitions = Datasets.Concat(ReportDefinitions(migration.CutoverDate)).ToArray();
+        var definitions = Datasets.AsEnumerable();
+        if (options.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Contains("accounting.journals.read", StringComparer.OrdinalIgnoreCase))
+        {
+            definitions = definitions.Append(new DatasetDefinition(
+                "journals", "Posted journals", "Journals", "Journals", true));
+        }
+        var definitionsArray = definitions.Concat(ReportDefinitions(migration.CutoverDate)).ToArray();
         var failures = new List<XeroSyncFailure>();
         var importedRecords = 0;
         var importedDatasets = 0;
 
-        foreach (var definition in definitions)
+        foreach (var definition in definitionsArray)
         {
             try
             {

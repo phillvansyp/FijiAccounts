@@ -48,7 +48,7 @@ public sealed class XeroMigrationService(
         "Bills, supplier credits and allocations", "Receivable Invoice Detail",
         "Payable Invoice Detail", "Bank statements and reconciliation",
         "Fixed assets and depreciation reconciliation", "GST returns and reconciliation",
-        "Payroll history reports"
+        "Payroll history reports", "Document attachments"
     ];
 
     public async Task<XeroMigration?> GetAsync(
@@ -97,6 +97,8 @@ public sealed class XeroMigrationService(
             .Include(x => x.Files)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
         var created = migration is null;
+        if (migration?.Status == XeroMigrationStatus.Complete)
+            throw new InvalidOperationException("This Xero migration is complete and its cutover record is locked.");
         migration ??= new XeroMigration
         {
             OrganisationId = organisationId,
@@ -120,9 +122,12 @@ public sealed class XeroMigrationService(
             .AnyAsync(x => x.XeroMigrationId == migration.Id, cancellationToken);
         var hasBlockingImportIssues = preparedRecordsExist && await db.XeroMigrationIssues
             .AnyAsync(x => x.XeroMigrationId == migration.Id && !x.IsResolved &&
-                           x.Severity == XeroMigrationIssueSeverity.Blocking, cancellationToken);
+                           x.Severity == XeroMigrationIssueSeverity.Blocking &&
+                           x.Code != "LIVE_IMPORT_PENDING", cancellationToken);
+        var requiredExportsSupplied = RequiredCategories.All(category =>
+            migration.Files.Any(file => file.Category.Equals(category, StringComparison.OrdinalIgnoreCase)));
         migration.ManagementApproved = request.ManagementApproved && AllChecksComplete(migration) &&
-                                       !hasBlockingImportIssues;
+                                       requiredExportsSupplied && !hasBlockingImportIssues;
         migration.UpdatedAt = DateTimeOffset.UtcNow;
         migration.UpdatedByUserId = userId;
         migration.Status = CalculateStatus(migration);
@@ -237,6 +242,36 @@ public sealed class XeroMigrationService(
         }));
         await db.SaveChangesAsync(cancellationToken);
         return new(content, file.ContentType, file.FileName);
+    }
+
+    public async Task<XeroMigration> CompleteAsync(
+        string userId, Guid organisationId, CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("Only an owner or administrator can complete the migration.");
+        var migration = await db.XeroMigrations.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId, cancellationToken)
+            ?? throw new InvalidOperationException("The Xero migration was not found.");
+        if (!migration.ManagementApproved || !AllChecksComplete(migration))
+            throw new InvalidOperationException("Complete all seven reconciliations and record management approval first.");
+        if (await db.XeroMigrationIssues.AnyAsync(x => x.XeroMigrationId == migration.Id &&
+                !x.IsResolved && x.Severity == XeroMigrationIssueSeverity.Blocking, cancellationToken))
+            throw new InvalidOperationException("Resolve every blocking migration issue before completion.");
+        if (!await db.AuditEvents.AnyAsync(x => x.OrganisationId == organisationId &&
+                x.EventType == "XeroOpeningBalancePosted" && x.EntityId == migration.Id.ToString(), cancellationToken))
+            throw new InvalidOperationException("Create the verified cutover opening balance first.");
+
+        migration.Status = XeroMigrationStatus.Complete;
+        migration.UpdatedAt = DateTimeOffset.UtcNow;
+        migration.UpdatedByUserId = userId;
+        db.AuditEvents.Add(Audit(userId, organisationId, "XeroMigrationCompleted", migration.Id, new
+        {
+            migration.CutoverDate,
+            migration.SourceOrganisationName,
+            CompletedAt = migration.UpdatedAt
+        }));
+        await db.SaveChangesAsync(cancellationToken);
+        return migration;
     }
 
     private async Task DemandPrepareAsync(string userId, Guid organisationId)

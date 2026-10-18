@@ -53,7 +53,7 @@ public sealed class XeroImportPreparationService(
             ["payments"] = "Payments", ["batch-payments"] = "BatchPayments",
             ["prepayments"] = "Prepayments", ["overpayments"] = "Overpayments",
             ["bank-transactions"] = "BankTransactions", ["bank-transfers"] = "BankTransfers",
-            ["manual-journals"] = "ManualJournals", ["purchase-orders"] = "PurchaseOrders",
+            ["manual-journals"] = "ManualJournals", ["journals"] = "Journals", ["purchase-orders"] = "PurchaseOrders",
             ["quotes"] = "Quotes", ["repeating-invoices"] = "RepeatingInvoices",
             ["budgets"] = "Budgets", ["assets"] = "Assets", ["asset-types"] = "AssetTypes",
             ["asset-settings"] = "Settings", ["trial-balance"] = "Reports",
@@ -75,7 +75,7 @@ public sealed class XeroImportPreparationService(
             ["payments"] = "payments", ["batch-payments"] = "batch payments",
             ["prepayments"] = "prepayments", ["overpayments"] = "overpayments",
             ["bank-transactions"] = "bank transactions", ["bank-transfers"] = "bank transfers",
-            ["manual-journals"] = "manual journals", ["purchase-orders"] = "purchase orders",
+            ["manual-journals"] = "manual journals", ["journals"] = "posted journals", ["purchase-orders"] = "purchase orders",
             ["quotes"] = "quotes", ["repeating-invoices"] = "repeating invoices",
             ["budgets"] = "budgets", ["assets"] = "fixed assets"
         };
@@ -168,7 +168,8 @@ public sealed class XeroImportPreparationService(
                     db.XeroMigrationRecords.Add(record);
                     recordsByKey[key] = record;
                 }
-                else if (record.Status != XeroMigrationRecordStatus.Imported)
+                else if (record.Status is not XeroMigrationRecordStatus.Imported and
+                         not XeroMigrationRecordStatus.Archived)
                 {
                     record.XeroApiSnapshotId = snapshot.Id;
                     record.DisplayName = display;
@@ -189,7 +190,8 @@ public sealed class XeroImportPreparationService(
         }
 
         foreach (var stale in existingRecords.Where(x =>
-                     x.Status != XeroMigrationRecordStatus.Imported &&
+                     x.Status is not XeroMigrationRecordStatus.Imported and
+                         not XeroMigrationRecordStatus.Archived &&
                      !currentKeys.Contains(RecordKey(x.DatasetKey, x.ExternalId))))
         {
             stale.Status = XeroMigrationRecordStatus.Skipped;
@@ -400,21 +402,25 @@ public sealed class XeroImportPreparationService(
                 $"Xero {mapping.Kind.ToString().ToLowerInvariant()} ‘{mapping.SourceName}’ will be excluded."));
         }
         var records = await db.XeroMigrationRecords.Where(x => x.XeroMigrationId == migrationId).ToListAsync(ct);
-        foreach (var changed in records.Where(x => x.Status == XeroMigrationRecordStatus.Imported && x.ReviewMessage != null))
+        foreach (var changed in records.Where(x =>
+                     x.Status is XeroMigrationRecordStatus.Imported or XeroMigrationRecordStatus.Archived &&
+                     x.ReviewMessage != null))
         {
             db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "SOURCE_CHANGED",
                 XeroMigrationIssueSeverity.Blocking, changed.ReviewMessage!, changed.Id));
         }
         if (!records.Any(x => x.DatasetKey == "manual-journals"))
             db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "JOURNALS_MISSING",
-                XeroMigrationIssueSeverity.Blocking, "No Xero manual journals were found in the latest API copy."));
+                XeroMigrationIssueSeverity.Warning,
+                "No Xero manual journals were found. This can be valid; the uploaded General Ledger remains the complete journal history."));
         if (!records.Any(x => x.DatasetKey == "accounts"))
             db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "ACCOUNTS_MISSING",
                 XeroMigrationIssueSeverity.Blocking, "The Xero chart of accounts is missing."));
         foreach (var pending in records
                      .Where(x => LiveImportDatasets.ContainsKey(x.DatasetKey) &&
                                  x.Status is not XeroMigrationRecordStatus.Imported and
-                                     not XeroMigrationRecordStatus.Skipped)
+                                     not XeroMigrationRecordStatus.Skipped and
+                                     not XeroMigrationRecordStatus.Archived)
                      .GroupBy(x => x.DatasetKey, StringComparer.OrdinalIgnoreCase)
                      .OrderBy(x => x.Key))
         {
@@ -423,11 +429,38 @@ public sealed class XeroImportPreparationService(
                 XeroMigrationIssueSeverity.Blocking,
                 $"{pending.Count():N0} Xero {label} still need to be converted into Account Island records."));
         }
-        db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "ATTACHMENTS_MANUAL",
-            XeroMigrationIssueSeverity.Warning,
-            "Download and retain Xero document attachments before final cutover; the accounting API copy contains their parent records only."));
+        var suppliedCategories = await db.XeroMigrationFiles.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migrationId)
+            .Select(x => x.Category)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var category in XeroMigrationService.RequiredCategories.Except(suppliedCategories))
+        {
+            db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "REQUIRED_EXPORT_MISSING",
+                XeroMigrationIssueSeverity.Blocking,
+                $"Add the Xero {category} export before cutover. API data alone is not a complete migration record."));
+        }
+        var evidenceForUsedFeatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["items"] = "Inventory items", ["budgets"] = "Budgets", ["tracking"] = "Tracking categories",
+            ["quotes"] = "Quotes and purchase orders", ["purchase-orders"] = "Quotes and purchase orders",
+            ["repeating-invoices"] = "Repeating transactions"
+        };
+        foreach (var requirement in evidenceForUsedFeatures.Where(x =>
+                     records.Any(record => record.DatasetKey.Equals(x.Key, StringComparison.OrdinalIgnoreCase)) &&
+                     !suppliedCategories.Contains(x.Value, StringComparer.OrdinalIgnoreCase)))
+        {
+            db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "USED_FEATURE_EXPORT_MISSING",
+                XeroMigrationIssueSeverity.Blocking,
+                $"Xero contains {LiveImportDatasets.GetValueOrDefault(requirement.Key, requirement.Key)}. Add the {requirement.Value} export so none of that information is omitted."));
+        }
         await db.SaveChangesAsync(ct);
     }
+
+    public Task RefreshIssuesAsync(
+        string userId, Guid organisationId, Guid migrationId,
+        CancellationToken cancellationToken = default) =>
+        RebuildIssuesAsync(userId, organisationId, migrationId, cancellationToken);
 
     private void AddMappings(
         XeroMigration migration, Guid organisationId, string userId, string dataset,
@@ -607,7 +640,7 @@ public sealed class XeroImportPreparationService(
             "payments" => new[] { "PaymentID" }, "batch-payments" => new[] { "BatchPaymentID" },
             "prepayments" => new[] { "PrepaymentID" }, "overpayments" => new[] { "OverpaymentID" },
             "bank-transactions" => new[] { "BankTransactionID" }, "bank-transfers" => new[] { "BankTransferID" },
-            "manual-journals" => new[] { "ManualJournalID", "Narration" },
+            "manual-journals" => new[] { "ManualJournalID", "Narration" }, "journals" => new[] { "JournalID", "JournalNumber" },
             "purchase-orders" => new[] { "PurchaseOrderID", "PurchaseOrderNumber" },
             "quotes" => new[] { "QuoteID", "QuoteNumber" }, "repeating-invoices" => new[] { "RepeatingInvoiceID" },
             "budgets" => new[] { "BudgetID", "Description" }, "assets" => new[] { "AssetId", "AssetID", "AssetNumber" },

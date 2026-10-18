@@ -61,7 +61,7 @@
                                 <article class="workspace-card-shell @(isCurrentOrganisation ? "is-current" : null)">
                                     <a class="workspace-card" href="@OrganisationUrl(item.Organisation.Id)" aria-current="@(isCurrentOrganisation ? "page" : null)">
                                         <span class="workspace-card-top"><span class="org-avatar">@OrganisationDisplay.WorkspaceBadge(item.Organisation, accessibleOrganisations.Select(x => x.Organisation))</span><span class="workspace-card-identifiers"><span class="country-tag">@OrganisationDisplay.CountryTag(item.Organisation.CountryCode)</span><span class="workspace-id">@OrganisationDisplay.WorkspaceId(item.Organisation)</span></span></span>
-                                        <b>@item.Organisation.LegalName</b>
+                                        <span class="workspace-card-name" title="@OrganisationDisplay.NameWithCountry(item.Organisation)">@OrganisationDisplay.NameWithCountry(item.Organisation)</span>
                                         <small>@(item.IsClient ? "Accountant client" : item.AccessLabel) · @item.Organisation.BaseCurrency</small>
                                         <span class="workspace-card-action">@(isCurrentOrganisation ? "Open company" : "Switch to company →")</span>
                                     </a>
