@@ -105,6 +105,32 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task ActiveXeroBankAccountReactivatesMatchingAccountIslandAccount()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        var existing = new LedgerAccount
+        {
+            OrganisationId = test.Organisation.Id, Code = "XERO-OLD",
+            Name = "Kiwibank 00", Type = FijiAccounts.Domain.Accounting.AccountType.Asset,
+            IsBankAccount = true, IsActive = false
+        };
+        test.Db.LedgerAccounts.Add(existing);
+        await test.Db.SaveChangesAsync();
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"bank-kiwibank","Code":"","Name":"Kiwibank 00","Type":"BANK","BankAccountNumber":"38-9027-0295495-00","Status":"ACTIVE"}]}
+            """);
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(1, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
+
+        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Name == "Kiwibank 00");
+        Assert.Equal(existing.Id, account.Id);
+        Assert.True(account.IsActive);
+        Assert.Equal("38-9027-0295495-00", account.BankAccountNumber);
+    }
+
+    [Fact]
     public async Task TaxRatesAreAutomaticallyMappedButUnknownRatesBlockCutover()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

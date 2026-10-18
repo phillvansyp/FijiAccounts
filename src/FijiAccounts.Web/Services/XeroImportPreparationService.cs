@@ -573,6 +573,16 @@ public sealed class XeroImportPreparationService(
             };
             db.LedgerAccounts.Add(account);
         }
+        else
+        {
+            var xeroType = Text(source, "Type");
+            account.Name = name[..Math.Min(name.Length, 160)];
+            account.Type = AccountTypeFor(xeroType);
+            account.IsBankAccount = xeroType is "BANK" or "CURRENT" or "CREDITCARD";
+            account.BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank;
+            account.BankAccountNumber = NullIfBlank(Text(source, "BankAccountNumber")) ?? account.BankAccountNumber;
+            account.IsActive = !Text(source, "Status").Equals("ARCHIVED", StringComparison.OrdinalIgnoreCase);
+        }
         return account.Id;
     }
 
