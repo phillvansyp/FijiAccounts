@@ -268,7 +268,9 @@ public sealed class XeroImportPreparationService(
                     // A record that was previously retained as unusable can become importable
                     // after the importer gains support for that Xero shape. Remove only that
                     // stale retention note; preserve genuine source-change review messages.
-                    if (record.ReviewMessage == MasterSkipReason(snapshot.DatasetKey))
+                    if (record.ReviewMessage == MasterSkipReason(snapshot.DatasetKey) ||
+                        snapshot.DatasetKey == "accounts" &&
+                        record.ReviewMessage == "Retained in the Xero archive because the source account has no usable code or name.")
                         record.ReviewMessage = null;
                     continue;
                 }

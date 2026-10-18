@@ -115,7 +115,7 @@ public sealed class XeroImportPreparationServiceTests
         await service.PrepareAsync(test.UserId, test.Organisation.Id);
         var record = await test.Db.XeroMigrationRecords.SingleAsync();
         record.Status = XeroMigrationRecordStatus.Skipped;
-        record.ReviewMessage = "Retained in the Xero archive because the source account has no usable name.";
+        record.ReviewMessage = "Retained in the Xero archive because the source account has no usable code or name.";
         await test.Db.SaveChangesAsync();
 
         Assert.Equal(1, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
