@@ -12,6 +12,7 @@ public sealed record XeroCutoverImportResult(
     int OpeningBalanceLines,
     int OpenSalesInvoices,
     int OpenSupplierBills,
+    int OpenSupplierCredits,
     int FixedAssets,
     int ArchivedSourceRecords);
 
@@ -78,6 +79,7 @@ public sealed class XeroCutoverImportService(
 
         var openSales = await ImportOpenSalesInvoicesAsync(userId, organisationId, migration, opening, ct);
         var openBills = await ImportOpenSupplierBillsAsync(userId, organisationId, migration, opening, ct);
+        var openSupplierCredits = await ImportOpenSupplierCreditsAsync(userId, organisationId, migration, opening, ct);
         var fixedAssets = await ImportFixedAssetsAsync(userId, organisationId, migration, opening, ct);
 
         var records = await db.XeroMigrationRecords
@@ -105,9 +107,9 @@ public sealed class XeroCutoverImportService(
             Status = XeroMigrationImportRunStatus.Completed,
             IsDryRun = false,
             SourceRecordCount = records.Count,
-            ImportedCount = openSales + openBills + fixedAssets,
+            ImportedCount = openSales + openBills + openSupplierCredits + fixedAssets,
             SkippedCount = archived,
-            Summary = $"Opening journal {opening.Reference} posted; {openSales} open sales invoice(s), {openBills} open supplier bill(s), and {fixedAssets} fixed asset(s) added; {archived} historical record(s) retained in the source archive.",
+            Summary = $"Opening journal {opening.Reference} posted; {openSales} open sales invoice(s), {openBills} open supplier bill(s), {openSupplierCredits} open supplier credit(s), and {fixedAssets} fixed asset(s) added; {archived} historical record(s) retained in the source archive.",
             StartedByUserId = userId,
             CompletedAt = DateTimeOffset.UtcNow
         });
@@ -117,12 +119,13 @@ public sealed class XeroCutoverImportService(
             OpeningLines = opening.Lines.Count,
             OpenSalesInvoices = openSales,
             OpenSupplierBills = openBills,
+            OpenSupplierCredits = openSupplierCredits,
             FixedAssets = fixedAssets,
             ArchivedSourceRecords = archived
         }));
         await db.SaveChangesAsync(ct);
         await preparation.RefreshIssuesAsync(userId, organisationId, migration.Id, ct);
-        return new(opening.Id, opening.Lines.Count, openSales, openBills, fixedAssets, archived);
+        return new(opening.Id, opening.Lines.Count, openSales, openBills, openSupplierCredits, fixedAssets, archived);
     }
 
     private async Task EnsureNoUnallocatedCreditsAsync(Guid organisationId, Guid migrationId, CancellationToken ct)
@@ -130,7 +133,6 @@ public sealed class XeroCutoverImportService(
         var checks = new[]
         {
             (Dataset: "sales-credits", Root: "CreditNotes", Label: "customer credit note"),
-            (Dataset: "supplier-credits", Root: "CreditNotes", Label: "supplier credit note"),
             (Dataset: "prepayments", Root: "Prepayments", Label: "prepayment"),
             (Dataset: "overpayments", Root: "Overpayments", Label: "overpayment")
         };
@@ -138,7 +140,8 @@ public sealed class XeroCutoverImportService(
         foreach (var check in checks)
         {
             var records = await ReadDatasetAsync(organisationId, migrationId, check.Dataset, check.Root, ct);
-            var count = records.Count(x => Decimal(x, "RemainingCredit") > 0m || Decimal(x, "AmountDue") > 0m);
+            var count = records.Count(x => !Text(x, "Status").Equals("VOIDED", StringComparison.OrdinalIgnoreCase) &&
+                (Decimal(x, "RemainingCredit") > 0m || Decimal(x, "AmountDue") > 0m));
             if (count > 0) open.Add($"{count} {check.Label}{(count == 1 ? string.Empty : "s")}");
         }
         if (open.Count > 0)
@@ -366,6 +369,56 @@ public sealed class XeroCutoverImportService(
             bill.Lines = await BillLinesAsync(migration.Id, source, rate, ct);
             db.SupplierBills.Add(bill);
             Link(record, bill.Id, nameof(SupplierBill), userId);
+            count++;
+        }
+        await db.SaveChangesAsync(ct);
+        return count;
+    }
+
+    private async Task<int> ImportOpenSupplierCreditsAsync(
+        string userId, Guid organisationId, XeroMigration migration, PostedJournal opening, CancellationToken ct)
+    {
+        var sources = await ReadDatasetAsync(organisationId, migration.Id, "supplier-credits", "CreditNotes", ct);
+        var sequence = await db.SupplierCreditNotes.Where(x => x.OrganisationId == organisationId)
+            .MaxAsync(x => (long?)x.SequenceNumber, ct) ?? 0;
+        var count = 0;
+        foreach (var source in sources.Where(x => Decimal(x, "RemainingCredit") > 0m &&
+                     !Text(x, "Status").Equals("VOIDED", StringComparison.OrdinalIgnoreCase)))
+        {
+            var externalId = Text(source, "CreditNoteID", "CreditNoteNumber");
+            var record = await FindRecordAsync(migration.Id, "supplier-credits", externalId, ct);
+            if (record?.Status == XeroMigrationRecordStatus.Imported) continue;
+
+            var supplierId = await ResolveContactAsync(migration.Id, source, ct);
+            var number = Short(Text(source, "CreditNoteNumber", "Reference"), 40,
+                "XERO-CR-" + externalId[..Math.Min(27, externalId.Length)]);
+            if (await db.SupplierCreditNotes.AnyAsync(x => x.OrganisationId == organisationId &&
+                    x.CreditNoteNumber == number, ct))
+                throw new InvalidDataException($"Supplier credit note number '{number}' already exists in Account Island.");
+
+            var rate = Decimal(source, "CurrencyRate");
+            if (rate <= 0m) rate = 1m;
+            var sourceTotal = Decimal(source, "Total");
+            var remaining = Decimal(source, "RemainingCredit");
+            var ratio = sourceTotal > 0m ? remaining / sourceTotal : 1m;
+            var credit = new SupplierCreditNote
+            {
+                OrganisationId = organisationId,
+                SupplierId = supplierId,
+                SequenceNumber = ++sequence,
+                CreditNoteNumber = number,
+                CreditDate = Date(source, "Date"),
+                Reason = Short("Xero opening supplier credit · " + Text(source, "Reference", "CreditNoteNumber"),
+                    300, "Xero opening supplier credit"),
+                Currency = Short(Text(source, "CurrencyCode"), 3, "NZD"),
+                Subtotal = Round(Decimal(source, "SubTotal") * ratio * rate),
+                VatTotal = Round(Decimal(source, "TotalTax") * ratio * rate),
+                Total = Round(remaining * rate),
+                PostedJournalId = opening.Id,
+                CreatedByUserId = userId
+            };
+            db.SupplierCreditNotes.Add(credit);
+            Link(record, credit.Id, nameof(SupplierCreditNote), userId);
             count++;
         }
         await db.SaveChangesAsync(ct);

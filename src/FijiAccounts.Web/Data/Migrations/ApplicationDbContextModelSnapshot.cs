@@ -5931,7 +5931,10 @@ namespace FijiAccounts.Web.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("SupplierBillId")
+                    b.Property<Guid?>("SupplierBillId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("SupplierId")
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("Total")
@@ -5947,6 +5950,8 @@ namespace FijiAccounts.Web.Migrations
                     b.HasIndex("PostedJournalId");
 
                     b.HasIndex("SupplierBillId");
+
+                    b.HasIndex("SupplierId");
 
                     b.HasIndex("OrganisationId", "CreditNoteNumber")
                         .IsUnique();
@@ -9549,12 +9554,18 @@ namespace FijiAccounts.Web.Migrations
                     b.HasOne("FijiAccounts.Web.Data.SupplierBill", "SupplierBill")
                         .WithMany()
                         .HasForeignKey("SupplierBillId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FijiAccounts.Web.Data.BusinessParty", "Supplier")
+                        .WithMany()
+                        .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Organisation");
 
                     b.Navigation("PostedJournal");
+
+                    b.Navigation("Supplier");
 
                     b.Navigation("SupplierBill");
                 });

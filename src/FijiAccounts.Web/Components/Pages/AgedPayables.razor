@@ -168,13 +168,16 @@ var paid = payments
 
     var credits = await Db.SupplierCreditNotes
         .AsNoTracking()
+        .Include(x => x.Supplier)
         .Where(x =>
-            billIds.Contains(x.SupplierBillId) &&
+            x.OrganisationId == OrganisationId &&
             x.CreditDate <= filter.AsAt)
         .Select(x => new
         {
             x.Id,
             x.SupplierBillId,
+            SupplierName = x.Supplier == null ? null : x.Supplier.Name,
+            x.CreditDate,
             x.Total
         })
         .ToListAsync();
@@ -192,14 +195,13 @@ var paid = payments
         .ToListAsync();
 
     var credited = credits
-        .Where(x => !reversedCreditIds.Contains(x.Id))
-        .GroupBy(x => x.SupplierBillId)
+        .Where(x => x.SupplierBillId.HasValue && !reversedCreditIds.Contains(x.Id))
+        .GroupBy(x => x.SupplierBillId!.Value)
         .ToDictionary(
             x => x.Key,
             x => x.Sum(y => y.Total));
 
-    payables = Group(
-        bills.Select(x =>
+    var billItems = bills.Select(x =>
             new AgingItem(
                 x.Supplier.Name,
                 x.DueDate,
@@ -207,11 +209,15 @@ var paid = payments
                     0,
                     x.Total -
                     paid.GetValueOrDefault(x.Id) -
-                    credited.GetValueOrDefault(x.Id)))));
+                    credited.GetValueOrDefault(x.Id))));
+    var standaloneCredits = credits
+        .Where(x => !x.SupplierBillId.HasValue && !reversedCreditIds.Contains(x.Id))
+        .Select(x => new AgingItem(x.SupplierName ?? "Unknown supplier", x.CreditDate, -x.Total));
+    payables = Group(billItems.Concat(standaloneCredits));
 }
 
     private List<AgingRow> Group(IEnumerable<AgingItem> items) => items
-        .Where(x => x.Amount > 0)
+        .Where(x => x.Amount != 0)
         .GroupBy(x => x.Contact)
         .Select(group =>
         {
@@ -227,6 +233,7 @@ var paid = payments
             }
             return new AgingRow(group.Key, current, d30, d60, d90, over);
         })
+        .Where(x => x.Total != 0)
         .OrderBy(x => x.Contact)
         .ToList();
 

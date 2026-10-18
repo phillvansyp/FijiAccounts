@@ -682,8 +682,8 @@ public sealed class YearEndHandoverPackService(
             .ToDictionary(x => x.Key, x => x.Sum(y => y.Amount));
 
         var credits = await db.SupplierCreditNotes.AsNoTracking()
-            .Where(x => billIds.Contains(x.SupplierBillId) && x.CreditDate <= asAt)
-            .Select(x => new { x.Id, x.SupplierBillId, x.Total })
+            .Where(x => x.SupplierBillId.HasValue && billIds.Contains(x.SupplierBillId.Value) && x.CreditDate <= asAt)
+            .Select(x => new { x.Id, SupplierBillId = x.SupplierBillId!.Value, x.Total })
             .ToListAsync(cancellationToken);
         var creditIds = credits.Select(x => x.Id).ToArray();
         var reversedCredits = await db.SupplierCreditNoteReversals.AsNoTracking()

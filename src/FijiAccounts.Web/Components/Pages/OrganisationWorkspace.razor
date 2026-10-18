@@ -526,6 +526,13 @@ else
                     x.AmountPaid + x.AmountCredited < x.Total)
                 .SumAsync(x => (decimal?)(x.Total - x.AmountPaid - x.AmountCredited)) ?? 0;
 
+        var standaloneSupplierCredits = await db.SupplierCreditNotes
+            .AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.SupplierBillId == null &&
+                !db.SupplierCreditNoteReversals.Any(r => r.SupplierCreditNoteId == x.Id))
+            .SumAsync(x => (decimal?)x.Total) ?? 0;
+        payables -= standaloneSupplierCredits;
+
         overdueInvoices =
             await db.SalesInvoices.CountAsync(x =>
                 x.OrganisationId == OrganisationId &&

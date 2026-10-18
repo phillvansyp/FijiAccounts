@@ -556,7 +556,7 @@ else
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             ApplyMigration();
             await ReloadWorkspace();
-            message = $"Created the balanced opening journal with {result.OpeningBalanceLines:N0} lines, added {result.OpenSalesInvoices:N0} open customer invoice(s), {result.OpenSupplierBills:N0} open supplier bill(s), and {result.FixedAssets:N0} fixed asset(s), and retained {result.ArchivedSourceRecords:N0} historical source record(s).";
+            message = $"Created the balanced opening journal with {result.OpeningBalanceLines:N0} lines, added {result.OpenSalesInvoices:N0} open customer invoice(s), {result.OpenSupplierBills:N0} open supplier bill(s), {result.OpenSupplierCredits:N0} open supplier credit(s), and {result.FixedAssets:N0} fixed asset(s), and retained {result.ArchivedSourceRecords:N0} historical source record(s).";
             messageClass = "alert-success";
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)

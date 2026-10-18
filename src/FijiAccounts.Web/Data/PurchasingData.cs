@@ -140,8 +140,10 @@ public sealed class SupplierCreditNote
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrganisationId { get; set; }
     public Organisation Organisation { get; set; } = null!;
-    public Guid SupplierBillId { get; set; }
-    public SupplierBill SupplierBill { get; set; } = null!;
+    public Guid? SupplierBillId { get; set; }
+    public SupplierBill? SupplierBill { get; set; }
+    public Guid? SupplierId { get; set; }
+    public BusinessParty? Supplier { get; set; }
     public long SequenceNumber { get; set; }
     [MaxLength(40)] public required string CreditNoteNumber { get; set; }
     public DateOnly CreditDate { get; set; }

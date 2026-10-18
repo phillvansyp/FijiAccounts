@@ -89,7 +89,7 @@ if (!controls.TryGetValue(
             db.InventoryMovements.Add(new InventoryMovement { OrganisationId = request.OrganisationId, BranchId = bill.BranchId!.Value, DivisionId = bill.DivisionId!.Value, ProductItemId = item.Id, MovementDate = request.Date, Type = InventoryMovementType.PurchaseReturn, QuantityChange = -quantity, UnitCost = receipt.UnitCost, ValueChange = -value, Reference = number, Note = $"Return to supplier against {bill.BillNumber}", PostedJournalId = journal.Id, PostedByUserId = userId });
         }
 
-        var credit = new SupplierCreditNote { OrganisationId = request.OrganisationId, SupplierBillId = bill.Id, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = bill.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, ReturnedTrackedItems = receipts.Count > 0, PostedJournalId = journal.Id, CreatedByUserId = userId };
+        var credit = new SupplierCreditNote { OrganisationId = request.OrganisationId, SupplierBillId = bill.Id, SupplierId = bill.SupplierId, SequenceNumber = sequence, CreditNoteNumber = number, CreditDate = request.Date, Reason = request.Reason.Trim(), Currency = bill.Currency, Subtotal = net, VatTotal = vat, Total = request.Amount, ReturnedTrackedItems = receipts.Count > 0, PostedJournalId = journal.Id, CreatedByUserId = userId };
         bill.AmountCredited += request.Amount;
         bill.Status = bill.Total - bill.AmountPaid - bill.AmountCredited <= 0 ? BillStatus.Credited : BillStatus.PartPaid;
         db.SupplierCreditNotes.Add(credit);
@@ -118,7 +118,7 @@ if (!controls.TryGetValue(
     var credit =
         await db.SupplierCreditNotes
             .Include(x => x.SupplierBill)
-                .ThenInclude(x => x.Lines)
+                .ThenInclude(x => x!.Lines)
                     .ThenInclude(x => x.ProductItem)
             .SingleOrDefaultAsync(
                 x =>
@@ -127,6 +127,10 @@ if (!controls.TryGetValue(
                 ct)
         ?? throw new InvalidOperationException(
             "Supplier credit note not found.");
+
+    if (credit.SupplierBill is null)
+        throw new InvalidOperationException(
+            "This migrated opening supplier credit must be allocated or refunded from the supplier account.");
 
     if (await db.SupplierCreditNoteReversals.AnyAsync(
             x => x.SupplierCreditNoteId == creditNoteId,

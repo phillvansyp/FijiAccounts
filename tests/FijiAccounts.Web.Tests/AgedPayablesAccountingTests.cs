@@ -67,12 +67,13 @@ public sealed class AgedPayablesAccountingTests
             await test.Db.SupplierCreditNotes
                 .AsNoTracking()
                 .Where(x =>
-                    billIds.Contains(x.SupplierBillId) &&
+                    x.SupplierBillId.HasValue &&
+                    billIds.Contains(x.SupplierBillId.Value) &&
                     x.CreditDate <= asAt)
                 .GroupBy(x => x.SupplierBillId)
                 .Select(x => new
                 {
-                    x.Key,
+                    Key = x.Key!.Value,
                     Amount = x.Sum(y => y.Total)
                 })
                 .ToDictionaryAsync(

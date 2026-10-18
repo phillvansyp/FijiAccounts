@@ -1193,6 +1193,7 @@ builder.Entity<RecurringSupplierBillGeneration>()
         builder.Entity<SupplierCreditNote>().HasIndex(x => new { x.OrganisationId, x.CreditNoteNumber }).IsUnique();
         builder.Entity<SupplierCreditNote>().HasOne(x => x.Organisation).WithMany().HasForeignKey(x => x.OrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierCreditNote>().HasOne(x => x.SupplierBill).WithMany().HasForeignKey(x => x.SupplierBillId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<SupplierCreditNote>().HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<SupplierCreditNote>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         foreach (var property in new[] { nameof(SupplierCreditNote.Subtotal), nameof(SupplierCreditNote.VatTotal), nameof(SupplierCreditNote.Total) }) builder.Entity<SupplierCreditNote>().Property(property).HasPrecision(18, 2);
         builder.Entity<SupplierCreditNoteReversal>()
