@@ -9,6 +9,7 @@
 @inject XeroConnectionService XeroConnection
 @inject XeroImportPreparationService ImportPreparation
 @inject XeroCutoverImportService CutoverImport
+@inject XeroMigrationAssistantService MigrationAssistant
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -43,6 +44,89 @@ else
         <div class="alert @messageClass" role="status">@message</div>
     }
 
+    <section class="migration-assistant" aria-labelledby="migration-assistant-title">
+        <div class="assistant-main">
+            <div class="assistant-heading">
+                <div>
+                    <p class="step-label">Migration assistant</p>
+                    <h2 id="migration-assistant-title">@assistant.Headline</h2>
+                    <p>@assistant.Guidance</p>
+                </div>
+                <div class="assistant-score">
+                    <strong>@assistant.PassedCount/@assistant.TotalCount</strong>
+                    <span>checks passed</span>
+                </div>
+            </div>
+            <div class="assistant-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@assistant.TotalCount" aria-valuenow="@assistant.PassedCount">
+                <span style="width: @AssistantProgress%"></span>
+            </div>
+            <div class="assistant-action">
+                @switch (assistant.NextAction)
+                {
+                    case XeroMigrationAssistantAction.SaveSetup:
+                        <a class="btn btn-primary" href="#migration-setup">Set up the migration</a>
+                        break;
+                    case XeroMigrationAssistantAction.ConnectXero:
+                        if (connectionStatus?.IsConnected == true)
+                        {
+                            <button type="button" class="btn btn-primary" @onclick="SyncXero" disabled="@syncing">@(syncing ? "Copying from Xero..." : "Copy data from Xero")</button>
+                        }
+                        else if (connectionStatus?.IsConfigured == true && canApprove && migration is not null)
+                        {
+                            <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+                        }
+                        else
+                        {
+                            <a class="btn btn-primary" href="#source-evidence">Review connection setup</a>
+                        }
+                        break;
+                    case XeroMigrationAssistantAction.RunPreparation:
+                        <button type="button" class="btn btn-primary" @onclick="RunGuidedPreparation" disabled="@(preparingImport || !canPrepare)">@(preparingImport ? "Preparing safely..." : "Run guided preparation")</button>
+                        <small>Indexes and checks the source, adds safe master data, then checks it again. It does not post money.</small>
+                        break;
+                    case XeroMigrationAssistantAction.SupplyEvidence:
+                        <a class="btn btn-primary" href="#source-evidence">Add missing evidence</a>
+                        break;
+                    case XeroMigrationAssistantAction.ResolveMappings:
+                        <a class="btn btn-primary" href="#prepare-records">Review decisions</a>
+                        break;
+                    case XeroMigrationAssistantAction.CompleteReconciliation:
+                        <a class="btn btn-primary" href="#reconciliation">Complete reconciliation</a>
+                        break;
+                    case XeroMigrationAssistantAction.RecordApproval:
+                        <a class="btn btn-primary" href="#reconciliation">Record management approval</a>
+                        break;
+                    case XeroMigrationAssistantAction.BuildCutover:
+                        <button type="button" class="btn btn-success" @onclick="BuildCutover" disabled="@(preparingImport || !canPrepare)">Create verified live cutover</button>
+                        break;
+                    case XeroMigrationAssistantAction.CompleteMigration:
+                        <button type="button" class="btn btn-success" @onclick="CompleteMigration" disabled="@(busy || !canApprove)">Complete migration</button>
+                        break;
+                    case XeroMigrationAssistantAction.Finished:
+                        <button type="button" class="btn btn-secondary" @onclick="VerifyMigration" disabled="@busy">@(busy ? "Verifying..." : "Run verification again")</button>
+                        break;
+                }
+            </div>
+        </div>
+        <details class="assistant-checks" open="@(assistant.NextAction != XeroMigrationAssistantAction.Finished)">
+            <summary>View the complete migration checklist</summary>
+            <div class="assistant-check-grid">
+                @foreach (var check in assistant.Checks)
+                {
+                    <div class="assistant-check @(check.Passed ? "passed" : "pending")">
+                        <span aria-hidden="true">@(check.Passed ? "✓" : "○")</span>
+                        <div><strong>@check.Title</strong><small>@check.Detail</small></div>
+                    </div>
+                }
+            </div>
+        </details>
+        <div class="assistant-safeguards">
+            <span><strong>Source variations handled</strong> Code-less bank accounts, current assets and standalone supplier credits are classified before cutover.</span>
+            <span><strong>Safe automation</strong> The assistant can prepare and explain. Only management can approve, post and complete.</span>
+            <span><strong>Automatic final proof</strong> The opening journal, open records, protected history and unresolved review notes are checked after posting.</span>
+        </div>
+    </section>
+
     <section class="migration-overview">
         <div><span>1</span><strong>Set the cutover</strong><small>Choose the first live day in Account Island.</small></div>
         <div><span>2</span><strong>Collect Xero exports</strong><small>Retain source data and its file fingerprint.</small></div>
@@ -50,7 +134,7 @@ else
         <div><span>4</span><strong>Reconcile and approve</strong><small>Prove every control balance before go-live.</small></div>
     </section>
 
-    <section class="migration-card">
+    <section class="migration-card" id="migration-setup">
         <div class="section-heading">
             <div><p class="step-label">Step 1</p><h2>Migration setup</h2></div>
             <span>@(migration is null ? "Not saved" : "Last updated " + migration.UpdatedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm"))</span>
@@ -85,7 +169,7 @@ else
         </EditForm>
     </section>
 
-    <section class="migration-card">
+    <section class="migration-card" id="source-evidence">
         <div class="section-heading">
             <div><p class="step-label">Step 2</p><h2>Connect Xero and collect the evidence</h2></div>
             <span>@SuppliedRequiredCount of @XeroMigrationService.RequiredCategories.Length required sets supplied</span>
@@ -227,7 +311,7 @@ else
         </div>
     </section>
 
-    <section class="migration-card">
+    <section class="migration-card" id="prepare-records">
         <div class="section-heading">
             <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
             <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
@@ -298,7 +382,7 @@ else
         }
     </section>
 
-    <section class="migration-card">
+    <section class="migration-card" id="reconciliation">
         <div class="section-heading">
             <div><p class="step-label">Step 4</p><h2>Reconciliation and cutover</h2></div>
             <span>@CompletedChecks of 7 controls complete</span>
@@ -339,6 +423,9 @@ else
     private List<XeroMigrationFile> files = [];
     private MigrationModel model = new();
     private XeroConnectionStatus? connectionStatus;
+    private XeroMigrationAssistantSummary assistant = new(
+        "Start with the migration setup", "Confirm the source and the first live day.",
+        XeroMigrationAssistantAction.SaveSetup, [], false, false, 0, 0);
     private XeroImportWorkspace workspace = new(0, 0, 0, 0, 0, 0, 0, [], [], null);
     private readonly Dictionary<XeroMigrationMappingKind, IReadOnlyList<XeroMappingTarget>> mappingTargets = [];
     private readonly Dictionary<Guid, string> mappingSelections = [];
@@ -358,6 +445,7 @@ else
         .ToList() ?? [];
     private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
     private bool AllChecksComplete => CompletedChecks == 7;
+    private int AssistantProgress => assistant.TotalCount == 0 ? 0 : (int)Math.Round(assistant.PassedCount * 100d / assistant.TotalCount);
     private bool CutoverCanBeApproved => AllChecksComplete &&
         SuppliedRequiredCount == XeroMigrationService.RequiredCategories.Length &&
         !workspace.Issues.Any(x => x.Severity == XeroMigrationIssueSeverity.Blocking && x.Code != "LIVE_IMPORT_PENDING");
@@ -391,6 +479,7 @@ else
             await ReloadWorkspace();
             selectedTenantId = connectionStatus.TenantId?.ToString() ?? string.Empty;
             ApplyMigration();
+            await RefreshAssistant();
             if (string.Equals(XeroResult, "connected", StringComparison.OrdinalIgnoreCase))
             {
                 message = connectionStatus.TenantId is null
@@ -437,6 +526,7 @@ else
                 model.GstReconciled, model.ManagementApproved, model.Notes));
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             ApplyMigration();
+            await RefreshAssistant();
             message = model.ManagementApproved ? "Cutover approval recorded in the audit trail." : "Migration setup saved.";
             messageClass = "alert-success";
         }
@@ -458,6 +548,7 @@ else
             await MigrationService.AddFileAsync(userId, OrganisationId, selectedCategory, args.File.Name, args.File.ContentType, buffer.ToArray());
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             ApplyMigration();
+            await RefreshAssistant();
             message = $"{args.File.Name} retained under {selectedCategory}.";
             messageClass = "alert-success";
         }
@@ -476,6 +567,7 @@ else
         {
             await XeroConnection.SelectTenantAsync(userId, OrganisationId, tenantId);
             connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            await RefreshAssistant();
             message = $"{connectionStatus.TenantName} selected for this migration.";
             messageClass = "alert-success";
         }
@@ -495,6 +587,7 @@ else
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
             ApplyMigration();
+            await RefreshAssistant();
             message = result.Failures.Count == 0
                 ? $"Copied {result.ImportedRecords:N0} records from {result.ImportedDatasets} Xero datasets into staging."
                 : $"Copied {result.ImportedRecords:N0} records from {result.ImportedDatasets} datasets. {result.Failures.Count} unavailable datasets are listed for follow-up.";
@@ -520,6 +613,27 @@ else
                 ? $"Checked {result.SourceRecordCount:N0} Xero records. The staged import has no blocking issues."
                 : $"Checked {result.SourceRecordCount:N0} Xero records. Resolve {result.BlockingCount} blocking issue(s) shown below.";
             messageClass = result.BlockingCount == 0 ? "alert-success" : "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { preparingImport = false; }
+    }
+
+    private async Task RunGuidedPreparation()
+    {
+        preparingImport = true; message = null;
+        try
+        {
+            await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            var imported = await ImportPreparation.ImportMasterDataAsync(userId, OrganisationId);
+            var final = await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            await ReloadWorkspace();
+            message = final.BlockingCount == 0
+                ? $"Guided preparation is complete. {final.SourceRecordCount:N0} records were checked and {imported:N0} new master record(s) were added."
+                : $"Preparation added {imported:N0} master record(s). Resolve {final.BlockingCount} remaining blocking issue(s) below.";
+            messageClass = final.BlockingCount == 0 ? "alert-success" : "alert-warning";
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -555,6 +669,7 @@ else
             var result = await CutoverImport.BuildAsync(userId, OrganisationId);
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             ApplyMigration();
+            await RefreshAssistant();
             await ReloadWorkspace();
             message = $"Created the balanced opening journal with {result.OpeningBalanceLines:N0} lines, added {result.OpenSalesInvoices:N0} open customer invoice(s), {result.OpenSupplierBills:N0} open supplier bill(s), {result.OpenSupplierCredits:N0} open supplier credit(s), and {result.FixedAssets:N0} fixed asset(s), and retained {result.ArchivedSourceRecords:N0} historical source record(s).";
             messageClass = "alert-success";
@@ -571,14 +686,33 @@ else
         busy = true; message = null;
         try
         {
+            await MigrationAssistant.VerifyAndRecordAsync(userId, OrganisationId);
             migration = await MigrationService.CompleteAsync(userId, OrganisationId);
             ApplyMigration();
+            await RefreshAssistant();
             message = "The Xero migration is complete. Account Island is now the live accounting record from the cutover date.";
             messageClass = "alert-success";
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {
             message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { busy = false; }
+    }
+
+    private async Task VerifyMigration()
+    {
+        busy = true; message = null;
+        try
+        {
+            assistant = await MigrationAssistant.VerifyAndRecordAsync(userId, OrganisationId);
+            message = $"Verification passed: {assistant.PassedCount} of {assistant.TotalCount} checks. The result is retained in the audit trail.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            await RefreshAssistant();
+            message = ex.Message; messageClass = "alert-warning";
         }
         finally { busy = false; }
     }
@@ -590,6 +724,13 @@ else
         mappingTargets.Clear();
         foreach (var kind in workspace.Mappings.Where(x => x.Status == XeroMigrationMappingStatus.Suggested).Select(x => x.Kind).Distinct())
             mappingTargets[kind] = await ImportPreparation.GetMappingTargetsAsync(userId, OrganisationId, kind);
+        await RefreshAssistant();
+    }
+
+    private async Task RefreshAssistant()
+    {
+        if (access is not null && !string.IsNullOrWhiteSpace(userId))
+            assistant = await MigrationAssistant.GetAsync(userId, OrganisationId);
     }
 
     private IReadOnlyList<XeroMappingTarget> Targets(XeroMigrationMappingKind kind) =>

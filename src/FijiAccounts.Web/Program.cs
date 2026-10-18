@@ -266,6 +266,7 @@ builder.Services.AddScoped<OrganisationDocumentService>();
 builder.Services.AddScoped<XeroMigrationService>();
 builder.Services.AddScoped<XeroImportPreparationService>();
 builder.Services.AddScoped<XeroCutoverImportService>();
+builder.Services.AddScoped<XeroMigrationAssistantService>();
 builder.Services.Configure<XeroApiOptions>(builder.Configuration.GetSection(XeroApiOptions.SectionName));
 builder.Services.AddHttpClient<XeroApiClient>(client =>
 {
