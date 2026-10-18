@@ -262,7 +262,16 @@ public sealed class XeroImportPreparationService(
                 var record = await db.XeroMigrationRecords.SingleOrDefaultAsync(x =>
                     x.XeroMigrationId == migration.Id && x.DatasetKey == snapshot.DatasetKey &&
                     x.ExternalId == externalId, cancellationToken);
-                if (record is null || record.Status == XeroMigrationRecordStatus.Imported) continue;
+                if (record is null) continue;
+                if (record.Status == XeroMigrationRecordStatus.Imported)
+                {
+                    // A record that was previously retained as unusable can become importable
+                    // after the importer gains support for that Xero shape. Remove only that
+                    // stale retention note; preserve genuine source-change review messages.
+                    if (record.ReviewMessage == MasterSkipReason(snapshot.DatasetKey))
+                        record.ReviewMessage = null;
+                    continue;
+                }
                 Guid? targetId = snapshot.DatasetKey switch
                 {
                     "accounts" => await ImportAccountAsync(organisationId, source, cancellationToken),
@@ -286,6 +295,7 @@ public sealed class XeroImportPreparationService(
                 record.Status = XeroMigrationRecordStatus.Imported;
                 record.TargetEntityType = TargetType(snapshot.DatasetKey);
                 record.TargetEntityId = targetId;
+                record.ReviewMessage = null;
                 record.ImportedAt = DateTimeOffset.UtcNow;
                 record.ImportedByUserId = userId;
                 imported++;

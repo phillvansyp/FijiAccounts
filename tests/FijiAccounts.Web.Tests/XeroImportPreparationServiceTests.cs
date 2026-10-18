@@ -105,6 +105,29 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task NewlySupportedBankAccountClearsPreviousRetentionIssue()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"bank-kiwibank","Code":"","Name":"Kiwibank 00","Type":"BANK","BankAccountNumber":"38-9027-0295495-00","Status":"ACTIVE"}]}
+            """);
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+        var record = await test.Db.XeroMigrationRecords.SingleAsync();
+        record.Status = XeroMigrationRecordStatus.Skipped;
+        record.ReviewMessage = "Retained in the Xero archive because the source account has no usable name.";
+        await test.Db.SaveChangesAsync();
+
+        Assert.Equal(1, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
+
+        record = await test.Db.XeroMigrationRecords.SingleAsync();
+        Assert.Equal(XeroMigrationRecordStatus.Imported, record.Status);
+        Assert.Null(record.ReviewMessage);
+        Assert.False(await test.Db.XeroMigrationIssues.AnyAsync(x =>
+            !x.IsResolved && x.XeroMigrationRecordId == record.Id));
+    }
+
+    [Fact]
     public async Task ActiveXeroBankAccountReactivatesMatchingAccountIslandAccount()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
