@@ -426,8 +426,8 @@ public sealed class XeroImportPreparationService(
         {
             var label = LiveImportDatasets[pending.Key];
             db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "LIVE_IMPORT_PENDING",
-                XeroMigrationIssueSeverity.Blocking,
-                $"{pending.Count():N0} Xero {label} still need to be converted into Account Island records."));
+                XeroMigrationIssueSeverity.Information,
+                CutoverPlanMessage(pending.Key, label, pending.Count())));
         }
         var suppliedCategories = await db.XeroMigrationFiles.AsNoTracking()
             .Where(x => x.XeroMigrationId == migrationId)
@@ -456,6 +456,15 @@ public sealed class XeroImportPreparationService(
         }
         await db.SaveChangesAsync(ct);
     }
+
+    private static string CutoverPlanMessage(string datasetKey, string label, int count) =>
+        datasetKey switch
+        {
+            "sales-invoices" => $"At approved cutover, Account Island will add the open items from {count:N0} Xero {label} and retain the remaining source records as immutable Xero history.",
+            "bills" => $"At approved cutover, Account Island will add the open items from {count:N0} Xero {label} and retain the remaining source records as immutable Xero history.",
+            "assets" => $"At approved cutover, Account Island will add the active items from {count:N0} Xero {label} and retain the remaining source records as immutable Xero history.",
+            _ => $"At approved cutover, {count:N0} Xero {label} will remain in the immutable Xero history and their balances will be represented by the opening journal. They will not be replayed into the live ledger, which prevents double counting."
+        };
 
     public Task RefreshIssuesAsync(
         string userId, Guid organisationId, Guid migrationId,

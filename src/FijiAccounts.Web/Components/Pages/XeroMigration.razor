@@ -232,7 +232,7 @@ else
             <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
             <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
         </div>
-        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. Upload the final Trial Balance as CSV: the CSV is used to create the opening journal, while PDF or XLSX copies remain supporting evidence.</p>
+        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. At approved cutover, the final Trial Balance CSV creates one opening journal, open invoices and bills continue as live records, active assets enter the asset register, and older transactions remain available in the immutable Xero archive. This avoids posting the same history twice.</p>
         <div class="import-actions">
             @if (canPrepare && migration is not null)
             {
@@ -284,7 +284,7 @@ else
         @if (workspace.Issues.Count > 0)
         {
             <details class="issue-panel" open>
-                <summary><strong>Items requiring attention</strong><span>@workspace.BlockingCount blocking · @workspace.WarningCount warnings</span></summary>
+                <summary><strong>Migration plan and items requiring attention</strong><span>@workspace.BlockingCount blocking · @workspace.WarningCount warnings · @workspace.Issues.Count(x => x.Severity == XeroMigrationIssueSeverity.Information) planned</span></summary>
                 <div class="issue-list">
                     @foreach (var issue in workspace.Issues)
                     {

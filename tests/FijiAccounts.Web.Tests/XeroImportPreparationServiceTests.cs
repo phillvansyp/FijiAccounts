@@ -82,7 +82,7 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
-    public async Task FinancialRecordsRemainBlockingUntilTheyAreConverted()
+    public async Task FinancialRecordsShowTheCutoverPlanWithoutBlockingApproval()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var service = await SetupAsync(test);
@@ -100,7 +100,8 @@ public sealed class XeroImportPreparationServiceTests
 
         Assert.True(await test.Db.XeroMigrationIssues.AnyAsync(x =>
             !x.IsResolved && x.Code == "LIVE_IMPORT_PENDING" &&
-            x.Message.Contains("sales invoices")));
+            x.Severity == XeroMigrationIssueSeverity.Information &&
+            x.Message.Contains("open items") && x.Message.Contains("immutable Xero history")));
     }
 
     private static async Task<XeroImportPreparationService> SetupAsync(AccountingTestDatabase test)
