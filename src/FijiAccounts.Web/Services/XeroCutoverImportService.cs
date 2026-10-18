@@ -449,8 +449,10 @@ public sealed class XeroCutoverImportService(
 
     private async Task<List<JsonElement>> ReadDatasetAsync(Guid organisationId, Guid migrationId, string dataset, string rootProperty, CancellationToken ct)
     {
-        var snapshot = await db.XeroApiSnapshots.AsNoTracking().Where(x => x.XeroMigrationId == migrationId && x.DatasetKey == dataset)
-            .OrderByDescending(x => x.RetrievedAt).FirstOrDefaultAsync(ct);
+        var snapshots = await db.XeroApiSnapshots.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migrationId && x.DatasetKey == dataset)
+            .ToListAsync(ct);
+        var snapshot = snapshots.OrderByDescending(x => x.RetrievedAt).FirstOrDefault();
         if (snapshot is null) return [];
         var bytes = await storage.ReadVerifiedAsync(organisationId, snapshot.ImmutableDocumentObjectId, ct);
         using var document = JsonDocument.Parse(bytes);

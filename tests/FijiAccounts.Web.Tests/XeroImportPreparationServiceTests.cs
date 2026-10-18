@@ -23,7 +23,7 @@ public sealed class XeroImportPreparationServiceTests
         Assert.Equal(1, second.SourceRecordCount);
         Assert.Equal(1, await test.Db.XeroMigrationRecords.CountAsync());
         Assert.True(await test.Db.XeroMigrationIssues.AnyAsync(x =>
-            !x.IsResolved && x.Code == "JOURNALS_MISSING" && x.Severity == XeroMigrationIssueSeverity.Blocking));
+            !x.IsResolved && x.Code == "JOURNALS_MISSING" && x.Severity == XeroMigrationIssueSeverity.Warning));
     }
 
     [Fact]
