@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Text;
 using FijiAccounts.Web.Data;
@@ -92,6 +93,62 @@ public sealed class XeroConnectionServiceTests
         Assert.Contains("app credentials", error.Message);
     }
 
+    [Fact]
+    public async Task SyncRetainsEveryReportedAttachmentInADeterministicEvidencePackage()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var migrationService = new XeroMigrationService(
+            test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
+        await migrationService.SaveAsync(test.UserId, test.Organisation.Id, new(
+            "BOSS Technologies Limited", new DateOnly(2026, 10, 18), true,
+            false, false, false, false, false, false, false, false, null));
+
+        var tenantId = Guid.NewGuid();
+        var invoiceId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var handler = new AttachmentXeroHandler(tenantId, invoiceId, attachmentId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var store = new DatabaseImmutableDocumentStore(test.Db);
+        var service = new XeroConnectionService(
+            test.Db,
+            test.Access,
+            new XeroApiClient(new HttpClient(handler), options),
+            store,
+            new EphemeralDataProtectionProvider(),
+            options);
+
+        var authorize = new Uri(await service.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await service.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        var first = await service.SyncAsync(test.UserId, test.Organisation.Id);
+        Assert.Empty(first.Failures);
+        var retained = Assert.Single(await test.Db.XeroMigrationFiles
+            .Where(x => x.Category == "Document attachments")
+            .ToListAsync());
+        var zipBytes = await store.ReadVerifiedAsync(test.Organisation.Id, retained.ImmutableDocumentObjectId);
+        using (var archive = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read))
+        {
+            Assert.Equal(2, archive.Entries.Count);
+            Assert.Contains(archive.Entries, x => x.FullName == "manifest.json");
+            Assert.Contains(archive.Entries, x => x.FullName.Contains(attachmentId.ToString("D"), StringComparison.Ordinal));
+        }
+        Assert.DoesNotContain(handler.Requests, x => x.Contains("AgedReceivablesByContact", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.Requests, x => x.Contains("AgedPayablesByContact", StringComparison.Ordinal));
+        Assert.Contains("application/pdf", handler.BinaryContentTypes);
+
+        var second = await service.SyncAsync(test.UserId, test.Organisation.Id);
+        Assert.Empty(second.Failures);
+        Assert.Equal(1, await test.Db.XeroMigrationFiles.CountAsync(x => x.Category == "Document attachments"));
+    }
+
     private sealed class XeroHandler(Guid firstTenant, Guid secondTenant) : HttpMessageHandler
     {
         public List<string?> TenantHeaders { get; } = [];
@@ -124,5 +181,62 @@ public sealed class XeroConnectionServiceTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             });
         }
+    }
+
+    private sealed class AttachmentXeroHandler(Guid tenantId, Guid invoiceId, Guid attachmentId) : HttpMessageHandler
+    {
+        public List<string> Requests { get; } = [];
+        public List<string?> BinaryContentTypes { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!.AbsoluteUri);
+            if (request.RequestUri.AbsoluteUri == "https://identity.xero.com/connect/token")
+            {
+                return Json("""
+                    {"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.attachments.read"}
+                    """);
+            }
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+            {
+                return Json($$"""
+                    [{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"BOSS Technologies Limited","tenantType":"ORGANISATION"}]
+                    """);
+            }
+
+            var path = request.RequestUri.AbsolutePath;
+            if (path.EndsWith($"/Invoices/{invoiceId:D}/Attachments/{attachmentId:D}", StringComparison.Ordinal))
+            {
+                BinaryContentTypes.Add(request.Headers.TryGetValues("contentType", out var values)
+                    ? values.Single()
+                    : null);
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("attachment-content"))
+                };
+                response.Content.Headers.ContentType = new("application/pdf");
+                return Task.FromResult(response);
+            }
+            if (path.EndsWith($"/Invoices/{invoiceId:D}/Attachments", StringComparison.Ordinal))
+            {
+                return Json($$"""
+                    {"Attachments":[{"AttachmentID":"{{attachmentId}}","FileName":"invoice.pdf","MimeType":"application/pdf","ContentLength":18}]}
+                    """);
+            }
+            if (path.EndsWith("/Invoices", StringComparison.Ordinal) &&
+                request.RequestUri.Query.Contains("ACCREC", StringComparison.Ordinal))
+            {
+                return Json($$"""
+                    {"Invoices":[{"InvoiceID":"{{invoiceId}}","HasAttachments":true}]}
+                    """);
+            }
+            if (path.EndsWith("/Invoices", StringComparison.Ordinal)) return Json("{\"Invoices\":[]}");
+            return Json("{}");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
     }
 }

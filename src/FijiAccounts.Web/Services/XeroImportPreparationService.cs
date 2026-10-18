@@ -440,6 +440,17 @@ public sealed class XeroImportPreparationService(
                 XeroMigrationIssueSeverity.Blocking,
                 $"Add the Xero {category} export before cutover. API data alone is not a complete migration record."));
         }
+        var attachmentSyncFailed = await db.XeroConnections.AsNoTracking()
+            .AnyAsync(x => x.OrganisationId == organisationId &&
+                           x.IsActive &&
+                           x.LastSyncError != null &&
+                           x.LastSyncError.Contains("Document attachments"), ct);
+        if (attachmentSyncFailed)
+        {
+            db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "ATTACHMENT_SYNC_FAILED",
+                XeroMigrationIssueSeverity.Blocking,
+                "One or more Xero attachments could not be retained. Copy the data from Xero again, or add a complete Document attachments ZIP before cutover."));
+        }
         var evidenceForUsedFeatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["items"] = "Inventory items", ["budgets"] = "Budgets", ["tracking"] = "Tracking categories",

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.IO.Compression;
 using FijiAccounts.Web.Data;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.WebUtilities;
@@ -35,6 +36,8 @@ public sealed class XeroConnectionService(
     IOptions<XeroApiOptions> configured)
 {
     private const int MaximumDatasetBytes = 25 * 1024 * 1024;
+    private const int MaximumAttachmentPackageBytes = 25 * 1024 * 1024;
+    private const int AttachmentPackageTargetBytes = 20 * 1024 * 1024;
     private const int MaximumPages = 100;
     private const int ExpectedPageSize = 100;
     private readonly XeroApiOptions options = configured.Value;
@@ -259,6 +262,8 @@ public sealed class XeroConnectionService(
         var failures = new List<XeroSyncFailure>();
         var importedRecords = 0;
         var importedDatasets = 0;
+        var attachmentSources = new List<AttachmentSource>();
+        var failedAttachmentDatasets = new List<string>();
 
         foreach (var definition in definitionsArray)
         {
@@ -282,11 +287,66 @@ public sealed class XeroConnectionService(
                 });
                 importedDatasets++;
                 importedRecords += fetched.RecordCount;
+                attachmentSources.AddRange(ExtractAttachmentSources(fetched.Content, definition));
             }
             catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
             {
                 failures.Add(new(definition.Name, FriendlyFailure(ex)));
+                if (AttachmentDefinitions.ContainsKey(definition.Key))
+                    failedAttachmentDatasets.Add(definition.Name);
             }
+        }
+
+        try
+        {
+            if (failedAttachmentDatasets.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Attachments cannot be verified because these Xero records were not copied: {string.Join(", ", failedAttachmentDatasets)}.");
+            }
+            var packages = await FetchAttachmentPackagesAsync(
+                accessToken,
+                connection.XeroTenantId.Value,
+                attachmentSources,
+                cancellationToken);
+            foreach (var package in packages)
+            {
+                if (await db.XeroMigrationFiles.AnyAsync(
+                        x => x.XeroMigrationId == migration.Id &&
+                             x.Category == "Document attachments" &&
+                             x.Sha256 == package.Sha256,
+                        cancellationToken))
+                {
+                    continue;
+                }
+
+                var stored = storage.Stage(organisationId, userId, package.Content);
+                var file = new XeroMigrationFile
+                {
+                    OrganisationId = organisationId,
+                    XeroMigrationId = migration.Id,
+                    Category = "Document attachments",
+                    FileName = package.FileName,
+                    ContentType = "application/zip",
+                    Size = package.Content.LongLength,
+                    Sha256 = stored.Sha256,
+                    ImmutableDocumentObjectId = stored.Id,
+                    UploadedByUserId = userId
+                };
+                db.XeroMigrationFiles.Add(file);
+                db.AuditEvents.Add(Audit(organisationId, userId, "XeroAttachmentPackageRetained", file.Id, new
+                {
+                    migration.Id,
+                    file.FileName,
+                    file.Size,
+                    file.Sha256,
+                    package.AttachmentCount
+                }, nameof(XeroMigrationFile)));
+            }
+        }
+        catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
+        {
+            failures.Add(new("Document attachments", FriendlyFailure(ex)));
         }
 
         connection.LastSyncedAt = DateTimeOffset.UtcNow;
@@ -449,11 +509,188 @@ public sealed class XeroConnectionService(
         [
             new("trial-balance", "Trial Balance control report", $"Reports/TrialBalance?date={encodedEnd}", "Reports", false),
             new("balance-sheet", "Balance Sheet control report", $"Reports/BalanceSheet?date={encodedEnd}", "Reports", false),
-            new("profit-loss", "Profit and Loss control report", $"Reports/ProfitAndLoss?fromDate={start:yyyy-MM-dd}&toDate={encodedEnd}", "Reports", false),
-            new("aged-receivables", "Aged receivables control report", $"Reports/AgedReceivablesByContact?date={encodedEnd}", "Reports", false),
-            new("aged-payables", "Aged payables control report", $"Reports/AgedPayablesByContact?date={encodedEnd}", "Reports", false)
+            new("profit-loss", "Profit and Loss control report", $"Reports/ProfitAndLoss?fromDate={start:yyyy-MM-dd}&toDate={encodedEnd}", "Reports", false)
         ];
     }
+
+    private static IReadOnlyList<AttachmentSource> ExtractAttachmentSources(
+        byte[] content,
+        DatasetDefinition definition)
+    {
+        if (!AttachmentDefinitions.TryGetValue(definition.Key, out var attachmentDefinition)) return [];
+        using var document = JsonDocument.Parse(content);
+        if (!document.RootElement.TryGetProperty("pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var sources = new List<AttachmentSource>();
+        foreach (var page in pages.EnumerateArray())
+        {
+            if (!TryGetPropertyIgnoreCase(page, definition.RootProperty, out var records) ||
+                records.ValueKind != JsonValueKind.Array) continue;
+            foreach (var record in records.EnumerateArray())
+            {
+                if (!TryGetPropertyIgnoreCase(record, "HasAttachments", out var hasAttachments) ||
+                    hasAttachments.ValueKind != JsonValueKind.True ||
+                    !TryGetPropertyIgnoreCase(record, attachmentDefinition.IdProperty, out var idValue) ||
+                    !Guid.TryParse(idValue.GetString(), out var recordId)) continue;
+                sources.Add(new(
+                    attachmentDefinition.EntityPath,
+                    attachmentDefinition.RecordType,
+                    recordId));
+            }
+        }
+        return sources;
+    }
+
+    private async Task<IReadOnlyList<AttachmentPackage>> FetchAttachmentPackagesAsync(
+        string accessToken,
+        Guid tenantId,
+        IReadOnlyCollection<AttachmentSource> sources,
+        CancellationToken cancellationToken)
+    {
+        var attachments = new List<DownloadedAttachment>();
+        foreach (var source in sources
+                     .Distinct()
+                     .OrderBy(x => x.RecordType, StringComparer.Ordinal)
+                     .ThenBy(x => x.RecordId))
+        {
+            var listEndpoint = $"{source.EntityPath}/{source.RecordId:D}/Attachments";
+            var metadataBytes = await api.GetJsonAsync(accessToken, tenantId, listEndpoint, cancellationToken);
+            using var metadata = JsonDocument.Parse(metadataBytes);
+            if (!TryGetPropertyIgnoreCase(metadata.RootElement, "Attachments", out var list) ||
+                list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Xero reported attachments for {source.RecordType} {source.RecordId:D}, but did not return their file details.");
+            }
+
+            foreach (var item in list.EnumerateArray())
+            {
+                if (!TryGetPropertyIgnoreCase(item, "AttachmentID", out var idValue) ||
+                    !Guid.TryParse(idValue.GetString(), out var attachmentId))
+                    throw new InvalidOperationException($"Xero returned an attachment without an identifier for {source.RecordType} {source.RecordId:D}.");
+                var fileName = TryGetString(item, "FileName") ?? $"attachment-{attachmentId:N}";
+                var mimeType = TryGetString(item, "MimeType") ?? "application/octet-stream";
+                var endpoint = $"{source.EntityPath}/{source.RecordId:D}/Attachments/{attachmentId:D}";
+                var bytes = await api.GetBytesAsync(accessToken, tenantId, endpoint, mimeType, cancellationToken);
+                if (bytes.Length == 0)
+                    throw new InvalidOperationException($"Xero returned an empty attachment for {source.RecordType} {source.RecordId:D}.");
+                attachments.Add(new(source, attachmentId, fileName, mimeType, bytes));
+            }
+        }
+
+        return BuildAttachmentPackages(attachments);
+    }
+
+    private static IReadOnlyList<AttachmentPackage> BuildAttachmentPackages(
+        IReadOnlyCollection<DownloadedAttachment> attachments)
+    {
+        var ordered = attachments
+            .OrderBy(x => x.Source.RecordType, StringComparer.Ordinal)
+            .ThenBy(x => x.Source.RecordId)
+            .ThenBy(x => x.AttachmentId)
+            .ToArray();
+        var groups = new List<List<DownloadedAttachment>>();
+        var current = new List<DownloadedAttachment>();
+        var currentBytes = 0L;
+        foreach (var attachment in ordered)
+        {
+            if (current.Count > 0 && currentBytes + attachment.Content.LongLength > AttachmentPackageTargetBytes)
+            {
+                groups.Add(current);
+                current = [];
+                currentBytes = 0;
+            }
+            current.Add(attachment);
+            currentBytes += attachment.Content.LongLength;
+        }
+        if (current.Count > 0 || groups.Count == 0) groups.Add(current);
+
+        var packages = new List<AttachmentPackage>();
+        for (var index = 0; index < groups.Count; index++)
+        {
+            var content = BuildAttachmentZip(groups[index]);
+            if (content.LongLength > MaximumAttachmentPackageBytes)
+            {
+                throw new InvalidOperationException(
+                    $"A Xero document package is larger than 25 MB. Download the affected files from Xero and upload them as smaller ZIP files.");
+            }
+            var hash = Convert.ToHexString(SHA256.HashData(content));
+            packages.Add(new(
+                $"xero-document-attachments-{index + 1:D3}-{hash[..12].ToLowerInvariant()}.zip",
+                content,
+                hash,
+                groups[index].Count));
+        }
+        return packages;
+    }
+
+    private static byte[] BuildAttachmentZip(IReadOnlyCollection<DownloadedAttachment> attachments)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, true))
+        {
+            var manifest = attachments.Select(x => new
+            {
+                x.Source.RecordType,
+                RecordId = x.Source.RecordId,
+                AttachmentId = x.AttachmentId,
+                x.FileName,
+                x.MimeType,
+                Size = x.Content.LongLength,
+                Sha256 = Convert.ToHexString(SHA256.HashData(x.Content))
+            }).ToArray();
+            WriteZipEntry(archive, "manifest.json", JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            }));
+            foreach (var attachment in attachments)
+            {
+                var safeName = SafeEntryName(attachment.FileName);
+                var entryName = $"records/{attachment.Source.RecordType}/{attachment.Source.RecordId:D}/{attachment.AttachmentId:D}-{safeName}";
+                WriteZipEntry(archive, entryName, attachment.Content);
+            }
+        }
+        return output.ToArray();
+    }
+
+    private static void WriteZipEntry(ZipArchive archive, string name, byte[] content)
+    {
+        var entry = archive.CreateEntry(name, CompressionLevel.Optimal);
+        entry.LastWriteTime = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        using var stream = entry.Open();
+        stream.Write(content);
+    }
+
+    private static string SafeEntryName(string value)
+    {
+        var name = Path.GetFileName(value);
+        var invalid = Path.GetInvalidFileNameChars().Concat(['/', '\\']).ToHashSet();
+        var safe = new string(name.Select(x => invalid.Contains(x) ? '_' : x).ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(safe) ? "attachment" : safe[..Math.Min(120, safe.Length)];
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
+    }
+
+    private static string? TryGetString(JsonElement element, string name) =>
+        TryGetPropertyIgnoreCase(element, name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static string FriendlyFailure(Exception exception) => exception switch
     {
@@ -511,4 +748,30 @@ public sealed class XeroConnectionService(
     private sealed record OAuthState(string UserId, Guid OrganisationId, Guid Nonce);
     private sealed record DatasetDefinition(string Key, string Name, string Path, string RootProperty, bool Paged);
     private sealed record FetchedDataset(byte[] Content, int RecordCount, int PageCount);
+    private sealed record AttachmentDefinition(string EntityPath, string RecordType, string IdProperty);
+    private sealed record AttachmentSource(string EntityPath, string RecordType, Guid RecordId);
+    private sealed record DownloadedAttachment(
+        AttachmentSource Source,
+        Guid AttachmentId,
+        string FileName,
+        string MimeType,
+        byte[] Content);
+    private sealed record AttachmentPackage(string FileName, byte[] Content, string Sha256, int AttachmentCount);
+
+    private static readonly IReadOnlyDictionary<string, AttachmentDefinition> AttachmentDefinitions =
+        new Dictionary<string, AttachmentDefinition>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["accounts"] = new("Accounts", "Account", "AccountID"),
+            ["contacts"] = new("Contacts", "Contact", "ContactID"),
+            ["sales-invoices"] = new("Invoices", "Invoice", "InvoiceID"),
+            ["bills"] = new("Invoices", "Invoice", "InvoiceID"),
+            ["sales-credits"] = new("CreditNotes", "CreditNote", "CreditNoteID"),
+            ["supplier-credits"] = new("CreditNotes", "CreditNote", "CreditNoteID"),
+            ["bank-transactions"] = new("BankTransactions", "BankTransaction", "BankTransactionID"),
+            ["bank-transfers"] = new("BankTransfers", "BankTransfer", "BankTransferID"),
+            ["manual-journals"] = new("ManualJournals", "ManualJournal", "ManualJournalID"),
+            ["purchase-orders"] = new("PurchaseOrders", "PurchaseOrder", "PurchaseOrderID"),
+            ["quotes"] = new("Quotes", "Quote", "QuoteID"),
+            ["repeating-invoices"] = new("RepeatingInvoices", "RepeatingInvoice", "RepeatingInvoiceID")
+        };
 }

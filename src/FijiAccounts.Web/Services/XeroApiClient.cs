@@ -83,21 +83,49 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         Guid tenantId,
         string endpoint,
         CancellationToken cancellationToken = default)
+        => await GetAsync(accessToken, tenantId, endpoint, "application/json", cancellationToken);
+
+    public async Task<byte[]> GetBytesAsync(
+        string accessToken,
+        Guid tenantId,
+        string endpoint,
+        string? contentType = null,
+        CancellationToken cancellationToken = default)
+        => await GetAsync(
+            accessToken,
+            tenantId,
+            endpoint,
+            string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType,
+            cancellationToken);
+
+    private async Task<byte[]> GetAsync(
+        string accessToken,
+        Guid tenantId,
+        string endpoint,
+        string accept,
+        CancellationToken cancellationToken)
     {
         var uri = Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute)
             ? absolute
             : new Uri(AccountingBase + endpoint.TrimStart('/'));
+        if (!uri.AbsoluteUri.StartsWith(AccountingBase, StringComparison.OrdinalIgnoreCase) &&
+            !uri.Host.Equals("api.xero.com", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Xero content must be downloaded from the Xero API.");
+        }
         for (var attempt = 1; ; attempt++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
+            if (!accept.Equals("application/json", StringComparison.OrdinalIgnoreCase))
+                request.Headers.TryAddWithoutValidation("contentType", accept);
             request.Headers.Add("xero-tenant-id", tenantId.ToString());
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (attempt < 3 && response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
+            if (attempt < 8 && response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
             {
                 var requestedDelay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(attempt);
-                await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(requestedDelay.TotalSeconds, 1, 10)), cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(requestedDelay.TotalSeconds, 1, 60)), cancellationToken);
                 continue;
             }
             return await ReadCheckedAsync(response, cancellationToken);

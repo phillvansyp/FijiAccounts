@@ -104,6 +104,49 @@ public sealed class XeroImportPreparationServiceTests
             x.Message.Contains("open items") && x.Message.Contains("immutable Xero history")));
     }
 
+    [Fact]
+    public async Task AttachmentSyncFailureRemainsBlockingEvenWhenAnOlderPackageExists()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"a-1","Code":"200","Name":"Sales","Type":"REVENUE","Status":"ACTIVE"}]}
+            """);
+        test.Db.XeroConnections.Add(new XeroConnection
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroTenantId = Guid.NewGuid(),
+            ProtectedAccessToken = "protected",
+            ProtectedRefreshToken = "protected",
+            GrantedScopes = "accounting.attachments.read",
+            ConnectedByUserId = test.UserId,
+            UpdatedByUserId = test.UserId,
+            LastSyncError = "Document attachments: Xero returned 503 Service Unavailable."
+        });
+        var migration = await test.Db.XeroMigrations.SingleAsync();
+        var retained = new DatabaseImmutableDocumentStore(test.Db).Stage(
+            test.Organisation.Id, test.UserId, Encoding.UTF8.GetBytes("older attachment package"));
+        test.Db.XeroMigrationFiles.Add(new XeroMigrationFile
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            Category = "Document attachments",
+            FileName = "older-attachments.zip",
+            ContentType = "application/zip",
+            Size = retained.ContentLength,
+            Sha256 = retained.Sha256,
+            ImmutableDocumentObjectId = retained.Id,
+            UploadedByUserId = test.UserId
+        });
+        await test.Db.SaveChangesAsync();
+
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        Assert.True(await test.Db.XeroMigrationIssues.AnyAsync(x =>
+            !x.IsResolved && x.Code == "ATTACHMENT_SYNC_FAILED" &&
+            x.Severity == XeroMigrationIssueSeverity.Blocking));
+    }
+
     private static async Task<XeroImportPreparationService> SetupAsync(AccountingTestDatabase test)
     {
         test.Organisation.CountryCode = "NZ";
