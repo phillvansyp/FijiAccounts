@@ -274,8 +274,7 @@ public sealed class XeroImportPreparationService(
                 if (targetId is null)
                 {
                     // Xero includes system, archived and partially configured master
-                    // records that cannot become usable Account Island records (for
-                    // example an account without a code). Retain them in the immutable
+                    // records that cannot become usable Account Island records. Retain them in the immutable
                     // source archive, but do not leave them permanently blocking cutover.
                     record.Status = XeroMigrationRecordStatus.Skipped;
                     record.TargetEntityType = "Immutable Xero history";
@@ -547,14 +546,22 @@ public sealed class XeroImportPreparationService(
 
     private async Task<Guid?> ImportAccountAsync(Guid organisationId, JsonElement source, CancellationToken ct)
     {
-        var code = Text(source, "Code");
+        var sourceCode = Text(source, "Code").Trim();
         var name = Text(source, "Name");
-        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name)) return null;
+        if (string.IsNullOrWhiteSpace(name)) return null;
         var account = await db.LedgerAccounts.SingleOrDefaultAsync(
-            x => x.OrganisationId == organisationId && x.Code == code, ct);
+            x => x.OrganisationId == organisationId &&
+                 ((!string.IsNullOrWhiteSpace(sourceCode) && x.Code == sourceCode) ||
+                  (string.IsNullOrWhiteSpace(sourceCode) && x.Name == name)), ct);
         if (account is null)
         {
             var xeroType = Text(source, "Type");
+            var code = sourceCode;
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                var identity = Text(source, "AccountID", "BankAccountNumber", "Name");
+                code = "XERO-" + Hash(identity.Length == 0 ? source.GetRawText() : identity)[..10];
+            }
             account = new LedgerAccount
             {
                 OrganisationId = organisationId, Code = code[..Math.Min(code.Length, 20)],
@@ -701,7 +708,7 @@ public sealed class XeroImportPreparationService(
 
     private static string MasterSkipReason(string dataset) => dataset switch
     {
-        "accounts" => "Retained in the Xero archive because the source account has no usable code or name.",
+        "accounts" => "Retained in the Xero archive because the source account has no usable name.",
         "contacts" => "Retained in the Xero archive because the source contact has no usable name.",
         "currencies" => "Retained in the Xero archive because the source currency has no valid three-letter code.",
         "items" => "Retained in the Xero archive because the source item has no usable code.",

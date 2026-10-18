@@ -66,7 +66,7 @@ public sealed class XeroImportPreparationServiceTests
         await AddSnapshotAsync(test, "accounts", "Accounts", """
             {"Accounts":[
               {"AccountID":"acc-1","Code":"7100","Name":"Travel","Type":"EXPENSE","Status":"ACTIVE"},
-              {"AccountID":"system-1","Code":"","Name":"System account","Type":"CURRLIAB","Status":"ACTIVE"}
+              {"AccountID":"system-1","Code":"","Name":"","Type":"CURRLIAB","Status":"ACTIVE"}
             ]}
             """);
         await service.PrepareAsync(test.UserId, test.Organisation.Id);
@@ -77,10 +77,31 @@ public sealed class XeroImportPreparationServiceTests
         var retained = await test.Db.XeroMigrationRecords.SingleAsync(x => x.ExternalId == "system-1");
         Assert.Equal(XeroMigrationRecordStatus.Skipped, retained.Status);
         Assert.Equal("Immutable Xero history", retained.TargetEntityType);
-        Assert.Contains("no usable code or name", retained.ReviewMessage);
+        Assert.Contains("no usable name", retained.ReviewMessage);
         Assert.False(await test.Db.XeroMigrationRecords.AnyAsync(x =>
             new[] { "accounts", "contacts", "currencies", "items" }.Contains(x.DatasetKey) &&
             x.Status != XeroMigrationRecordStatus.Imported && x.Status != XeroMigrationRecordStatus.Skipped));
+    }
+
+    [Fact]
+    public async Task BankAccountWithoutXeroCodeGetsStableAccountIslandCode()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"bank-kiwibank","Code":"","Name":"Kiwibank 00","Type":"BANK","BankAccountNumber":"38-9027-0295495-00","Status":"ACTIVE"}]}
+            """);
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(1, await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id));
+
+        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Name == "Kiwibank 00");
+        Assert.StartsWith("XERO-", account.Code);
+        Assert.True(account.IsBankAccount);
+        Assert.Equal("38-9027-0295495-00", account.BankAccountNumber);
+        var record = await test.Db.XeroMigrationRecords.SingleAsync(x => x.ExternalId == "bank-kiwibank");
+        Assert.Equal(XeroMigrationRecordStatus.Imported, record.Status);
+        Assert.Equal(account.Id, record.TargetEntityId);
     }
 
     [Fact]
