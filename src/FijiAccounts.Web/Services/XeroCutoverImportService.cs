@@ -222,9 +222,10 @@ public sealed class XeroCutoverImportService(
 
     private async Task<PostedJournal?> FindOpeningJournalAsync(Guid organisationId, Guid migrationId, CancellationToken ct)
     {
-        var audit = await db.AuditEvents.AsNoTracking().Where(x => x.OrganisationId == organisationId &&
+        var audits = await db.AuditEvents.AsNoTracking().Where(x => x.OrganisationId == organisationId &&
             x.EventType == "XeroOpeningBalancePosted" && x.EntityId == migrationId.ToString())
-            .OrderByDescending(x => x.OccurredAt).FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+        var audit = audits.OrderByDescending(x => x.OccurredAt).FirstOrDefault();
         if (audit is null) return null;
         using var evidence = JsonDocument.Parse(audit.JsonData);
         if (!evidence.RootElement.TryGetProperty("OpeningJournalId", out var id) || !Guid.TryParse(id.GetString(), out var journalId))
