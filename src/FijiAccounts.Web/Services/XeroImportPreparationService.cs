@@ -271,7 +271,19 @@ public sealed class XeroImportPreparationService(
                     "items" => await ImportItemAsync(organisationId, source, cancellationToken),
                     _ => null
                 };
-                if (targetId is null) continue;
+                if (targetId is null)
+                {
+                    // Xero includes system, archived and partially configured master
+                    // records that cannot become usable Account Island records (for
+                    // example an account without a code). Retain them in the immutable
+                    // source archive, but do not leave them permanently blocking cutover.
+                    record.Status = XeroMigrationRecordStatus.Skipped;
+                    record.TargetEntityType = "Immutable Xero history";
+                    record.ReviewMessage = MasterSkipReason(snapshot.DatasetKey);
+                    record.ImportedAt = DateTimeOffset.UtcNow;
+                    record.ImportedByUserId = userId;
+                    continue;
+                }
                 record.Status = XeroMigrationRecordStatus.Imported;
                 record.TargetEntityType = TargetType(snapshot.DatasetKey);
                 record.TargetEntityId = targetId;
@@ -685,6 +697,15 @@ public sealed class XeroImportPreparationService(
     {
         "accounts" => nameof(LedgerAccount), "contacts" => nameof(BusinessParty),
         "currencies" => nameof(OrganisationCurrency), "items" => nameof(ProductItem), _ => null
+    };
+
+    private static string MasterSkipReason(string dataset) => dataset switch
+    {
+        "accounts" => "Retained in the Xero archive because the source account has no usable code or name.",
+        "contacts" => "Retained in the Xero archive because the source contact has no usable name.",
+        "currencies" => "Retained in the Xero archive because the source currency has no valid three-letter code.",
+        "items" => "Retained in the Xero archive because the source item has no usable code.",
+        _ => "Retained in the Xero archive because the source master record cannot be added as a usable live record."
     };
 
     private static AccountType AccountTypeFor(string xeroType) => xeroType.ToUpperInvariant() switch

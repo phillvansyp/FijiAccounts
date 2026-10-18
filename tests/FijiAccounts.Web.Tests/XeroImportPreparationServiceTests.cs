@@ -59,6 +59,31 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task MasterImportArchivesUnusableXeroSystemRecordsInsteadOfBlockingCutover()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[
+              {"AccountID":"acc-1","Code":"7100","Name":"Travel","Type":"EXPENSE","Status":"ACTIVE"},
+              {"AccountID":"system-1","Code":"","Name":"System account","Type":"CURRLIAB","Status":"ACTIVE"}
+            ]}
+            """);
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        var imported = await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(1, imported);
+        var retained = await test.Db.XeroMigrationRecords.SingleAsync(x => x.ExternalId == "system-1");
+        Assert.Equal(XeroMigrationRecordStatus.Skipped, retained.Status);
+        Assert.Equal("Immutable Xero history", retained.TargetEntityType);
+        Assert.Contains("no usable code or name", retained.ReviewMessage);
+        Assert.False(await test.Db.XeroMigrationRecords.AnyAsync(x =>
+            new[] { "accounts", "contacts", "currencies", "items" }.Contains(x.DatasetKey) &&
+            x.Status != XeroMigrationRecordStatus.Imported && x.Status != XeroMigrationRecordStatus.Skipped));
+    }
+
+    [Fact]
     public async Task TaxRatesAreAutomaticallyMappedButUnknownRatesBlockCutover()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
