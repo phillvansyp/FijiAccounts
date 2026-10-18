@@ -120,6 +120,47 @@ public sealed class OrganisationInvitationServiceTests
     }
 
     [Fact]
+    public async Task IssueAsync_ExistingMemberCanReceiveFreshAccessInvitationWithoutDuplicateMembership()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var existingMember = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = "member@example.com",
+            NormalizedUserName = "MEMBER@EXAMPLE.COM",
+            Email = "member@example.com",
+            NormalizedEmail = "MEMBER@EXAMPLE.COM",
+            EmailConfirmed = true
+        };
+        test.Db.Users.Add(existingMember);
+        test.Db.OrganisationMemberships.Add(new OrganisationMembership
+        {
+            OrganisationId = test.Organisation.Id,
+            UserId = existingMember.Id,
+            Role = OrganisationRole.Administrator
+        });
+        await test.Db.SaveChangesAsync();
+        var service = new OrganisationInvitationService(test.Db, test.Access);
+
+        var issued = await service.IssueAsync(
+            test.UserId,
+            test.Organisation.Id,
+            existingMember.Email,
+            OrganisationRole.Administrator);
+        var accepted = await service.AcceptAsync(
+            existingMember.Id,
+            existingMember.Email,
+            issued.Token);
+
+        Assert.True(accepted.Succeeded);
+        Assert.Contains("now have", accepted.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await test.Db.OrganisationMemberships.CountAsync(x =>
+            x.OrganisationId == test.Organisation.Id &&
+            x.UserId == existingMember.Id));
+        Assert.NotNull((await test.Db.OrganisationInvitations.SingleAsync()).AcceptedAt);
+    }
+
+    [Fact]
     public async Task IssueAsync_ReadOnlyMemberCannotCreateInvitation()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
