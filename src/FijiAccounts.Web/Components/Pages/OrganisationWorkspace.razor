@@ -284,7 +284,18 @@ else
     @if (IsTeamPage)
     {
     <section class="business-banner"><div class="business-identity"><span class="business-avatar">@Initials(access.Organisation.LegalName)</span><div><span class="eyebrow">Team &amp; permissions · @OrganisationDisplay.WorkspaceId(access.Organisation)</span><h1>@OrganisationDisplay.NameWithCountry(access.Organisation)</h1><p>Manage users, permission profiles and access for this company only. A user added here receives no access to another company.</p></div></div><div class="banner-actions"><a href="/o/@OrganisationId/settings">Workspace settings</a></div></section>
-    <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div><div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Permission profile</th><th>Branch / division access</th></tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@PermissionProfileLabel(member)</td><td>@DimensionAccessLabel(member)</td></tr> }</tbody></table></div>
+    <section id="team" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Access</span><h2>Team &amp; permissions</h2></div><span>@members.Count members</span></div>
+    @if (memberInvitationMessage is not null)
+    {
+        <div class="alert @memberInvitationMessageClass">
+            @memberInvitationMessage
+            @if (memberInvitationLink is not null)
+            {
+                <br /><a href="@memberInvitationLink">@memberInvitationLink</a>
+            }
+        </div>
+    }
+    <div class="table-responsive"><table class="table"><thead><tr><th>User</th><th>Permission profile</th><th>Branch / division access</th>@if (canManageTeam) { <th class="text-end">Actions</th> }</tr></thead><tbody>@foreach (var member in members) { <tr><td>@member.User.Email</td><td>@PermissionProfileLabel(member)</td><td>@DimensionAccessLabel(member)</td>@if (canManageTeam) { <td class="text-end">@if (CanResendInvitation(member)) { <button type="button" class="btn btn-sm btn-outline-primary" disabled="@(memberInvitationActionUserId is not null)" @onclick="() => ResendMemberInvitation(member)">@(memberInvitationActionUserId == member.UserId ? "Sending…" : "Resend invitation")</button> }</td> }</tr> }</tbody></table></div>
     @if (canManageTeam)
     {
         <details class="invite-panel" open="@(permissionProfiles.Count == 0)">
@@ -430,7 +441,7 @@ else
 @code {
     [Parameter] public Guid OrganisationId { get; set; }
     private bool IsTeamPage => Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/').EndsWith("/team", StringComparison.OrdinalIgnoreCase);
-    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<OrganisationPermissionProfile> permissionProfiles = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private TemporaryPasswordModel temporaryPassword = new(); private PermissionProfileModel permissionProfileEditor = new(); private Guid? editingPermissionProfileId; private bool savingPermissionProfile; private string? permissionProfileMessage; private string permissionProfileMessageClass = "alert-success"; private string selectedProfileMemberUserId = ""; private string selectedPermissionProfileId = ""; private string? profileAssignmentMessage; private string profileAssignmentMessageClass = "alert-success"; private string? temporaryPasswordMessage; private string temporaryPasswordMessageClass = "alert-success"; private bool settingTemporaryPassword; private string? invitationLink; private string? invitationError; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<OrganisationPermissionProfile> permissionProfiles = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private TemporaryPasswordModel temporaryPassword = new(); private PermissionProfileModel permissionProfileEditor = new(); private Guid? editingPermissionProfileId; private bool savingPermissionProfile; private string? permissionProfileMessage; private string permissionProfileMessageClass = "alert-success"; private string selectedProfileMemberUserId = ""; private string selectedPermissionProfileId = ""; private string? profileAssignmentMessage; private string profileAssignmentMessageClass = "alert-success"; private string? temporaryPasswordMessage; private string temporaryPasswordMessageClass = "alert-success"; private bool settingTemporaryPassword; private string? invitationLink; private string? invitationError; private string? memberInvitationMessage; private string? memberInvitationLink; private string memberInvitationMessageClass = "alert-success"; private string? memberInvitationActionUserId; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
     private List<OrganisationMembership> ProfileAssignableMembers => members.Where(x => x.Role != OrganisationRole.Owner && x.UserId != userId).OrderBy(x => x.User.Email).ToList();
     private List<OrganisationMembership> RestrictableMembers => members.Where(x => x.Role is not OrganisationRole.Owner and not OrganisationRole.Administrator).OrderBy(x => x.User.Email).ToList();
     private OrganisationMembership? SelectedMember => members.SingleOrDefault(x => x.UserId == selectedMemberUserId);
@@ -1001,6 +1012,52 @@ else
         pendingInvitations = canManageTeam
             ? (await Invitations.ListPendingAsync(userId, OrganisationId)).ToList()
             : [];
+    }
+
+    private bool CanResendInvitation(OrganisationMembership member) =>
+        member.Role != OrganisationRole.Owner &&
+        !string.IsNullOrWhiteSpace(member.User.Email);
+
+    private async Task ResendMemberInvitation(OrganisationMembership member)
+    {
+        if (!CanResendInvitation(member))
+        {
+            return;
+        }
+
+        memberInvitationActionUserId = member.UserId;
+        memberInvitationMessage = null;
+        memberInvitationLink = null;
+        try
+        {
+            var email = member.User.Email!;
+            var result = await Invitations.IssueAsync(
+                userId,
+                OrganisationId,
+                email,
+                member.Role);
+            memberInvitationLink = Navigation.ToAbsoluteUri($"invite/{result.Token}").ToString();
+            var delivered = await DeliverInvitationEmailAsync(
+                email,
+                member.Role,
+                memberInvitationLink);
+            memberInvitationMessageClass = delivered ? "alert-success" : "alert-warning";
+            memberInvitationMessage = delivered
+                ? $"A fresh invitation was sent to {email}. Any previous pending link is no longer valid."
+                : InvitationEmailSender.IsConfigured
+                    ? $"A fresh invitation for {email} was created, but its email could not be delivered. Use the link below."
+                    : $"A fresh invitation for {email} was created. Email delivery is not configured, so use the link below.";
+            await LoadPendingInvitations();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            memberInvitationMessageClass = "alert-danger";
+            memberInvitationMessage = ex.Message;
+        }
+        finally
+        {
+            memberInvitationActionUserId = null;
+        }
     }
 
     private async Task ReissueInvitation(PendingInvitationSummary invitation)
