@@ -1,0 +1,113 @@
+name: Replace JCR 2006 Limited NZ company
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type REPLACE AI-NZ-B372B479
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-island-production
+  cancel-in-progress: false
+
+jobs:
+  replace-company:
+    name: Back up and replace NZ workspace
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://app.accountisland.com:8443
+    env:
+      DEPLOY_DIR: /mnt/data/account-island
+
+    steps:
+      - name: Validate reviewed workspace
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRMATION" != "REPLACE AI-NZ-B372B479" ]; then
+            echo "Confirmation must identify the exact NZ workspace." >&2
+            exit 1
+          fi
+
+      - name: Back up, preview, replace, and verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$DEPLOY_DIR/stack"
+          image="$(docker inspect --format '{{.Config.Image}}' account-island-app)"
+          app_was_running="$(docker inspect --format '{{.State.Running}}' account-island-app)"
+          restart_app() {
+            if [ "$app_was_running" = "true" ]; then
+              APP_IMAGE="$image" docker compose up -d app
+            fi
+          }
+          trap restart_app EXIT
+
+          if [ "$app_was_running" = "true" ]; then
+            docker compose stop app
+          fi
+
+          backup_name="account-island-before-replace-AI-NZ-B372B479-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+          docker run --rm \
+            --volume "$DEPLOY_DIR/data:/source:ro" \
+            --volume "$DEPLOY_DIR/backups:/backup" \
+            alpine:3.22 \
+            tar -C /source -czf "/backup/$backup_name" .
+          backup_path="$DEPLOY_DIR/backups/$backup_name"
+          tar -tzf "$backup_path" >/dev/null
+          (cd "$DEPLOY_DIR/backups" && sha256sum "$backup_name" > "$backup_name.sha256")
+
+          plan='{
+            "workspaceId":"AI-NZ-B372B479",
+            "expectedLegalName":"JCR 2006 Limited",
+            "expectedCountryCode":"NZ",
+            "preservedWorkspaceId":"AI-FJ-71BAB0B8",
+            "preservedExpectedLegalName":"JCR 2006 Limited",
+            "preservedExpectedCountryCode":"FJ"
+          }'
+          run_maintenance() {
+            command="$1"
+            printf '%s' "$plan" | docker run --rm -i \
+              --network none \
+              --env-file "$DEPLOY_DIR/config/app.env" \
+              --env ASPNETCORE_ENVIRONMENT=Production \
+              --env Database__MigrateOnStartup=false \
+              --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+              --volume "$DEPLOY_DIR/data:/app/data" \
+              --volume "$DEPLOY_DIR/keys:/app/keys" \
+              "$image" replace-organisation "$command"
+          }
+
+          echo "Reviewed preview:"
+          run_maintenance preview
+          echo "Replacement result:"
+          run_maintenance apply | tee "$DEPLOY_DIR/backups/${backup_name%.tar.gz}-result.json"
+
+          docker run --rm \
+            --network none \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Database__MigrateOnStartup=false \
+            --env Maintenance__VerifyDatabase__RequireCurrentMigrations=true \
+            --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+            --volume "$DEPLOY_DIR/data:/app/data" \
+            "$image" verify-database
+
+          echo "Verified backup retained at $backup_path"
+
+      - name: Verify production health
+        shell: bash
+        run: |
+          docker run --rm --network host curlimages/curl:8.12.1 \
+            --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
+            --header 'Host: app.accountisland.com' \
+            --header 'X-Forwarded-Proto: https' \
+            http://192.168.1.125:8188/health >/dev/null
