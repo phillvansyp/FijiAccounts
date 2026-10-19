@@ -81,11 +81,14 @@ public sealed class XeroReadOnlySyncService(
                 counts.Where(x => x.DatasetKey == definition.Key && x.IsArchived).Sum(x => x.Count)))
             .Where(x => x.ActiveRecords > 0 || x.ArchivedRecords > 0)
             .ToList();
-        var recentRuns = await db.XeroReadOnlySyncRuns.AsNoTracking()
+        // SQLite cannot translate ORDER BY for DateTimeOffset. Materialise this
+        // organisation's small run history first, then order it in memory.
+        var recentRuns = (await db.XeroReadOnlySyncRuns.AsNoTracking()
             .Where(x => x.OrganisationId == organisationId)
+            .ToListAsync(cancellationToken))
             .OrderByDescending(x => x.StartedAt)
             .Take(10)
-            .ToListAsync(cancellationToken);
+            .ToList();
         return new(connection, datasets, recentRuns);
     }
 

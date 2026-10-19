@@ -86,6 +86,10 @@ public sealed class XeroReadOnlySyncServiceTests
         Assert.NotNull(connection.LastSyncedAt);
         Assert.NotNull(connection.NextSyncAt);
         Assert.Null(connection.LastSyncError);
+        var status = await sync.GetStatusAsync(test.UserId, test.Organisation.Id);
+        Assert.Equal(2, status.RecentRuns.Count);
+        Assert.True(status.RecentRuns[0].StartedAt >= status.RecentRuns[1].StartedAt);
+        Assert.Equal(3, status.Datasets.Sum(x => x.ActiveRecords));
     }
 
     [Fact]
