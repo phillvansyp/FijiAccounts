@@ -70,37 +70,139 @@ else
                 @switch (assistant.NextAction)
                 {
                     case XeroMigrationAssistantAction.SaveSetup:
-                        <a class="btn btn-primary" href="@MigrationAnchor("migration-setup")">Set up the migration</a>
+                        <EditForm Model="model" OnValidSubmit="Save" FormName="guided-xero-migration-setup" class="guided-action-panel">
+                            <DataAnnotationsValidator />
+                            <ValidationSummary />
+                            <div class="guided-setup-grid">
+                                <div>
+                                    <label class="form-label">Xero organisation name</label>
+                                    <InputText class="form-control" @bind-Value="model.SourceOrganisationName" disabled="@(!canPrepare || busy)" />
+                                    <small>Use the legal organisation name shown in Xero.</small>
+                                </div>
+                                <div>
+                                    <label class="form-label">First live day in Account Island</label>
+                                    <InputDate class="form-control" @bind-Value="model.CutoverDate" disabled="@(!canPrepare || busy)" />
+                                    <small>Choose the day after the final day you will use Xero.</small>
+                                </div>
+                            </div>
+                            <label class="guided-check">
+                                <InputCheckbox class="form-check-input" @bind-Value="model.IncludeFullHistory" disabled="@(!canPrepare || busy)" />
+                                <span>Bring across the complete available transaction history.</span>
+                            </label>
+                            <button class="btn btn-primary" disabled="@busy">@(busy ? "Saving..." : "Save and continue")</button>
+                        </EditForm>
                         break;
                     case XeroMigrationAssistantAction.ConnectXero:
-                        if (connectionStatus?.IsConnected == true)
+                        if (connectionStatus?.IsConnected == true && connectionStatus.TenantId is null)
                         {
-                            <button type="button" class="btn btn-primary" @onclick="SyncXero" disabled="@syncing">@(syncing ? "Copying from Xero..." : "Copy data from Xero")</button>
+                            <div class="guided-action-panel">
+                                <div>
+                                    <strong>Choose the Xero organisation that belongs to @OrganisationName</strong>
+                                    <p>This confirmation prevents records from another Xero organisation being copied into this workspace.</p>
+                                </div>
+                                <div class="guided-tenant-choice">
+                                    <select class="form-select" @bind="selectedTenantId" disabled="@busy">
+                                        <option value="">Choose the Xero organisation</option>
+                                        @foreach (var tenant in connectionStatus.AvailableTenants)
+                                        {
+                                            <option value="@tenant.TenantId">@tenant.TenantName</option>
+                                        }
+                                    </select>
+                                    <button type="button" class="btn btn-primary" @onclick="ChooseTenant" disabled="@(busy || string.IsNullOrWhiteSpace(selectedTenantId))">Use this organisation and continue</button>
+                                </div>
+                            </div>
+                        }
+                        else if (connectionStatus?.IsConnected == true)
+                        {
+                            <div class="guided-action-panel">
+                                <strong>@connectionStatus.TenantName is selected</strong>
+                                <p>Account Island will copy every supported read-only dataset, retain its fingerprint, index the records and add safe master data. It cannot change Xero or post financial entries.</p>
+                                <button type="button" class="btn btn-primary" @onclick="RunSafeAutomation" disabled="@(!CanRunSafeAutomation)">@(runningAutomation ? "Copying and preparing..." : "Copy and prepare everything")</button>
+                            </div>
                         }
                         else if (connectionStatus?.IsConfigured == true && canApprove && migration is not null)
                         {
-                            <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+                            <div class="guided-action-panel">
+                                <strong>Connect Xero using read-only access</strong>
+                                <p>You will sign in to Xero, choose the source organisation and return here to continue.</p>
+                                <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+                            </div>
                         }
                         else
                         {
-                            <a class="btn btn-primary" href="@MigrationAnchor("source-evidence")">Review connection setup</a>
+                            <div class="guided-action-panel">
+                                <strong>The Xero connection needs administrator setup</strong>
+                                <p>An Account Island administrator needs to configure the secure Xero connection before this migration can continue.</p>
+                            </div>
                         }
                         break;
                     case XeroMigrationAssistantAction.RunPreparation:
-                        <button type="button" class="btn btn-primary" @onclick="RunGuidedPreparation" disabled="@(preparingImport || !canPrepare)">@(preparingImport ? "Preparing safely..." : "Run guided preparation")</button>
-                        <small>Indexes and checks the source, adds safe master data, then checks it again. It does not post money.</small>
+                        <div class="guided-action-panel">
+                            <strong>Check and prepare the copied records</strong>
+                            <p>Account Island will classify the source, add safe accounts and contacts, and identify only the decisions that need you. No money is posted.</p>
+                            <button type="button" class="btn btn-primary" @onclick="RunGuidedPreparation" disabled="@(preparingImport || !canPrepare)">@(preparingImport ? "Preparing safely..." : "Prepare records and continue")</button>
+                        </div>
                         break;
                     case XeroMigrationAssistantAction.SupplyEvidence:
-                        <a class="btn btn-primary" href="@MigrationAnchor("source-evidence")">Add missing evidence</a>
+                        <div class="guided-action-panel guided-evidence">
+                            <div>
+                                <strong>Add @CurrentMissingEvidenceCategory</strong>
+                                <p>@CurrentEvidenceGuidance</p>
+                                <small>@MissingEvidenceCategories.Count required report set(s) remain. The original file is retained with its fingerprint.</small>
+                            </div>
+                            <InputFile class="form-control" accept=".csv,.xlsx,.pdf,.zip" OnChange="UploadCurrentEvidence" disabled="@(!canPrepare || uploading)" />
+                            <span>@(uploading ? "Uploading and checking..." : "Choose the original Xero export to continue")</span>
+                        </div>
                         break;
                     case XeroMigrationAssistantAction.ResolveMappings:
-                        <a class="btn btn-primary" href="@MigrationAnchor("prepare-records")">Review decisions</a>
+                        @if (CurrentMapping is { } currentMapping)
+                        {
+                            <div class="guided-action-panel guided-mapping">
+                                <div>
+                                    <small>@MappingKindLabel(currentMapping.Kind)</small>
+                                    <strong>@currentMapping.SourceName</strong>
+                                    <p>Choose its Account Island destination. Confirm one decision at a time; the next item will appear automatically.</p>
+                                </div>
+                                <select class="form-select" value="@MappingSelection(currentMapping.Id)" @onchange="args => mappingSelections[currentMapping.Id] = args.Value?.ToString() ?? string.Empty" disabled="@preparingImport">
+                                    <option value="">Choose a destination</option>
+                                    @foreach (var target in Targets(currentMapping.Kind))
+                                    {
+                                        <option value="@target.Value">@target.Label</option>
+                                    }
+                                </select>
+                                <div class="guided-button-row">
+                                    <button type="button" class="btn btn-primary" @onclick="() => SaveMapping(currentMapping)" disabled="@(preparingImport || string.IsNullOrWhiteSpace(MappingSelection(currentMapping.Id)))">Confirm and continue</button>
+                                    <button type="button" class="btn btn-link" @onclick="() => IgnoreMapping(currentMapping)" disabled="@preparingImport">Exclude this value</button>
+                                </div>
+                            </div>
+                        }
+                        else if (CurrentBlockingIssue is { } blockingIssue)
+                        {
+                            <div class="guided-action-panel">
+                                <strong>Resolve this required item</strong>
+                                <p>@blockingIssue.Message</p>
+                                <button type="button" class="btn btn-primary" @onclick="RunGuidedPreparation" disabled="@(preparingImport || !canPrepare)">Check again</button>
+                                <small>The detailed workspace below contains the affected records when a manual correction is required.</small>
+                            </div>
+                        }
                         break;
                     case XeroMigrationAssistantAction.CompleteReconciliation:
-                        <a class="btn btn-primary" href="@MigrationAnchor("reconciliation")">Complete reconciliation</a>
+                        @if (CurrentReconciliationRequirement is { } requirement)
+                        {
+                            <div class="guided-action-panel">
+                                <strong>@requirement.Title</strong>
+                                <p>@requirement.Detail</p>
+                                <button type="button" class="btn btn-primary" @onclick="() => ConfirmReconciliation(requirement.Property)" disabled="@busy">@(busy ? "Saving..." : "Confirm and continue")</button>
+                                <small>@CompletedChecks of 7 reconciliation confirmations completed.</small>
+                            </div>
+                        }
                         break;
                     case XeroMigrationAssistantAction.RecordApproval:
-                        <a class="btn btn-primary" href="@MigrationAnchor("reconciliation")">Record management approval</a>
+                        <div class="guided-action-panel">
+                            <strong>Approve the verified cutover</strong>
+                            <p>All source records, evidence, mappings and control balances are ready. Approval is recorded in the audit trail.</p>
+                            <button type="button" class="btn btn-success" @onclick="ApproveCutover" disabled="@(busy || !canApprove || !CutoverCanBeApproved)">@(busy ? "Recording approval..." : "Approve and continue")</button>
+                        </div>
                         break;
                     case XeroMigrationAssistantAction.BuildCutover:
                         <button type="button" class="btn btn-success" @onclick="BuildCutover" disabled="@(preparingImport || !canPrepare)">Create verified live cutover</button>
@@ -114,7 +216,7 @@ else
                 }
             </div>
         </div>
-        <details class="assistant-checks" open="@(assistant.NextAction != XeroMigrationAssistantAction.Finished)">
+        <details class="assistant-checks">
             <summary>View the complete migration checklist</summary>
             <div class="assistant-check-grid">
                 @foreach (var check in assistant.Checks)
@@ -133,6 +235,9 @@ else
         </div>
     </section>
 
+    <details class="migration-details">
+        <summary><strong>Detailed migration workspace</strong><span>Open reports, mappings, evidence and all reconciliation controls</span></summary>
+        <div class="migration-details-body">
     <section class="self-service-hub" aria-labelledby="self-service-title">
         <div class="self-service-copy">
             <p class="step-label">Self-service migration</p>
@@ -495,6 +600,8 @@ else
             }
         }
     </section>
+        </div>
+    </details>
 }
 
 @code {
@@ -525,6 +632,33 @@ else
     private List<string> MissingEvidenceCategories => XeroMigrationService.RequiredCategories
         .Where(category => migration is null || !XeroMigrationService.HasRequiredEvidenceCategory(migration, category))
         .ToList();
+    private string CurrentMissingEvidenceCategory => MissingEvidenceCategories.FirstOrDefault() ?? "the next source report";
+    private string CurrentEvidenceGuidance => CurrentMissingEvidenceCategory switch
+    {
+        "General ledger" => "Export the General Ledger for all available dates with every column and currency included.",
+        "Trial balance" => "Export the Trial Balance at the final Xero date and at each earlier financial year end.",
+        "Balance Sheet and Profit & Loss" => "Export the Balance Sheet and Profit & Loss for every financial year being retained.",
+        "Receivable Invoice Detail" => "Export Receivable Invoice Detail at the final Xero date, including open credits and allocations.",
+        "Payable Invoice Detail" => "Export Payable Invoice Detail at the final Xero date, including supplier credits and allocations.",
+        "Bank statements and reconciliation" => "Export the reconciliation report and final statement for every bank, card and loan account.",
+        "Fixed assets and depreciation reconciliation" => "Export the fixed asset list and depreciation reconciliation for each financial year.",
+        "GST returns and reconciliation" => "Export every filed GST return and the reconciliation for the next unfiled period.",
+        "Payroll history reports" => "Export annual payroll activity and liability reports. Employee payroll records will continue in NZ Pay.",
+        "Document attachments" => "Download the supporting documents that must remain with the accounting record, preferably as a ZIP file.",
+        _ => $"Export the original {CurrentMissingEvidenceCategory} report from Xero without editing it."
+    };
+    private XeroMigrationMapping? CurrentMapping => workspace.Mappings
+        .FirstOrDefault(x => x.Status == XeroMigrationMappingStatus.Suggested);
+    private XeroMigrationIssue? CurrentBlockingIssue => workspace.Issues
+        .FirstOrDefault(x => x.Severity == XeroMigrationIssueSeverity.Blocking && !x.IsResolved);
+    private ReconciliationRequirement? CurrentReconciliationRequirement =>
+        !model.XeroEntryStopped ? new("Stop entries in Xero", "Confirm that no transactions will be entered in Xero after the final copy. Take the final copy first, then stop Xero entry before confirming.", nameof(model.XeroEntryStopped)) :
+        !model.TrialBalanceReconciled ? new("Confirm the Trial Balance", "Compare every Account Island opening balance to the final Xero Trial Balance. Total debits and credits must agree.", nameof(model.TrialBalanceReconciled)) :
+        !model.ReceivablesReconciled ? new("Confirm receivables", "Compare open customer invoices and credits to Xero's final aged receivables total.", nameof(model.ReceivablesReconciled)) :
+        !model.PayablesReconciled ? new("Confirm payables", "Compare open supplier bills and credits to Xero's final aged payables total.", nameof(model.PayablesReconciled)) :
+        !model.BankReconciled ? new("Confirm bank balances", "Compare every bank, card and loan account to its final reconciled Xero statement balance.", nameof(model.BankReconciled)) :
+        !model.FixedAssetsReconciled ? new("Confirm fixed assets", "Compare asset cost, accumulated depreciation and net book value to the final Xero fixed asset reconciliation.", nameof(model.FixedAssetsReconciled)) :
+        !model.GstReconciled ? new("Confirm GST", "Compare the GST control accounts to the last filed return and the next unfiled Xero period.", nameof(model.GstReconciled)) : null;
     private List<XeroApiSnapshot> LatestSnapshots => migration?.ApiSnapshots
         .GroupBy(x => x.DatasetKey)
         .Select(group => group.OrderByDescending(x => x.RetrievedAt).First())
@@ -564,8 +698,6 @@ else
         XeroMigrationStatus.Reconciliation => "progress",
         _ => "preparing"
     };
-    private string MigrationAnchor(string fragment) => $"/o/{OrganisationId:D}/migration/xero#{fragment}";
-
     protected override async Task OnParametersSetAsync()
     {
         loading = true;
@@ -653,6 +785,29 @@ else
             ApplyMigration();
             await RefreshAssistant();
             message = $"{args.File.Name} retained under {uploadCategory}.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { uploading = false; }
+    }
+
+    private async Task UploadCurrentEvidence(InputFileChangeEventArgs args)
+    {
+        var category = CurrentMissingEvidenceCategory;
+        uploading = true; message = null;
+        try
+        {
+            using var stream = args.File.OpenReadStream(XeroMigrationService.MaximumBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            await MigrationService.AddFileAsync(userId, OrganisationId, category, args.File.Name, args.File.ContentType, buffer.ToArray());
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+            await RefreshAssistant();
+            message = $"{category} retained. The next requirement is ready.";
             messageClass = "alert-success";
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -750,6 +905,18 @@ else
             message = ex.Message; messageClass = "alert-danger";
         }
         finally { busy = false; }
+    }
+
+    private async Task ConfirmReconciliation(string property)
+    {
+        SetCheck(property, true);
+        await Save();
+    }
+
+    private async Task ApproveCutover()
+    {
+        model.ManagementApproved = true;
+        await Save();
     }
 
     private async Task SyncXero()
@@ -1003,5 +1170,6 @@ else
         [StringLength(1000)] public string? Notes { get; set; }
     }
 
+    private sealed record ReconciliationRequirement(string Title, string Detail, string Property);
     private sealed record ControlEvidenceItem(string Title, bool Ready, string Detail);
 }
