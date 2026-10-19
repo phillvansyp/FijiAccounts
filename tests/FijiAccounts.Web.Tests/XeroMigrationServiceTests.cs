@@ -209,6 +209,33 @@ public sealed class XeroMigrationServiceTests
             test.UserId, test.Organisation.Id, "General ledger", filename, null, System.Text.Encoding.UTF8.GetBytes(content)));
     }
 
+    [Fact]
+    public void CompleteApiSnapshotsCountAsEvidenceWithoutDuplicateUploads()
+    {
+        var migration = new XeroMigration { CreatedByUserId = "user", UpdatedByUserId = "user" };
+        foreach (var key in new[] { "trial-balance", "balance-sheet", "profit-loss", "accounts", "contacts",
+                     "sales-invoices", "sales-credits", "bills", "supplier-credits", "payments", "prepayments", "overpayments" })
+        {
+            migration.ApiSnapshots.Add(new XeroApiSnapshot
+            {
+                XeroMigrationId = migration.Id,
+                DatasetKey = key,
+                DisplayName = key,
+                Endpoint = key,
+                Sha256 = new string('a', 64),
+                RetrievedByUserId = "user"
+            });
+        }
+
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Trial balance"));
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Balance Sheet and Profit & Loss"));
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Chart of accounts"));
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Contacts"));
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Sales invoices, credits and allocations"));
+        Assert.True(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Bills, supplier credits and allocations"));
+        Assert.False(XeroMigrationService.HasRequiredEvidenceCategory(migration, "Bank statements and reconciliation"));
+    }
+
     private static XeroMigrationService Service(AccountingTestDatabase test) =>
         new(test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
 

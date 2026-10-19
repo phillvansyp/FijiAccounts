@@ -86,6 +86,34 @@ public sealed class EnterpriseStructureServiceTests
     }
 
     [Fact]
+    public async Task CreateStandaloneCompany_SupportsNewZealandTrustWithoutCompanyNumber()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new EnterpriseStructureService(test.Db);
+
+        var trust = await service.CreateStandaloneCompanyAsync(
+            test.UserId,
+            new CreateStandaloneCompanyRequest(
+                "Van Syp Family Trust",
+                null,
+                "094-717-205",
+                "NZ",
+                OrganisationKind.Trust,
+                Nzbn: null,
+                NzCompanyNumber: null));
+
+        var stored = await test.Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == trust.Id);
+        Assert.Equal(OrganisationKind.Trust, stored.Kind);
+        Assert.Equal("NZ", stored.CountryCode);
+        Assert.Equal("NZD", stored.BaseCurrency);
+        Assert.Equal("094-717-205", stored.Tin);
+        Assert.Null(stored.NzCompanyNumber);
+        Assert.Contains(await test.Db.AuditEvents.AsNoTracking().ToListAsync(),
+            x => x.OrganisationId == trust.Id && x.EventType == "OrganisationCreated" &&
+                 x.JsonData.Contains("\"Kind\":\"Trust\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AddDefaultFor_CreatesPersistedGroupBranchAndDivision()
     {
         await using var test =

@@ -85,6 +85,7 @@ public sealed class XeroMigrationAssistantService(
 
         var migration = await db.XeroMigrations.AsNoTracking()
             .Include(x => x.Files)
+            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
         if (migration is null)
             return Summary("Start with the migration setup",
@@ -97,8 +98,10 @@ public sealed class XeroMigrationAssistantService(
                 .Select(x => x.DatasetKey)
                 .ToListAsync(cancellationToken))
             .Distinct(StringComparer.OrdinalIgnoreCase).Count();
-        var supplied = migration.Files.Select(x => x.Category).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var evidenceComplete = XeroMigrationService.RequiredCategories.All(supplied.Contains);
+        var evidenceComplete = XeroMigrationService.RequiredCategories.All(category =>
+            XeroMigrationService.HasRequiredEvidenceCategory(migration, category));
+        var suppliedEvidenceCount = XeroMigrationService.RequiredCategories.Count(category =>
+            XeroMigrationService.HasRequiredEvidenceCategory(migration, category));
         var mappingsComplete = workspace.Mappings.All(x => x.Status != XeroMigrationMappingStatus.Suggested);
         var preparationComplete = workspace.SourceRecordCount > 0 && workspace.LastRun is not null;
         var masterDataComplete = preparationComplete && workspace.ImportedCount > 0;
@@ -155,7 +158,7 @@ public sealed class XeroMigrationAssistantService(
             new("evidence", "Control evidence is complete",
                 evidenceComplete
                     ? $"All {XeroMigrationService.RequiredCategories.Length} required evidence sets are retained with fingerprints."
-                    : $"{XeroMigrationService.RequiredCategories.Count(supplied.Contains)} of {XeroMigrationService.RequiredCategories.Length} required evidence sets are supplied.",
+                    : $"{suppliedEvidenceCount} of {XeroMigrationService.RequiredCategories.Length} required evidence sets are supplied.",
                 evidenceComplete),
             new("preparation", "Records are staged and checked",
                 preparationComplete

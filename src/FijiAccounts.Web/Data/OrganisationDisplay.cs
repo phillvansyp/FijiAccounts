@@ -2,6 +2,13 @@ namespace FijiAccounts.Web.Data;
 
 public static class OrganisationDisplay
 {
+    public static string KindLabel(OrganisationKind kind) => kind switch
+    {
+        OrganisationKind.AccountingPractice => "Accounting practice",
+        OrganisationKind.Trust => "Trust",
+        _ => "Business"
+    };
+
     public static string CountryTag(string countryCode) =>
         countryCode.ToUpperInvariant() switch
         {

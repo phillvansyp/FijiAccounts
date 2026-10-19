@@ -36,7 +36,13 @@ else
             <h1>Move from Xero</h1>
             <p>@OrganisationName · A controlled move of the complete accounting record into Account Island.</p>
         </div>
-        <span class="status-pill @StatusClass">@StatusLabel</span>
+        <div class="heading-actions">
+            @if (migration is not null)
+            {
+                <a class="btn btn-secondary" href="/o/@OrganisationId/migration/xero/reports">Report library</a>
+            }
+            <span class="status-pill @StatusClass">@StatusLabel</span>
+        </div>
     </div>
 
     @if (message is not null)
@@ -64,7 +70,7 @@ else
                 @switch (assistant.NextAction)
                 {
                     case XeroMigrationAssistantAction.SaveSetup:
-                        <a class="btn btn-primary" href="#migration-setup">Set up the migration</a>
+                        <a class="btn btn-primary" href="@MigrationAnchor("migration-setup")">Set up the migration</a>
                         break;
                     case XeroMigrationAssistantAction.ConnectXero:
                         if (connectionStatus?.IsConnected == true)
@@ -77,7 +83,7 @@ else
                         }
                         else
                         {
-                            <a class="btn btn-primary" href="#source-evidence">Review connection setup</a>
+                            <a class="btn btn-primary" href="@MigrationAnchor("source-evidence")">Review connection setup</a>
                         }
                         break;
                     case XeroMigrationAssistantAction.RunPreparation:
@@ -85,16 +91,16 @@ else
                         <small>Indexes and checks the source, adds safe master data, then checks it again. It does not post money.</small>
                         break;
                     case XeroMigrationAssistantAction.SupplyEvidence:
-                        <a class="btn btn-primary" href="#source-evidence">Add missing evidence</a>
+                        <a class="btn btn-primary" href="@MigrationAnchor("source-evidence")">Add missing evidence</a>
                         break;
                     case XeroMigrationAssistantAction.ResolveMappings:
-                        <a class="btn btn-primary" href="#prepare-records">Review decisions</a>
+                        <a class="btn btn-primary" href="@MigrationAnchor("prepare-records")">Review decisions</a>
                         break;
                     case XeroMigrationAssistantAction.CompleteReconciliation:
-                        <a class="btn btn-primary" href="#reconciliation">Complete reconciliation</a>
+                        <a class="btn btn-primary" href="@MigrationAnchor("reconciliation")">Complete reconciliation</a>
                         break;
                     case XeroMigrationAssistantAction.RecordApproval:
-                        <a class="btn btn-primary" href="#reconciliation">Record management approval</a>
+                        <a class="btn btn-primary" href="@MigrationAnchor("reconciliation")">Record management approval</a>
                         break;
                     case XeroMigrationAssistantAction.BuildCutover:
                         <button type="button" class="btn btn-success" @onclick="BuildCutover" disabled="@(preparingImport || !canPrepare)">Create verified live cutover</button>
@@ -127,6 +133,52 @@ else
         </div>
     </section>
 
+    <section class="self-service-hub" aria-labelledby="self-service-title">
+        <div class="self-service-copy">
+            <p class="step-label">Self-service migration</p>
+            <h2 id="self-service-title">Account Island does the preparation for you</h2>
+            <p>One safe run copies every available read-only Xero dataset, preserves its fingerprint, creates the import index, adds safe master data and reports the decisions that still need a person.</p>
+            <div class="self-service-actions">
+                <button type="button" class="btn btn-primary" @onclick="RunSafeAutomation" disabled="@(!CanRunSafeAutomation)">
+                    @(runningAutomation ? "Copying and preparing..." : "Copy and prepare everything")
+                </button>
+                @if (connectionStatus?.IsConnected != true)
+                {
+                    <span>Connect Xero first.</span>
+                }
+                else if (connectionStatus.TenantId is null)
+                {
+                    <span>Choose the Xero organisation first.</span>
+                }
+                else
+                {
+                    <span>No approvals or financial entries are posted by this action.</span>
+                }
+            </div>
+        </div>
+        <div class="self-service-boundary">
+            <strong>@MissingEvidenceCategories.Count source reports still needed</strong>
+            @if (MissingEvidenceCategories.Count == 0)
+            {
+                <span class="complete-note">The required evidence pack is complete.</span>
+            }
+            else
+            {
+                <span>Xero does not provide every control report through its API. Add the missing originals below:</span>
+                <ul>
+                    @foreach (var category in MissingEvidenceCategories.Take(5))
+                    {
+                        <li>@category</li>
+                    }
+                    @if (MissingEvidenceCategories.Count > 5)
+                    {
+                        <li>and @(MissingEvidenceCategories.Count - 5) more</li>
+                    }
+                </ul>
+            }
+        </div>
+    </section>
+
     <section class="migration-overview">
         <div><span>1</span><strong>Set the cutover</strong><small>Choose the first live day in Account Island.</small></div>
         <div><span>2</span><strong>Collect Xero exports</strong><small>Retain source data and its file fingerprint.</small></div>
@@ -156,7 +208,7 @@ else
             </div>
             <label class="option-card mt-3">
                 <InputCheckbox class="form-check-input" @bind-Value="model.IncludeFullHistory" disabled="@(!canPrepare || busy)" />
-                <span><strong>Bring across full transaction history</strong><small>Recommended for JCR 2006 Limited. Open invoices, bills, contacts, bank history, assets and archived evidence remain individually traceable.</small></span>
+                <span><strong>Bring across full transaction history</strong><small>Recommended when replacing Xero. Open invoices, bills, contacts, bank history, assets and archived evidence remain individually traceable.</small></span>
             </label>
             <div class="mt-3">
                 <label class="form-label">Migration notes</label>
@@ -272,9 +324,26 @@ else
         }
         else
         {
+            <div class="smart-upload">
+                <div>
+                    <strong>Add the complete export pack</strong>
+                    <p>Select up to 50 original Xero CSV, XLSX, PDF or ZIP files together. Account Island identifies standard report names and files each one under the right control.</p>
+                </div>
+                <div>
+                    <InputFile class="form-control" accept=".csv,.xlsx,.pdf,.zip" multiple OnChange="UploadEvidenceBundle" disabled="@(!canPrepare || uploading)" />
+                    <small>@(uploading ? "Reading and filing the evidence pack..." : "Ambiguous file names are left for review; Account Island does not guess.")</small>
+                </div>
+            </div>
+            @if (unclassifiedFiles.Count > 0)
+            {
+                <div class="alert alert-warning">
+                    <strong>Choose a category for these files:</strong>
+                    @string.Join(", ", unclassifiedFiles)
+                </div>
+            }
             <div class="upload-panel">
                 <div>
-                    <label class="form-label">What are you adding?</label>
+                    <label class="form-label">Add one file or resolve an unrecognised file</label>
                     <select class="form-select" @bind="selectedCategory" disabled="@(!canPrepare || uploading)">
                         @foreach (var category in XeroMigrationService.Categories)
                         {
@@ -283,9 +352,9 @@ else
                     </select>
                 </div>
                 <div>
-                    <label class="form-label">Xero export</label>
+                    <label class="form-label">Selected Xero export</label>
                     <InputFile class="form-control" accept=".csv,.xlsx,.pdf,.zip" OnChange="Upload" disabled="@(!canPrepare || uploading)" />
-                    <small>CSV, XLSX, PDF or ZIP up to 25 MB. Uploading stores evidence only; it does not post to the ledger.</small>
+                    <small>Up to 25 MB. The selected category is locked when the upload starts. Uploading stores evidence only; it does not post to the ledger.</small>
                 </div>
             </div>
         }
@@ -295,10 +364,14 @@ else
             {
                 var categoryFiles = files.Where(x => x.Category == category).OrderByDescending(x => x.UploadedAt).ToList();
                 var required = XeroMigrationService.RequiredCategories.Contains(category);
-                <article class="dataset @(categoryFiles.Count > 0 ? "supplied" : string.Empty)">
+                var categorySupplied = migration is not null && XeroMigrationService.HasRequiredEvidenceCategory(migration, category);
+                <article class="dataset @(categorySupplied ? "supplied" : string.Empty)">
                     <div>
-                        <span class="dataset-check">@(categoryFiles.Count > 0 ? "✓" : "○")</span>
-                        <div><strong>@category</strong><small>@(required ? "Required" : "If used")</small></div>
+                        <span class="dataset-check">@(categorySupplied ? "✓" : "○")</span>
+                        <div>
+                            <strong>@category</strong>
+                            <small>@(categoryFiles.Count > 0 ? (required ? "Required · source file retained" : "Source file retained") : categorySupplied ? "Copied directly from Xero" : required ? "Required" : "If used")</small>
+                        </div>
                     </div>
                     @foreach (var file in categoryFiles)
                     {
@@ -391,6 +464,15 @@ else
             <strong>Nothing goes live until these checks pass.</strong>
             <span>Imports are first matched and validated in staging. Any duplicate, missing account, invalid tax treatment or control difference must be resolved before approval.</span>
         </div>
+        <div class="control-evidence-grid" aria-label="Source evidence coverage">
+            @foreach (var control in ControlEvidence)
+            {
+                <article class="control-evidence @(control.Ready ? "ready" : "missing")">
+                    <span aria-hidden="true">@(control.Ready ? "✓" : "!")</span>
+                    <div><strong>@control.Title</strong><small>@control.Detail</small></div>
+                </article>
+            }
+        </div>
         <div class="checklist">
             @Check("Xero entry has stopped", "No transactions are entered into Xero after the final export.", nameof(model.XeroEntryStopped), model.XeroEntryStopped)
             @Check("Trial Balance agrees", "Total debits and credits, and every account balance, agree at the final Xero date.", nameof(model.TrialBalanceReconciled), model.TrialBalanceReconciled)
@@ -434,10 +516,15 @@ else
     private string selectedTenantId = string.Empty;
     private string? message;
     private string messageClass = "alert-success";
-    private bool loading = true, busy, uploading, syncing, preparingImport, canPrepare, canApprove;
+    private readonly List<string> unclassifiedFiles = [];
+    private bool loading = true, busy, uploading, syncing, preparingImport, runningAutomation, canPrepare, canApprove;
     private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
     private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
-    private int SuppliedRequiredCount => XeroMigrationService.RequiredCategories.Count(category => files.Any(x => x.Category == category));
+    private int SuppliedRequiredCount => migration is null ? 0 : XeroMigrationService.RequiredCategories.Count(category =>
+        XeroMigrationService.HasRequiredEvidenceCategory(migration, category));
+    private List<string> MissingEvidenceCategories => XeroMigrationService.RequiredCategories
+        .Where(category => migration is null || !XeroMigrationService.HasRequiredEvidenceCategory(migration, category))
+        .ToList();
     private List<XeroApiSnapshot> LatestSnapshots => migration?.ApiSnapshots
         .GroupBy(x => x.DatasetKey)
         .Select(group => group.OrderByDescending(x => x.RetrievedAt).First())
@@ -446,6 +533,20 @@ else
     private int CompletedChecks => new[] { model.XeroEntryStopped, model.TrialBalanceReconciled, model.ReceivablesReconciled, model.PayablesReconciled, model.BankReconciled, model.FixedAssetsReconciled, model.GstReconciled }.Count(x => x);
     private bool AllChecksComplete => CompletedChecks == 7;
     private int AssistantProgress => assistant.TotalCount == 0 ? 0 : (int)Math.Round(assistant.PassedCount * 100d / assistant.TotalCount);
+    private bool CanRunSafeAutomation => canPrepare && migration is not null &&
+        migration.Status != XeroMigrationStatus.Complete && connectionStatus?.IsConnected == true &&
+        connectionStatus.TenantId is not null && !runningAutomation && !syncing && !preparingImport && !busy;
+    private IReadOnlyList<ControlEvidenceItem> ControlEvidence =>
+    [
+        EvidenceControl("Trial Balance", "Trial balance", "trial-balance", "Final account balances and debits equal credits."),
+        EvidenceControl("Receivables", "Receivable Invoice Detail", "sales-invoices", "Customer invoices, credits and open allocations."),
+        EvidenceControl("Payables", "Payable Invoice Detail", "bills", "Supplier bills, credits and open allocations."),
+        EvidenceControl("Banks", "Bank statements and reconciliation", "bank-transactions", "Final statements support every bank, card and loan."),
+        EvidenceControl("Fixed assets", "Fixed assets and depreciation reconciliation", "assets", "The report supports cost and depreciation when Xero cannot return individual assets."),
+        EvidenceControl("GST", "GST returns and reconciliation", "tax-rates", "Filed returns and the next unfiled period support the GST control."),
+        new("Final Xero stop", model.XeroEntryStopped,
+            model.XeroEntryStopped ? "Management has confirmed that no later entries will be made in Xero." : "Confirm this only after the final Xero copy has been taken.")
+    ];
     private bool CutoverCanBeApproved => AllChecksComplete &&
         SuppliedRequiredCount == XeroMigrationService.RequiredCategories.Length &&
         !workspace.Issues.Any(x => x.Severity == XeroMigrationIssueSeverity.Blocking && x.Code != "LIVE_IMPORT_PENDING");
@@ -463,6 +564,7 @@ else
         XeroMigrationStatus.Reconciliation => "progress",
         _ => "preparing"
     };
+    private string MigrationAnchor(string fragment) => $"/o/{OrganisationId:D}/migration/xero#{fragment}";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -539,17 +641,18 @@ else
 
     private async Task Upload(InputFileChangeEventArgs args)
     {
+        var uploadCategory = selectedCategory;
         uploading = true; message = null;
         try
         {
             using var stream = args.File.OpenReadStream(XeroMigrationService.MaximumBytes);
             using var buffer = new MemoryStream();
             await stream.CopyToAsync(buffer);
-            await MigrationService.AddFileAsync(userId, OrganisationId, selectedCategory, args.File.Name, args.File.ContentType, buffer.ToArray());
+            await MigrationService.AddFileAsync(userId, OrganisationId, uploadCategory, args.File.Name, args.File.ContentType, buffer.ToArray());
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             ApplyMigration();
             await RefreshAssistant();
-            message = $"{args.File.Name} retained under {selectedCategory}.";
+            message = $"{args.File.Name} retained under {uploadCategory}.";
             messageClass = "alert-success";
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -557,6 +660,77 @@ else
             message = ex.Message; messageClass = "alert-danger";
         }
         finally { uploading = false; }
+    }
+
+    private async Task UploadEvidenceBundle(InputFileChangeEventArgs args)
+    {
+        uploading = true; message = null; unclassifiedFiles.Clear();
+        var added = 0;
+        try
+        {
+            foreach (var file in args.GetMultipleFiles(50))
+            {
+                var category = XeroEvidenceClassifier.Classify(file.Name);
+                if (category is null)
+                {
+                    unclassifiedFiles.Add(file.Name);
+                    continue;
+                }
+
+                using var stream = file.OpenReadStream(XeroMigrationService.MaximumBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                await MigrationService.AddFileAsync(userId, OrganisationId, category, file.Name, file.ContentType, buffer.ToArray());
+                added++;
+            }
+
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            ApplyMigration();
+            await RefreshAssistant();
+            message = unclassifiedFiles.Count == 0
+                ? $"Filed {added:N0} source file(s) into the evidence pack."
+                : $"Filed {added:N0} source file(s). Review {unclassifiedFiles.Count:N0} file name(s) listed below.";
+            messageClass = unclassifiedFiles.Count == 0 ? "alert-success" : "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { uploading = false; }
+    }
+
+    private async Task RunSafeAutomation()
+    {
+        if (!CanRunSafeAutomation) return;
+        runningAutomation = true; syncing = true; preparingImport = true; message = null;
+        try
+        {
+            var copied = await XeroConnection.SyncAsync(userId, OrganisationId);
+            await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            var imported = await ImportPreparation.ImportMasterDataAsync(userId, OrganisationId);
+            var prepared = await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            ApplyMigration();
+            await ReloadWorkspace();
+            message = $"Safe preparation complete: {copied.ImportedRecords:N0} records copied from {copied.ImportedDatasets:N0} datasets, {imported:N0} master record(s) added and {prepared.SourceRecordCount:N0} records checked. ";
+            message += prepared.BlockingCount == 0
+                ? $"No blocking issues remain. {MissingEvidenceCategories.Count:N0} source report set(s) still need to be added."
+                : $"Review {prepared.BlockingCount:N0} blocking issue(s) before cutover.";
+            if (copied.Failures.Count > 0)
+                message += $" {copied.Failures.Count:N0} Xero dataset(s) were unavailable and are listed under the connection.";
+            if (copied.ReconciliationReset)
+                message += " Earlier reconciliation approval was cleared because the source changed.";
+            messageClass = prepared.BlockingCount == 0 ? "alert-success" : "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or UnauthorizedAccessException or XeroApiException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally
+        {
+            runningAutomation = false; syncing = false; preparingImport = false;
+        }
     }
 
     private async Task ChooseTenant()
@@ -781,6 +955,18 @@ else
         finally { preparingImport = false; }
     }
 
+    private ControlEvidenceItem EvidenceControl(string title, string category, string datasetKey, string purpose)
+    {
+        var evidenceCount = files.Count(x => x.Category.Equals(category, StringComparison.OrdinalIgnoreCase));
+        var snapshot = LatestSnapshots.FirstOrDefault(x => x.DatasetKey.Equals(datasetKey, StringComparison.OrdinalIgnoreCase));
+        var ready = migration is not null && XeroMigrationService.HasRequiredEvidenceCategory(migration, category);
+        var source = snapshot is null ? "No matching API dataset was available" : $"{snapshot.RecordCount:N0} API record(s) copied";
+        var reports = evidenceCount > 0
+            ? $"{evidenceCount:N0} source report(s) retained"
+            : ready ? "the protected API control is sufficient" : "source report missing";
+        return new(title, ready, $"{source}; {reports}. {purpose}");
+    }
+
     private RenderFragment Check(string title, string detail, string property, bool value) => builder =>
     {
         var sequence = 0;
@@ -816,4 +1002,6 @@ else
         public bool ManagementApproved { get; set; }
         [StringLength(1000)] public string? Notes { get; set; }
     }
+
+    private sealed record ControlEvidenceItem(string Title, bool Ready, string Detail);
 }

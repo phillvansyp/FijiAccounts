@@ -25,7 +25,7 @@ else
         @foreach (var membership in organisations)
         {
             <a class="org-card text-decoration-none text-body" href="o/@membership.Organisation.Id">
-                <span class="badge text-bg-light">@(membership.IsClient ? "Accountant client" : membership.Organisation.Kind)</span>
+                <span class="badge text-bg-light">@(membership.IsClient ? "Accountant client" : OrganisationDisplay.KindLabel(membership.Organisation.Kind))</span>
                 <h2>@OrganisationDisplay.NameWithCountry(membership.Organisation)</h2>
                 <p><strong>Workspace ID:</strong> @OrganisationDisplay.WorkspaceId(membership.Organisation)</p>
                 @if (OrganisationIndustries.Label(membership.Organisation.Industry) is string industryLabel) { <p>@industryLabel</p> }<p>@membership.AccessLabel · @CountryName(membership.Organisation.CountryCode) · @membership.Organisation.BaseCurrency</p>
@@ -46,7 +46,7 @@ else
                 <div class="mb-3"><label class="form-label">NZBN (optional)</label><input class="form-control" inputmode="numeric" maxlength="13" @bind="model.Nzbn" @bind:event="oninput" /><div class="form-text">Enter the organisation's 13-digit New Zealand Business Number.</div></div>
                 <div class="mb-3"><label class="form-label">NZ company number (optional)</label><input class="form-control" inputmode="numeric" maxlength="10" @bind="model.NzCompanyNumber" @bind:event="oninput" /><div class="form-text">Enter the number issued by the New Zealand Companies Register. Leave blank for entities that are not registered companies.</div></div>
             }
-            <div class="mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="AccountingPractice">Accounting practice</option></InputSelect></div>
+            <div class="mb-3"><label class="form-label">Workspace type</label><InputSelect class="form-select" @bind-Value="model.Kind"><option value="Business">Business</option><option value="Trust">Trust</option><option value="AccountingPractice">Accounting practice</option></InputSelect>@if (model.Kind == OrganisationKind.Trust) { <div class="form-text">Use the trust’s legal name and IRD number. An NZ company number is not required unless a registered company is the entity being created.</div> }</div>
             <div class="mb-3"><label class="form-label">Industry / business activity</label><InputSelect class="form-select" @bind-Value="model.Industry" ><option value="">Select an industry (optional)</option>@foreach (var industry in OrganisationIndustries.All) { <option value="@industry.Code">@industry.Label</option> }</InputSelect></div>
             <button class="btn btn-primary" type="submit">Create organisation</button>
         </EditForm>

@@ -1,0 +1,255 @@
+@page "/o/{OrganisationId:guid}/migration/xero/reports"
+@attribute [Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@inject XeroMigrationService MigrationService
+@inject XeroConnectionService XeroConnection
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Xero report library · Account Island</PageTitle>
+
+@if (loading)
+{
+    <p role="status">Loading the Xero report library...</p>
+}
+else if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <header class="library-heading">
+        <div>
+            <p class="eyebrow">Accounting · protected source records</p>
+            <h1>Xero report library</h1>
+            <p>@OrganisationDisplay.NameWithCountry(access.Organisation) · Reports and records retained during migration.</p>
+        </div>
+        <a class="btn btn-secondary" href="/o/@OrganisationId/migration/xero">Migration workspace</a>
+    </header>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass" role="status">@message</div>
+    }
+
+    @if (migration is null)
+    {
+        <section class="library-empty">
+            <h2>Set up the migration first</h2>
+            <p>Create the migration workspace, connect Xero and choose the correct Xero organisation.</p>
+            <a class="btn btn-primary" href="/o/@OrganisationId/migration/xero">Set up Xero migration</a>
+        </section>
+    }
+    else
+    {
+        <section class="connection-bar">
+            <div>
+                <span class="connection-dot @(connection?.IsConnected == true ? "online" : string.Empty)"></span>
+                <div>
+                    <strong>@(connection?.TenantName ?? (connection?.IsConnected == true ? "Xero connected" : "Xero connection required"))</strong>
+                    <small>@LastCopiedText</small>
+                </div>
+            </div>
+            <div class="connection-actions">
+                @if (connection?.IsConnected == true && connection.TenantId is not null && canRefresh &&
+                     migration.Status is XeroMigrationStatus.Preparing or XeroMigrationStatus.ReadyForImport)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="RefreshSource" disabled="@refreshing">@(refreshing ? "Refreshing..." : "Refresh from Xero")</button>
+                }
+                else if (connection?.IsConfigured == true && connection?.IsConnected != true && canRefresh)
+                {
+                    <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+                }
+                @if (migration.Status == XeroMigrationStatus.Complete)
+                {
+                    <span class="locked-note">Migration complete · retained records are locked</span>
+                }
+                else if (migration.Status is XeroMigrationStatus.Reconciliation or XeroMigrationStatus.ApprovedForCutover)
+                {
+                    <span class="locked-note">Reconciliation has started · refresh from the migration workspace if the Xero source changed</span>
+                }
+            </div>
+        </section>
+
+        <section class="library-summary">
+            <article><strong>@LatestSnapshots.Count</strong><span>Xero datasets</span></article>
+            <article><strong>@migration.ApiSnapshots.Count</strong><span>protected source copies</span></article>
+            <article><strong>@migration.Files.Count</strong><span>source files</span></article>
+            <article class="@(MissingEvidence.Count > 0 ? "attention" : "complete")"><strong>@MissingEvidence.Count</strong><span>required sets missing</span></article>
+        </section>
+
+        <div class="library-tools">
+            <div>
+                <label for="report-search" class="form-label">Find a report or source file</label>
+                <input id="report-search" class="form-control" placeholder="Search Trial Balance, invoices, bank reconciliation..." @bind="search" @bind:event="oninput" />
+            </div>
+            <span>Only people with access to this organisation can open these records.</span>
+        </div>
+
+        @if (MissingEvidence.Count > 0 && string.IsNullOrWhiteSpace(search))
+        {
+            <details class="missing-evidence" open>
+                <summary>@MissingEvidence.Count report set(s) still need to be supplied</summary>
+                <p>Xero’s API does not provide these controls reliably. Export the originals from Xero and add them in the migration workspace.</p>
+                <ul>@foreach (var category in MissingEvidence) { <li>@category</li> }</ul>
+                <a class="btn btn-secondary" href="@MigrationEvidenceUrl">Add source reports</a>
+            </details>
+        }
+
+        <section class="report-section">
+            <div class="section-heading"><div><p class="eyebrow">Financial controls</p><h2>Reports copied from Xero</h2></div><span>JSON source copies with SHA-256 fingerprints</span></div>
+            @if (VisibleControlSnapshots.Count == 0)
+            {
+                <p class="empty-result">No matching Xero control report was found.</p>
+            }
+            else
+            {
+                <div class="report-grid">
+                    @foreach (var item in VisibleControlSnapshots)
+                    {
+                        @SnapshotCard(item)
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="report-section">
+            <div class="section-heading"><div><p class="eyebrow">Accounting detail</p><h2>Datasets copied from Xero</h2></div><span>Latest copy shown; earlier copies remain protected</span></div>
+            @if (VisibleDataSnapshots.Count == 0)
+            {
+                <p class="empty-result">No matching Xero dataset was found.</p>
+            }
+            else
+            {
+                <div class="report-grid">
+                    @foreach (var item in VisibleDataSnapshots)
+                    {
+                        @SnapshotCard(item)
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="report-section">
+            <div class="section-heading"><div><p class="eyebrow">Original exports</p><h2>Uploaded reports and attachments</h2></div><span>Original format retained</span></div>
+            @if (VisibleFiles.Count == 0)
+            {
+                <p class="empty-result">No matching uploaded report was found.</p>
+            }
+            else
+            {
+                <div class="file-list">
+                    @foreach (var file in VisibleFiles)
+                    {
+                        <a href="/api/o/@OrganisationId/xero-migration/files/@file.Id" title="SHA-256 @file.Sha256">
+                            <span class="file-mark" aria-hidden="true">↧</span>
+                            <span><strong>@file.FileName</strong><small>@file.Category · @FormatSize(file.Size) · @file.UploadedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</small></span>
+                        </a>
+                    }
+                </div>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    private static readonly HashSet<string> ControlKeys = new(StringComparer.OrdinalIgnoreCase)
+        { "trial-balance", "balance-sheet", "profit-loss" };
+    private AccessibleOrganisation? access;
+    private FijiAccounts.Web.Data.XeroMigration? migration;
+    private XeroConnectionStatus? connection;
+    private string userId = string.Empty;
+    private string search = string.Empty;
+    private string? message;
+    private string messageClass = "alert-success";
+    private bool loading = true, refreshing, canRefresh;
+
+    private List<SnapshotItem> LatestSnapshots => migration?.ApiSnapshots
+        .GroupBy(x => x.DatasetKey, StringComparer.OrdinalIgnoreCase)
+        .Select(group => new SnapshotItem(group.OrderByDescending(x => x.RetrievedAt).First(), group.Count()))
+        .OrderBy(x => x.Snapshot.DisplayName)
+        .ToList() ?? [];
+    private List<SnapshotItem> VisibleControlSnapshots => LatestSnapshots
+        .Where(x => ControlKeys.Contains(x.Snapshot.DatasetKey) && Matches(x.Snapshot.DisplayName, x.Snapshot.DatasetKey))
+        .ToList();
+    private List<SnapshotItem> VisibleDataSnapshots => LatestSnapshots
+        .Where(x => !ControlKeys.Contains(x.Snapshot.DatasetKey) && Matches(x.Snapshot.DisplayName, x.Snapshot.DatasetKey))
+        .ToList();
+    private List<XeroMigrationFile> VisibleFiles => migration?.Files
+        .Where(x => Matches(x.FileName, x.Category))
+        .OrderBy(x => x.Category).ThenByDescending(x => x.UploadedAt)
+        .ToList() ?? [];
+    private List<string> MissingEvidence => migration is null ? [] : XeroMigrationService.RequiredCategories
+        .Where(category => !XeroMigrationService.HasRequiredEvidenceCategory(migration, category))
+        .ToList();
+    private string LastCopiedText => connection?.LastSyncedAt is null
+        ? "No source copy has been taken yet."
+        : $"Last copied {connection.LastSyncedAt.Value.ToLocalTime():dd MMM yyyy HH:mm}.";
+    private string MigrationEvidenceUrl => $"/o/{OrganisationId:D}/migration/xero#source-evidence";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        access = string.IsNullOrWhiteSpace(userId) ? null : await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null)
+        {
+            canRefresh = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+            await Load();
+        }
+        loading = false;
+    }
+
+    private async Task Load()
+    {
+        migration = await MigrationService.GetAsync(userId, OrganisationId);
+        connection = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+    }
+
+    private async Task RefreshSource()
+    {
+        refreshing = true; message = null;
+        try
+        {
+            var result = await XeroConnection.SyncAsync(userId, OrganisationId);
+            await Load();
+            message = $"Refreshed {result.ImportedRecords:N0} records across {result.ImportedDatasets:N0} Xero datasets.";
+            if (result.Failures.Count > 0) message += $" {result.Failures.Count:N0} dataset(s) need follow-up.";
+            if (result.ReconciliationReset) message += " Reconciliation approval was cleared because the source changed.";
+            messageClass = result.Failures.Count == 0 ? "alert-success" : "alert-warning";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or XeroApiException)
+        {
+            message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { refreshing = false; }
+    }
+
+    private bool Matches(params string[] values) => string.IsNullOrWhiteSpace(search) ||
+        values.Any(value => value.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private RenderFragment SnapshotCard(SnapshotItem item) => builder =>
+    {
+        var sequence = 0;
+        var snapshot = item.Snapshot;
+        builder.OpenElement(sequence++, "article"); builder.AddAttribute(sequence++, "class", "report-card");
+        builder.OpenElement(sequence++, "div");
+        builder.OpenElement(sequence++, "strong"); builder.AddContent(sequence++, snapshot.DisplayName); builder.CloseElement();
+        builder.OpenElement(sequence++, "small"); builder.AddContent(sequence++, $"{snapshot.RecordCount:N0} records · copied {snapshot.RetrievedAt.ToLocalTime():dd MMM yyyy HH:mm}"); builder.CloseElement();
+        builder.CloseElement();
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "report-meta");
+        builder.OpenElement(sequence++, "span"); builder.AddContent(sequence++, item.CopyCount == 1 ? "1 protected copy" : $"{item.CopyCount:N0} protected copies"); builder.CloseElement();
+        builder.OpenElement(sequence++, "a"); builder.AddAttribute(sequence++, "class", "btn btn-secondary"); builder.AddAttribute(sequence++, "href", $"/api/o/{OrganisationId:D}/xero-migration/snapshots/{snapshot.Id:D}"); builder.AddAttribute(sequence++, "title", $"SHA-256 {snapshot.Sha256}"); builder.AddContent(sequence++, "Download source"); builder.CloseElement();
+        builder.CloseElement(); builder.CloseElement();
+    };
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:N1} MB" : $"{Math.Max(1, bytes / 1024d):N0} KB";
+    private sealed record SnapshotItem(XeroApiSnapshot Snapshot, int CopyCount);
+}

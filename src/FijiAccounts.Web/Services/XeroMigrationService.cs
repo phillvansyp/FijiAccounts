@@ -51,6 +51,34 @@ public sealed class XeroMigrationService(
         "Payroll history reports", "Document attachments"
     ];
 
+    private static readonly IReadOnlyDictionary<string, string[]> ApiEvidenceDatasets =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Trial balance"] = ["trial-balance"],
+            ["Balance Sheet and Profit & Loss"] = ["balance-sheet", "profit-loss"],
+            ["Chart of accounts"] = ["accounts"],
+            ["Contacts"] = ["contacts"],
+            ["Sales invoices, credits and allocations"] =
+                ["sales-invoices", "sales-credits", "payments", "prepayments", "overpayments"],
+            ["Bills, supplier credits and allocations"] =
+                ["bills", "supplier-credits", "payments", "prepayments", "overpayments"]
+        };
+
+    public static bool HasRequiredEvidenceCategory(
+        XeroMigration migration,
+        string category,
+        string? pendingFileCategory = null)
+    {
+        if (migration.Files.Any(file => file.Category.Equals(category, StringComparison.OrdinalIgnoreCase)) ||
+            string.Equals(category, pendingFileCategory, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!ApiEvidenceDatasets.TryGetValue(category, out var requiredDatasets)) return false;
+        var suppliedDatasets = migration.ApiSnapshots.Select(x => x.DatasetKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return requiredDatasets.All(suppliedDatasets.Contains);
+    }
+
     public async Task<XeroMigration?> GetAsync(
         string userId,
         Guid organisationId,
@@ -95,6 +123,7 @@ public sealed class XeroMigrationService(
 
         var migration = await db.Set<XeroMigration>()
             .Include(x => x.Files)
+            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
         var created = migration is null;
         if (migration?.Status == XeroMigrationStatus.Complete)
@@ -125,7 +154,7 @@ public sealed class XeroMigrationService(
                            x.Severity == XeroMigrationIssueSeverity.Blocking &&
                            x.Code != "LIVE_IMPORT_PENDING", cancellationToken);
         var requiredExportsSupplied = RequiredCategories.All(category =>
-            migration.Files.Any(file => file.Category.Equals(category, StringComparison.OrdinalIgnoreCase)));
+            HasRequiredEvidenceCategory(migration, category));
         migration.ManagementApproved = request.ManagementApproved && AllChecksComplete(migration) &&
                                        requiredExportsSupplied && !hasBlockingImportIssues;
         migration.UpdatedAt = DateTimeOffset.UtcNow;
@@ -191,6 +220,7 @@ public sealed class XeroMigrationService(
 
         var migration = await db.Set<XeroMigration>()
             .Include(x => x.Files)
+            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Save the migration setup before adding exports.");
         var stored = storage.Stage(organisationId, userId, content);
@@ -284,12 +314,11 @@ public sealed class XeroMigrationService(
 
     private static XeroMigrationStatus CalculateStatus(XeroMigration migration, string? addedCategory = null)
     {
-        var supplied = migration.Files.Select(x => x.Category).Append(addedCategory ?? string.Empty).ToHashSet();
         if (migration.ManagementApproved && AllChecksComplete(migration)) return XeroMigrationStatus.ApprovedForCutover;
         if (migration.TrialBalanceReconciled || migration.ReceivablesReconciled || migration.PayablesReconciled ||
             migration.BankReconciled || migration.FixedAssetsReconciled || migration.GstReconciled)
             return XeroMigrationStatus.Reconciliation;
-        return RequiredCategories.All(supplied.Contains) && migration.CutoverDate is not null
+        return RequiredCategories.All(category => HasRequiredEvidenceCategory(migration, category, addedCategory)) && migration.CutoverDate is not null
             ? XeroMigrationStatus.ReadyForImport
             : XeroMigrationStatus.Preparing;
     }
