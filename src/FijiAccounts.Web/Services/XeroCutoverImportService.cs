@@ -46,6 +46,10 @@ public sealed class XeroCutoverImportService(
         var migration = await db.XeroMigrations.Include(x => x.Files)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Save the Xero migration setup first.");
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, ct);
+        migration.Files = migration.Files
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, attemptStartedAt)).ToList();
         if (migration.CutoverDate is null)
             throw new InvalidOperationException("Choose the Account Island start date first.");
         if (!migration.ManagementApproved || !XeroMigrationService.AllChecksComplete(migration))
@@ -503,10 +507,14 @@ public sealed class XeroCutoverImportService(
 
     private async Task<List<JsonElement>> ReadDatasetAsync(Guid organisationId, Guid migrationId, string dataset, string rootProperty, CancellationToken ct)
     {
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migrationId, ct);
         var snapshots = await db.XeroApiSnapshots.AsNoTracking()
             .Where(x => x.XeroMigrationId == migrationId && x.DatasetKey == dataset)
             .ToListAsync(ct);
-        var snapshot = snapshots.OrderByDescending(x => x.RetrievedAt).FirstOrDefault();
+        var snapshot = snapshots
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt))
+            .OrderByDescending(x => x.RetrievedAt).FirstOrDefault();
         if (snapshot is null) return [];
         var bytes = await storage.ReadVerifiedAsync(organisationId, snapshot.ImmutableDocumentObjectId, ct);
         using var document = JsonDocument.Parse(bytes);

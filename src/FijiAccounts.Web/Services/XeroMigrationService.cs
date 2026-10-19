@@ -23,6 +23,8 @@ public sealed record XeroMigrationFileDownload(
     string ContentType,
     string FileName);
 
+public sealed record XeroMigrationRestartResult(int RetainedMasterRecords);
+
 public sealed class XeroMigrationService(
     ApplicationDbContext db,
     TenantAccessService access,
@@ -67,14 +69,21 @@ public sealed class XeroMigrationService(
     public static bool HasRequiredEvidenceCategory(
         XeroMigration migration,
         string category,
+        string? pendingFileCategory = null) =>
+        HasRequiredEvidenceCategory(migration.Files, migration.ApiSnapshots, category, pendingFileCategory);
+
+    private static bool HasRequiredEvidenceCategory(
+        IEnumerable<XeroMigrationFile> files,
+        IEnumerable<XeroApiSnapshot> apiSnapshots,
+        string category,
         string? pendingFileCategory = null)
     {
-        if (migration.Files.Any(file => file.Category.Equals(category, StringComparison.OrdinalIgnoreCase)) ||
+        if (files.Any(file => file.Category.Equals(category, StringComparison.OrdinalIgnoreCase)) ||
             string.Equals(category, pendingFileCategory, StringComparison.OrdinalIgnoreCase))
             return true;
 
         if (!ApiEvidenceDatasets.TryGetValue(category, out var requiredDatasets)) return false;
-        var suppliedDatasets = migration.ApiSnapshots.Select(x => x.DatasetKey)
+        var suppliedDatasets = apiSnapshots.Select(x => x.DatasetKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return requiredDatasets.All(suppliedDatasets.Contains);
     }
@@ -89,11 +98,20 @@ public sealed class XeroMigrationService(
             throw new UnauthorizedAccessException();
         }
 
-        return await db.Set<XeroMigration>()
+        var migration = await db.Set<XeroMigration>()
             .AsNoTracking()
             .Include(x => x.Files)
             .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
+        if (migration is null) return null;
+
+        var startedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
+        migration.Files = migration.Files
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, startedAt)).ToList();
+        migration.ApiSnapshots = migration.ApiSnapshots
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, startedAt)).ToList();
+        return migration;
     }
 
     public async Task<XeroMigration> SaveAsync(
@@ -122,8 +140,6 @@ public sealed class XeroMigrationService(
         }
 
         var migration = await db.Set<XeroMigration>()
-            .Include(x => x.Files)
-            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken);
         var created = migration is null;
         if (migration?.Status == XeroMigrationStatus.Complete)
@@ -147,6 +163,16 @@ public sealed class XeroMigrationService(
         migration.FixedAssetsReconciled = request.FixedAssetsReconciled;
         migration.GstReconciled = request.GstReconciled;
         migration.Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        var attemptStartedAt = created ? null : await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
+        var currentFiles = created ? new List<XeroMigrationFile>() : (await db.XeroMigrationFiles.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migration.Id)
+            .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, attemptStartedAt)).ToList();
+        var currentSnapshots = created ? new List<XeroApiSnapshot>() : (await db.XeroApiSnapshots.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migration.Id)
+            .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt)).ToList();
         var preparedRecordsExist = !created && await db.XeroMigrationRecords
             .AnyAsync(x => x.XeroMigrationId == migration.Id, cancellationToken);
         var hasBlockingImportIssues = preparedRecordsExist && await db.XeroMigrationIssues
@@ -154,12 +180,12 @@ public sealed class XeroMigrationService(
                            x.Severity == XeroMigrationIssueSeverity.Blocking &&
                            x.Code != "LIVE_IMPORT_PENDING", cancellationToken);
         var requiredExportsSupplied = RequiredCategories.All(category =>
-            HasRequiredEvidenceCategory(migration, category));
+            HasRequiredEvidenceCategory(currentFiles, currentSnapshots, category));
         migration.ManagementApproved = request.ManagementApproved && AllChecksComplete(migration) &&
                                        requiredExportsSupplied && !hasBlockingImportIssues;
         migration.UpdatedAt = DateTimeOffset.UtcNow;
         migration.UpdatedByUserId = userId;
-        migration.Status = CalculateStatus(migration);
+        migration.Status = CalculateStatus(migration, files: currentFiles, apiSnapshots: currentSnapshots);
         if (migration.CutoverDate is not null)
         {
             organisation.ConversionDate = migration.CutoverDate;
@@ -184,7 +210,7 @@ public sealed class XeroMigrationService(
                 migration.FixedAssetsReconciled,
                 migration.GstReconciled,
                 migration.ManagementApproved,
-                SourceFileCount = migration.Files.Count
+                SourceFileCount = currentFiles.Count
             }));
         await db.SaveChangesAsync(cancellationToken);
         return migration;
@@ -219,10 +245,18 @@ public sealed class XeroMigrationService(
         }
 
         var migration = await db.Set<XeroMigration>()
-            .Include(x => x.Files)
-            .Include(x => x.ApiSnapshots)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Save the migration setup before adding exports.");
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
+        var currentFiles = (await db.XeroMigrationFiles.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migration.Id)
+            .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, attemptStartedAt)).ToList();
+        var currentSnapshots = (await db.XeroApiSnapshots.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migration.Id)
+            .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt)).ToList();
         var stored = storage.Stage(organisationId, userId, content);
         var file = new XeroMigrationFile
         {
@@ -239,7 +273,8 @@ public sealed class XeroMigrationService(
         db.Set<XeroMigrationFile>().Add(file);
         migration.UpdatedAt = DateTimeOffset.UtcNow;
         migration.UpdatedByUserId = userId;
-        migration.Status = CalculateStatus(migration, category);
+        migration.Status = CalculateStatus(
+            migration, category, currentFiles, currentSnapshots);
         db.AuditEvents.Add(Audit(userId, organisationId, "XeroMigrationFileAdded", file.Id, new
         {
             migration.Id,
@@ -304,6 +339,100 @@ public sealed class XeroMigrationService(
         return migration;
     }
 
+    public async Task<XeroMigrationRestartResult> RestartAsync(
+        string userId, Guid organisationId, CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanManageTeamAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("Only an owner or administrator can restart the migration.");
+
+        var migration = await db.XeroMigrations.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId, cancellationToken)
+            ?? throw new InvalidOperationException("The Xero migration was not found.");
+        var cutoverPosted = await db.AuditEvents.AnyAsync(x =>
+            x.OrganisationId == organisationId &&
+            x.EventType == "XeroOpeningBalancePosted" &&
+            x.EntityId == migration.Id.ToString(), cancellationToken);
+        if (migration.Status == XeroMigrationStatus.Complete || cutoverPosted)
+            throw new InvalidOperationException(
+                "This migration has posted its live cutover and cannot be restarted. Reverse the posted accounting records through the controlled accounting workflow.");
+
+        var previousSource = migration.SourceOrganisationName;
+        var previousCutover = migration.CutoverDate;
+        var records = await db.XeroMigrationRecords
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+        var retainedMasterRecords = records.Count(x =>
+            x.Status == XeroMigrationRecordStatus.Imported &&
+            x.TargetEntityType is nameof(LedgerAccount) or nameof(BusinessParty) or
+                nameof(OrganisationCurrency) or nameof(ProductItem));
+        var issues = await db.XeroMigrationIssues
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+        var mappings = await db.XeroMigrationMappings
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+        var runs = await db.XeroMigrationImportRuns
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+        var snapshots = await db.XeroApiSnapshots
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+        var files = await db.XeroMigrationFiles
+            .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
+
+        db.XeroMigrationIssues.RemoveRange(issues);
+        db.XeroMigrationMappings.RemoveRange(mappings);
+        db.XeroMigrationRecords.RemoveRange(records);
+        db.XeroMigrationImportRuns.RemoveRange(runs);
+        var connection = await db.XeroConnections.SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId, cancellationToken);
+        if (connection is not null)
+        {
+            connection.XeroConnectionId = null;
+            connection.XeroTenantId = null;
+            connection.XeroTenantName = null;
+            connection.LastSyncedAt = null;
+            connection.LastSyncError = null;
+            connection.UpdatedAt = DateTimeOffset.UtcNow;
+            connection.UpdatedByUserId = userId;
+        }
+
+        migration.SourceOrganisationName = string.Empty;
+        migration.CutoverDate = null;
+        migration.IncludeFullHistory = true;
+        migration.Status = XeroMigrationStatus.Preparing;
+        migration.XeroEntryStopped = false;
+        migration.TrialBalanceReconciled = false;
+        migration.ReceivablesReconciled = false;
+        migration.PayablesReconciled = false;
+        migration.BankReconciled = false;
+        migration.FixedAssetsReconciled = false;
+        migration.GstReconciled = false;
+        migration.ManagementApproved = false;
+        migration.Notes = null;
+        var restartedAt = DateTimeOffset.UtcNow;
+        migration.UpdatedAt = restartedAt;
+        migration.UpdatedByUserId = userId;
+
+        var organisation = await db.Organisations.SingleAsync(
+            x => x.Id == organisationId, cancellationToken);
+        if (organisation.ConversionDate == previousCutover)
+            organisation.ConversionDate = null;
+
+        var restartAudit = Audit(userId, organisationId, "XeroMigrationRestarted", migration.Id, new
+        {
+            PreviousSourceOrganisationName = previousSource,
+            PreviousCutoverDate = previousCutover,
+            RetainedPreviousSnapshots = snapshots.Count,
+            RetainedPreviousEvidenceLinks = files.Count,
+            RemovedPreparedRecords = records.Count,
+            RemovedMappings = mappings.Count,
+            RemovedIssues = issues.Count,
+            RemovedRuns = runs.Count,
+            RetainedMasterRecords = retainedMasterRecords,
+            ImmutableSourceDocumentsRetained = true
+        });
+        restartAudit.OccurredAt = restartedAt;
+        db.AuditEvents.Add(restartAudit);
+        await db.SaveChangesAsync(cancellationToken);
+        return new(retainedMasterRecords);
+    }
+
     private async Task DemandPrepareAsync(string userId, Guid organisationId)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId))
@@ -312,13 +441,18 @@ public sealed class XeroMigrationService(
         }
     }
 
-    private static XeroMigrationStatus CalculateStatus(XeroMigration migration, string? addedCategory = null)
+    private static XeroMigrationStatus CalculateStatus(
+        XeroMigration migration,
+        string? addedCategory = null,
+        IEnumerable<XeroMigrationFile>? files = null,
+        IEnumerable<XeroApiSnapshot>? apiSnapshots = null)
     {
         if (migration.ManagementApproved && AllChecksComplete(migration)) return XeroMigrationStatus.ApprovedForCutover;
         if (migration.TrialBalanceReconciled || migration.ReceivablesReconciled || migration.PayablesReconciled ||
             migration.BankReconciled || migration.FixedAssetsReconciled || migration.GstReconciled)
             return XeroMigrationStatus.Reconciliation;
-        return RequiredCategories.All(category => HasRequiredEvidenceCategory(migration, category, addedCategory)) && migration.CutoverDate is not null
+        return RequiredCategories.All(category => HasRequiredEvidenceCategory(
+                   files ?? migration.Files, apiSnapshots ?? migration.ApiSnapshots, category, addedCategory)) && migration.CutoverDate is not null
             ? XeroMigrationStatus.ReadyForImport
             : XeroMigrationStatus.Preparing;
     }

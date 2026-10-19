@@ -92,11 +92,20 @@ public sealed class XeroMigrationAssistantService(
                 "Confirm the Xero organisation and choose the first live day in Account Island.",
                 XeroMigrationAssistantAction.SaveSetup, [], false, false);
 
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
+        migration.Files = migration.Files
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, attemptStartedAt)).ToList();
+        migration.ApiSnapshots = migration.ApiSnapshots
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt)).ToList();
+
         var workspace = await preparation.GetWorkspaceAsync(userId, organisationId, cancellationToken);
         var latestSnapshotCount = (await db.XeroApiSnapshots.AsNoTracking()
                 .Where(x => x.XeroMigrationId == migration.Id)
-                .Select(x => x.DatasetKey)
+                .Select(x => new { x.DatasetKey, x.RetrievedAt })
                 .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt))
+            .Select(x => x.DatasetKey)
             .Distinct(StringComparer.OrdinalIgnoreCase).Count();
         var evidenceComplete = XeroMigrationService.RequiredCategories.All(category =>
             XeroMigrationService.HasRequiredEvidenceCategory(migration, category));

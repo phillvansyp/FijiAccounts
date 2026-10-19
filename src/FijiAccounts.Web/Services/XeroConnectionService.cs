@@ -212,8 +212,16 @@ public sealed class XeroConnectionService(
         var selected = DeserializeCandidates(connection.TenantCandidatesJson)
             .SingleOrDefault(x => x.TenantId == tenantId)
             ?? throw new InvalidOperationException("Choose an organisation returned by Xero.");
-        if (connection.XeroTenantId != tenantId && await db.XeroApiSnapshots.AnyAsync(
-                x => x.OrganisationId == organisationId, cancellationToken))
+        var migration = await db.XeroMigrations.AsNoTracking().SingleOrDefaultAsync(
+            x => x.OrganisationId == organisationId, cancellationToken);
+        var attemptStartedAt = migration is null ? null : await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
+        var currentSnapshotsExist = (await db.XeroApiSnapshots.AsNoTracking()
+                .Where(x => x.OrganisationId == organisationId)
+                .Select(x => x.RetrievedAt)
+                .ToListAsync(cancellationToken))
+            .Any(x => XeroMigrationAttempt.IsCurrent(x, attemptStartedAt));
+        if (connection.XeroTenantId != tenantId && currentSnapshotsExist)
         {
             throw new InvalidOperationException(
                 "This migration already contains Xero snapshots. Keep the same Xero organisation so records cannot be mixed.");
@@ -243,6 +251,8 @@ public sealed class XeroConnectionService(
         var migration = await db.XeroMigrations.SingleOrDefaultAsync(
             x => x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Save the migration setup first.");
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
         var connection = await db.XeroConnections.SingleOrDefaultAsync(
             x => x.OrganisationId == organisationId && x.IsActive, cancellationToken)
             ?? throw new InvalidOperationException("Connect Xero first.");
@@ -311,11 +321,13 @@ public sealed class XeroConnectionService(
                 cancellationToken);
             foreach (var package in packages)
             {
-                if (await db.XeroMigrationFiles.AnyAsync(
+                var matchingFiles = await db.XeroMigrationFiles.AsNoTracking().Where(
                         x => x.XeroMigrationId == migration.Id &&
                              x.Category == "Document attachments" &&
-                             x.Sha256 == package.Sha256,
-                        cancellationToken))
+                             x.Sha256 == package.Sha256)
+                    .Select(x => x.UploadedAt)
+                    .ToListAsync(cancellationToken);
+                if (matchingFiles.Any(x => XeroMigrationAttempt.IsCurrent(x, attemptStartedAt)))
                 {
                     continue;
                 }

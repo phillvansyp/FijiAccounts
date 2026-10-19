@@ -40,6 +40,10 @@ else
             @if (migration is not null)
             {
                 <a class="btn btn-secondary" href="/o/@OrganisationId/migration/xero/reports">Report library</a>
+                @if (canApprove && migration.Status != XeroMigrationStatus.Complete)
+                {
+                    <button type="button" class="btn btn-outline-danger" @onclick="ShowRestartConfirmation" disabled="@busy">Start again</button>
+                }
             }
             <span class="status-pill @StatusClass">@StatusLabel</span>
         </div>
@@ -48,6 +52,26 @@ else
     @if (message is not null)
     {
         <div class="alert @messageClass" role="status">@message</div>
+    }
+
+    @if (restartConfirmationVisible)
+    {
+        <section class="restart-panel" role="dialog" aria-labelledby="restart-title" aria-describedby="restart-description">
+            <div>
+                <p class="step-label">Restart migration</p>
+                <h2 id="restart-title">Return to the first step?</h2>
+                <p id="restart-description">This clears the selected Xero organisation, copied staging data, uploaded evidence links, mappings and completed checks. Protected source documents and the audit history remain retained.</p>
+                <p>Nothing already posted to the live ledger will be removed. If a live cutover exists, Account Island will prevent the restart.</p>
+            </div>
+            <label class="guided-check restart-check">
+                <input type="checkbox" @bind="restartAcknowledged" disabled="@busy" />
+                <span>I understand that the current unposted migration progress will be cleared.</span>
+            </label>
+            <div class="guided-button-row">
+                <button type="button" class="btn btn-danger" @onclick="RestartMigration" disabled="@(busy || !restartAcknowledged)">@(busy ? "Restarting..." : "Restart migration")</button>
+                <button type="button" class="btn btn-secondary" @onclick="HideRestartConfirmation" disabled="@busy">Keep current progress</button>
+            </div>
+        </section>
     }
 
     <section class="migration-assistant" aria-labelledby="migration-assistant-title">
@@ -633,6 +657,7 @@ else
     private string messageClass = "alert-success";
     private readonly List<string> unclassifiedFiles = [];
     private bool loading = true, busy, uploading, syncing, preparingImport, runningAutomation, canPrepare, canApprove;
+    private bool restartConfirmationVisible, restartAcknowledged;
     private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
     private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
     private int SuppliedRequiredCount => migration is null ? 0 : XeroMigrationService.RequiredCategories.Count(category =>
@@ -1045,6 +1070,47 @@ else
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {
             message = ex.Message; messageClass = "alert-danger";
+        }
+        finally { busy = false; }
+    }
+
+    private void ShowRestartConfirmation()
+    {
+        restartAcknowledged = false;
+        restartConfirmationVisible = true;
+        message = null;
+    }
+
+    private void HideRestartConfirmation()
+    {
+        restartAcknowledged = false;
+        restartConfirmationVisible = false;
+    }
+
+    private async Task RestartMigration()
+    {
+        if (!restartAcknowledged) return;
+        busy = true;
+        message = null;
+        try
+        {
+            var result = await MigrationService.RestartAsync(userId, OrganisationId);
+            migration = await MigrationService.GetAsync(userId, OrganisationId);
+            connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
+            files = migration?.Files.OrderByDescending(x => x.UploadedAt).ToList() ?? [];
+            selectedTenantId = string.Empty;
+            ApplyMigration();
+            await ReloadWorkspace();
+            HideRestartConfirmation();
+            message = result.RetainedMasterRecords == 0
+                ? "The migration has returned to the first step. Choose the source and cutover date to begin again."
+                : $"The migration has returned to the first step. {result.RetainedMasterRecords:N0} master record link(s) already added to Account Island were retained and can be reused.";
+            messageClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            message = ex.Message;
+            messageClass = "alert-danger";
         }
         finally { busy = false; }
     }

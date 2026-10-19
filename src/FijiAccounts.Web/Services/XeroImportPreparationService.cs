@@ -118,9 +118,12 @@ public sealed class XeroImportPreparationService(
         var migration = await db.XeroMigrations.SingleOrDefaultAsync(
             x => x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Save the migration setup first.");
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
         var latest = (await db.XeroApiSnapshots
                 .Where(x => x.XeroMigrationId == migration.Id)
                 .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt))
             .GroupBy(x => x.DatasetKey, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.OrderByDescending(snapshot => snapshot.RetrievedAt).First()).ToList();
         if (latest.Count == 0)
@@ -242,10 +245,13 @@ public sealed class XeroImportPreparationService(
         var migration = await db.XeroMigrations.SingleOrDefaultAsync(
             x => x.OrganisationId == organisationId, cancellationToken)
             ?? throw new InvalidOperationException("Save the migration setup first.");
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migration.Id, cancellationToken);
         var snapshots = (await db.XeroApiSnapshots
                 .Where(x => x.XeroMigrationId == migration.Id &&
                             new[] { "accounts", "contacts", "currencies", "items" }.Contains(x.DatasetKey))
                 .ToListAsync(cancellationToken))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt))
             .GroupBy(x => x.DatasetKey).Select(x => x.OrderByDescending(snapshot => snapshot.RetrievedAt).First()).ToList();
         if (snapshots.Count == 0) throw new InvalidOperationException("Prepare Xero data first.");
 
@@ -410,10 +416,13 @@ public sealed class XeroImportPreparationService(
     private async Task<IReadOnlyDictionary<string, XeroAssetAccountReference>> LoadAssetTypeAccountsAsync(
         Guid organisationId, Guid migrationId, CancellationToken ct)
     {
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migrationId, ct);
         var latest = (await db.XeroApiSnapshots.AsNoTracking()
                 .Where(x => x.OrganisationId == organisationId && x.XeroMigrationId == migrationId &&
                             (x.DatasetKey == "accounts" || x.DatasetKey == "asset-types"))
                 .ToListAsync(ct))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.RetrievedAt, attemptStartedAt))
             .GroupBy(x => x.DatasetKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 x => x.Key,
@@ -505,11 +514,16 @@ public sealed class XeroImportPreparationService(
                 XeroMigrationIssueSeverity.Information,
                 CutoverPlanMessage(pending.Key, label, pending.Count())));
         }
-        var suppliedCategories = await db.XeroMigrationFiles.AsNoTracking()
-            .Where(x => x.XeroMigrationId == migrationId)
+        var attemptStartedAt = await XeroMigrationAttempt.StartedAtAsync(
+            db, organisationId, migrationId, ct);
+        var suppliedCategories = (await db.XeroMigrationFiles.AsNoTracking()
+                .Where(x => x.XeroMigrationId == migrationId)
+                .Select(x => new { x.Category, x.UploadedAt })
+                .ToListAsync(ct))
+            .Where(x => XeroMigrationAttempt.IsCurrent(x.UploadedAt, attemptStartedAt))
             .Select(x => x.Category)
-            .Distinct()
-            .ToListAsync(ct);
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         foreach (var category in XeroMigrationService.RequiredCategories.Except(suppliedCategories))
         {
             db.XeroMigrationIssues.Add(Issue(organisationId, migrationId, "REQUIRED_EXPORT_MISSING",

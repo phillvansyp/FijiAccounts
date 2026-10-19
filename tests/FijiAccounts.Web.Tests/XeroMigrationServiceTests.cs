@@ -105,6 +105,116 @@ public sealed class XeroMigrationServiceTests
     }
 
     [Fact]
+    public async Task RestartClearsUnpostedProgressAndSelectedTenantButRetainsProtectedDocuments()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var service = Service(test);
+        var cutover = new DateOnly(2026, 11, 1);
+        var migration = await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover));
+        var file = await service.AddFileAsync(test.UserId, test.Organisation.Id,
+            "Chart of accounts", "accounts.csv", "text/csv", "Code,Name\n100,Bank"u8.ToArray());
+        var retained = new DatabaseImmutableDocumentStore(test.Db).Stage(
+            test.Organisation.Id, test.UserId, "{}"u8.ToArray());
+        var snapshot = new XeroApiSnapshot
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            DatasetKey = "accounts",
+            DisplayName = "Chart of accounts",
+            Endpoint = "Accounts",
+            ImmutableDocumentObjectId = retained.Id,
+            Sha256 = retained.Sha256,
+            Size = 2,
+            RetrievedByUserId = test.UserId
+        };
+        test.Db.XeroApiSnapshots.Add(snapshot);
+        test.Db.XeroMigrationRecords.Add(new XeroMigrationRecord
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            XeroApiSnapshotId = snapshot.Id,
+            DatasetKey = "accounts",
+            ExternalId = "account-1",
+            DisplayName = "100 · Bank",
+            SourceHash = new string('a', 64),
+            PreparedByUserId = test.UserId
+        });
+        var tenantId = Guid.NewGuid();
+        test.Db.XeroConnections.Add(new XeroConnection
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroConnectionId = "connection",
+            XeroTenantId = tenantId,
+            XeroTenantName = "Wrong organisation",
+            ProtectedAccessToken = "protected",
+            ProtectedRefreshToken = "protected",
+            GrantedScopes = "accounting.settings.read",
+            ConnectedByUserId = test.UserId,
+            UpdatedByUserId = test.UserId
+        });
+        await test.Db.SaveChangesAsync();
+        var protectedDocumentCount = await test.Db.ImmutableDocumentObjects.CountAsync();
+
+        var result = await service.RestartAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(0, result.RetainedMasterRecords);
+        var restarted = await service.GetAsync(test.UserId, test.Organisation.Id);
+        Assert.NotNull(restarted);
+        Assert.Empty(restarted.SourceOrganisationName);
+        Assert.Null(restarted.CutoverDate);
+        Assert.Equal(XeroMigrationStatus.Preparing, restarted.Status);
+        Assert.Empty(restarted.Files);
+        Assert.Empty(restarted.ApiSnapshots);
+        Assert.Equal(1, await test.Db.XeroMigrationFiles.CountAsync());
+        Assert.Equal(1, await test.Db.XeroApiSnapshots.CountAsync());
+        Assert.Empty(await test.Db.XeroMigrationRecords.ToListAsync());
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.Null(connection.XeroTenantId);
+        Assert.Null(connection.XeroTenantName);
+        Assert.Equal(protectedDocumentCount, await test.Db.ImmutableDocumentObjects.CountAsync());
+        Assert.Null((await test.Db.Organisations.SingleAsync(x => x.Id == test.Organisation.Id)).ConversionDate);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x => x.EventType == "XeroMigrationRestarted"));
+        Assert.True(await test.Db.ImmutableDocumentObjects.AnyAsync(x => x.Id == file.ImmutableDocumentObjectId));
+
+        await service.SaveAsync(test.UserId, test.Organisation.Id, Request(cutover));
+        await service.AddFileAsync(test.UserId, test.Organisation.Id,
+            "Trial balance", "new-attempt.csv", "text/csv", "Account,Balance\n100,1"u8.ToArray());
+        var nextAttempt = await service.GetAsync(test.UserId, test.Organisation.Id);
+        Assert.Single(nextAttempt!.Files);
+        Assert.Equal("new-attempt.csv", nextAttempt.Files[0].FileName);
+        Assert.Equal(2, await test.Db.XeroMigrationFiles.CountAsync());
+    }
+
+    [Fact]
+    public async Task RestartIsBlockedAfterTheLiveOpeningJournalWasPosted()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var service = Service(test);
+        var migration = await service.SaveAsync(test.UserId, test.Organisation.Id,
+            Request(new DateOnly(2026, 11, 1)));
+        test.Db.AuditEvents.Add(new AuditEvent
+        {
+            OrganisationId = test.Organisation.Id,
+            EventType = "XeroOpeningBalancePosted",
+            EntityType = nameof(XeroMigration),
+            EntityId = migration.Id.ToString(),
+            UserId = test.UserId,
+            JsonData = "{}"
+        });
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RestartAsync(test.UserId, test.Organisation.Id));
+
+        Assert.Contains("posted its live cutover", error.Message);
+        Assert.Equal("JCR 2006 Limited", (await service.GetAsync(test.UserId, test.Organisation.Id))!.SourceOrganisationName);
+    }
+
+    [Fact]
     public async Task LiveImportPendingDoesNotPreventApprovalNeededToRunCutover()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
