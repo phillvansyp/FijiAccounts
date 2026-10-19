@@ -27,6 +27,7 @@ public sealed class OrganisationReplacementServiceTests
                 null,
                 "FJ",
                 OrganisationKind.Business));
+        test.Organisation.OrganisationGroupId = fiji.OrganisationGroupId;
         test.Db.XeroConnections.Add(new XeroConnection
         {
             OrganisationId = test.Organisation.Id,
@@ -77,6 +78,7 @@ public sealed class OrganisationReplacementServiceTests
             x.Id != fiji.Id && x.LegalName == "JCR 2006 Limited");
         Assert.Equal("NZ", replacement.CountryCode);
         Assert.Equal("NZD", replacement.BaseCurrency);
+        Assert.NotEqual(fiji.OrganisationGroupId, replacement.OrganisationGroupId);
         Assert.Equal(result.ReplacementWorkspaceId, OrganisationDisplay.WorkspaceId(replacement));
         Assert.Equal(
             OrganisationRole.Owner,
