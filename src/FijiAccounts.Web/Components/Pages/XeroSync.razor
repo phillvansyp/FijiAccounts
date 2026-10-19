@@ -77,13 +77,24 @@ else
                     <dt class="col-sm-3">Last full check</dt><dd class="col-sm-9">@FormatDate(status.Connection.LastFullReconciliationAt)</dd>
                     <dt class="col-sm-3">Next scheduled check</dt><dd class="col-sm-9">@(status.Connection.ContinuousSyncEnabled ? FormatDate(status.Connection.NextSyncAt) : "Not scheduled")</dd>
                 </dl>
-                @if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
+                @if (status.Connection.NeedsPermissionUpdate || NeedsPermissionUpdate(status.Connection.LastSyncError))
+                {
+                    <div class="alert alert-warning">
+                        <strong>Xero permissions need updating.</strong>
+                        Reconnect and approve all requested read-only access. The selected Xero company and records already copied into Account Island will be kept.
+                        <div class="mt-3">
+                            <a class="btn btn-warning" href="/api/o/@OrganisationId/integrations/xero/connect">Update Xero permissions</a>
+                        </div>
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
                 {
                     <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @status.Connection.LastSyncError</div>
                 }
                 <div class="d-flex gap-2 flex-wrap">
                     <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@busy">@(busy ? "Refreshing…" : "Refresh now")</button>
                     <button type="button" class="btn btn-secondary" @onclick="FullReconciliation" disabled="@busy">Run full reconciliation</button>
+                    <a class="btn btn-outline-secondary" href="/api/o/@OrganisationId/integrations/xero/connect">Reconnect Xero</a>
                     <button type="button" class="btn @(status.Connection.ContinuousSyncEnabled ? "btn-outline-danger" : "btn-success")" @onclick="ToggleAutomatic" disabled="@busy">
                         @(status.Connection.ContinuousSyncEnabled ? "Turn automatic sync off" : "Turn automatic sync on")
                     </button>
@@ -217,4 +228,10 @@ else
     }
 
     private static string FormatDate(DateTimeOffset? value) => value?.ToLocalTime().ToString("d MMM yyyy, h:mm tt") ?? "Not yet";
+
+    private static bool NeedsPermissionUpdate(string? error) =>
+        !string.IsNullOrWhiteSpace(error) &&
+        (error.Contains("permission", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("renew", StringComparison.OrdinalIgnoreCase));
 }

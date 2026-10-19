@@ -205,6 +205,7 @@ public sealed class XeroReadOnlySyncService(
             var changedCount = 0;
             var archivedCount = 0;
             var datasetCount = 0;
+            TimeSpan? retryAfter = null;
 
             foreach (var definition in Datasets)
             {
@@ -227,6 +228,11 @@ public sealed class XeroReadOnlySyncService(
                     failures.Add(new(definition.Name, FriendlyFailure(ex)));
                     logger.LogWarning(ex, "Xero read-only dataset {Dataset} failed for organisation {OrganisationId}.",
                         definition.Key, organisationId);
+                    if (ex is XeroApiException { StatusCode: System.Net.HttpStatusCode.TooManyRequests } rateLimit)
+                    {
+                        retryAfter = NormaliseRetryAfter(rateLimit.RetryAfter);
+                        break;
+                    }
                 }
             }
 
@@ -237,8 +243,9 @@ public sealed class XeroReadOnlySyncService(
                 if (full) connection.LastFullReconciliationAt = completedAt;
             }
             connection.ConsecutiveSyncFailures = failures.Count == 0 ? 0 : connection.ConsecutiveSyncFailures + 1;
-            connection.NextSyncAt = completedAt.AddMinutes(
-                failures.Count == 0 ? Math.Clamp(options.SyncIntervalMinutes, 5, 1440) : 5);
+            connection.NextSyncAt = completedAt.Add(
+                retryAfter ?? TimeSpan.FromMinutes(
+                    failures.Count == 0 ? Math.Clamp(options.SyncIntervalMinutes, 5, 1440) : 5));
             connection.LastSyncError = failures.Count == 0
                 ? null
                 : Limit(string.Join("; ", failures.Select(x => $"{x.Dataset}: {x.Reason}")), 2000);
@@ -551,14 +558,22 @@ public sealed class XeroReadOnlySyncService(
 
     private static string FriendlyFailure(Exception exception) => exception switch
     {
+        XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.TooManyRequests =>
+            XeroConnectionService.RateLimitMessage(x),
         XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.Unauthorized =>
-            "The Xero connection needs to be renewed.",
+            "Xero permission is missing. Reconnect and approve the requested read-only access.",
         XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.Forbidden =>
             "The connected Xero user or plan does not permit this read-only dataset.",
         XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.NotFound =>
             "This dataset is not available for the connected organisation.",
         _ => exception.Message
     };
+
+    private static TimeSpan NormaliseRetryAfter(TimeSpan? retryAfter)
+    {
+        var seconds = retryAfter?.TotalSeconds ?? TimeSpan.FromMinutes(5).TotalSeconds;
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, 5, TimeSpan.FromDays(1).TotalSeconds));
+    }
 
     private static AccountType AccountTypeFor(string xeroType) => xeroType switch
     {

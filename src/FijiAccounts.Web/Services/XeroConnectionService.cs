@@ -20,7 +20,8 @@ public sealed record XeroConnectionStatus(
     string? LastSyncError,
     bool ContinuousSyncEnabled = false,
     DateTimeOffset? LastFullReconciliationAt = null,
-    DateTimeOffset? NextSyncAt = null);
+    DateTimeOffset? NextSyncAt = null,
+    bool NeedsPermissionUpdate = false);
 
 public sealed record XeroSyncFailure(string Dataset, string Reason);
 public sealed record XeroSyncResult(
@@ -106,7 +107,8 @@ public sealed class XeroConnectionService(
             connection?.LastSyncError,
             connection?.ContinuousSyncEnabled ?? false,
             connection?.LastFullReconciliationAt,
-            connection?.NextSyncAt);
+            connection?.NextSyncAt,
+            connection is not null && HasMissingScopes(connection.GrantedScopes));
     }
 
     public async Task<string> CreateAuthorizationUriAsync(
@@ -290,6 +292,7 @@ public sealed class XeroConnectionService(
         var importedDatasets = 0;
         var attachmentSources = new List<AttachmentSource>();
         var failedAttachmentDatasets = new List<string>();
+        XeroApiException? rateLimitFailure = null;
 
         foreach (var definition in definitionsArray)
         {
@@ -324,6 +327,11 @@ public sealed class XeroConnectionService(
                 failures.Add(new(definition.Name, FriendlyFailure(ex)));
                 if (AttachmentDefinitions.ContainsKey(definition.Key))
                     failedAttachmentDatasets.Add(definition.Name);
+                if (ex is XeroApiException { StatusCode: System.Net.HttpStatusCode.TooManyRequests } rateLimit)
+                {
+                    rateLimitFailure = rateLimit;
+                    break;
+                }
             }
         }
 
@@ -331,58 +339,58 @@ public sealed class XeroConnectionService(
         // unavailable. Completed datasets were saved individually above.
         await db.SaveChangesAsync(cancellationToken);
 
-        try
+        if (rateLimitFailure is null)
         {
-            if (failedAttachmentDatasets.Count > 0)
+            try
             {
-                throw new InvalidOperationException(
-                    $"Attachments cannot be verified because these Xero records were not copied: {string.Join(", ", failedAttachmentDatasets)}.");
-            }
-            var packages = await FetchAttachmentPackagesAsync(
-                accessToken,
-                connection.XeroTenantId.Value,
-                attachmentSources,
-                cancellationToken);
-            foreach (var package in packages)
-            {
-                var matchingFiles = await db.XeroMigrationFiles.AsNoTracking().Where(
-                        x => x.XeroMigrationId == migration.Id &&
-                             x.Category == "Document attachments" &&
-                             x.Sha256 == package.Sha256)
-                    .Select(x => x.UploadedAt)
-                    .ToListAsync(cancellationToken);
-                if (matchingFiles.Any(x => XeroMigrationAttempt.IsCurrent(x, attemptStartedAt)))
+                if (failedAttachmentDatasets.Count > 0)
                 {
-                    continue;
+                    throw new InvalidOperationException(
+                        $"Attachments cannot be verified because these Xero records were not copied: {string.Join(", ", failedAttachmentDatasets)}.");
                 }
+                var packages = await FetchAttachmentPackagesAsync(
+                    accessToken,
+                    connection.XeroTenantId.Value,
+                    attachmentSources,
+                    cancellationToken);
+                foreach (var package in packages)
+                {
+                    var matchingFiles = await db.XeroMigrationFiles.AsNoTracking().Where(
+                            x => x.XeroMigrationId == migration.Id &&
+                                 x.Category == "Document attachments" &&
+                                 x.Sha256 == package.Sha256)
+                        .Select(x => x.UploadedAt)
+                        .ToListAsync(cancellationToken);
+                    if (matchingFiles.Any(x => XeroMigrationAttempt.IsCurrent(x, attemptStartedAt))) continue;
 
-                var stored = storage.Stage(organisationId, userId, package.Content);
-                var file = new XeroMigrationFile
-                {
-                    OrganisationId = organisationId,
-                    XeroMigrationId = migration.Id,
-                    Category = "Document attachments",
-                    FileName = package.FileName,
-                    ContentType = "application/zip",
-                    Size = package.Content.LongLength,
-                    Sha256 = stored.Sha256,
-                    ImmutableDocumentObjectId = stored.Id,
-                    UploadedByUserId = userId
-                };
-                db.XeroMigrationFiles.Add(file);
-                db.AuditEvents.Add(Audit(organisationId, userId, "XeroAttachmentPackageRetained", file.Id, new
-                {
-                    migration.Id,
-                    file.FileName,
-                    file.Size,
-                    file.Sha256,
-                    package.AttachmentCount
-                }, nameof(XeroMigrationFile)));
+                    var stored = storage.Stage(organisationId, userId, package.Content);
+                    var file = new XeroMigrationFile
+                    {
+                        OrganisationId = organisationId,
+                        XeroMigrationId = migration.Id,
+                        Category = "Document attachments",
+                        FileName = package.FileName,
+                        ContentType = "application/zip",
+                        Size = package.Content.LongLength,
+                        Sha256 = stored.Sha256,
+                        ImmutableDocumentObjectId = stored.Id,
+                        UploadedByUserId = userId
+                    };
+                    db.XeroMigrationFiles.Add(file);
+                    db.AuditEvents.Add(Audit(organisationId, userId, "XeroAttachmentPackageRetained", file.Id, new
+                    {
+                        migration.Id,
+                        file.FileName,
+                        file.Size,
+                        file.Sha256,
+                        package.AttachmentCount
+                    }, nameof(XeroMigrationFile)));
+                }
             }
-        }
-        catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
-        {
-            failures.Add(new("Document attachments", FriendlyFailure(ex)));
+            catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
+            {
+                failures.Add(new("Document attachments", FriendlyFailure(ex)));
+            }
         }
 
         connection.LastSyncedAt = DateTimeOffset.UtcNow;
@@ -744,6 +752,7 @@ public sealed class XeroConnectionService(
 
     private static string FriendlyFailure(Exception exception) => exception switch
     {
+        XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.TooManyRequests => RateLimitMessage(x),
         XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.Unauthorized =>
             "Xero permission is missing. Reconnect and approve the requested read-only access.",
         XeroApiException x when x.StatusCode == System.Net.HttpStatusCode.Forbidden =>
@@ -753,6 +762,37 @@ public sealed class XeroConnectionService(
         XeroApiException x => x.Message,
         _ => exception.Message
     };
+
+    private bool HasMissingScopes(string grantedScopes)
+    {
+        var granted = grantedScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var requested in options.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!requested.StartsWith("accounting.", StringComparison.OrdinalIgnoreCase) &&
+                !requested.StartsWith("assets.", StringComparison.OrdinalIgnoreCase)) continue;
+            if (granted.Contains(requested)) continue;
+            var coveredByBroadTransactionScope =
+                (requested is "accounting.invoices.read" or "accounting.payments.read" or
+                    "accounting.banktransactions.read" or "accounting.manualjournals.read") &&
+                (granted.Contains("accounting.transactions.read") || granted.Contains("accounting.transactions"));
+            if (coveredByBroadTransactionScope) continue;
+            if (requested.StartsWith("accounting.reports.", StringComparison.OrdinalIgnoreCase) &&
+                granted.Contains("accounting.reports.read")) continue;
+            return true;
+        }
+        return false;
+    }
+
+    internal static string RateLimitMessage(XeroApiException exception)
+    {
+        var limit = exception.RateLimitProblem?.Equals("day", StringComparison.OrdinalIgnoreCase) == true
+            ? "daily"
+            : "request";
+        if (exception.RetryAfter is not { } delay || delay <= TimeSpan.Zero)
+            return $"Xero's {limit} limit was reached. Wait for Xero to reset it before trying again.";
+        var minutes = Math.Max(1, (int)Math.Ceiling(delay.TotalMinutes));
+        return $"Xero's {limit} limit was reached. Sync paused for about {minutes:N0} minute(s) before another attempt.";
+    }
 
     private async Task DemandAccessAsync(string userId, Guid organisationId)
     {

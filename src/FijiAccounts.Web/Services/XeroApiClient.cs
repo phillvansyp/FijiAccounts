@@ -38,9 +38,13 @@ public sealed record XeroTenantCandidate(
 public sealed class XeroApiException(
     string message,
     System.Net.HttpStatusCode statusCode,
-    string? response = null) : HttpRequestException(message, null, statusCode)
+    string? response = null,
+    TimeSpan? retryAfter = null,
+    string? rateLimitProblem = null) : HttpRequestException(message, null, statusCode)
 {
     public string? Response { get; } = response;
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+    public string? RateLimitProblem { get; } = rateLimitProblem;
 }
 
 public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> configured)
@@ -126,24 +130,15 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         {
             throw new InvalidOperationException("Xero content must be downloaded from the Xero API.");
         }
-        for (var attempt = 1; ; attempt++)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
-            request.Headers.IfModifiedSince = ifModifiedSince;
-            if (!accept.Equals("application/json", StringComparison.OrdinalIgnoreCase))
-                request.Headers.TryAddWithoutValidation("contentType", accept);
-            request.Headers.Add("xero-tenant-id", tenantId.ToString());
-            using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (attempt < 8 && response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
-            {
-                var requestedDelay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(attempt);
-                await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(requestedDelay.TotalSeconds, 1, 60)), cancellationToken);
-                continue;
-            }
-            return await ReadCheckedAsync(response, cancellationToken);
-        }
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
+        request.Headers.IfModifiedSince = ifModifiedSince;
+        if (!accept.Equals("application/json", StringComparison.OrdinalIgnoreCase))
+            request.Headers.TryAddWithoutValidation("contentType", accept);
+        request.Headers.Add("xero-tenant-id", tenantId.ToString());
+        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        return await ReadCheckedAsync(response, cancellationToken);
     }
 
     private async Task<XeroToken> RequestTokenAsync(
@@ -183,10 +178,19 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         if (response.IsSuccessStatusCode) return bytes;
         var body = Encoding.UTF8.GetString(bytes);
         if (body.Length > 600) body = body[..600];
+        var retryAfter = response.Headers.RetryAfter?.Delta;
+        if (retryAfter is null && response.Headers.RetryAfter?.Date is { } retryAt)
+            retryAfter = retryAt - DateTimeOffset.UtcNow;
+        if (retryAfter < TimeSpan.Zero) retryAfter = TimeSpan.Zero;
+        var rateLimitProblem = response.Headers.TryGetValues("X-Rate-Limit-Problem", out var problems)
+            ? problems.FirstOrDefault()
+            : null;
         throw new XeroApiException(
             $"Xero returned {(int)response.StatusCode} {response.ReasonPhrase}.",
             response.StatusCode,
-            body);
+            body,
+            retryAfter,
+            rateLimitProblem);
     }
 
     private async Task<HttpResponseMessage> SendAsync(
