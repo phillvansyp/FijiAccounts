@@ -10,6 +10,7 @@ public static class AccountMaintenanceCommand
     private const string ResetPasswordCommand = "reset-password";
     private const string VerifyDatabaseCommand = "verify-database";
     private const string SendOperationsAlertCommand = "send-operations-alert";
+    private const string ReplaceOrganisationCommand = "replace-organisation";
 
     public static async Task<bool> TryRunAsync(
         WebApplication app,
@@ -73,6 +74,29 @@ public static class AccountMaintenanceCommand
         if (arguments.Count == 0)
         {
             return false;
+        }
+
+        if (string.Equals(
+                arguments[0],
+                ReplaceOrganisationCommand,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            if (arguments.Count != 2 || arguments[1] is not ("preview" or "apply"))
+            {
+                throw new InvalidOperationException(
+                    "Usage: replace-organisation preview|apply, with a reviewed JSON plan on stdin.");
+            }
+
+            var json = await Console.In.ReadToEndAsync();
+            var plan = System.Text.Json.JsonSerializer.Deserialize<ReplaceOrganisationPlan>(
+                json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Organisation replacement plan required.");
+            await using var replacementScope = app.Services.CreateAsyncScope();
+            var service = replacementScope.ServiceProvider
+                .GetRequiredService<OrganisationReplacementService>();
+            Console.WriteLine(await service.RunAsync(plan, arguments[1] == "apply"));
+            return true;
         }
 
         if (string.Equals(

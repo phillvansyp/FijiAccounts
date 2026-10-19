@@ -211,6 +211,7 @@ builder.Services.AddScoped<OrganisationSelectionService>();
 builder.Services.AddScoped<OrganisationInvitationService>();
 builder.Services.AddScoped<OrganisationPermissionProfileService>();
 builder.Services.AddScoped<EnterpriseStructureService>();
+builder.Services.AddScoped<OrganisationReplacementService>();
 builder.Services.AddScoped<OrganisationSettingsService>();
 builder.Services.AddScoped<OrganisationBrandingService>();
 builder.Services.AddScoped<BusinessPartyService>();
