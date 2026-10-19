@@ -251,6 +251,8 @@ public sealed class BusinessPartyService(
             cancellationToken)
             ?? throw new InvalidOperationException("Contact not found.");
 
+        await RequireLocallyManagedContactAsync(request.OrganisationId, party.Id, cancellationToken);
+
         var email = ValidateEmail(request.Email, "email address");
         var accountsEmail = ValidateEmail(request.AccountsEmail, "accounts email address");
         if (party.Email == email && party.AccountsEmail == accountsEmail)
@@ -282,6 +284,8 @@ public sealed class BusinessPartyService(
                  x.IsActive,
             cancellationToken)
             ?? throw new InvalidOperationException("Contact not found.");
+
+        await RequireLocallyManagedContactAsync(request.OrganisationId, party.Id, cancellationToken);
 
         var email = ValidateEmail(request.Email, "email address");
         var accountsEmail = ValidateEmail(request.AccountsEmail, "accounts email address");
@@ -902,6 +906,23 @@ public sealed class BusinessPartyService(
         {
             throw new UnauthorizedAccessException(
                 "You do not have permission to manage contacts for this organisation.");
+        }
+    }
+
+    private async Task RequireLocallyManagedContactAsync(
+        Guid organisationId,
+        Guid businessPartyId,
+        CancellationToken cancellationToken)
+    {
+        if (await db.XeroMirrorEntityLinks.AsNoTracking().AnyAsync(x =>
+                x.OrganisationId == organisationId &&
+                x.TargetEntityType == nameof(BusinessParty) &&
+                x.TargetEntityId == businessPartyId &&
+                x.Connection.IsActive,
+                cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "This contact is controlled by Xero. Make the change in Xero and refresh Account Island.");
         }
     }
 

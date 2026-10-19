@@ -6416,6 +6416,12 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("ConsecutiveSyncFailures")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ContinuousSyncEnabled")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("GrantedScopes")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -6424,11 +6430,17 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTimeOffset?>("LastFullReconciliationAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("LastSyncError")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset?>("LastSyncedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("NextSyncAt")
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("OrganisationId")
@@ -6440,6 +6452,9 @@ namespace FijiAccounts.Web.Migrations
 
                     b.Property<string>("ProtectedRefreshToken")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("SyncLeaseUntil")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TenantCandidatesJson")
@@ -6851,6 +6866,157 @@ namespace FijiAccounts.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("XeroMigrationRecords");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroMirrorEntityLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DatasetKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("LinkedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TargetEntityId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetEntityType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("XeroConnectionId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("XeroConnectionId", "DatasetKey", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("XeroMirrorEntityLinks");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroMirrorRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DatasetKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(240)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsArchived")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("SourceUpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("XeroConnectionId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganisationId", "DatasetKey", "IsArchived");
+
+                    b.HasIndex("XeroConnectionId", "DatasetKey", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("XeroMirrorRecords");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroReadOnlySyncRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ArchivedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChangedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DatasetCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorSummary")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsFullReconciliation")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RecordCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("XeroConnectionId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("XeroConnectionId", "StartedAt");
+
+                    b.ToTable("XeroReadOnlySyncRuns");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.YearEndHandoverPackSnapshot", b =>
@@ -9933,6 +10099,39 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("Migration");
 
                     b.Navigation("Snapshot");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroMirrorEntityLink", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.XeroConnection", "Connection")
+                        .WithMany()
+                        .HasForeignKey("XeroConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroMirrorRecord", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.XeroConnection", "Connection")
+                        .WithMany()
+                        .HasForeignKey("XeroConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroReadOnlySyncRun", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.XeroConnection", "Connection")
+                        .WithMany()
+                        .HasForeignKey("XeroConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.YearEndHandoverPackSnapshot", b =>

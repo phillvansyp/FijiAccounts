@@ -131,6 +131,8 @@ public sealed class ChartOfAccountsService(
             ?? throw new InvalidOperationException(
                 "Account not found.");
 
+        await RequireLocallyManagedAsync(request.OrganisationId, account.Id, ct);
+
         if (account.IsSystemAccount)
         {
             throw new InvalidOperationException(
@@ -224,6 +226,8 @@ public sealed class ChartOfAccountsService(
             ?? throw new InvalidOperationException(
                 "Account not found.");
 
+        await RequireLocallyManagedAsync(organisationId, account.Id, ct);
+
         if (!active && account.IsSystemAccount)
         {
             throw new InvalidOperationException(
@@ -248,6 +252,18 @@ public sealed class ChartOfAccountsService(
         });
 
         await db.SaveChangesAsync(ct);
+    }
+
+    private async Task RequireLocallyManagedAsync(Guid organisationId, Guid accountId, CancellationToken ct)
+    {
+        if (await db.XeroMirrorEntityLinks.AsNoTracking().AnyAsync(x =>
+                x.OrganisationId == organisationId &&
+                x.TargetEntityType == nameof(LedgerAccount) &&
+                x.TargetEntityId == accountId &&
+                x.Connection.IsActive, ct))
+        {
+            throw new InvalidOperationException("This account is controlled by Xero. Make the change in Xero and refresh Account Island.");
+        }
     }
 
     private static void ValidateClassification(

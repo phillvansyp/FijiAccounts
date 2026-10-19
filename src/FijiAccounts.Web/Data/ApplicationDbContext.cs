@@ -164,6 +164,9 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<XeroMigrationMapping> XeroMigrationMappings => Set<XeroMigrationMapping>();
     public DbSet<XeroMigrationIssue> XeroMigrationIssues => Set<XeroMigrationIssue>();
     public DbSet<XeroMigrationImportRun> XeroMigrationImportRuns => Set<XeroMigrationImportRun>();
+    public DbSet<XeroMirrorRecord> XeroMirrorRecords => Set<XeroMirrorRecord>();
+    public DbSet<XeroMirrorEntityLink> XeroMirrorEntityLinks => Set<XeroMirrorEntityLink>();
+    public DbSet<XeroReadOnlySyncRun> XeroReadOnlySyncRuns => Set<XeroReadOnlySyncRun>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -207,6 +210,31 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
             .WithMany()
             .HasForeignKey(x => x.OrganisationId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<XeroMirrorRecord>()
+            .HasIndex(x => new { x.XeroConnectionId, x.DatasetKey, x.ExternalId })
+            .IsUnique();
+        builder.Entity<XeroMirrorRecord>()
+            .HasIndex(x => new { x.OrganisationId, x.DatasetKey, x.IsArchived });
+        builder.Entity<XeroMirrorRecord>()
+            .HasOne(x => x.Connection)
+            .WithMany()
+            .HasForeignKey(x => x.XeroConnectionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroMirrorEntityLink>()
+            .HasIndex(x => new { x.XeroConnectionId, x.DatasetKey, x.ExternalId })
+            .IsUnique();
+        builder.Entity<XeroMirrorEntityLink>()
+            .HasOne(x => x.Connection)
+            .WithMany()
+            .HasForeignKey(x => x.XeroConnectionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<XeroReadOnlySyncRun>()
+            .HasIndex(x => new { x.XeroConnectionId, x.StartedAt });
+        builder.Entity<XeroReadOnlySyncRun>()
+            .HasOne(x => x.Connection)
+            .WithMany()
+            .HasForeignKey(x => x.XeroConnectionId)
+            .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<XeroApiSnapshot>()
             .HasIndex(x => new { x.XeroMigrationId, x.DatasetKey, x.RetrievedAt });
         builder.Entity<XeroApiSnapshot>()

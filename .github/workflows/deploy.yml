@@ -204,16 +204,17 @@ jobs:
           update_setting Email__Smtp__Password "$EMAIL_SMTP_PASSWORD"
           echo "Production email settings provisioned."
 
-      - name: Provision Xero migration connection
+      - name: Provision Xero read-only connection
         shell: bash
         env:
           XERO_CLIENT_ID: ${{ secrets.XERO_CLIENT_ID }}
           XERO_CLIENT_SECRET: ${{ secrets.XERO_CLIENT_SECRET }}
           XERO_REDIRECT_URI: ${{ secrets.XERO_REDIRECT_URI }}
+          XERO_WEBHOOK_KEY: ${{ secrets.XERO_WEBHOOK_KEY }}
         run: |
           set -euo pipefail
           env_file="$DEPLOY_DIR/config/app.env"
-          values=("$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" "$XERO_REDIRECT_URI")
+          values=("$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" "$XERO_REDIRECT_URI" "$XERO_WEBHOOK_KEY")
           configured=0
           for value in "${values[@]}"; do
             if [ -n "$value" ]; then
@@ -245,7 +246,8 @@ jobs:
           update_setting Xero__ClientId "$XERO_CLIENT_ID"
           update_setting Xero__ClientSecret "$XERO_CLIENT_SECRET"
           update_setting Xero__RedirectUri "$XERO_REDIRECT_URI"
-          echo "Xero migration connection settings provisioned."
+          update_setting Xero__WebhookKey "$XERO_WEBHOOK_KEY"
+          echo "Xero read-only connection settings provisioned."
 
       - name: Back up and deploy
         id: deployment

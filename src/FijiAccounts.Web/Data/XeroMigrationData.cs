@@ -214,7 +214,73 @@ public sealed class XeroConnection
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     [MaxLength(450)] public required string UpdatedByUserId { get; set; }
     public DateTimeOffset? LastSyncedAt { get; set; }
+    public DateTimeOffset? LastFullReconciliationAt { get; set; }
+    public DateTimeOffset? NextSyncAt { get; set; }
+    public DateTimeOffset? SyncLeaseUntil { get; set; }
+    public bool ContinuousSyncEnabled { get; set; }
+    public int ConsecutiveSyncFailures { get; set; }
     [MaxLength(2000)] public string? LastSyncError { get; set; }
+}
+
+/// <summary>
+/// A read-only local projection of a Xero object. Xero remains authoritative;
+/// Account Island never sends changes from this record back to Xero.
+/// </summary>
+public sealed class XeroMirrorRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid XeroConnectionId { get; set; }
+    public XeroConnection Connection { get; set; } = null!;
+    [MaxLength(80)] public required string DatasetKey { get; set; }
+    [MaxLength(160)] public required string ExternalId { get; set; }
+    [MaxLength(240)] public required string DisplayName { get; set; }
+    [MaxLength(64)] public required string SourceHash { get; set; }
+    public required string SourceJson { get; set; }
+    public DateTimeOffset? SourceUpdatedAt { get; set; }
+    public DateTimeOffset FirstSeenAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset LastSeenAt { get; set; } = DateTimeOffset.UtcNow;
+    public bool IsArchived { get; set; }
+}
+
+/// <summary>Stable link between a Xero source identity and a safe Account Island master record.</summary>
+public sealed class XeroMirrorEntityLink
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid XeroConnectionId { get; set; }
+    public XeroConnection Connection { get; set; } = null!;
+    [MaxLength(80)] public required string DatasetKey { get; set; }
+    [MaxLength(160)] public required string ExternalId { get; set; }
+    [MaxLength(80)] public required string TargetEntityType { get; set; }
+    public Guid TargetEntityId { get; set; }
+    public DateTimeOffset LinkedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public enum XeroReadOnlySyncRunStatus
+{
+    Running,
+    Completed,
+    Partial,
+    Failed
+}
+
+public sealed class XeroReadOnlySyncRun
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid XeroConnectionId { get; set; }
+    public XeroConnection Connection { get; set; } = null!;
+    [MaxLength(40)] public required string Trigger { get; set; }
+    public XeroReadOnlySyncRunStatus Status { get; set; } = XeroReadOnlySyncRunStatus.Running;
+    public bool IsFullReconciliation { get; set; }
+    public int DatasetCount { get; set; }
+    public int RecordCount { get; set; }
+    public int ChangedCount { get; set; }
+    public int ArchivedCount { get; set; }
+    [MaxLength(2000)] public string? ErrorSummary { get; set; }
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? CompletedAt { get; set; }
 }
 
 public sealed class XeroApiSnapshot

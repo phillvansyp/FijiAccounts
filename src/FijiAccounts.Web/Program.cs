@@ -274,6 +274,8 @@ builder.Services.AddHttpClient<XeroApiClient>(client =>
     client.MaxResponseContentBufferSize = 30 * 1024 * 1024;
 });
 builder.Services.AddScoped<XeroConnectionService>();
+builder.Services.AddScoped<XeroReadOnlySyncService>();
+builder.Services.AddHostedService<XeroReadOnlySyncWorker>();
 builder.Services.AddScoped<EmployeeReceiptService>();
 builder.Services.AddScoped<ReceiptBankPurchaseService>();
 builder.Services.AddScoped<DatabaseImmutableDocumentStore>();

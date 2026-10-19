@@ -17,7 +17,10 @@ public sealed record XeroConnectionStatus(
     string? TenantName,
     IReadOnlyList<XeroTenantCandidate> AvailableTenants,
     DateTimeOffset? LastSyncedAt,
-    string? LastSyncError);
+    string? LastSyncError,
+    bool ContinuousSyncEnabled = false,
+    DateTimeOffset? LastFullReconciliationAt = null,
+    DateTimeOffset? NextSyncAt = null);
 
 public sealed record XeroSyncFailure(string Dataset, string Reason);
 public sealed record XeroSyncResult(
@@ -100,7 +103,10 @@ public sealed class XeroConnectionService(
             connection?.XeroTenantName,
             candidates,
             connection?.LastSyncedAt,
-            connection?.LastSyncError);
+            connection?.LastSyncError,
+            connection?.ContinuousSyncEnabled ?? false,
+            connection?.LastFullReconciliationAt,
+            connection?.NextSyncAt);
     }
 
     public async Task<string> CreateAuthorizationUriAsync(
@@ -112,10 +118,6 @@ public sealed class XeroConnectionService(
         if (!IsConfigured)
         {
             throw new InvalidOperationException("The Xero connection is waiting for its app credentials in deployment settings.");
-        }
-        if (!await db.XeroMigrations.AnyAsync(x => x.OrganisationId == organisationId, cancellationToken))
-        {
-            throw new InvalidOperationException("Save the migration setup before connecting Xero.");
         }
         var state = stateProtector.Protect(
             JsonSerializer.Serialize(new OAuthState(userId, organisationId, Guid.NewGuid())),
@@ -280,6 +282,7 @@ public sealed class XeroConnectionService(
             try
             {
                 var fetched = await FetchDatasetAsync(accessToken, connection.XeroTenantId.Value, definition, cancellationToken);
+                var datasetAttachmentSources = ExtractAttachmentSources(fetched.Content, definition);
                 var stored = storage.Stage(organisationId, userId, fetched.Content);
                 db.XeroApiSnapshots.Add(new XeroApiSnapshot
                 {
@@ -295,9 +298,12 @@ public sealed class XeroConnectionService(
                     ImmutableDocumentObjectId = stored.Id,
                     RetrievedByUserId = userId
                 });
+                // Each completed dataset is durable immediately. A later Xero
+                // timeout or attachment problem cannot erase earlier progress.
+                await db.SaveChangesAsync(cancellationToken);
                 importedDatasets++;
                 importedRecords += fetched.RecordCount;
-                attachmentSources.AddRange(ExtractAttachmentSources(fetched.Content, definition));
+                attachmentSources.AddRange(datasetAttachmentSources);
             }
             catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
             {
@@ -306,6 +312,10 @@ public sealed class XeroConnectionService(
                     failedAttachmentDatasets.Add(definition.Name);
             }
         }
+
+        // Persist any refreshed OAuth token even when every source dataset was
+        // unavailable. Completed datasets were saved individually above.
+        await db.SaveChangesAsync(cancellationToken);
 
         try
         {
@@ -420,7 +430,7 @@ public sealed class XeroConnectionService(
         return new(content, $"xero-{snapshot.DatasetKey}-{timestamp}.json");
     }
 
-    private async Task<string> GetAccessTokenAsync(
+    internal async Task<string> GetAccessTokenAsync(
         XeroConnection connection,
         string userId,
         CancellationToken cancellationToken)

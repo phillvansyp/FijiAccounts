@@ -1,0 +1,220 @@
+@page "/o/{OrganisationId:guid}/integrations/xero"
+@attribute [Authorize]
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@inject XeroReadOnlySyncService SyncService
+@inject XeroConnectionService ConnectionService
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Xero sync · Account Island</PageTitle>
+
+@if (loading)
+{
+    <p role="status">Loading Xero sync…</p>
+}
+else if (access is null)
+{
+    <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else
+{
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">Accounting · connected app</p>
+            <h1>Xero read-only sync</h1>
+            <p>Xero remains the accounting source of truth. Account Island receives updates and cannot change Xero.</p>
+        </div>
+        <div class="heading-actions">
+            @if (status?.Connection.IsConnected == true)
+            {
+                <span class="status-pill @(status.Connection.ContinuousSyncEnabled ? "complete" : "progress")">
+                    @(status.Connection.ContinuousSyncEnabled ? "Automatic sync on" : "Automatic sync off")
+                </span>
+            }
+        </div>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @messageClass" role="status">@message</div>
+    }
+
+    <section class="card mb-4">
+        <div class="card-body">
+            <h2>Connection</h2>
+            @if (status?.Connection.IsConfigured != true)
+            {
+                <div class="alert alert-warning">An administrator must add the Xero app credentials before this connection can be used.</div>
+            }
+            else if (status.Connection.IsConnected != true)
+            {
+                <p>Connect using Xero's read-only accounting permissions.</p>
+                <a class="btn btn-primary" href="/api/o/@OrganisationId/integrations/xero/connect">Connect Xero</a>
+            }
+            else if (status.Connection.TenantId is null)
+            {
+                <label class="form-label" for="xero-tenant">Xero organisation</label>
+                <div class="d-flex gap-2 flex-wrap">
+                    <select id="xero-tenant" class="form-select" style="max-width: 30rem" @bind="selectedTenantId" disabled="@busy">
+                        <option value="">Choose an organisation</option>
+                        @foreach (var tenant in status.Connection.AvailableTenants)
+                        {
+                            <option value="@tenant.TenantId">@tenant.TenantName</option>
+                        }
+                    </select>
+                    <button type="button" class="btn btn-primary" @onclick="ChooseTenant" disabled="@(busy || string.IsNullOrWhiteSpace(selectedTenantId))">Use this organisation</button>
+                </div>
+            }
+            else
+            {
+                <dl class="row mb-3">
+                    <dt class="col-sm-3">Xero organisation</dt><dd class="col-sm-9">@status.Connection.TenantName</dd>
+                    <dt class="col-sm-3">Last update</dt><dd class="col-sm-9">@FormatDate(status.Connection.LastSyncedAt)</dd>
+                    <dt class="col-sm-3">Last full check</dt><dd class="col-sm-9">@FormatDate(status.Connection.LastFullReconciliationAt)</dd>
+                    <dt class="col-sm-3">Next scheduled check</dt><dd class="col-sm-9">@(status.Connection.ContinuousSyncEnabled ? FormatDate(status.Connection.NextSyncAt) : "Not scheduled")</dd>
+                </dl>
+                @if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
+                {
+                    <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @status.Connection.LastSyncError</div>
+                }
+                <div class="d-flex gap-2 flex-wrap">
+                    <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@busy">@(busy ? "Refreshing…" : "Refresh now")</button>
+                    <button type="button" class="btn btn-secondary" @onclick="FullReconciliation" disabled="@busy">Run full reconciliation</button>
+                    <button type="button" class="btn @(status.Connection.ContinuousSyncEnabled ? "btn-outline-danger" : "btn-success")" @onclick="ToggleAutomatic" disabled="@busy">
+                        @(status.Connection.ContinuousSyncEnabled ? "Turn automatic sync off" : "Turn automatic sync on")
+                    </button>
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (status is not null && status.Datasets.Count > 0)
+    {
+        <section class="card mb-4">
+            <div class="card-body">
+                <h2>Read-only Xero records</h2>
+                <p>Accounts, contacts and items are projected into their Account Island lists. Financial transactions remain read-only Xero records so local workflows cannot alter Xero accounting.</p>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead><tr><th>Dataset</th><th class="text-end">Current</th><th class="text-end">Archived</th></tr></thead>
+                        <tbody>
+                        @foreach (var dataset in status.Datasets)
+                        {
+                            <tr><td>@dataset.Name</td><td class="text-end">@dataset.ActiveRecords.ToString("N0")</td><td class="text-end">@dataset.ArchivedRecords.ToString("N0")</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    }
+
+    @if (status is not null && status.RecentRuns.Count > 0)
+    {
+        <section class="card">
+            <div class="card-body">
+                <h2>Recent sync activity</h2>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead><tr><th>Started</th><th>Trigger</th><th>Status</th><th class="text-end">Records</th><th class="text-end">Changed</th></tr></thead>
+                        <tbody>
+                        @foreach (var run in status.RecentRuns)
+                        {
+                            <tr>
+                                <td>@FormatDate(run.StartedAt)</td><td>@run.Trigger</td><td>@run.Status</td>
+                                <td class="text-end">@run.RecordCount.ToString("N0")</td><td class="text-end">@run.ChangedCount.ToString("N0")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [SupplyParameterFromQuery(Name = "xero")] public string? XeroResult { get; set; }
+    private AccessibleOrganisation? access;
+    private XeroReadOnlySyncStatus? status;
+    private string userId = string.Empty;
+    private string selectedTenantId = string.Empty;
+    private string? message;
+    private string messageClass = "alert-success";
+    private bool loading = true;
+    private bool busy;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User) ?? string.Empty;
+        access = string.IsNullOrWhiteSpace(userId) ? null : await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null) await ReloadAsync();
+        if (string.Equals(XeroResult, "connected", StringComparison.OrdinalIgnoreCase))
+        {
+            message = status?.Connection.TenantId is null
+                ? "Xero is connected. Choose the organisation to keep in sync."
+                : "Xero is connected with read-only access.";
+        }
+        loading = false;
+    }
+
+    private async Task ReloadAsync() => status = await SyncService.GetStatusAsync(userId, OrganisationId);
+
+    private async Task ChooseTenant()
+    {
+        if (!Guid.TryParse(selectedTenantId, out var tenantId)) return;
+        await RunAction(async () =>
+        {
+            await ConnectionService.SelectTenantAsync(userId, OrganisationId, tenantId);
+            message = "Xero organisation selected. Turn on automatic sync or run the first refresh now.";
+        });
+    }
+
+    private async Task ToggleAutomatic() => await RunAction(async () =>
+    {
+        var enabled = !(status?.Connection.ContinuousSyncEnabled ?? false);
+        await SyncService.SetEnabledAsync(userId, OrganisationId, enabled);
+        message = enabled ? "Automatic read-only Xero sync is on." : "Automatic Xero sync is off.";
+    });
+
+    private async Task SyncNow() => await Sync(false);
+    private async Task FullReconciliation() => await Sync(true);
+
+    private async Task Sync(bool full) => await RunAction(async () =>
+    {
+        var result = await SyncService.RunNowAsync(userId, OrganisationId, full);
+        message = result.Failures.Count == 0
+            ? $"Xero refresh completed: {result.RecordCount:N0} records checked and {result.ChangedCount:N0} updated."
+            : $"Xero refresh completed with {result.Failures.Count:N0} dataset warning(s).";
+        messageClass = result.Failures.Count == 0 ? "alert-success" : "alert-warning";
+    });
+
+    private async Task RunAction(Func<Task> action)
+    {
+        busy = true;
+        message = null;
+        messageClass = "alert-success";
+        try
+        {
+            await action();
+            await ReloadAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or XeroApiException)
+        {
+            message = ex.Message;
+            messageClass = "alert-danger";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string FormatDate(DateTimeOffset? value) => value?.ToLocalTime().ToString("d MMM yyyy, h:mm tt") ?? "Not yet";
+}

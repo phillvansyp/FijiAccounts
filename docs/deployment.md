@@ -53,7 +53,7 @@ Email__Smtp__Username=example-user
 Email__Smtp__Password=replace-me
 ```
 
-## Xero migration connection
+## Xero read-only synchronisation
 
 Create an OAuth 2.0 web app in the Xero Developer portal and register the exact
 production callback address, including the public port when one is present:
@@ -62,12 +62,24 @@ production callback address, including the public port when one is present:
 https://app.accountisland.com:8443/api/integrations/xero/callback
 ```
 
-Add `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, and `XERO_REDIRECT_URI` to GitHub's
-`production` environment secrets. All three are required to enable **Connect
-Xero**. The deployment writes them to the protected server environment file;
-the client secret must never be committed to the repository. The integration
-requests read-only accounting permissions and stores Xero access and refresh
-tokens using the application's persistent data-protection keys.
+In the Xero app, configure the webhook delivery URL:
+
+```text
+https://app.accountisland.com:8443/api/integrations/xero/webhook
+```
+
+Add `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, and
+`XERO_WEBHOOK_KEY` to GitHub's `production` environment secrets. All four are
+required to provision the connection. The deployment writes them to the
+protected server environment file; neither the client secret nor webhook key
+may be committed to the repository.
+
+The integration requests read-only accounting permissions and stores Xero
+access and refresh tokens using the application's persistent data-protection
+keys. Xero contact and invoice webhooks request an immediate refresh. The
+background worker also checks enabled connections every 15 minutes and performs
+a complete reconciliation at least once every 24 hours, covering datasets that
+do not emit webhooks and changes that do not advance `UpdatedDateUTC`.
 
 ## Off-host backups and operations alerts
 

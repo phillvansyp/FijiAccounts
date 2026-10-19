@@ -11,6 +11,7 @@ A Fiji-first, multi-tenant accounting SaaS for businesses, staff, and accounting
 - Balanced double-entry journals
 - Effective-dated Fiji VAT calculation
 - Automated accounting and tax-boundary tests
+- One-way Xero synchronisation with read-only OAuth scopes, webhook-triggered refreshes, scheduled checks, and daily reconciliation
 
 ## Run locally
 

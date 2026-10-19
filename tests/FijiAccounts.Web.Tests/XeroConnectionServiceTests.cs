@@ -149,6 +149,54 @@ public sealed class XeroConnectionServiceTests
         Assert.Equal(1, await test.Db.XeroMigrationFiles.CountAsync(x => x.Category == "Document attachments"));
     }
 
+    [Fact]
+    public async Task TimedOutDatasetIsReportedWithoutDiscardingCompletedSourceCopy()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        await test.Db.SaveChangesAsync();
+        var migrationService = new XeroMigrationService(
+            test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
+        await migrationService.SaveAsync(test.UserId, test.Organisation.Id, new(
+            "JCR 2006 Limited", new DateOnly(2026, 11, 1), true,
+            false, false, false, false, false, false, false, false, null));
+
+        var tenantId = Guid.NewGuid();
+        var handler = new TimeoutXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var service = new XeroConnectionService(
+            test.Db,
+            test.Access,
+            new XeroApiClient(new HttpClient(handler), options),
+            new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(),
+            options);
+
+        var authorize = new Uri(await service.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await service.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        await service.SelectTenantAsync(test.UserId, test.Organisation.Id, tenantId);
+
+        var result = await service.SyncAsync(test.UserId, test.Organisation.Id);
+
+        Assert.True(result.ImportedDatasets > 0);
+        var failure = Assert.Single(result.Failures, x => x.Dataset == "Budgets");
+        Assert.Contains("timed out", failure.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(await test.Db.XeroApiSnapshots.AnyAsync());
+        Assert.Contains("Budgets", (await test.Db.XeroConnections.SingleAsync()).LastSyncError);
+        var preparation = new XeroImportPreparationService(
+            test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
+        var assistant = await new XeroMigrationAssistantService(test.Db, test.Access, preparation)
+            .GetAsync(test.UserId, test.Organisation.Id);
+        Assert.True(Assert.Single(assistant.Checks, x => x.Key == "source").Passed);
+        Assert.NotEqual(XeroMigrationAssistantAction.CopySource, assistant.NextAction);
+    }
+
     private sealed class XeroHandler(Guid firstTenant, Guid secondTenant) : HttpMessageHandler
     {
         public List<string?> TenantHeaders { get; } = [];
@@ -231,6 +279,27 @@ public sealed class XeroConnectionServiceTests
                     """);
             }
             if (path.EndsWith("/Invoices", StringComparison.Ordinal)) return Json("{\"Invoices\":[]}");
+            return Json("{}");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class TimeoutXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read accounting.budgets.read"}""");
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"JCR 2006 Limited","tenantType":"ORGANISATION"}]""");
+            if (request.RequestUri.AbsolutePath.EndsWith("/Budgets", StringComparison.Ordinal))
+                throw new TaskCanceledException("Simulated Xero timeout.");
             return Json("{}");
         }
 

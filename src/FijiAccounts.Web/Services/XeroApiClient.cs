@@ -12,6 +12,9 @@ public sealed class XeroApiOptions
     public string ClientId { get; set; } = string.Empty;
     public string ClientSecret { get; set; } = string.Empty;
     public string RedirectUri { get; set; } = string.Empty;
+    public string WebhookKey { get; set; } = string.Empty;
+    public int SyncIntervalMinutes { get; set; } = 15;
+    public int FullReconciliationHours { get; set; } = 24;
     public string Scopes { get; set; } =
         "openid profile email offline_access accounting.settings.read accounting.contacts.read " +
         "accounting.invoices.read accounting.payments.read accounting.banktransactions.read " +
@@ -68,7 +71,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ConnectionsEndpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var bytes = await ReadCheckedAsync(response, cancellationToken);
         var payload = JsonSerializer.Deserialize<List<ConnectionPayload>>(bytes, JsonOptions) ?? [];
         return payload
@@ -83,7 +86,15 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         Guid tenantId,
         string endpoint,
         CancellationToken cancellationToken = default)
-        => await GetAsync(accessToken, tenantId, endpoint, "application/json", cancellationToken);
+        => await GetAsync(accessToken, tenantId, endpoint, "application/json", null, cancellationToken);
+
+    public async Task<byte[]> GetJsonAsync(
+        string accessToken,
+        Guid tenantId,
+        string endpoint,
+        DateTimeOffset? ifModifiedSince,
+        CancellationToken cancellationToken = default)
+        => await GetAsync(accessToken, tenantId, endpoint, "application/json", ifModifiedSince, cancellationToken);
 
     public async Task<byte[]> GetBytesAsync(
         string accessToken,
@@ -96,6 +107,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             tenantId,
             endpoint,
             string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType,
+            null,
             cancellationToken);
 
     private async Task<byte[]> GetAsync(
@@ -103,6 +115,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         Guid tenantId,
         string endpoint,
         string accept,
+        DateTimeOffset? ifModifiedSince,
         CancellationToken cancellationToken)
     {
         var uri = Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute)
@@ -118,10 +131,11 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
+            request.Headers.IfModifiedSince = ifModifiedSince;
             if (!accept.Equals("application/json", StringComparison.OrdinalIgnoreCase))
                 request.Headers.TryAddWithoutValidation("contentType", accept);
             request.Headers.Add("xero-tenant-id", tenantId.ToString());
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (attempt < 8 && response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable)
             {
                 var requestedDelay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(attempt);
@@ -143,7 +157,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             Content = new FormUrlEncodedContent(fields)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
-        using var response = await client.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         var bytes = await ReadCheckedAsync(response, cancellationToken);
         var payload = JsonSerializer.Deserialize<TokenPayload>(bytes, JsonOptions)
             ?? throw new XeroApiException("Xero returned an empty token response.", response.StatusCode);
@@ -173,6 +187,23 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             $"Xero returned {(int)response.StatusCode} {response.ReasonPhrase}.",
             response.StatusCode,
             body);
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        HttpCompletionOption completion,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.SendAsync(request, completion, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new XeroApiException(
+                "Xero did not respond before the request timed out. Try the copy again; completed datasets have been retained.",
+                System.Net.HttpStatusCode.RequestTimeout);
+        }
     }
 
     private sealed class TokenPayload
