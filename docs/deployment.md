@@ -68,11 +68,12 @@ In the Xero app, configure the webhook delivery URL:
 https://app.accountisland.com:8443/api/integrations/xero/webhook
 ```
 
-Add `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, and
-`XERO_WEBHOOK_KEY` to GitHub's `production` environment secrets. All four are
-required to provision the connection. The deployment writes them to the
+Add `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, and `XERO_REDIRECT_URI` to GitHub's
+`production` environment secrets. Add `XERO_WEBHOOK_KEY` when webhooks are
+enabled in the Xero app. The deployment writes configured values to the
 protected server environment file; neither the client secret nor webhook key
-may be committed to the repository.
+may be committed to the repository. Without a webhook key, the scheduled
+read-only synchronization still checks enabled connections every 15 minutes.
 
 The integration requests read-only accounting permissions and stores Xero
 access and refresh tokens using the application's persistent data-protection

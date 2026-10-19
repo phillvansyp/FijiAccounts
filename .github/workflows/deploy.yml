@@ -214,18 +214,18 @@ jobs:
         run: |
           set -euo pipefail
           env_file="$DEPLOY_DIR/config/app.env"
-          values=("$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" "$XERO_REDIRECT_URI" "$XERO_WEBHOOK_KEY")
-          configured=0
-          for value in "${values[@]}"; do
+          required_values=("$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" "$XERO_REDIRECT_URI")
+          required_configured=0
+          for value in "${required_values[@]}"; do
             if [ -n "$value" ]; then
-              configured=$((configured + 1))
+              required_configured=$((required_configured + 1))
             fi
           done
-          if [ "$configured" -eq 0 ]; then
+          if [ "$required_configured" -eq 0 ] && [ -z "$XERO_WEBHOOK_KEY" ]; then
             echo "Xero connection secrets are not configured; preserving existing server settings."
             exit 0
           fi
-          if [ "$configured" -ne "${#values[@]}" ]; then
+          if [ "$required_configured" -ne 0 ] && [ "$required_configured" -ne "${#required_values[@]}" ]; then
             echo "Xero connection secrets are incomplete." >&2
             exit 1
           fi
@@ -239,14 +239,20 @@ jobs:
             install -m 0600 "$temp_file" "$env_file"
             rm -f "$temp_file"
           }
-          if [[ "$XERO_REDIRECT_URI" != https://* ]]; then
-            echo "Xero redirect URI must use HTTPS." >&2
-            exit 1
+          if [ "$required_configured" -gt 0 ]; then
+            if [[ "$XERO_REDIRECT_URI" != https://* ]]; then
+              echo "Xero redirect URI must use HTTPS." >&2
+              exit 1
+            fi
+            update_setting Xero__ClientId "$XERO_CLIENT_ID"
+            update_setting Xero__ClientSecret "$XERO_CLIENT_SECRET"
+            update_setting Xero__RedirectUri "$XERO_REDIRECT_URI"
           fi
-          update_setting Xero__ClientId "$XERO_CLIENT_ID"
-          update_setting Xero__ClientSecret "$XERO_CLIENT_SECRET"
-          update_setting Xero__RedirectUri "$XERO_REDIRECT_URI"
-          update_setting Xero__WebhookKey "$XERO_WEBHOOK_KEY"
+          if [ -n "$XERO_WEBHOOK_KEY" ]; then
+            update_setting Xero__WebhookKey "$XERO_WEBHOOK_KEY"
+          else
+            echo "Xero webhook key is not configured; scheduled read-only synchronization remains enabled."
+          fi
           echo "Xero read-only connection settings provisioned."
 
       - name: Back up and deploy
