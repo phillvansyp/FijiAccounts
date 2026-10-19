@@ -5067,6 +5067,57 @@ namespace FijiAccounts.Web.Migrations
                     b.ToTable("SalesInvoices");
                 });
 
+            modelBuilder.Entity("FijiAccounts.Web.Data.SalesInvoiceAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ImmutableDocumentObjectId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("OriginalSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("SalesInvoiceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UploadedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImmutableDocumentObjectId");
+
+                    b.HasIndex("SalesInvoiceId");
+
+                    b.HasIndex("OrganisationId", "SalesInvoiceId");
+
+                    b.ToTable("SalesInvoiceAttachments");
+                });
+
             modelBuilder.Entity("FijiAccounts.Web.Data.SalesInvoiceLine", b =>
                 {
                     b.Property<Guid>("Id")
@@ -9223,6 +9274,25 @@ namespace FijiAccounts.Web.Migrations
                     b.Navigation("Organisation");
                 });
 
+            modelBuilder.Entity("FijiAccounts.Web.Data.SalesInvoiceAttachment", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.ImmutableDocumentObject", "ImmutableDocumentObject")
+                        .WithMany()
+                        .HasForeignKey("ImmutableDocumentObjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.SalesInvoice", "SalesInvoice")
+                        .WithMany("Attachments")
+                        .HasForeignKey("SalesInvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ImmutableDocumentObject");
+
+                    b.Navigation("SalesInvoice");
+                });
+
             modelBuilder.Entity("FijiAccounts.Web.Data.SalesInvoiceLine", b =>
                 {
                     b.HasOne("FijiAccounts.Web.Data.ProductItem", "ProductItem")
@@ -10185,6 +10255,8 @@ namespace FijiAccounts.Web.Migrations
 
             modelBuilder.Entity("FijiAccounts.Web.Data.SalesInvoice", b =>
                 {
+                    b.Navigation("Attachments");
+
                     b.Navigation("Lines");
                 });
 

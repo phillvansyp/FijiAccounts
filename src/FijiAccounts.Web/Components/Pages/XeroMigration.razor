@@ -441,7 +441,7 @@ else
                     <li>Receivable Invoice Detail and Payable Invoice Detail, including all open allocations.</li>
                     <li>Bank Reconciliation reports plus statements for every bank, card and loan account.</li>
                     <li>Fixed Asset Reconciliation and asset list for each year, every filed GST return, and annual payroll activity reports.</li>
-                    <li>If used, export inventory, budgets and tracking categories. Retain quotes, purchase orders, repeating templates and document attachments separately.</li>
+                    <li>If used, export inventory, budgets and tracking categories. Retain quotes, purchase orders and repeating templates separately. Account Island copies available Xero attachments automatically.</li>
                     <li>Keep every original Xero export unchanged.</li>
                     <li>Before the final copy, allocate or refund any unallocated credit notes, prepayments and overpayments so the opening customer and supplier ledgers can be recreated exactly.</li>
                 </ol>
@@ -523,7 +523,7 @@ else
             <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
             <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
         </div>
-        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. At approved cutover, the final Trial Balance CSV creates one opening journal, open invoices and bills continue as live records, active assets enter the asset register, and older transactions remain available in the immutable Xero archive. This avoids posting the same history twice.</p>
+        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. At approved cutover, the final Trial Balance CSV creates one opening journal, open invoices and bills continue as live records with their Xero attachments, active assets enter the asset register, and older transactions and files remain available in the immutable Xero archive. This avoids posting the same history twice.</p>
         <div class="import-actions">
             @if (canPrepare && migration is not null)
             {
@@ -674,7 +674,7 @@ else
         "Fixed assets and depreciation reconciliation" => "Export the fixed asset list and depreciation reconciliation for each financial year.",
         "GST returns and reconciliation" => "Export every filed GST return and the reconciliation for the next unfiled period.",
         "Payroll history reports" => "Export annual payroll activity and liability reports. Employee payroll records will continue in NZ Pay.",
-        "Document attachments" => "Download the supporting documents that must remain with the accounting record, preferably as a ZIP file.",
+        "Document attachments" => "Account Island normally copies Xero attachments automatically. If Xero could not provide them, download the supporting documents from Xero and upload the retained ZIP here.",
         _ => $"Export the original {CurrentMissingEvidenceCategory} report from Xero without editing it."
     };
     private XeroMigrationMapping? CurrentMapping => workspace.Mappings

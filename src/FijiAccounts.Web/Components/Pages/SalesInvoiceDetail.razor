@@ -110,6 +110,25 @@ else
         else if (invoice.IsTaxInvoice is null) { <div class="alert alert-secondary mt-4">Legacy document — the compliance profile was not captured when this invoice was issued.</div> }
         <div class="invoice-powered-by">Powered by Account Island</div>
     </article>
+    @if (invoice.Attachments.Count > 0)
+    {
+        <section class="history-card no-print mt-4">
+            <div class="history-heading">
+                <span class="eyebrow">Source documents</span>
+                <h2>Attachments</h2>
+            </div>
+            <p class="text-muted">Original files retained with this invoice during the Xero migration.</p>
+            <div class="d-flex flex-wrap gap-2">
+                @foreach (var attachment in invoice.Attachments.OrderBy(x => x.FileName))
+                {
+                    <a class="btn btn-outline-secondary"
+                       href="@($"/api/o/{OrganisationId}/sales/{InvoiceId}/attachments/{attachment.Id}")">
+                        @attachment.FileName (@FormatAttachmentSize(attachment.OriginalSize))
+                    </a>
+                }
+            </div>
+        </section>
+    }
     <div class="no-print"><CustomerReceiptHistory OrganisationId="OrganisationId" InvoiceId="InvoiceId" OnChanged="Reload" /></div>
 
     @if (credits.Count > 0)
@@ -358,6 +377,7 @@ else
                 .Include(x => x.Customer)
                 .Include(x => x.Branch)
                 .Include(x => x.Division)
+                .Include(x => x.Attachments)
                 .Include(x => x.Lines)
                     .ThenInclude(x => x.Project)
                 .Include(x => x.Lines)
@@ -366,8 +386,7 @@ else
                     x =>
                         x.Id == InvoiceId &&
                         x.OrganisationId == OrganisationId &&
-                        x.DivisionId != null &&
-                        accessibleDivisionIds.Contains(x.DivisionId.Value));
+                        (x.DivisionId == null || accessibleDivisionIds.Contains(x.DivisionId.Value)));
 
         payrollBillingDetail = null;
         if (invoice is not null)
@@ -605,6 +624,10 @@ else
     private static string ProjectLabel(SalesInvoiceLine line) => line.Project is null
         ? "—"
         : $"{line.Project.ProjectNumber}{(line.ProjectCostCode is null ? "" : $" / {line.ProjectCostCode.Code}")}";
+
+    private static string FormatAttachmentSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:N1} MB"
+        : $"{Math.Max(1, bytes / 1024d):N0} KB";
 
     private void OpenCreditReversal(Guid creditNoteId)
     {

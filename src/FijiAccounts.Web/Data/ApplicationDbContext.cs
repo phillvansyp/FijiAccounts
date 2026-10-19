@@ -84,6 +84,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<RecurringSalesInvoiceGeneration> RecurringSalesInvoiceGenerations =>
         Set<RecurringSalesInvoiceGeneration>();
     public DbSet<SalesCreditNote> SalesCreditNotes => Set<SalesCreditNote>();
+    public DbSet<SalesInvoiceAttachment> SalesInvoiceAttachments => Set<SalesInvoiceAttachment>();
     public DbSet<SalesCreditNoteLine> SalesCreditNoteLines => Set<SalesCreditNoteLine>();
     public DbSet<SalesCreditNoteReversal> SalesCreditNoteReversals =>
     Set<SalesCreditNoteReversal>();
@@ -584,6 +585,11 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
         builder.Entity<AccountantEngagement>().HasOne(x => x.ClientOrganisation).WithMany()
             .HasForeignKey(x => x.ClientOrganisationId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<LedgerAccount>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique();
+        builder.Entity<SalesInvoiceAttachment>().HasIndex(x => new { x.OrganisationId, x.SalesInvoiceId });
+        builder.Entity<SalesInvoiceAttachment>().HasOne(x => x.SalesInvoice).WithMany(x => x.Attachments)
+            .HasForeignKey(x => x.SalesInvoiceId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<SalesInvoiceAttachment>().HasOne(x => x.ImmutableDocumentObject).WithMany()
+            .HasForeignKey(x => x.ImmutableDocumentObjectId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<OrganisationInvitation>().HasIndex(x => x.TokenHash).IsUnique();
         builder.Entity<AccountingPeriod>().HasIndex(x => new { x.OrganisationId, x.StartsOn, x.EndsOn }).IsUnique();
         builder.Entity<YearEndReview>().HasIndex(x => x.AccountingPeriodId).IsUnique();

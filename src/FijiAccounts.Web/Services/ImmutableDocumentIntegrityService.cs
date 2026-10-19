@@ -98,6 +98,9 @@ public sealed class ImmutableDocumentIntegrityService(
             await db.SupplierBillAttachments.AsNoTracking().CountAsync(
                 x => x.OrganisationId == organisationId && x.ImmutableDocumentObjectId != null,
                 cancellationToken) +
+            await db.SalesInvoiceAttachments.AsNoTracking().CountAsync(
+                x => x.OrganisationId == organisationId,
+                cancellationToken) +
             await db.BankStatementImportDocuments.AsNoTracking().CountAsync(
                 x => x.OrganisationId == organisationId && x.ImmutableDocumentObjectId != null,
                 cancellationToken) +
@@ -133,6 +136,12 @@ public sealed class ImmutableDocumentIntegrityService(
                          o.Id == x.ImmutableDocumentObjectId &&
                          o.OrganisationId == organisationId),
                 cancellationToken) +
+            await db.SalesInvoiceAttachments.AsNoTracking().CountAsync(
+                x => x.OrganisationId == organisationId &&
+                     !db.ImmutableDocumentObjects.Any(o =>
+                         o.Id == x.ImmutableDocumentObjectId &&
+                         o.OrganisationId == organisationId),
+                cancellationToken) +
             await db.BankStatementImportDocuments.AsNoTracking().CountAsync(
                 x => x.OrganisationId == organisationId &&
                      x.ImmutableDocumentObjectId != null &&
@@ -159,6 +168,7 @@ public sealed class ImmutableDocumentIntegrityService(
                 x => x.OrganisationId == organisationId &&
                      !db.BusinessPartyDocuments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.SupplierBillAttachments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
+                     !db.SalesInvoiceAttachments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.BankStatementImportDocuments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.YearEndHandoverPackSnapshots.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.YearEndReviewAttachments.Any(d => d.ImmutableDocumentObjectId == x.Id),

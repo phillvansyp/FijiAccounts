@@ -393,6 +393,7 @@ app.MapAdditionalIdentityEndpoints();
 
 // Supplier bill attachment endpoint (single registration only).
 app.MapSupplierBillAttachmentEndpoints();
+app.MapSalesInvoiceAttachmentEndpoints();
 app.MapBusinessPartyDocumentEndpoints();
 app.MapGet("/api/receipts/{organisationId:guid}/{receiptId:guid}/file", async (Guid organisationId, Guid receiptId, EmployeeReceiptService receipts, System.Security.Claims.ClaimsPrincipal principal, HttpContext http) =>
 {

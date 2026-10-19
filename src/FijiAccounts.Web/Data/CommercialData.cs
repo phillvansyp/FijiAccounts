@@ -293,8 +293,25 @@ public sealed class SalesInvoice
     [MaxLength(32)] public string? RecipientTinSnapshot { get; set; }
     public Guid? PostedJournalId { get; set; }
     public List<SalesInvoiceLine> Lines { get; set; } = [];
+    public List<SalesInvoiceAttachment> Attachments { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public required string CreatedByUserId { get; set; }
+}
+
+public sealed class SalesInvoiceAttachment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OrganisationId { get; set; }
+    public Guid SalesInvoiceId { get; set; }
+    public SalesInvoice SalesInvoice { get; set; } = null!;
+    [MaxLength(255)] public required string FileName { get; set; }
+    [MaxLength(100)] public required string ContentType { get; set; }
+    public long OriginalSize { get; set; }
+    public required byte[] Content { get; set; }
+    public Guid ImmutableDocumentObjectId { get; set; }
+    public ImmutableDocumentObject ImmutableDocumentObject { get; set; } = null!;
+    public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
+    [MaxLength(450)] public required string UploadedByUserId { get; set; }
 }
 
 public enum SalesInvoiceVoidStatus

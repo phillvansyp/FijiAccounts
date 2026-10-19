@@ -1341,8 +1341,7 @@ private async Task RecordPayment()
             .SingleOrDefaultAsync(
                 x => x.Id == BillId &&
                      x.OrganisationId == OrganisationId &&
-                     x.DivisionId != null &&
-                     accessibleDivisionIds.Contains(x.DivisionId.Value));
+                     (x.DivisionId == null || accessibleDivisionIds.Contains(x.DivisionId.Value)));
 
         duplicateAttachmentIds = bill is null || !canManage || !AttachmentDeletionProtected
             ? new HashSet<Guid>()

@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FijiAccounts.Domain.Tax;
@@ -29,6 +31,7 @@ public sealed class XeroCutoverImportService(
     JournalPostingService posting,
     XeroImportPreparationService preparation)
 {
+    private const long MaximumRetainedAttachmentBytes = 25L * 1024 * 1024;
     private static readonly HashSet<string> FinancialDatasets = new(StringComparer.OrdinalIgnoreCase)
     {
         "sales-invoices", "bills", "sales-credits", "supplier-credits", "payments",
@@ -71,6 +74,8 @@ public sealed class XeroCutoverImportService(
             throw new InvalidOperationException("Add the prepared accounts, contacts, currencies and items before creating the cutover.");
 
         await EnsureNoUnallocatedCreditsAsync(organisationId, migration.Id, ct);
+        var retainedAttachments = await ReadDocumentAttachmentsAsync(
+            organisationId, migration.Files, ct);
 
         var prior = await FindOpeningJournalAsync(organisationId, migration.Id, ct);
         PostedJournal opening;
@@ -85,6 +90,8 @@ public sealed class XeroCutoverImportService(
         var openBills = await ImportOpenSupplierBillsAsync(userId, organisationId, migration, opening, ct);
         var openSupplierCredits = await ImportOpenSupplierCreditsAsync(userId, organisationId, migration, opening, ct);
         var fixedAssets = await ImportFixedAssetsAsync(userId, organisationId, migration, opening, ct);
+        var attachedDocuments = await AttachImportedDocumentsAsync(
+            userId, organisationId, migration.Id, retainedAttachments, ct);
 
         var records = await db.XeroMigrationRecords
             .Where(x => x.XeroMigrationId == migration.Id && FinancialDatasets.Contains(x.DatasetKey))
@@ -113,7 +120,7 @@ public sealed class XeroCutoverImportService(
             SourceRecordCount = records.Count,
             ImportedCount = openSales + openBills + openSupplierCredits + fixedAssets,
             SkippedCount = archived,
-            Summary = $"Opening journal {opening.Reference} posted; {openSales} open sales invoice(s), {openBills} open supplier bill(s), {openSupplierCredits} open supplier credit(s), and {fixedAssets} fixed asset(s) added; {archived} historical record(s) retained in the source archive.",
+            Summary = $"Opening journal {opening.Reference} posted; {openSales} open sales invoice(s), {openBills} open supplier bill(s), {openSupplierCredits} open supplier credit(s), and {fixedAssets} fixed asset(s) added; {attachedDocuments} supporting attachment(s) linked; {archived} historical record(s) retained in the source archive.",
             StartedByUserId = userId,
             CompletedAt = DateTimeOffset.UtcNow
         });
@@ -125,12 +132,199 @@ public sealed class XeroCutoverImportService(
             OpenSupplierBills = openBills,
             OpenSupplierCredits = openSupplierCredits,
             FixedAssets = fixedAssets,
+            AttachedDocuments = attachedDocuments,
             ArchivedSourceRecords = archived
         }));
         await db.SaveChangesAsync(ct);
         await preparation.RefreshIssuesAsync(userId, organisationId, migration.Id, ct);
         return new(opening.Id, opening.Lines.Count, openSales, openBills, openSupplierCredits, fixedAssets, archived);
     }
+
+    private async Task<IReadOnlyList<RetainedXeroAttachment>> ReadDocumentAttachmentsAsync(
+        Guid organisationId,
+        IReadOnlyCollection<XeroMigrationFile> files,
+        CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, RetainedXeroAttachment>();
+        foreach (var file in files.Where(x =>
+                     x.Category.Equals("Document attachments", StringComparison.OrdinalIgnoreCase) &&
+                     x.FileName.StartsWith("xero-document-attachments-", StringComparison.OrdinalIgnoreCase) &&
+                     (x.ContentType.Equals("application/zip", StringComparison.OrdinalIgnoreCase) ||
+                      x.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))))
+        {
+            var bytes = await storage.ReadVerifiedAsync(organisationId, file.ImmutableDocumentObjectId, ct);
+            try
+            {
+                using var input = new MemoryStream(bytes, writable: false);
+                using var archive = new ZipArchive(input, ZipArchiveMode.Read);
+                var manifestEntry = archive.GetEntry("manifest.json")
+                    ?? throw new InvalidDataException($"{file.FileName} does not contain the Xero attachment manifest.");
+                List<XeroAttachmentManifestItem>? manifest;
+                await using (var manifestStream = manifestEntry.Open())
+                {
+                    manifest = await JsonSerializer.DeserializeAsync<List<XeroAttachmentManifestItem>>(
+                        manifestStream,
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                        {
+                            PropertyNameCaseInsensitive = true
+                        },
+                        ct);
+                }
+
+                foreach (var item in manifest ?? [])
+                {
+                    if (item.RecordId == Guid.Empty || item.AttachmentId == Guid.Empty ||
+                        string.IsNullOrWhiteSpace(item.FileName) || item.Size <= 0 ||
+                        string.IsNullOrWhiteSpace(item.Sha256))
+                        throw new InvalidDataException($"{file.FileName} contains an incomplete attachment manifest entry.");
+
+                    var prefix = $"records/{item.RecordType}/{item.RecordId:D}/{item.AttachmentId:D}-";
+                    var entry = archive.Entries.SingleOrDefault(x =>
+                        x.FullName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                    if (entry is null)
+                        throw new InvalidDataException($"{file.FileName} is missing the retained file {item.FileName}.");
+                    if (item.Size > MaximumRetainedAttachmentBytes || entry.Length != item.Size)
+                        throw new InvalidDataException($"The retained Xero attachment {item.FileName} has an invalid size.");
+
+                    byte[] content;
+                    await using (var entryStream = entry.Open())
+                    using (var output = new MemoryStream())
+                    {
+                        await entryStream.CopyToAsync(output, ct);
+                        content = output.ToArray();
+                    }
+
+                    var hash = Convert.ToHexString(SHA256.HashData(content));
+                    if (content.LongLength != item.Size ||
+                        !hash.Equals(item.Sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException($"The retained Xero attachment {item.FileName} failed its integrity check.");
+
+                    var retained = new RetainedXeroAttachment(
+                        item.RecordId,
+                        item.AttachmentId,
+                        SafeFileName(item.FileName),
+                        string.IsNullOrWhiteSpace(item.MimeType) ? "application/octet-stream" : item.MimeType,
+                        content,
+                        hash);
+                    if (result.TryGetValue(item.AttachmentId, out var existing) &&
+                        !existing.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException($"Xero returned conflicting copies of attachment {item.AttachmentId:D}.");
+                    result[item.AttachmentId] = retained;
+                }
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            {
+                throw new InvalidDataException($"The retained Xero attachment package {file.FileName} could not be read.", ex);
+            }
+        }
+        return result.Values.ToArray();
+    }
+
+    private async Task<int> AttachImportedDocumentsAsync(
+        string userId,
+        Guid organisationId,
+        Guid migrationId,
+        IReadOnlyCollection<RetainedXeroAttachment> attachments,
+        CancellationToken ct)
+    {
+        if (attachments.Count == 0) return 0;
+        var records = await db.XeroMigrationRecords.AsNoTracking()
+            .Where(x => x.XeroMigrationId == migrationId && x.TargetEntityId != null &&
+                        (x.DatasetKey == "sales-invoices" || x.DatasetKey == "bills"))
+            .ToListAsync(ct);
+        var targets = records
+            .Where(x => Guid.TryParse(x.ExternalId, out _))
+            .ToDictionary(x => Guid.Parse(x.ExternalId), x => x);
+        var count = 0;
+        foreach (var attachment in attachments)
+        {
+            if (!targets.TryGetValue(attachment.RecordId, out var record) || record.TargetEntityId is null)
+                continue;
+
+            if (record.DatasetKey == "sales-invoices")
+            {
+                var existing = await db.SalesInvoiceAttachments.AsNoTracking()
+                    .Where(x => x.OrganisationId == organisationId &&
+                                x.SalesInvoiceId == record.TargetEntityId.Value &&
+                                x.FileName == attachment.FileName && x.OriginalSize == attachment.Content.LongLength)
+                    .Select(x => x.Content).ToListAsync(ct);
+                if (existing.Any(x => SHA256.HashData(x).SequenceEqual(SHA256.HashData(attachment.Content))))
+                    continue;
+                var stored = storage.Stage(organisationId, userId, attachment.Content);
+                db.SalesInvoiceAttachments.Add(new SalesInvoiceAttachment
+                {
+                    OrganisationId = organisationId,
+                    SalesInvoiceId = record.TargetEntityId.Value,
+                    FileName = attachment.FileName,
+                    ContentType = attachment.MimeType,
+                    OriginalSize = attachment.Content.LongLength,
+                    Content = attachment.Content,
+                    ImmutableDocumentObjectId = stored.Id,
+                    UploadedByUserId = userId
+                });
+            }
+            else
+            {
+                var existing = await db.SupplierBillAttachments.AsNoTracking()
+                    .Where(x => x.OrganisationId == organisationId &&
+                                x.SupplierBillId == record.TargetEntityId.Value &&
+                                x.FileName == attachment.FileName && x.OriginalSize == attachment.Content.LongLength)
+                    .Select(x => x.Content).ToListAsync(ct);
+                if (existing.Any(x => SHA256.HashData(x).SequenceEqual(SHA256.HashData(attachment.Content))))
+                    continue;
+                var stored = storage.Stage(organisationId, userId, attachment.Content);
+                db.SupplierBillAttachments.Add(new SupplierBillAttachment
+                {
+                    OrganisationId = organisationId,
+                    SupplierBillId = record.TargetEntityId.Value,
+                    FileName = attachment.FileName,
+                    ContentType = attachment.MimeType,
+                    OriginalSize = attachment.Content.LongLength,
+                    StoredSize = attachment.Content.LongLength,
+                    IsCompressed = false,
+                    Content = attachment.Content,
+                    ImmutableDocumentObjectId = stored.Id,
+                    UploadedByUserId = userId
+                });
+            }
+            count++;
+        }
+        if (count > 0)
+        {
+            db.AuditEvents.Add(Audit(organisationId, userId, "XeroDocumentAttachmentsLinked", migrationId,
+                new { AttachedDocuments = count }));
+            await db.SaveChangesAsync(ct);
+        }
+        return count;
+    }
+
+    private static string SafeFileName(string value)
+    {
+        var fileName = Path.GetFileName(value.Trim());
+        if (string.IsNullOrWhiteSpace(fileName)) return "xero-attachment";
+        return fileName.Length <= 255 ? fileName : fileName[..255];
+    }
+
+    private sealed record XeroAttachmentManifestItem(
+        string RecordType,
+        Guid RecordId,
+        Guid AttachmentId,
+        string FileName,
+        string MimeType,
+        long Size,
+        string Sha256);
+
+    private sealed record RetainedXeroAttachment(
+        Guid RecordId,
+        Guid AttachmentId,
+        string FileName,
+        string MimeType,
+        byte[] Content,
+        string Sha256);
 
     private async Task EnsureNoUnallocatedCreditsAsync(Guid organisationId, Guid migrationId, CancellationToken ct)
     {

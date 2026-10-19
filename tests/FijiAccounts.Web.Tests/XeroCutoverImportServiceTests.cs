@@ -1,4 +1,7 @@
 using System.Text;
+using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text.Json;
 using FijiAccounts.Web.Data;
 using FijiAccounts.Web.Services;
 using Microsoft.EntityFrameworkCore;
@@ -165,6 +168,66 @@ public sealed class XeroCutoverImportServiceTests
         Assert.Equal(credit.Id, record.TargetEntityId);
     }
 
+    [Fact]
+    public async Task XeroAttachmentsAreLinkedToImportedOpenInvoicesAndBillsOnce()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        test.Organisation.CountryCode = "NZ";
+        test.Organisation.BaseCurrency = "NZD";
+        var migration = ApprovedMigration(test, new DateOnly(2026, 10, 18));
+        test.Db.XeroMigrations.Add(migration);
+        var store = new DatabaseImmutableDocumentStore(test.Db);
+        await AddRequiredExportsAsync(test, migration, store,
+            "Account Code,Account,Debit,Credit\r\n1000,Bank,100.00,\r\n3000,Owner's Equity,,100.00\r\n");
+
+        var invoiceId = Guid.NewGuid();
+        var billId = Guid.NewGuid();
+        await AddInvoiceSnapshotAsync(test, migration, store, "sales-invoices", invoiceId,
+            "ACCREC", "INV-ATT-1", "customer", "Test Customer", "4000", 115m);
+        await AddInvoiceSnapshotAsync(test, migration, store, "bills", billId,
+            "ACCPAY", "BILL-ATT-1", "supplier", "Test Supplier", "6000", 57.5m);
+        AddMapping(test, migration, XeroMigrationMappingKind.Contact, "customer", test.Customer.Id,
+            nameof(BusinessParty), test.Customer.Name);
+        AddMapping(test, migration, XeroMigrationMappingKind.Contact, "supplier", test.Supplier.Id,
+            nameof(BusinessParty), test.Supplier.Name);
+        AddMapping(test, migration, XeroMigrationMappingKind.Account, "4000", test.Account("4000").Id,
+            nameof(LedgerAccount), "4000");
+        AddMapping(test, migration, XeroMigrationMappingKind.Account, "6000", test.Account("6000").Id,
+            nameof(LedgerAccount), "6000");
+
+        var salesFile = Encoding.UTF8.GetBytes("customer invoice evidence");
+        var billFile = Encoding.UTF8.GetBytes("supplier receipt evidence");
+        var package = BuildAttachmentPackage(
+            (invoiceId, Guid.NewGuid(), "customer-invoice.pdf", "application/pdf", salesFile),
+            (billId, Guid.NewGuid(), "supplier-receipt.jpg", "image/jpeg", billFile));
+        var retained = store.Stage(test.Organisation.Id, test.UserId, package);
+        test.Db.XeroMigrationFiles.Add(new XeroMigrationFile
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            Category = "Document attachments",
+            FileName = "xero-document-attachments-001.zip",
+            ContentType = "application/zip",
+            Size = package.Length,
+            Sha256 = retained.Sha256,
+            ImmutableDocumentObjectId = retained.Id,
+            UploadedByUserId = test.UserId
+        });
+        await test.Db.SaveChangesAsync();
+
+        var preparation = new XeroImportPreparationService(test.Db, test.Access, store);
+        var service = new XeroCutoverImportService(test.Db, test.Access, store, test.Posting, preparation);
+        await service.BuildAsync(test.UserId, test.Organisation.Id);
+        await service.BuildAsync(test.UserId, test.Organisation.Id);
+
+        var salesAttachment = await test.Db.SalesInvoiceAttachments.SingleAsync();
+        var billAttachment = await test.Db.SupplierBillAttachments.SingleAsync();
+        Assert.Equal("customer-invoice.pdf", salesAttachment.FileName);
+        Assert.Equal(salesFile, salesAttachment.Content);
+        Assert.Equal("supplier-receipt.jpg", billAttachment.FileName);
+        Assert.Equal(billFile, billAttachment.Content);
+    }
+
     private static XeroMigration ApprovedMigration(AccountingTestDatabase test, DateOnly cutoverDate) => new()
     {
         OrganisationId = test.Organisation.Id, SourceOrganisationName = "Xero Test Limited",
@@ -192,5 +255,80 @@ public sealed class XeroCutoverImportServiceTests
             });
         }
         await test.Db.SaveChangesAsync();
+    }
+
+    private static async Task AddInvoiceSnapshotAsync(
+        AccountingTestDatabase test, XeroMigration migration, DatabaseImmutableDocumentStore store,
+        string dataset, Guid sourceId, string type, string number, string contactId,
+        string contactName, string accountCode, decimal total)
+    {
+        var root = dataset == "bills" ? "bills" : "sales-invoices";
+        var json = $$"""
+            {"dataset":"{{root}}","pages":[{"Invoices":[{
+              "InvoiceID":"{{sourceId:D}}","InvoiceNumber":"{{number}}","Type":"{{type}}",
+              "Date":"2026-10-17","DueDate":"2026-10-31","Status":"AUTHORISED",
+              "CurrencyCode":"NZD","CurrencyRate":1,"SubTotal":{{total / 1.15m}},
+              "TotalTax":{{total - total / 1.15m}},"Total":{{total}},"AmountDue":{{total}},
+              "Contact":{"ContactID":"{{contactId}}","Name":"{{contactName}}"},
+              "LineItems":[{"Description":"Imported line","Quantity":1,"UnitAmount":{{total / 1.15m}},
+                "LineAmount":{{total / 1.15m}},"TaxAmount":{{total - total / 1.15m}},
+                "AccountCode":"{{accountCode}}","TaxType":"OUTPUT2"}]
+            }]}]}
+            """;
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var retained = store.Stage(test.Organisation.Id, test.UserId, bytes);
+        var snapshot = new XeroApiSnapshot
+        {
+            OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+            DatasetKey = dataset, DisplayName = dataset, Endpoint = "Invoices",
+            RecordCount = 1, PageCount = 1, Size = bytes.Length, Sha256 = retained.Sha256,
+            ImmutableDocumentObjectId = retained.Id, RetrievedByUserId = test.UserId
+        };
+        test.Db.XeroApiSnapshots.Add(snapshot);
+        test.Db.XeroMigrationRecords.Add(new XeroMigrationRecord
+        {
+            OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+            XeroApiSnapshotId = snapshot.Id, DatasetKey = dataset, ExternalId = sourceId.ToString("D"),
+            DisplayName = number, SourceHash = new string('b', 64),
+            Status = XeroMigrationRecordStatus.Ready, PreparedByUserId = test.UserId
+        });
+    }
+
+    private static void AddMapping(
+        AccountingTestDatabase test, XeroMigration migration, XeroMigrationMappingKind kind,
+        string sourceKey, Guid targetId, string targetType, string targetName) =>
+        test.Db.XeroMigrationMappings.Add(new XeroMigrationMapping
+        {
+            OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+            Kind = kind, SourceKey = sourceKey, SourceName = sourceKey,
+            TargetEntityType = targetType, TargetEntityId = targetId,
+            TargetDisplayName = targetName, Status = XeroMigrationMappingStatus.Confirmed,
+            UpdatedByUserId = test.UserId
+        });
+
+    private static byte[] BuildAttachmentPackage(
+        params (Guid RecordId, Guid AttachmentId, string FileName, string MimeType, byte[] Content)[] files)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, true))
+        {
+            var manifest = files.Select(x => new
+            {
+                RecordType = "Invoice", x.RecordId, x.AttachmentId, x.FileName, x.MimeType,
+                Size = x.Content.LongLength,
+                Sha256 = Convert.ToHexString(SHA256.HashData(x.Content))
+            }).ToArray();
+            var manifestEntry = archive.CreateEntry("manifest.json");
+            using (var stream = manifestEntry.Open())
+                stream.Write(JsonSerializer.SerializeToUtf8Bytes(manifest));
+            foreach (var file in files)
+            {
+                var entry = archive.CreateEntry(
+                    $"records/Invoice/{file.RecordId:D}/{file.AttachmentId:D}-{file.FileName}");
+                using var stream = entry.Open();
+                stream.Write(file.Content);
+            }
+        }
+        return output.ToArray();
     }
 }
