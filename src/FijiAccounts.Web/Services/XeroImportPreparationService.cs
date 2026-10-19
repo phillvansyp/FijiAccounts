@@ -381,6 +381,7 @@ public sealed class XeroImportPreparationService(
         var contacts = await db.BusinessParties.Where(x => x.OrganisationId == organisationId).ToListAsync(ct);
         var items = await db.ProductItems.Where(x => x.OrganisationId == organisationId).ToListAsync(ct);
         var currencies = await db.OrganisationCurrencies.Where(x => x.OrganisationId == organisationId).ToListAsync(ct);
+        var assetAccounts = await LoadAssetTypeAccountsAsync(organisationId, migrationId, ct);
         foreach (var mapping in mappings)
         {
             (Guid? id, string? name, string? type) match = mapping.Kind switch
@@ -390,6 +391,7 @@ public sealed class XeroImportPreparationService(
                 XeroMigrationMappingKind.Item => Match(items, x => x.Id, x => x.Code, x => x.Name, mapping),
                 XeroMigrationMappingKind.Currency => Match(currencies, x => x.Id, x => x.Code, x => x.Name, mapping),
                 XeroMigrationMappingKind.TaxRate => TaxMatch(mapping),
+                XeroMigrationMappingKind.AssetType => AssetTypeMatch(mapping, assetAccounts, accounts),
                 _ => (null, null, null)
             };
             if (match.id is not null || match.name is not null)
@@ -403,6 +405,52 @@ public sealed class XeroImportPreparationService(
             }
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    private async Task<IReadOnlyDictionary<string, XeroAssetAccountReference>> LoadAssetTypeAccountsAsync(
+        Guid organisationId, Guid migrationId, CancellationToken ct)
+    {
+        var latest = (await db.XeroApiSnapshots.AsNoTracking()
+                .Where(x => x.OrganisationId == organisationId && x.XeroMigrationId == migrationId &&
+                            (x.DatasetKey == "accounts" || x.DatasetKey == "asset-types"))
+                .ToListAsync(ct))
+            .GroupBy(x => x.DatasetKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                x => x.Key,
+                x => x.OrderByDescending(snapshot => snapshot.RetrievedAt).First(),
+                StringComparer.OrdinalIgnoreCase);
+        if (!latest.TryGetValue("accounts", out var accountsSnapshot) ||
+            !latest.TryGetValue("asset-types", out var assetTypesSnapshot))
+            return new Dictionary<string, XeroAssetAccountReference>(StringComparer.OrdinalIgnoreCase);
+
+        var accountsById = new Dictionary<string, XeroAssetAccountReference>(StringComparer.OrdinalIgnoreCase);
+        var accountBytes = await storage.ReadVerifiedAsync(organisationId, accountsSnapshot.ImmutableDocumentObjectId, ct);
+        using (var document = JsonDocument.Parse(accountBytes))
+        {
+            foreach (var source in EnumerateRecords(document.RootElement, accountsSnapshot.DatasetKey))
+            {
+                var accountId = Text(source, "AccountID", "AccountId");
+                if (string.IsNullOrWhiteSpace(accountId)) continue;
+                accountsById[accountId] = new XeroAssetAccountReference(
+                    Text(source, "Code"), Text(source, "Name", "AccountID"));
+            }
+        }
+
+        var result = new Dictionary<string, XeroAssetAccountReference>(StringComparer.OrdinalIgnoreCase);
+        var assetTypeBytes = await storage.ReadVerifiedAsync(organisationId, assetTypesSnapshot.ImmutableDocumentObjectId, ct);
+        using (var document = JsonDocument.Parse(assetTypeBytes))
+        {
+            foreach (var source in EnumerateRecords(document.RootElement, assetTypesSnapshot.DatasetKey))
+            {
+                var assetTypeId = Text(source, "AssetTypeID", "AssetTypeId");
+                var accountId = Text(source, "FixedAssetAccountID", "FixedAssetAccountId");
+                if (string.IsNullOrWhiteSpace(assetTypeId) || string.IsNullOrWhiteSpace(accountId) ||
+                    !accountsById.TryGetValue(accountId, out var account)) continue;
+                result[assetTypeId] = account;
+            }
+        }
+
+        return result;
     }
 
     private async Task RebuildIssuesAsync(string userId, Guid organisationId, Guid migrationId, CancellationToken ct)
@@ -547,7 +595,7 @@ public sealed class XeroImportPreparationService(
                 Join(source, "Code", "Name"), nameof(ProductItem));
         if (dataset.Equals("asset-types", StringComparison.OrdinalIgnoreCase))
             Add(XeroMigrationMappingKind.AssetType, Text(source, "AssetTypeID", "AssetTypeName"),
-                Text(source, "AssetTypeName", "AssetTypeID"), nameof(FixedAsset));
+                Text(source, "AssetTypeName", "AssetTypeID"), nameof(LedgerAccount));
         if (dataset.Equals("tracking", StringComparison.OrdinalIgnoreCase))
         {
             var categoryId = Text(source, "TrackingCategoryID", "Name");
@@ -771,6 +819,29 @@ public sealed class XeroImportPreparationService(
             : text.Contains("NONE") || text.Contains("EXCLUDED") || text.Contains("OUT OF SCOPE") ? nameof(VatTreatment.OutOfScope)
             : null;
         return (null, target, nameof(VatTreatment));
+    }
+
+    private static (Guid?, string?, string?) AssetTypeMatch(
+        XeroMigrationMapping mapping,
+        IReadOnlyDictionary<string, XeroAssetAccountReference> assetAccounts,
+        IEnumerable<LedgerAccount> accounts)
+    {
+        if (!assetAccounts.TryGetValue(mapping.SourceKey, out var sourceAccount))
+            return (null, null, null);
+
+        mapping.Notes = $"Xero assigned this asset type to {sourceAccount.DisplayName}.";
+        var match = accounts.FirstOrDefault(x =>
+            (!string.IsNullOrWhiteSpace(sourceAccount.Code) &&
+             x.Code.Equals(sourceAccount.Code, StringComparison.OrdinalIgnoreCase)) ||
+            x.Name.Equals(sourceAccount.Name, StringComparison.OrdinalIgnoreCase));
+        return match is null
+            ? (null, null, null)
+            : (match.Id, $"{match.Code} · {match.Name}", nameof(LedgerAccount));
+    }
+
+    private sealed record XeroAssetAccountReference(string Code, string Name)
+    {
+        public string DisplayName => string.IsNullOrWhiteSpace(Code) ? Name : $"{Code} · {Name}";
     }
 
     private static XeroMigrationIssue Issue(Guid organisationId, Guid migrationId, string code,

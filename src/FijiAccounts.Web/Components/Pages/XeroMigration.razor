@@ -161,6 +161,14 @@ else
                                 <div>
                                     <small>@MappingKindLabel(currentMapping.Kind)</small>
                                     <strong>@currentMapping.SourceName</strong>
+                                    @if (!string.IsNullOrWhiteSpace(currentMapping.Notes))
+                                    {
+                                        <p><strong>Found in Xero:</strong> @currentMapping.Notes</p>
+                                    }
+                                    else
+                                    {
+                                        <p><strong>Xero source:</strong> @currentMapping.SourceKey</p>
+                                    }
                                     <p>Choose its Account Island destination. Confirm one decision at a time; the next item will appear automatically.</p>
                                 </div>
                                 <select class="form-select" value="@MappingSelection(currentMapping.Id)" @onchange="args => mappingSelections[currentMapping.Id] = args.Value?.ToString() ?? string.Empty" disabled="@preparingImport">

@@ -197,6 +197,38 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task AssetTypesUseTheirXeroFixedAssetAccountsForAutomaticMapping()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[
+              {"AccountID":"land-account","Code":"730","Name":"Land (cost)","Type":"FIXED","Status":"ACTIVE"},
+              {"AccountID":"plant-account","Code":"742","Name":"Plant and equipment (cost)","Type":"FIXED","Status":"ACTIVE"}
+            ]}
+            """);
+        await AddSnapshotAsync(test, "asset-types", "AssetTypes", """
+            {"AssetTypes":[
+              {"AssetTypeID":"land-type","AssetTypeName":"Land","FixedAssetAccountID":"land-account"},
+              {"AssetTypeID":"plant-type","AssetTypeName":"Plant","FixedAssetAccountID":"plant-account"}
+            ]}
+            """);
+
+        await service.PrepareAsync(test.UserId, test.Organisation.Id);
+        await service.ImportMasterDataAsync(test.UserId, test.Organisation.Id);
+
+        var mappings = await test.Db.XeroMigrationMappings
+            .Where(x => x.Kind == XeroMigrationMappingKind.AssetType)
+            .OrderBy(x => x.SourceName)
+            .ToListAsync();
+        Assert.Equal(2, mappings.Count);
+        Assert.All(mappings, mapping => Assert.Equal(XeroMigrationMappingStatus.Confirmed, mapping.Status));
+        Assert.Equal("730 · Land (cost)", mappings[0].TargetDisplayName);
+        Assert.Equal("Xero assigned this asset type to 730 · Land (cost).", mappings[0].Notes);
+        Assert.Equal("742 · Plant and equipment (cost)", mappings[1].TargetDisplayName);
+    }
+
+    [Fact]
     public async Task FinancialRecordsShowTheCutoverPlanWithoutBlockingApproval()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
