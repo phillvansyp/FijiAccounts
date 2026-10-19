@@ -10,7 +10,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Xero sync · Account Island</PageTitle>
+<PageTitle>@(IsConnected ? "Xero sync" : "Set up Xero") · Account Island</PageTitle>
 
 @if (loading)
 {
@@ -24,9 +24,11 @@ else
 {
     <div class="page-heading">
         <div>
-            <p class="eyebrow">Accounting · connected app</p>
-            <h1>Xero read-only sync</h1>
-            <p>Xero remains the accounting source of truth. Account Island receives updates and cannot change Xero.</p>
+            <p class="eyebrow">Accounting · @(IsConnected ? "connected app" : "setup")</p>
+            <h1>@(IsConnected ? "Xero read-only sync" : "Set up Xero")</h1>
+            <p>@(IsConnected
+                ? "Xero remains the accounting source of truth. Account Island receives updates and cannot change Xero."
+                : "Connect the correct Xero organisation to begin again with read-only access.")</p>
         </div>
         <div class="heading-actions">
             @if (status?.Connection.IsConnected == true)
@@ -159,6 +161,7 @@ else
     private string messageClass = "alert-success";
     private bool loading = true;
     private bool busy;
+    private bool IsConnected => status?.Connection.IsConnected == true;
 
     protected override async Task OnParametersSetAsync()
     {
