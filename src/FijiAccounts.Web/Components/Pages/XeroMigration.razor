@@ -189,14 +189,11 @@ else
                                     {
                                         <p><strong>Found in Xero:</strong> @currentMapping.Notes</p>
                                     }
-                                    else
-                                    {
-                                        <p><strong>Xero source:</strong> @currentMapping.SourceKey</p>
-                                    }
-                                    <p>Choose its Account Island destination. Confirm one decision at a time; the next item will appear automatically.</p>
+                                    <p>@MappingGuidance(currentMapping)</p>
+                                    <details class="source-reference"><summary>Technical Xero reference</summary><code>@currentMapping.SourceKey</code></details>
                                 </div>
                                 <select class="form-select" value="@MappingSelection(currentMapping.Id)" @onchange="args => mappingSelections[currentMapping.Id] = args.Value?.ToString() ?? string.Empty" disabled="@preparingImport">
-                                    <option value="">Choose a destination</option>
+                                    <option value="">@MappingPrompt(currentMapping.Kind)</option>
                                     @foreach (var target in Targets(currentMapping.Kind))
                                     {
                                         <option value="@target.Value">@target.Label</option>
@@ -1154,10 +1151,26 @@ else
     private static string MappingKindLabel(XeroMigrationMappingKind kind) => kind switch
     {
         XeroMigrationMappingKind.TaxRate => "GST rate",
-        XeroMigrationMappingKind.TrackingCategory => "Tracking category",
-        XeroMigrationMappingKind.TrackingOption => "Tracking option",
+        XeroMigrationMappingKind.TrackingCategory => "Xero tracking category",
+        XeroMigrationMappingKind.TrackingOption => "Xero tracking value",
         XeroMigrationMappingKind.AssetType => "Fixed asset account",
         _ => kind.ToString()
+    };
+
+    private static string MappingPrompt(XeroMigrationMappingKind kind) => kind switch
+    {
+        XeroMigrationMappingKind.TrackingCategory => "Choose branches or divisions",
+        XeroMigrationMappingKind.TrackingOption => "Choose the matching branch or division",
+        _ => "Choose an Account Island destination"
+    };
+
+    private static string MappingGuidance(XeroMigrationMapping mapping) => mapping.Kind switch
+    {
+        XeroMigrationMappingKind.TrackingCategory =>
+            $"Tell Account Island how Xero's “{mapping.SourceName}” category is organised. Choose branches when its values are offices or locations; choose divisions when its values are departments or business units.",
+        XeroMigrationMappingKind.TrackingOption =>
+            $"Choose the Account Island branch or division that represents “{mapping.SourceName}”. Transactions carrying this Xero value will use that destination.",
+        _ => "Choose the matching Account Island destination. Confirm one decision at a time; the next item will appear automatically."
     };
 
     private async Task SaveMapping(XeroMigrationMapping mapping)
@@ -1168,7 +1181,8 @@ else
         preparingImport = true; message = null;
         try
         {
-            await ImportPreparation.ConfirmMappingAsync(userId, OrganisationId, mapping.Id, target.Id, target.Label, false);
+            await ImportPreparation.ConfirmMappingAsync(
+                userId, OrganisationId, mapping.Id, target.Id, target.Label, target.EntityType, false);
             await ReloadWorkspace();
             message = $"Mapping saved for {mapping.SourceName}."; messageClass = "alert-success";
         }
@@ -1184,7 +1198,7 @@ else
         preparingImport = true; message = null;
         try
         {
-            await ImportPreparation.ConfirmMappingAsync(userId, OrganisationId, mapping.Id, null, null, true);
+            await ImportPreparation.ConfirmMappingAsync(userId, OrganisationId, mapping.Id, null, null, null, true);
             await ReloadWorkspace();
             message = $"{mapping.SourceName} will be excluded and remains listed as a warning.";
             messageClass = "alert-warning";

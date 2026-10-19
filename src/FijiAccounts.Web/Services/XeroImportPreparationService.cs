@@ -323,7 +323,8 @@ public sealed class XeroImportPreparationService(
 
     public async Task ConfirmMappingAsync(
         string userId, Guid organisationId, Guid mappingId, Guid? targetId,
-        string? targetDisplayName, bool ignored, CancellationToken cancellationToken = default)
+        string? targetDisplayName, string? targetEntityType, bool ignored,
+        CancellationToken cancellationToken = default)
     {
         await DemandPrepareAsync(userId, organisationId);
         var mapping = await db.XeroMigrationMappings.SingleOrDefaultAsync(
@@ -331,6 +332,8 @@ public sealed class XeroImportPreparationService(
             ?? throw new InvalidOperationException("The migration mapping was not found.");
         mapping.TargetEntityId = targetId;
         mapping.TargetDisplayName = string.IsNullOrWhiteSpace(targetDisplayName) ? null : targetDisplayName.Trim();
+        if (!ignored && !string.IsNullOrWhiteSpace(targetEntityType))
+            mapping.TargetEntityType = targetEntityType.Trim();
         mapping.Status = ignored ? XeroMigrationMappingStatus.Ignored : XeroMigrationMappingStatus.Confirmed;
         mapping.UpdatedAt = DateTimeOffset.UtcNow;
         mapping.UpdatedByUserId = userId;
@@ -366,7 +369,12 @@ public sealed class XeroImportPreparationService(
                 await db.OrganisationCurrencies.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.IsActive)
                     .OrderBy(x => x.Code).Select(x => new XeroMappingTarget(x.Id, x.Id.ToString(), x.Code + " · " + x.Name, nameof(OrganisationCurrency)))
                     .ToListAsync(cancellationToken),
-            XeroMigrationMappingKind.TrackingCategory or XeroMigrationMappingKind.TrackingOption =>
+            XeroMigrationMappingKind.TrackingCategory =>
+            [
+                new XeroMappingTarget(null, nameof(Branch), "Use Account Island branches", nameof(Branch)),
+                new XeroMappingTarget(null, nameof(Division), "Use Account Island divisions", nameof(Division))
+            ],
+            XeroMigrationMappingKind.TrackingOption =>
                 (await db.Branches.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.IsActive)
                     .OrderBy(x => x.Code).Select(x => new XeroMappingTarget(x.Id, x.Id.ToString(), "Branch · " + x.Code + " · " + x.Name, nameof(Branch)))
                     .ToListAsync(cancellationToken))

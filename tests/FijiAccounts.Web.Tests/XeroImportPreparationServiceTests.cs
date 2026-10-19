@@ -8,6 +8,44 @@ namespace FijiAccounts.Web.Tests;
 public sealed class XeroImportPreparationServiceTests
 {
     [Fact]
+    public async Task TrackingCategoryChoosesAnAccountIslandDimensionInsteadOfOneBranch()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        var migration = await test.Db.XeroMigrations.SingleAsync();
+        var mapping = new XeroMigrationMapping
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroMigrationId = migration.Id,
+            Kind = XeroMigrationMappingKind.TrackingCategory,
+            SourceKey = "xero-category-id",
+            SourceName = "Branch",
+            TargetEntityType = "Branch or division",
+            Status = XeroMigrationMappingStatus.Suggested,
+            UpdatedByUserId = test.UserId
+        };
+        test.Db.XeroMigrationMappings.Add(mapping);
+        await test.Db.SaveChangesAsync();
+
+        var targets = await service.GetMappingTargetsAsync(
+            test.UserId, test.Organisation.Id, XeroMigrationMappingKind.TrackingCategory);
+
+        Assert.Collection(targets,
+            branch => Assert.Equal("Use Account Island branches", branch.Label),
+            division => Assert.Equal("Use Account Island divisions", division.Label));
+        Assert.All(targets, target => Assert.Null(target.Id));
+
+        var branchTarget = targets[0];
+        await service.ConfirmMappingAsync(test.UserId, test.Organisation.Id, mapping.Id,
+            branchTarget.Id, branchTarget.Label, branchTarget.EntityType, false);
+
+        var saved = await test.Db.XeroMigrationMappings.SingleAsync(x => x.Id == mapping.Id);
+        Assert.Equal(XeroMigrationMappingStatus.Confirmed, saved.Status);
+        Assert.Equal(nameof(Branch), saved.TargetEntityType);
+        Assert.Null(saved.TargetEntityId);
+    }
+
+    [Fact]
     public async Task PreparationIndexesLatestSnapshotsAndDoesNotDuplicateSourceRecords()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
