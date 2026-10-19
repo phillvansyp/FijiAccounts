@@ -79,7 +79,7 @@ public sealed class OrganisationReplacementService(ApplicationDbContext db)
 
         var members = await db.OrganisationMemberships.AsNoTracking()
             .Where(x => x.OrganisationId == target.Id)
-            .OrderBy(x => x.CreatedAt)
+            .OrderBy(x => x.UserId)
             .Select(x => new MemberSnapshot(x.UserId, x.Role))
             .ToListAsync(ct);
         var primaryOwner = members.FirstOrDefault(x => x.Role == OrganisationRole.Owner)
