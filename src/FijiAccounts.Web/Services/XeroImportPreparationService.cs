@@ -132,13 +132,17 @@ public sealed class XeroImportPreparationService(
         var existingRecords = await db.XeroMigrationRecords
             .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
         var recordsByKey = existingRecords.ToDictionary(
-            x => RecordKey(x.DatasetKey, x.ExternalId), StringComparer.OrdinalIgnoreCase);
+            x => RecordKey(x.DatasetKey, x.ExternalId), StringComparer.Ordinal);
         var existingMappings = await db.XeroMigrationMappings
             .Where(x => x.XeroMigrationId == migration.Id).ToListAsync(cancellationToken);
         var mappingsByKey = existingMappings.ToDictionary(
-            x => MappingKey(x.Kind, x.SourceKey), StringComparer.OrdinalIgnoreCase);
+            x => MappingKey(x.Kind, x.SourceKey), StringComparer.Ordinal);
 
-        var currentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Match the database's ordinal unique indexes. Xero identifiers that
+        // differ only by case are separate source values in SQLite; using a
+        // case-insensitive dictionary here made an otherwise valid retained
+        // history crash preparation before it could be reviewed.
+        var currentKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var snapshot in latest)
         {
             var bytes = await storage.ReadVerifiedAsync(organisationId, snapshot.ImmutableDocumentObjectId, cancellationToken);

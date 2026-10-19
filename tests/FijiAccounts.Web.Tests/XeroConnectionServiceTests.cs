@@ -72,6 +72,7 @@ public sealed class XeroConnectionServiceTests
         Assert.False(migration.TrialBalanceReconciled);
         Assert.True(await test.Db.AuditEvents.AnyAsync(x => x.EventType == "XeroConnected"));
         Assert.True(await test.Db.AuditEvents.AnyAsync(x => x.EventType == "XeroApiSnapshotImported"));
+        Assert.Null((await test.Db.XeroConnections.SingleAsync()).SyncLeaseUntil);
     }
 
     [Fact]
@@ -188,7 +189,9 @@ public sealed class XeroConnectionServiceTests
         var failure = Assert.Single(result.Failures, x => x.Dataset == "Budgets");
         Assert.Contains("timed out", failure.Reason, StringComparison.OrdinalIgnoreCase);
         Assert.True(await test.Db.XeroApiSnapshots.AnyAsync());
-        Assert.Contains("Budgets", (await test.Db.XeroConnections.SingleAsync()).LastSyncError);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.Contains("Budgets", connection.LastSyncError);
+        Assert.Null(connection.SyncLeaseUntil);
         var preparation = new XeroImportPreparationService(
             test.Db, test.Access, new DatabaseImmutableDocumentStore(test.Db));
         var assistant = await new XeroMigrationAssistantService(test.Db, test.Access, preparation)

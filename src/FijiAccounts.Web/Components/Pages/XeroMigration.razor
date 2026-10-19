@@ -13,6 +13,7 @@
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<XeroMigration> Logger
 
 <PageTitle>Xero migration · Account Island</PageTitle>
 
@@ -888,12 +889,17 @@ else
     {
         if (!CanRunSafeAutomation) return;
         runningAutomation = true; syncing = true; preparingImport = true; message = null;
+        var stage = "copying data from Xero";
         try
         {
             var copied = await XeroConnection.SyncAsync(userId, OrganisationId);
+            stage = "checking the copied Xero data";
             await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            stage = "adding safe master records";
             var imported = await ImportPreparation.ImportMasterDataAsync(userId, OrganisationId);
+            stage = "performing the final preparation check";
             var prepared = await ImportPreparation.PrepareAsync(userId, OrganisationId);
+            stage = "refreshing the migration screen";
             migration = await MigrationService.GetAsync(userId, OrganisationId);
             connectionStatus = await XeroConnection.GetStatusAsync(userId, OrganisationId);
             ApplyMigration();
@@ -911,6 +917,16 @@ else
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or UnauthorizedAccessException or XeroApiException)
         {
             message = ex.Message; messageClass = "alert-danger";
+        }
+        catch (Exception ex)
+        {
+            var reference = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
+            Logger.LogError(ex,
+                "Xero migration automation failed while {Stage} for organisation {OrganisationId}. Reference {Reference}.",
+                stage, OrganisationId, reference);
+            message = $"Account Island could not finish while {stage}. Completed Xero datasets remain saved. " +
+                      $"Try again after a minute. If it repeats, quote reference {reference}.";
+            messageClass = "alert-danger";
         }
         finally
         {

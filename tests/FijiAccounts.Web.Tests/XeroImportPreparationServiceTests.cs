@@ -65,6 +65,55 @@ public sealed class XeroImportPreparationServiceTests
     }
 
     [Fact]
+    public async Task PreparationHandlesPreviouslyRetainedIdentifiersThatDifferOnlyByCase()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = await SetupAsync(test);
+        await AddSnapshotAsync(test, "accounts", "Accounts", """
+            {"Accounts":[{"AccountID":"acc-1","Code":"7100","Name":"Travel","Type":"EXPENSE","Status":"ACTIVE"}]}
+            """);
+        var migration = await test.Db.XeroMigrations.SingleAsync();
+        var snapshot = await test.Db.XeroApiSnapshots.SingleAsync();
+        test.Db.XeroMigrationRecords.AddRange(
+            new XeroMigrationRecord
+            {
+                OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+                XeroApiSnapshotId = snapshot.Id, DatasetKey = "accounts", ExternalId = "ACC-1",
+                DisplayName = "Older retained account", SourceHash = new string('A', 64),
+                Status = XeroMigrationRecordStatus.Ready, PreparedByUserId = test.UserId
+            },
+            new XeroMigrationRecord
+            {
+                OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+                XeroApiSnapshotId = snapshot.Id, DatasetKey = "accounts", ExternalId = "acc-1",
+                DisplayName = "Current account", SourceHash = new string('B', 64),
+                Status = XeroMigrationRecordStatus.Ready, PreparedByUserId = test.UserId
+            });
+        test.Db.XeroMigrationMappings.AddRange(
+            new XeroMigrationMapping
+            {
+                OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+                Kind = XeroMigrationMappingKind.Account, SourceKey = "DUP", SourceName = "Upper",
+                Status = XeroMigrationMappingStatus.Suggested, UpdatedByUserId = test.UserId
+            },
+            new XeroMigrationMapping
+            {
+                OrganisationId = test.Organisation.Id, XeroMigrationId = migration.Id,
+                Kind = XeroMigrationMappingKind.Account, SourceKey = "dup", SourceName = "Lower",
+                Status = XeroMigrationMappingStatus.Suggested, UpdatedByUserId = test.UserId
+            });
+        await test.Db.SaveChangesAsync();
+
+        var result = await service.PrepareAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Equal(2, result.SourceRecordCount);
+        Assert.Equal(XeroMigrationRecordStatus.Skipped,
+            (await test.Db.XeroMigrationRecords.SingleAsync(x => x.ExternalId == "ACC-1")).Status);
+        Assert.Equal(2, await test.Db.XeroMigrationMappings.CountAsync(x =>
+            x.SourceKey == "DUP" || x.SourceKey == "dup"));
+    }
+
+    [Fact]
     public async Task MasterImportCreatesUsableRecordsAndLinksSourceIdentity()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

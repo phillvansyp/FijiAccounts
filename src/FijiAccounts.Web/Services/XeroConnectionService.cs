@@ -262,6 +262,20 @@ public sealed class XeroConnectionService(
         {
             throw new InvalidOperationException("Choose which Xero organisation to import.");
         }
+        var leaseStartedAt = DateTimeOffset.UtcNow;
+        var previousLease = connection.SyncLeaseUntil;
+        if (previousLease > leaseStartedAt)
+            throw new InvalidOperationException("A Xero refresh is already running. Wait for it to finish, then try again.");
+        var leaseUntil = leaseStartedAt.AddMinutes(30);
+        var claimed = await db.XeroConnections
+            .Where(x => x.Id == connection.Id && x.SyncLeaseUntil == previousLease)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, leaseUntil), cancellationToken);
+        if (claimed == 0)
+            throw new InvalidOperationException("A Xero refresh is already running. Wait for it to finish, then try again.");
+        connection.SyncLeaseUntil = leaseUntil;
+
+        try
+        {
         var accessToken = await GetAccessTokenAsync(connection, userId, cancellationToken);
         var definitions = Datasets.AsEnumerable();
         if (options.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -406,6 +420,20 @@ public sealed class XeroConnectionService(
         }, nameof(XeroMigration)));
         await db.SaveChangesAsync(cancellationToken);
         return new(importedDatasets, importedRecords, reconciliationReset, failures);
+        }
+        finally
+        {
+            // The migration copy and the scheduled read-only mirror share this
+            // database lease. Always release it, including after an unexpected
+            // source shape or a cancelled browser operation.
+            await db.XeroConnections
+                .Where(x => x.Id == connection.Id && x.SyncLeaseUntil == leaseUntil)
+                .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, (DateTimeOffset?)null), CancellationToken.None);
+            var trackedLease = db.Entry(connection).Property(x => x.SyncLeaseUntil);
+            trackedLease.CurrentValue = null;
+            trackedLease.OriginalValue = null;
+            trackedLease.IsModified = false;
+        }
     }
 
     public async Task<XeroSnapshotDownload?> ReadSnapshotAsync(
