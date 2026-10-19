@@ -26,7 +26,7 @@ public sealed record ReplaceOrganisationResult(
 }
 
 /// <summary>
-/// Replaces one standalone company workspace with a clean workspace while retaining
+/// Replaces one company workspace with a clean standalone workspace while retaining
 /// its users and immutable company identity. The operation is deliberately guarded
 /// by both workspace IDs, legal names and jurisdictions so same-named companies in
 /// different countries cannot be confused.
@@ -66,15 +66,6 @@ public sealed class OrganisationReplacementService(ApplicationDbContext db)
         {
             throw new InvalidOperationException(
                 "The target and protected workspaces must be different companies in different countries.");
-        }
-
-        var oldGroupCompanyCount = target.OrganisationGroupId is Guid oldGroupId
-            ? await db.Organisations.CountAsync(x => x.OrganisationGroupId == oldGroupId, ct)
-            : 1;
-        if (oldGroupCompanyCount != 1)
-        {
-            throw new InvalidOperationException(
-                "The target workspace belongs to a multi-company group and cannot be replaced by this standalone-company operation.");
         }
 
         var members = await db.OrganisationMemberships.AsNoTracking()
