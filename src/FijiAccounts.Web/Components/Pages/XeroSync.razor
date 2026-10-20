@@ -288,7 +288,9 @@ else
         }
     }
 
-    private static string FormatDate(DateTimeOffset? value) => value?.ToLocalTime().ToString("d MMM yyyy, h:mm tt") ?? "Not yet";
+    private string FormatDate(DateTimeOffset? value) => value is null
+        ? "Not yet"
+        : OrganisationTime.Convert(value.Value, access!.Organisation).ToString("d MMM yyyy, h:mm tt");
 
     private static bool NeedsPermissionUpdate(string? error) =>
         !string.IsNullOrWhiteSpace(error) &&
