@@ -250,6 +250,43 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Active_sync_is_reported_without_turning_a_parallel_refresh_into_an_error()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new ReadOnlyXeroHandler(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        connection.SyncLeaseUntil = DateTimeOffset.UtcNow.AddMinutes(5);
+        connection.UpdatedByUserId = "system:xero-read-only-sync:active";
+        await test.Db.SaveChangesAsync();
+
+        var status = await sync.GetStatusAsync(test.UserId, test.Organisation.Id);
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.True(status.IsRunning);
+        Assert.True(result.AlreadyRunning);
+        Assert.True(result.FullReconciliation);
+        Assert.Empty(result.Failures);
+        Assert.Empty(await test.Db.XeroReadOnlySyncRuns.ToListAsync());
+    }
+
+    [Fact]
     public async Task Cancelled_run_releases_lease_and_records_failure()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

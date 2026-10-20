@@ -13,7 +13,8 @@ public sealed record XeroMirrorDatasetStatus(string Key, string Name, int Active
 public sealed record XeroReadOnlySyncStatus(
     XeroConnectionStatus Connection,
     IReadOnlyList<XeroMirrorDatasetStatus> Datasets,
-    IReadOnlyList<XeroReadOnlySyncRun> RecentRuns);
+    IReadOnlyList<XeroReadOnlySyncRun> RecentRuns,
+    bool IsRunning);
 
 public sealed record XeroReadOnlySyncResult(
     bool FullReconciliation,
@@ -21,7 +22,8 @@ public sealed record XeroReadOnlySyncResult(
     int RecordCount,
     int ChangedCount,
     int ArchivedCount,
-    IReadOnlyList<XeroSyncFailure> Failures);
+    IReadOnlyList<XeroSyncFailure> Failures,
+    bool AlreadyRunning = false);
 
 /// <summary>
 /// Maintains a one-way, read-only projection of Xero inside Account Island.
@@ -95,7 +97,11 @@ public sealed class XeroReadOnlySyncService(
             .OrderByDescending(x => x.StartedAt)
             .Take(10)
             .ToList();
-        return new(connection, datasets, recentRuns);
+        var syncLeaseUntil = await db.XeroConnections.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.IsActive)
+            .Select(x => x.SyncLeaseUntil)
+            .SingleOrDefaultAsync(cancellationToken);
+        return new(connection, datasets, recentRuns, syncLeaseUntil > DateTimeOffset.UtcNow);
     }
 
     public async Task SetEnabledAsync(
@@ -204,8 +210,10 @@ public sealed class XeroReadOnlySyncService(
                         (allowDisabled || x.ContinuousSyncEnabled))
             .Select(x => new { x.Id, x.SyncLeaseUntil })
             .SingleOrDefaultAsync(cancellationToken);
-        if (leaseCandidate is null || leaseCandidate.SyncLeaseUntil > now)
-            throw new InvalidOperationException("A Xero refresh is already running or the connection is not ready.");
+        if (leaseCandidate is null)
+            throw new InvalidOperationException("Connect Xero and select an organisation before refreshing.");
+        if (leaseCandidate.SyncLeaseUntil > now)
+            return AlreadyRunningResult(forceFullReconciliation);
 
         var leaseUntil = now.Add(SyncLeaseDuration);
         var claimed = await db.XeroConnections
@@ -213,7 +221,7 @@ public sealed class XeroReadOnlySyncService(
             .ExecuteUpdateAsync(update => update
                 .SetProperty(x => x.SyncLeaseUntil, leaseUntil)
                 .SetProperty(x => x.UpdatedByUserId, leaseOwner), cancellationToken);
-        if (claimed == 0) throw new InvalidOperationException("A Xero refresh is already running or the connection is not ready.");
+        if (claimed == 0) return AlreadyRunningResult(forceFullReconciliation);
 
         var connection = await db.XeroConnections.SingleAsync(
             x => x.OrganisationId == organisationId && x.IsActive, cancellationToken);
@@ -358,6 +366,9 @@ public sealed class XeroReadOnlySyncService(
         if (renewed == 0) throw new InvalidOperationException("This Xero refresh no longer owns the active sync lease.");
         connection.SyncLeaseUntil = leaseUntil;
     }
+
+    private static XeroReadOnlySyncResult AlreadyRunningResult(bool fullReconciliation) =>
+        new(fullReconciliation, 0, 0, 0, 0, [], true);
 
     private async Task<DatasetSyncResult> SyncDatasetAsync(
         XeroConnection connection,

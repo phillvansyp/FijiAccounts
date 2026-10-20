@@ -80,7 +80,7 @@ else
                     <dt class="col-sm-3">Last full check</dt><dd class="col-sm-9">@FormatDate(status.Connection.LastFullReconciliationAt)</dd>
                     <dt class="col-sm-3">Next scheduled check</dt><dd class="col-sm-9">@(status.Connection.ContinuousSyncEnabled ? FormatDate(status.Connection.NextSyncAt) : "Not scheduled")</dd>
                 </dl>
-                @if (status.Connection.NeedsPermissionUpdate || NeedsPermissionUpdate(status.Connection.LastSyncError))
+                @if (status.Connection.NeedsPermissionUpdate || NeedsPermissionUpdate(LatestReadOnlySyncError))
                 {
                     <div class="alert alert-warning">
                         <strong>Xero permissions need updating.</strong>
@@ -104,9 +104,9 @@ else
                         Account Island is copying the remaining read-only records in the background. This page can be reloaded safely to check progress.
                     </div>
                 }
-                else if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
+                else if (!string.IsNullOrWhiteSpace(LatestReadOnlySyncError))
                 {
-                    <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @status.Connection.LastSyncError</div>
+                    <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @LatestReadOnlySyncError</div>
                 }
                 <div class="d-flex gap-2 flex-wrap">
                     <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@SyncActionDisabled">@SyncButtonLabel</button>
@@ -180,8 +180,9 @@ else
     private bool RateLimitBackoffActive =>
         status?.Connection.NextSyncAt is { } nextSyncAt &&
         nextSyncAt > DateTimeOffset.UtcNow &&
-        IsRateLimit(status.Connection.LastSyncError);
-    private bool ServerSyncRunning => status?.RecentRuns.FirstOrDefault()?.Status == XeroReadOnlySyncRunStatus.Running;
+        IsRateLimit(LatestReadOnlySyncError);
+    private bool ServerSyncRunning => status?.IsRunning == true;
+    private string? LatestReadOnlySyncError => status?.RecentRuns.FirstOrDefault()?.ErrorSummary;
     private bool SyncActionDisabled => busy || RateLimitBackoffActive || ServerSyncRunning;
     private string SyncButtonLabel => busy
         ? "Refreshing…"
@@ -237,6 +238,12 @@ else
             return;
         }
         var result = await SyncService.RunNowAsync(userId, OrganisationId, full);
+        if (result.AlreadyRunning)
+        {
+            message = "A Xero import is already running. Account Island will keep it going in the background; reload this page to check progress.";
+            messageClass = "alert-info";
+            return;
+        }
         var rateLimited = result.Failures.Any(failure => IsRateLimit(failure.Reason));
         message = result.Failures.Count == 0
             ? $"Xero refresh completed: {result.RecordCount:N0} records checked and {result.ChangedCount:N0} updated."
