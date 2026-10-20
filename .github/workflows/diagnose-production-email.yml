@@ -1,4 +1,4 @@
-name: Diagnose production invoice email
+name: Diagnose production Xero sync
 
 on:
   workflow_dispatch:
@@ -8,20 +8,21 @@ permissions:
 
 jobs:
   diagnose:
-    name: Read redacted invoice email failure
+    name: Read redacted Xero sync failure
     runs-on: [self-hosted, Linux, X64, account-island]
     timeout-minutes: 5
     steps:
-      - name: Show latest Microsoft Graph email failure
+      - name: Show latest Xero sync failure
         shell: bash
         run: |
           set -euo pipefail
           output="$({ docker logs --since 30m account-island-app 2>&1 || true; } \
             | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[redacted-email]/g' \
-            | grep -E -A 10 -B 3 'Microsoft Graph email delivery failed|Invoice email delivery failed' \
-            | tail -n 100)"
+            | sed -E 's/(access_token|refresh_token|client_secret)([^[:space:]]*)/[redacted-secret]/Ig' \
+            | grep -E -A 35 -B 5 'Xero sync page action failed|Xero read-only|XeroApiException|refresh is already running|active sync lease' \
+            | tail -n 250)"
           if [ -z "$output" ]; then
-            echo "No recent invoice email failure was found." >&2
+            echo "No recent Xero sync failure was found." >&2
             exit 1
           fi
           printf '%s\n' "$output"
