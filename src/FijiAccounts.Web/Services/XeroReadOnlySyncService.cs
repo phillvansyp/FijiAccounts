@@ -261,6 +261,7 @@ public sealed class XeroReadOnlySyncService(
             var archivedCount = 0;
             var datasetCount = 0;
             TimeSpan? retryAfter = null;
+            var rateLimitWaitBudget = new InlineRateLimitWaitBudget(MaximumInlineRateLimitRetries);
 
             foreach (var definition in Datasets)
             {
@@ -273,6 +274,7 @@ public sealed class XeroReadOnlySyncService(
                         definition,
                         definition.SupportsModifiedSince ? modifiedSince : null,
                         full,
+                        rateLimitWaitBudget,
                         cancellationToken);
                     datasetCount++;
                     recordCount += result.Seen;
@@ -385,6 +387,7 @@ public sealed class XeroReadOnlySyncService(
         DatasetDefinition definition,
         DateTimeOffset? modifiedSince,
         bool fullReconciliation,
+        InlineRateLimitWaitBudget rateLimitWaitBudget,
         CancellationToken cancellationToken)
     {
         var existing = await db.XeroMirrorRecords
@@ -419,6 +422,7 @@ public sealed class XeroReadOnlySyncService(
                 accessToken,
                 endpoint,
                 modifiedSince,
+                rateLimitWaitBudget,
                 cancellationToken);
             using var document = JsonDocument.Parse(bytes);
             var records = Records(document.RootElement, definition.RootProperty).ToList();
@@ -502,9 +506,9 @@ public sealed class XeroReadOnlySyncService(
         string accessToken,
         string endpoint,
         DateTimeOffset? modifiedSince,
+        InlineRateLimitWaitBudget rateLimitWaitBudget,
         CancellationToken cancellationToken)
     {
-        var retries = 0;
         while (true)
         {
             try
@@ -517,15 +521,14 @@ public sealed class XeroReadOnlySyncService(
                     cancellationToken);
             }
             catch (XeroApiException exception) when (
-                retries < MaximumInlineRateLimitRetries &&
-                CanWaitInsideRun(exception, out var retryAfter))
+                CanWaitInsideRun(exception, out var retryAfter) &&
+                rateLimitWaitBudget.TryConsume())
             {
-                retries++;
                 logger.LogInformation(
                     "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before retry {RetryNumber} of {MaximumRetries} for endpoint {Endpoint}.",
                     connection.OrganisationId,
                     retryAfter,
-                    retries,
+                    rateLimitWaitBudget.Consumed,
                     MaximumInlineRateLimitRetries,
                     endpoint);
                 await WaitAndRenewLeaseAsync(connection, retryAfter, cancellationToken);
@@ -854,6 +857,18 @@ public sealed class XeroReadOnlySyncService(
         bool SupportsModifiedSince);
 
     private sealed record DatasetSyncResult(int Seen, int Changed, int Archived);
+
+    private sealed class InlineRateLimitWaitBudget(int maximumRetries)
+    {
+        public int Consumed { get; private set; }
+
+        public bool TryConsume()
+        {
+            if (Consumed >= maximumRetries) return false;
+            Consumed++;
+            return true;
+        }
+    }
 }
 
 public sealed class XeroReadOnlySyncWorker(
