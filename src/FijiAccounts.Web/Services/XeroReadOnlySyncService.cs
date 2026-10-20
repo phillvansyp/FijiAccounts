@@ -43,6 +43,7 @@ public sealed class XeroReadOnlySyncService(
     private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumInlineRateLimitWait = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan LeaseRenewalWaitSlice = TimeSpan.FromMinutes(2);
+    private const int MaximumInlineRateLimitRetries = 1;
     private const int MaximumPages = 100;
     private const int ExpectedPageSize = 100;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -503,6 +504,7 @@ public sealed class XeroReadOnlySyncService(
         DateTimeOffset? modifiedSince,
         CancellationToken cancellationToken)
     {
+        var retries = 0;
         while (true)
         {
             try
@@ -514,12 +516,17 @@ public sealed class XeroReadOnlySyncService(
                     modifiedSince,
                     cancellationToken);
             }
-            catch (XeroApiException exception) when (CanWaitInsideRun(exception, out var retryAfter))
+            catch (XeroApiException exception) when (
+                retries < MaximumInlineRateLimitRetries &&
+                CanWaitInsideRun(exception, out var retryAfter))
             {
+                retries++;
                 logger.LogInformation(
-                    "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before continuing endpoint {Endpoint}.",
+                    "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before retry {RetryNumber} of {MaximumRetries} for endpoint {Endpoint}.",
                     connection.OrganisationId,
                     retryAfter,
+                    retries,
+                    MaximumInlineRateLimitRetries,
                     endpoint);
                 await WaitAndRenewLeaseAsync(connection, retryAfter, cancellationToken);
             }

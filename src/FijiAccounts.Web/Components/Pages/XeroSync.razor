@@ -80,7 +80,7 @@ else
                     <dt class="col-sm-3">Last full check</dt><dd class="col-sm-9">@FormatDate(status.Connection.LastFullReconciliationAt)</dd>
                     <dt class="col-sm-3">Next scheduled check</dt><dd class="col-sm-9">@(status.Connection.ContinuousSyncEnabled ? FormatDate(status.Connection.NextSyncAt) : "Not scheduled")</dd>
                 </dl>
-                @if (status.Connection.NeedsPermissionUpdate || NeedsPermissionUpdate(LatestReadOnlySyncError))
+                @if (status.Connection.NeedsPermissionUpdate || NeedsPermissionUpdate(CurrentSyncError))
                 {
                     <div class="alert alert-warning">
                         <strong>Xero permissions need updating.</strong>
@@ -104,9 +104,9 @@ else
                         Account Island is copying the remaining read-only records in the background. This page can be reloaded safely to check progress.
                     </div>
                 }
-                else if (!string.IsNullOrWhiteSpace(LatestReadOnlySyncError))
+                else if (!string.IsNullOrWhiteSpace(CurrentSyncError))
                 {
-                    <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @LatestReadOnlySyncError</div>
+                    <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @CurrentSyncError</div>
                 }
                 <div class="d-flex gap-2 flex-wrap">
                     <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@SyncActionDisabled">@SyncButtonLabel</button>
@@ -153,7 +153,14 @@ else
                         @foreach (var run in status.RecentRuns)
                         {
                             <tr>
-                                <td>@FormatDate(run.StartedAt)</td><td>@run.Trigger</td><td>@run.Status</td>
+                                <td>@FormatDate(run.StartedAt)</td><td>@run.Trigger</td>
+                                <td>
+                                    @run.Status
+                                    @if (!string.IsNullOrWhiteSpace(run.ErrorSummary))
+                                    {
+                                        <div class="small text-muted mt-1">@run.ErrorSummary</div>
+                                    }
+                                </td>
                                 <td class="text-end">@run.RecordCount.ToString("N0")</td><td class="text-end">@run.ChangedCount.ToString("N0")</td>
                             </tr>
                         }
@@ -180,9 +187,9 @@ else
     private bool RateLimitBackoffActive =>
         status?.Connection.NextSyncAt is { } nextSyncAt &&
         nextSyncAt > DateTimeOffset.UtcNow &&
-        IsRateLimit(LatestReadOnlySyncError);
+        IsRateLimit(CurrentSyncError);
     private bool ServerSyncRunning => status?.IsRunning == true;
-    private string? LatestReadOnlySyncError => status?.RecentRuns.FirstOrDefault()?.ErrorSummary;
+    private string? CurrentSyncError => status?.Connection.LastSyncError;
     private bool SyncActionDisabled => busy || RateLimitBackoffActive || ServerSyncRunning;
     private string SyncButtonLabel => busy
         ? "Refreshing…"

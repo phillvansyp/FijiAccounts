@@ -206,6 +206,51 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Repeated_short_rate_limit_stops_after_one_inline_retry()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new PersistentRateLimitedXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var delays = new List<TimeSpan>();
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance)
+        {
+            DelayAsync = (delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            }
+        };
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("Chart of accounts", failure.Dataset);
+        Assert.Equal(2, handler.AccountRequests);
+        Assert.Equal([TimeSpan.FromMinutes(2)], delays);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.NotNull(connection.NextSyncAt);
+        Assert.True(connection.NextSyncAt >= startedAt.AddSeconds(110));
+        Assert.Equal(XeroReadOnlySyncRunStatus.Partial,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
+    }
+
+    [Fact]
     public async Task New_run_closes_interrupted_running_history_before_resuming()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -567,6 +612,32 @@ public sealed class XeroReadOnlySyncServiceTests
                 _ => "Records"
             };
             return Json($$"""{"{{root}}":[]}""");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class PersistentRateLimitedXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        public int AccountRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read"}""");
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
+
+            AccountRequests++;
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(2));
+            response.Headers.TryAddWithoutValidation("X-Rate-Limit-Problem", "minute");
+            return Task.FromResult(response);
         }
 
         private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
