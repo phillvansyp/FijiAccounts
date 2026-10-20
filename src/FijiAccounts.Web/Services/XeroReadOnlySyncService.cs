@@ -37,11 +37,13 @@ public sealed class XeroReadOnlySyncService(
     ILogger<XeroReadOnlySyncService> logger)
 {
     private const string SystemActor = "system:xero-read-only-sync";
-    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(30);
+    private const string LeaseOwnerPrefix = "system:xero-read-only-sync:";
+    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(5);
     private const int MaximumPages = 100;
     private const int ExpectedPageSize = 100;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly XeroApiOptions options = configured.Value;
+    private readonly string leaseOwner = LeaseOwnerPrefix + Guid.NewGuid().ToString("N");
 
     private static readonly DatasetDefinition[] Datasets =
     [
@@ -141,6 +143,35 @@ public sealed class XeroReadOnlySyncService(
             .ToList();
     }
 
+    public async Task RecoverLegacyLeasesAsync(CancellationToken cancellationToken = default)
+    {
+        var interruptedAt = DateTimeOffset.UtcNow;
+        var connectionsWithLegacyLeases = await db.XeroConnections
+            .Where(x => x.SyncLeaseUntil != null && !x.UpdatedByUserId.StartsWith(LeaseOwnerPrefix))
+            .ToListAsync(cancellationToken);
+        if (connectionsWithLegacyLeases.Count == 0) return;
+
+        var organisationIds = connectionsWithLegacyLeases.Select(x => x.OrganisationId).ToHashSet();
+        var interruptedRuns = await db.XeroReadOnlySyncRuns
+            .Where(x => organisationIds.Contains(x.OrganisationId) && x.Status == XeroReadOnlySyncRunStatus.Running)
+            .ToListAsync(cancellationToken);
+        foreach (var run in interruptedRuns)
+        {
+            run.Status = XeroReadOnlySyncRunStatus.Failed;
+            run.ErrorSummary = "The previous Xero refresh was interrupted during an application restart. Account Island resumed it automatically.";
+            run.CompletedAt = interruptedAt;
+        }
+        foreach (var connection in connectionsWithLegacyLeases)
+        {
+            connection.SyncLeaseUntil = null;
+            connection.NextSyncAt = interruptedAt;
+            connection.LastSyncError = "The previous Xero refresh was interrupted during an application restart. Account Island is resuming it automatically.";
+            connection.UpdatedAt = interruptedAt;
+            connection.UpdatedByUserId = SystemActor;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<XeroReadOnlySyncResult> RunDueAsync(
         Guid organisationId,
         CancellationToken cancellationToken = default) =>
@@ -177,12 +208,14 @@ public sealed class XeroReadOnlySyncService(
         var claimed = await db.XeroConnections
             .Where(x => x.Id == leaseCandidate.Id && x.SyncLeaseUntil == leaseCandidate.SyncLeaseUntil)
             .ExecuteUpdateAsync(update => update
-                .SetProperty(x => x.SyncLeaseUntil, leaseUntil), cancellationToken);
+                .SetProperty(x => x.SyncLeaseUntil, leaseUntil)
+                .SetProperty(x => x.UpdatedByUserId, leaseOwner), cancellationToken);
         if (claimed == 0) throw new InvalidOperationException("A Xero refresh is already running or the connection is not ready.");
 
         var connection = await db.XeroConnections.SingleAsync(
             x => x.OrganisationId == organisationId && x.IsActive, cancellationToken);
         connection.SyncLeaseUntil = leaseUntil;
+        connection.UpdatedByUserId = leaseOwner;
         var interruptedRuns = await db.XeroReadOnlySyncRuns
             .Where(x => x.OrganisationId == organisationId && x.Status == XeroReadOnlySyncRunStatus.Running)
             .ToListAsync(cancellationToken);
@@ -248,6 +281,7 @@ public sealed class XeroReadOnlySyncService(
             }
 
             var completedAt = DateTimeOffset.UtcNow;
+            await RenewLeaseAsync(connection, cancellationToken);
             if (failures.Count == 0)
             {
                 connection.LastSyncedAt = completedAt;
@@ -315,9 +349,10 @@ public sealed class XeroReadOnlySyncService(
     private async Task RenewLeaseAsync(XeroConnection connection, CancellationToken cancellationToken)
     {
         var leaseUntil = DateTimeOffset.UtcNow.Add(SyncLeaseDuration);
-        await db.XeroConnections
-            .Where(x => x.Id == connection.Id)
+        var renewed = await db.XeroConnections
+            .Where(x => x.Id == connection.Id && x.UpdatedByUserId == leaseOwner)
             .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, leaseUntil), cancellationToken);
+        if (renewed == 0) throw new InvalidOperationException("This Xero refresh no longer owns the active sync lease.");
         connection.SyncLeaseUntil = leaseUntil;
     }
 
@@ -361,6 +396,7 @@ public sealed class XeroReadOnlySyncService(
             var records = Records(document.RootElement, definition.RootProperty).ToList();
             foreach (var source in records)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 count++;
                 var externalId = ExternalId(definition.Key, source, count);
                 seen.Add(externalId);
@@ -412,6 +448,8 @@ public sealed class XeroReadOnlySyncService(
                     projectedItems,
                     cancellationToken);
             }
+
+            await RenewLeaseAsync(connection, cancellationToken);
 
             if (!definition.Paged || records.Count < ExpectedPageSize) break;
             if (page == MaximumPages) throw new InvalidOperationException($"{definition.Name} exceeded the safe page limit.");
@@ -737,6 +775,16 @@ public sealed class XeroReadOnlySyncWorker(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<XeroReadOnlySyncService>()
+                .RecoverLegacyLeasesAsync(stoppingToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+        {
+            logger.LogError(ex, "Could not recover legacy Xero sync leases during worker startup.");
+        }
         while (!stoppingToken.IsCancellationRequested)
         {
             try
