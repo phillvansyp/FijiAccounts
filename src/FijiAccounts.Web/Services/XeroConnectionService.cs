@@ -502,6 +502,10 @@ public sealed class XeroConnectionService(
             connection.GrantedScopes = refreshed.Scope;
             connection.UpdatedAt = DateTimeOffset.UtcNow;
             connection.UpdatedByUserId = userId;
+            // Xero rotates refresh tokens. Persist the replacement before
+            // beginning any long-running copy so an application restart cannot
+            // leave the database holding the token Xero has just invalidated.
+            await db.SaveChangesAsync(cancellationToken);
             return refreshed.AccessToken;
         }
         catch (CryptographicException ex)

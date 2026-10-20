@@ -213,6 +213,41 @@ public sealed class XeroConnectionServiceTests
         Assert.Contains("timed out", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task RotatedRefreshTokenIsPersistedImmediately()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        var protector = protection.CreateProtector("AccountIsland.Xero.Token.v1");
+        var connection = new XeroConnection
+        {
+            OrganisationId = test.Organisation.Id,
+            ProtectedAccessToken = protector.Protect("expired-access"),
+            ProtectedRefreshToken = protector.Protect("old-refresh"),
+            AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            GrantedScopes = "offline_access accounting.settings.read",
+            ConnectedByUserId = test.UserId,
+            UpdatedByUserId = test.UserId
+        };
+        test.Db.XeroConnections.Add(connection);
+        await test.Db.SaveChangesAsync();
+        var options = Options.Create(new XeroApiOptions());
+        var service = new XeroConnectionService(
+            test.Db,
+            test.Access,
+            new XeroApiClient(new HttpClient(new RotatingTokenHandler()), options),
+            new DatabaseImmutableDocumentStore(test.Db),
+            protection,
+            options);
+
+        var accessToken = await service.GetAccessTokenAsync(connection, test.UserId, CancellationToken.None);
+        test.Db.ChangeTracker.Clear();
+        var stored = await test.Db.XeroConnections.SingleAsync();
+
+        Assert.Equal("new-access", accessToken);
+        Assert.Equal("new-refresh", protector.Unprotect(stored.ProtectedRefreshToken));
+    }
+
     private sealed class XeroHandler(Guid firstTenant, Guid secondTenant) : HttpMessageHandler
     {
         public List<string?> TenantHeaders { get; } = [];
@@ -333,6 +368,20 @@ public sealed class XeroConnectionServiceTests
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StalledContent()
+            });
+    }
+
+    private sealed class RotatingTokenHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":1800,"scope":"offline_access accounting.settings.read"}""",
+                    Encoding.UTF8,
+                    "application/json")
             });
     }
 
