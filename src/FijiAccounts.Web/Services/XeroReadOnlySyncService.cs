@@ -40,7 +40,12 @@ public sealed class XeroReadOnlySyncService(
 {
     private const string SystemActor = "system:xero-read-only-sync";
     private const string LeaseOwnerPrefix = "system:xero-read-only-sync:";
-    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(5);
+    // A full Xero page request can take two minutes and Xero can then require
+    // an inline wait of up to five minutes. Keep the ownership window longer
+    // than either operation so the scheduler cannot replace a healthy import
+    // while that import is waiting on Xero. Host startup recovery still clears
+    // this lease immediately after a real application restart.
+    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MaximumInlineRateLimitWait = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan LeaseRenewalWaitSlice = TimeSpan.FromMinutes(2);
     private const int MaximumInlineRateLimitRetries = 1;
