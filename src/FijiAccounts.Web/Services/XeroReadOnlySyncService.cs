@@ -694,23 +694,27 @@ public sealed class XeroReadOnlySyncService(
         if (links.TryGetValue(externalId, out var link))
             projectedAccounts.TryGetValue(link.TargetEntityId, out account);
         var sourceCode = Text(source, "Code").Trim();
-        if (account is null && sourceCode.Length > 0)
+        var localCode = sourceCode.Length > 0
+            ? Limit(sourceCode, 20)
+            : "XERO-" + Hash(externalId)[..10];
+        if (account is null)
             account = projectedAccounts.Values.FirstOrDefault(x =>
-                x.Code.Equals(sourceCode, StringComparison.OrdinalIgnoreCase));
-        if (account is null && sourceCode.Length > 0)
-            account = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == organisationId && x.Code == sourceCode, cancellationToken);
+                x.Code.Equals(localCode, StringComparison.OrdinalIgnoreCase));
+        if (account is null)
+            account = await db.LedgerAccounts.SingleOrDefaultAsync(
+                x => x.OrganisationId == organisationId && x.Code == localCode,
+                cancellationToken);
         var xeroType = Text(source, "Type").ToUpperInvariant();
         var archived = IsArchived(source);
         if (account is null)
         {
-            var code = sourceCode.Length > 0 ? sourceCode : "XERO-" + Hash(externalId)[..10];
-            account = new LedgerAccount { OrganisationId = organisationId, Code = Limit(code, 20), Name = Limit(name, 160) };
+            account = new LedgerAccount { OrganisationId = organisationId, Code = localCode, Name = Limit(name, 160) };
             db.LedgerAccounts.Add(account);
         }
         // Xero can return both an active and an archived account with the same
         // code. They are distinct source records but one local chart code. Keep
         // both mirror/link records while allowing the active source to win.
-        if (archived && sourceCode.Length > 0 && activeAccountCodes.Contains(sourceCode))
+        if (archived && activeAccountCodes.Contains(localCode))
             return account.Id;
         account.Name = Limit(name, 160);
         account.Type = AccountTypeFor(xeroType);
@@ -718,7 +722,7 @@ public sealed class XeroReadOnlySyncService(
         account.BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank;
         account.BankAccountNumber = NullIfBlank(Limit(Text(source, "BankAccountNumber"), 80));
         account.IsActive = !archived;
-        if (!archived && sourceCode.Length > 0) activeAccountCodes.Add(sourceCode);
+        if (!archived) activeAccountCodes.Add(localCode);
         projectedAccounts[account.Id] = account;
         return account.Id;
     }

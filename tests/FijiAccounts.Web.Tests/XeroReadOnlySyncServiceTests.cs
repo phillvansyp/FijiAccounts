@@ -94,7 +94,7 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
-    public async Task Duplicate_active_and_archived_Xero_account_codes_share_one_local_account()
+    public async Task Xero_account_codes_that_collide_after_local_limit_share_one_local_account()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var tenantId = Guid.NewGuid();
@@ -122,7 +122,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
 
         Assert.Empty(result.Failures);
-        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "6200");
+        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "12345678901234567890");
         Assert.True(account.IsActive);
         Assert.Equal("Office expenses", account.Name);
         Assert.Equal(2, await test.Db.XeroMirrorEntityLinks.CountAsync(x => x.DatasetKey == "accounts"));
@@ -670,7 +670,7 @@ public sealed class XeroReadOnlySyncServiceTests
             if (path.EndsWith("/Accounts", StringComparison.Ordinal))
             {
                 if (ReturnDuplicateAccountCode)
-                    return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"6200","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"},{"AccountID":"{{Guid.NewGuid()}}","Code":"6200","Name":"Old office expenses","Type":"EXPENSE","Status":"ARCHIVED"}]}""");
+                    return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"12345678901234567890-A","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"},{"AccountID":"{{Guid.NewGuid()}}","Code":"12345678901234567890-B","Name":"Old office expenses","Type":"EXPENSE","Status":"ARCHIVED"}]}""");
                 return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"6200","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"}]}""");
             }
             if (path.EndsWith("/Contacts", StringComparison.Ordinal))
