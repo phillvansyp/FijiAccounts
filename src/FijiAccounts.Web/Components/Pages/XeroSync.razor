@@ -97,6 +97,13 @@ else
                         Account Island will retry automatically after @FormatDate(status.Connection.NextSyncAt). Keep automatic sync on; reconnecting or refreshing will not shorten Xero's wait.
                     </div>
                 }
+                else if (ServerSyncRunning)
+                {
+                    <div class="alert alert-info">
+                        <strong>Xero import is running.</strong>
+                        Account Island is copying the remaining read-only records in the background. This page can be reloaded safely to check progress.
+                    </div>
+                }
                 else if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
                 {
                     <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @status.Connection.LastSyncError</div>
@@ -174,8 +181,15 @@ else
         status?.Connection.NextSyncAt is { } nextSyncAt &&
         nextSyncAt > DateTimeOffset.UtcNow &&
         IsRateLimit(status.Connection.LastSyncError);
-    private bool SyncActionDisabled => busy || RateLimitBackoffActive;
-    private string SyncButtonLabel => busy ? "Refreshing…" : RateLimitBackoffActive ? "Waiting for Xero…" : "Refresh now";
+    private bool ServerSyncRunning => status?.RecentRuns.FirstOrDefault()?.Status == XeroReadOnlySyncRunStatus.Running;
+    private bool SyncActionDisabled => busy || RateLimitBackoffActive || ServerSyncRunning;
+    private string SyncButtonLabel => busy
+        ? "Refreshing…"
+        : RateLimitBackoffActive
+            ? "Waiting for Xero…"
+            : ServerSyncRunning
+                ? "Importing from Xero…"
+                : "Refresh now";
 
     protected override async Task OnParametersSetAsync()
     {

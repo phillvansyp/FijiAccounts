@@ -37,6 +37,7 @@ public sealed class XeroReadOnlySyncService(
     ILogger<XeroReadOnlySyncService> logger)
 {
     private const string SystemActor = "system:xero-read-only-sync";
+    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(30);
     private const int MaximumPages = 100;
     private const int ExpectedPageSize = 100;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -172,7 +173,7 @@ public sealed class XeroReadOnlySyncService(
         if (leaseCandidate is null || leaseCandidate.SyncLeaseUntil > now)
             throw new InvalidOperationException("A Xero refresh is already running or the connection is not ready.");
 
-        var leaseUntil = now.AddMinutes(10);
+        var leaseUntil = now.Add(SyncLeaseDuration);
         var claimed = await db.XeroConnections
             .Where(x => x.Id == leaseCandidate.Id && x.SyncLeaseUntil == leaseCandidate.SyncLeaseUntil)
             .ExecuteUpdateAsync(update => update
@@ -182,6 +183,15 @@ public sealed class XeroReadOnlySyncService(
         var connection = await db.XeroConnections.SingleAsync(
             x => x.OrganisationId == organisationId && x.IsActive, cancellationToken);
         connection.SyncLeaseUntil = leaseUntil;
+        var interruptedRuns = await db.XeroReadOnlySyncRuns
+            .Where(x => x.OrganisationId == organisationId && x.Status == XeroReadOnlySyncRunStatus.Running)
+            .ToListAsync(cancellationToken);
+        foreach (var interruptedRun in interruptedRuns)
+        {
+            interruptedRun.Status = XeroReadOnlySyncRunStatus.Failed;
+            interruptedRun.ErrorSummary = "The previous Xero refresh was interrupted before it could finish. Account Island resumed it automatically.";
+            interruptedRun.CompletedAt = now;
+        }
         var full = forceFullReconciliation || connection.LastSyncedAt is null ||
                    connection.LastFullReconciliationAt is null ||
                    connection.LastFullReconciliationAt <= now.AddHours(-Math.Clamp(options.FullReconciliationHours, 1, 168));
@@ -211,6 +221,7 @@ public sealed class XeroReadOnlySyncService(
             {
                 try
                 {
+                    await RenewLeaseAsync(connection, cancellationToken);
                     var result = await SyncDatasetAsync(
                         connection,
                         accessToken,
@@ -284,9 +295,30 @@ public sealed class XeroReadOnlySyncService(
             run.Status = XeroReadOnlySyncRunStatus.Failed;
             run.ErrorSummary = connection.LastSyncError;
             run.CompletedAt = failedAt;
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                // A host shutdown cancels the worker token. Persist the final run
+                // state anyway so the next process does not inherit a phantom
+                // "Running" import and an expired lease.
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (Exception finalisationException)
+            {
+                logger.LogError(finalisationException,
+                    "Could not finalise failed Xero read-only sync run {RunId} for organisation {OrganisationId}.",
+                    run.Id, organisationId);
+            }
             throw;
         }
+    }
+
+    private async Task RenewLeaseAsync(XeroConnection connection, CancellationToken cancellationToken)
+    {
+        var leaseUntil = DateTimeOffset.UtcNow.Add(SyncLeaseDuration);
+        await db.XeroConnections
+            .Where(x => x.Id == connection.Id)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, leaseUntil), cancellationToken);
+        connection.SyncLeaseUntil = leaseUntil;
     }
 
     private async Task<DatasetSyncResult> SyncDatasetAsync(
@@ -310,6 +342,7 @@ public sealed class XeroReadOnlySyncService(
 
         for (var page = 1; page <= MaximumPages; page++)
         {
+            await RenewLeaseAsync(connection, cancellationToken);
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
             var bytes = await api.GetJsonAsync(accessToken, connection.XeroTenantId!.Value, endpoint, modifiedSince, cancellationToken);
             using var document = JsonDocument.Parse(bytes);

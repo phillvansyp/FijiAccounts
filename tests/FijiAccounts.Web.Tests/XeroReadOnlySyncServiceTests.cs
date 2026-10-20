@@ -161,6 +161,85 @@ public sealed class XeroReadOnlySyncServiceTests
         Assert.Contains("request limit", connection.LastSyncError, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task New_run_closes_interrupted_running_history_before_resuming()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new ReadOnlyXeroHandler(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        connection.SyncLeaseUntil = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var interrupted = new XeroReadOnlySyncRun
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroConnectionId = connection.Id,
+            Trigger = "scheduled",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-45)
+        };
+        test.Db.XeroReadOnlySyncRuns.Add(interrupted);
+        await test.Db.SaveChangesAsync();
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Empty(result.Failures);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Failed, interrupted.Status);
+        Assert.NotNull(interrupted.CompletedAt);
+        Assert.Contains("interrupted", interrupted.ErrorSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Completed,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync(x => x.Id != interrupted.Id)).Status);
+    }
+
+    [Fact]
+    public async Task Cancelled_run_releases_lease_and_records_failure()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        using var cancellation = new CancellationTokenSource();
+        var tenantId = Guid.NewGuid();
+        var handler = new CancellingXeroHandler(tenantId, cancellation);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            sync.RunNowAsync(test.UserId, test.Organisation.Id, true, cancellation.Token));
+
+        test.Db.ChangeTracker.Clear();
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        var run = await test.Db.XeroReadOnlySyncRuns.SingleAsync();
+        Assert.Null(connection.SyncLeaseUntil);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Failed, run.Status);
+        Assert.NotNull(run.CompletedAt);
+    }
+
     private sealed class ReadOnlyXeroHandler(Guid tenantId, Guid accountId, Guid contactId, Guid itemId) : HttpMessageHandler
     {
         public int Revision { get; set; } = 1;
@@ -237,6 +316,27 @@ public sealed class XeroReadOnlySyncServiceTests
             response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(2));
             response.Headers.TryAddWithoutValidation("X-Rate-Limit-Problem", "minute");
             return Task.FromResult(response);
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class CancellingXeroHandler(Guid tenantId, CancellationTokenSource cancellation) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read"}""");
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
+
+            cancellation.Cancel();
+            return Task.FromCanceled<HttpResponseMessage>(cancellationToken);
         }
 
         private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
