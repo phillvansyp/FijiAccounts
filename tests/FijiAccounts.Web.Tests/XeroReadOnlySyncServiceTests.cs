@@ -94,6 +94,44 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Duplicate_active_and_archived_Xero_account_codes_share_one_local_account()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new ReadOnlyXeroHandler(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+        {
+            ReturnDuplicateAccountCode = true
+        };
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Empty(result.Failures);
+        var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "6200");
+        Assert.True(account.IsActive);
+        Assert.Equal("Office expenses", account.Name);
+        Assert.Equal(2, await test.Db.XeroMirrorEntityLinks.CountAsync(x => x.DatasetKey == "accounts"));
+        Assert.All(
+            await test.Db.XeroMirrorEntityLinks.Where(x => x.DatasetKey == "accounts").ToListAsync(),
+            link => Assert.Equal(account.Id, link.TargetEntityId));
+    }
+
+    [Fact]
     public async Task Full_reconciliation_archives_records_removed_from_Xero()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -612,6 +650,7 @@ public sealed class XeroReadOnlySyncServiceTests
     {
         public int Revision { get; set; } = 1;
         public bool ReturnNoRecords { get; set; }
+        public bool ReturnDuplicateAccountCode { get; set; }
         public List<(string Method, string Url)> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -629,7 +668,11 @@ public sealed class XeroReadOnlySyncServiceTests
             if (ReturnNoRecords) return EmptyFor(request.RequestUri.AbsolutePath);
             var path = request.RequestUri.AbsolutePath;
             if (path.EndsWith("/Accounts", StringComparison.Ordinal))
+            {
+                if (ReturnDuplicateAccountCode)
+                    return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"6200","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"},{"AccountID":"{{Guid.NewGuid()}}","Code":"6200","Name":"Old office expenses","Type":"EXPENSE","Status":"ARCHIVED"}]}""");
                 return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"6200","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"}]}""");
+            }
             if (path.EndsWith("/Contacts", StringComparison.Ordinal))
                 return Json($$"""{"Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer","EmailAddress":"{{(Revision == 1 ? "first" : "second")}}@example.test","IsCustomer":true,"ContactStatus":"ACTIVE","UpdatedDateUTC":"2026-10-19T00:0{{Revision}}:00Z"}]}""");
             if (path.EndsWith("/Items", StringComparison.Ordinal))

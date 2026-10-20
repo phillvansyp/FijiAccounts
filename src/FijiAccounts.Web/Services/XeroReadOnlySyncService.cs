@@ -384,24 +384,35 @@ public sealed class XeroReadOnlySyncService(
         catch (Exception ex)
         {
             var failedAt = DateTimeOffset.UtcNow;
-            connection.SyncLeaseUntil = null;
-            connection.SyncLeaseOwner = null;
-            connection.ConsecutiveSyncFailures++;
+            // The failed save can leave invalid Added/Modified entities in the
+            // tracker. Reload only the durable connection and run before
+            // recording the failure, otherwise SaveChanges retries the same
+            // invalid batch and leaves the UI permanently showing Running.
+            db.ChangeTracker.Clear();
+            var failedConnection = await db.XeroConnections.SingleAsync(
+                x => x.Id == connection.Id,
+                CancellationToken.None);
+            var failedRun = await db.XeroReadOnlySyncRuns.SingleAsync(
+                x => x.Id == run.Id,
+                CancellationToken.None);
+            failedConnection.SyncLeaseUntil = null;
+            failedConnection.SyncLeaseOwner = null;
+            failedConnection.ConsecutiveSyncFailures++;
             if (ex is XeroReconnectRequiredException)
             {
-                connection.ContinuousSyncEnabled = false;
-                connection.NextSyncAt = null;
+                failedConnection.ContinuousSyncEnabled = false;
+                failedConnection.NextSyncAt = null;
             }
             else
             {
-                connection.NextSyncAt = failedAt.AddMinutes(5);
+                failedConnection.NextSyncAt = failedAt.AddMinutes(5);
             }
-            connection.LastSyncError = Limit(ex.Message, 2000);
-            connection.UpdatedAt = failedAt;
-            connection.UpdatedByUserId = actor;
-            run.Status = XeroReadOnlySyncRunStatus.Failed;
-            run.ErrorSummary = connection.LastSyncError;
-            run.CompletedAt = failedAt;
+            failedConnection.LastSyncError = Limit(ex.Message, 2000);
+            failedConnection.UpdatedAt = failedAt;
+            failedConnection.UpdatedByUserId = actor;
+            failedRun.Status = XeroReadOnlySyncRunStatus.Failed;
+            failedRun.ErrorSummary = failedConnection.LastSyncError;
+            failedRun.CompletedAt = failedAt;
             try
             {
                 // A host shutdown cancels the worker token. Persist the final run
@@ -451,6 +462,7 @@ public sealed class XeroReadOnlySyncService(
             ? await db.LedgerAccounts.Where(x => x.OrganisationId == connection.OrganisationId)
                 .ToDictionaryAsync(x => x.Id, cancellationToken)
             : [];
+        var activeAccountCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectedParties = definition.Key == "contacts"
             ? await db.BusinessParties.Where(x => x.OrganisationId == connection.OrganisationId)
                 .ToDictionaryAsync(x => x.Id, cancellationToken)
@@ -527,6 +539,7 @@ public sealed class XeroReadOnlySyncService(
                     source,
                     links,
                     projectedAccounts,
+                    activeAccountCodes,
                     projectedParties,
                     projectedItems,
                     cancellationToken);
@@ -617,13 +630,14 @@ public sealed class XeroReadOnlySyncService(
         JsonElement source,
         IDictionary<string, XeroMirrorEntityLink> links,
         IDictionary<Guid, LedgerAccount> projectedAccounts,
+        ISet<string> activeAccountCodes,
         IDictionary<Guid, BusinessParty> projectedParties,
         IDictionary<Guid, ProductItem> projectedItems,
         CancellationToken cancellationToken)
     {
         Guid? targetId = dataset switch
         {
-            "accounts" => await ProjectAccountAsync(connection.OrganisationId, externalId, source, links, projectedAccounts, cancellationToken),
+            "accounts" => await ProjectAccountAsync(connection.OrganisationId, externalId, source, links, projectedAccounts, activeAccountCodes, cancellationToken),
             "contacts" => await ProjectContactAsync(connection.OrganisationId, externalId, source, links, projectedParties, cancellationToken),
             "items" => await ProjectItemAsync(connection.OrganisationId, externalId, source, links, projectedItems, cancellationToken),
             _ => null
@@ -651,6 +665,7 @@ public sealed class XeroReadOnlySyncService(
     private async Task<Guid?> ProjectAccountAsync(Guid organisationId, string externalId, JsonElement source,
         IDictionary<string, XeroMirrorEntityLink> links,
         IDictionary<Guid, LedgerAccount> projectedAccounts,
+        ISet<string> activeAccountCodes,
         CancellationToken cancellationToken)
     {
         var name = Text(source, "Name").Trim();
@@ -660,20 +675,30 @@ public sealed class XeroReadOnlySyncService(
             projectedAccounts.TryGetValue(link.TargetEntityId, out account);
         var sourceCode = Text(source, "Code").Trim();
         if (account is null && sourceCode.Length > 0)
+            account = projectedAccounts.Values.FirstOrDefault(x =>
+                x.Code.Equals(sourceCode, StringComparison.OrdinalIgnoreCase));
+        if (account is null && sourceCode.Length > 0)
             account = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == organisationId && x.Code == sourceCode, cancellationToken);
         var xeroType = Text(source, "Type").ToUpperInvariant();
+        var archived = IsArchived(source);
         if (account is null)
         {
             var code = sourceCode.Length > 0 ? sourceCode : "XERO-" + Hash(externalId)[..10];
             account = new LedgerAccount { OrganisationId = organisationId, Code = Limit(code, 20), Name = Limit(name, 160) };
             db.LedgerAccounts.Add(account);
         }
+        // Xero can return both an active and an archived account with the same
+        // code. They are distinct source records but one local chart code. Keep
+        // both mirror/link records while allowing the active source to win.
+        if (archived && sourceCode.Length > 0 && activeAccountCodes.Contains(sourceCode))
+            return account.Id;
         account.Name = Limit(name, 160);
         account.Type = AccountTypeFor(xeroType);
         account.IsBankAccount = xeroType is "BANK" or "CREDITCARD";
         account.BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank;
         account.BankAccountNumber = NullIfBlank(Limit(Text(source, "BankAccountNumber"), 80));
-        account.IsActive = !IsArchived(source);
+        account.IsActive = !archived;
+        if (!archived && sourceCode.Length > 0) activeAccountCodes.Add(sourceCode);
         projectedAccounts[account.Id] = account;
         return account.Id;
     }
