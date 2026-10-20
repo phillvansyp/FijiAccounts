@@ -456,7 +456,7 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
-    public async Task Worker_startup_recovers_future_lease_from_older_sync_version()
+    public async Task Worker_startup_recovers_future_lease_from_previous_process()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var tenantId = Guid.NewGuid();
@@ -479,7 +479,7 @@ public sealed class XeroReadOnlySyncServiceTests
         await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
         var connection = await test.Db.XeroConnections.SingleAsync();
         connection.SyncLeaseUntil = DateTimeOffset.UtcNow.AddMinutes(25);
-        connection.UpdatedByUserId = "system:xero-read-only-sync";
+        connection.SyncLeaseOwner = "system:xero-read-only-sync:previous-process";
         var interrupted = new XeroReadOnlySyncRun
         {
             OrganisationId = test.Organisation.Id,
@@ -493,10 +493,46 @@ public sealed class XeroReadOnlySyncServiceTests
         await sync.RecoverLegacyLeasesAsync();
 
         Assert.Null(connection.SyncLeaseUntil);
+        Assert.Null(connection.SyncLeaseOwner);
         Assert.NotNull(connection.NextSyncAt);
         Assert.Equal(XeroReadOnlySyncRunStatus.Failed, interrupted.Status);
         Assert.NotNull(interrupted.CompletedAt);
         Assert.Contains("restart", interrupted.ErrorSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Refreshing_an_expired_access_token_does_not_break_the_sync_lease()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new ReadOnlyXeroHandler(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        connection.AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await test.Db.SaveChangesAsync();
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Empty(result.Failures);
+        Assert.Null(connection.SyncLeaseUntil);
+        Assert.Null(connection.SyncLeaseOwner);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Completed,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
     }
 
     private sealed class ReadOnlyXeroHandler(Guid tenantId, Guid accountId, Guid contactId, Guid itemId) : HttpMessageHandler

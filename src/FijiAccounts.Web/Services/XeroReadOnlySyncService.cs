@@ -156,8 +156,11 @@ public sealed class XeroReadOnlySyncService(
     public async Task RecoverLegacyLeasesAsync(CancellationToken cancellationToken = default)
     {
         var interruptedAt = DateTimeOffset.UtcNow;
+        // The worker runs this once while the host is starting, before requests
+        // or scheduled imports can begin. Any persisted lease therefore belongs
+        // to a process that no longer exists and must be recovered.
         var connectionsWithLegacyLeases = await db.XeroConnections
-            .Where(x => x.SyncLeaseUntil != null && !x.UpdatedByUserId.StartsWith(LeaseOwnerPrefix))
+            .Where(x => x.SyncLeaseUntil != null || x.SyncLeaseOwner != null)
             .ToListAsync(cancellationToken);
         if (connectionsWithLegacyLeases.Count == 0) return;
 
@@ -174,6 +177,7 @@ public sealed class XeroReadOnlySyncService(
         foreach (var connection in connectionsWithLegacyLeases)
         {
             connection.SyncLeaseUntil = null;
+            connection.SyncLeaseOwner = null;
             connection.NextSyncAt = interruptedAt;
             connection.LastSyncError = "The previous Xero refresh was interrupted during an application restart. Account Island is resuming it automatically.";
             connection.UpdatedAt = interruptedAt;
@@ -209,7 +213,7 @@ public sealed class XeroReadOnlySyncService(
         var leaseCandidate = await db.XeroConnections.AsNoTracking()
             .Where(x => x.OrganisationId == organisationId && x.IsActive && x.XeroTenantId != null &&
                         (allowDisabled || x.ContinuousSyncEnabled))
-            .Select(x => new { x.Id, x.SyncLeaseUntil })
+            .Select(x => new { x.Id, x.SyncLeaseUntil, x.SyncLeaseOwner })
             .SingleOrDefaultAsync(cancellationToken);
         if (leaseCandidate is null)
             throw new InvalidOperationException("Connect Xero and select an organisation before refreshing.");
@@ -218,16 +222,19 @@ public sealed class XeroReadOnlySyncService(
 
         var leaseUntil = now.Add(SyncLeaseDuration);
         var claimed = await db.XeroConnections
-            .Where(x => x.Id == leaseCandidate.Id && x.SyncLeaseUntil == leaseCandidate.SyncLeaseUntil)
+            .Where(x => x.Id == leaseCandidate.Id &&
+                        x.SyncLeaseUntil == leaseCandidate.SyncLeaseUntil &&
+                        x.SyncLeaseOwner == leaseCandidate.SyncLeaseOwner)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(x => x.SyncLeaseUntil, leaseUntil)
-                .SetProperty(x => x.UpdatedByUserId, leaseOwner), cancellationToken);
+                .SetProperty(x => x.SyncLeaseOwner, leaseOwner), cancellationToken);
         if (claimed == 0) return AlreadyRunningResult(forceFullReconciliation);
 
         var connection = await db.XeroConnections.SingleAsync(
             x => x.OrganisationId == organisationId && x.IsActive, cancellationToken);
         connection.SyncLeaseUntil = leaseUntil;
-        connection.UpdatedByUserId = leaseOwner;
+        connection.SyncLeaseOwner = leaseOwner;
+        connection.UpdatedByUserId = actor;
         var interruptedRuns = await db.XeroReadOnlySyncRuns
             .Where(x => x.OrganisationId == organisationId && x.Status == XeroReadOnlySyncRunStatus.Running)
             .ToListAsync(cancellationToken);
@@ -309,6 +316,7 @@ public sealed class XeroReadOnlySyncService(
                 ? null
                 : Limit(string.Join("; ", failures.Select(x => $"{x.Dataset}: {x.Reason}")), 2000);
             connection.SyncLeaseUntil = null;
+            connection.SyncLeaseOwner = null;
             connection.UpdatedAt = completedAt;
             connection.UpdatedByUserId = actor;
             run.Status = failures.Count == 0 ? XeroReadOnlySyncRunStatus.Completed : XeroReadOnlySyncRunStatus.Partial;
@@ -335,6 +343,7 @@ public sealed class XeroReadOnlySyncService(
         {
             var failedAt = DateTimeOffset.UtcNow;
             connection.SyncLeaseUntil = null;
+            connection.SyncLeaseOwner = null;
             connection.ConsecutiveSyncFailures++;
             if (ex is XeroReconnectRequiredException)
             {
@@ -372,7 +381,7 @@ public sealed class XeroReadOnlySyncService(
     {
         var leaseUntil = DateTimeOffset.UtcNow.Add(SyncLeaseDuration);
         var renewed = await db.XeroConnections
-            .Where(x => x.Id == connection.Id && x.UpdatedByUserId == leaseOwner)
+            .Where(x => x.Id == connection.Id && x.SyncLeaseOwner == leaseOwner)
             .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, leaseUntil), cancellationToken);
         if (renewed == 0) throw new InvalidOperationException("This Xero refresh no longer owns the active sync lease.");
         connection.SyncLeaseUntil = leaseUntil;

@@ -6454,6 +6454,10 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SyncLeaseOwner")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset?>("SyncLeaseUntil")
                         .HasColumnType("TEXT");
 

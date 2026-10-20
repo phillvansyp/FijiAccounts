@@ -447,11 +447,17 @@ public sealed class XeroConnectionService(
             // source shape or a cancelled browser operation.
             await db.XeroConnections
                 .Where(x => x.Id == connection.Id && x.SyncLeaseUntil == leaseUntil)
-                .ExecuteUpdateAsync(update => update.SetProperty(x => x.SyncLeaseUntil, (DateTimeOffset?)null), CancellationToken.None);
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(x => x.SyncLeaseUntil, (DateTimeOffset?)null)
+                    .SetProperty(x => x.SyncLeaseOwner, (string?)null), CancellationToken.None);
             var trackedLease = db.Entry(connection).Property(x => x.SyncLeaseUntil);
             trackedLease.CurrentValue = null;
             trackedLease.OriginalValue = null;
             trackedLease.IsModified = false;
+            var trackedLeaseOwner = db.Entry(connection).Property(x => x.SyncLeaseOwner);
+            trackedLeaseOwner.CurrentValue = null;
+            trackedLeaseOwner.OriginalValue = null;
+            trackedLeaseOwner.IsModified = false;
         }
     }
 
