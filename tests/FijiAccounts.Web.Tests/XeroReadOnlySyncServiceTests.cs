@@ -293,6 +293,42 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Provider_timeout_stops_the_run_and_schedules_one_retry()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new TimeoutReadOnlyXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        var startedAt = DateTimeOffset.UtcNow;
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("Chart of accounts", failure.Dataset);
+        Assert.Contains("timed out", failure.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, handler.AccountingRequests);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.True(connection.NextSyncAt >= startedAt.AddMinutes(5));
+        Assert.Equal(XeroReadOnlySyncRunStatus.Partial,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
+    }
+
+    [Fact]
     public async Task New_run_closes_interrupted_running_history_before_resuming()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -585,6 +621,32 @@ public sealed class XeroReadOnlySyncServiceTests
                 _ => "Records"
             };
             return Json($$"""{"{{root}}":[]}""");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class TimeoutReadOnlyXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        public int AccountingRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""
+                    {"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read"}
+                    """);
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""
+                    [{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]
+                    """);
+            AccountingRequests++;
+            return Task.FromException<HttpResponseMessage>(new OperationCanceledException());
         }
 
         private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

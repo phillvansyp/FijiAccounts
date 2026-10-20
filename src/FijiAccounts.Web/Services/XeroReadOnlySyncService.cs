@@ -303,6 +303,16 @@ public sealed class XeroReadOnlySyncService(
                         retryAfter = NormaliseRetryAfter(rateLimit.RetryAfter);
                         break;
                     }
+                    // A provider/network timeout normally affects the whole
+                    // Xero API, not just one dataset. Do not spend two minutes
+                    // timing out every remaining endpoint. Finish this run as
+                    // partial and let the scheduled retry resume in five
+                    // minutes from the retained progress.
+                    if (ex is XeroApiException { StatusCode: System.Net.HttpStatusCode.RequestTimeout })
+                    {
+                        retryAfter = TimeSpan.FromMinutes(5);
+                        break;
+                    }
                 }
             }
 
