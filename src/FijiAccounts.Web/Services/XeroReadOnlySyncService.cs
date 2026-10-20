@@ -265,6 +265,8 @@ public sealed class XeroReadOnlySyncService(
 
         try
         {
+            run.ErrorSummary = "Connecting to Xero…";
+            await db.SaveChangesAsync(cancellationToken);
             var accessToken = await connections.GetAccessTokenAsync(connection, actor, cancellationToken);
             var modifiedSince = full ? null : connection.LastSyncedAt?.AddMinutes(-2);
             var failures = new List<XeroSyncFailure>();
@@ -279,6 +281,8 @@ public sealed class XeroReadOnlySyncService(
             {
                 try
                 {
+                    run.ErrorSummary = $"Copying {definition.Name}…";
+                    await db.SaveChangesAsync(cancellationToken);
                     await RenewLeaseAsync(connection, cancellationToken);
                     var result = await SyncDatasetAsync(
                         connection,
