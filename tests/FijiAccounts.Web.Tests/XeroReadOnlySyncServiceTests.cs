@@ -126,7 +126,7 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
-    public async Task Rate_limit_stops_the_run_and_schedules_retry_after_Xero_wait_period()
+    public async Task Daily_rate_limit_stops_the_run_and_schedules_retry_after_Xero_wait_period()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var tenantId = Guid.NewGuid();
@@ -158,7 +158,51 @@ public sealed class XeroReadOnlySyncServiceTests
         var connection = await test.Db.XeroConnections.SingleAsync();
         Assert.NotNull(connection.NextSyncAt);
         Assert.True(connection.NextSyncAt >= startedAt.AddSeconds(110));
-        Assert.Contains("request limit", connection.LastSyncError, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("daily limit", connection.LastSyncError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Short_rate_limit_waits_and_continues_the_same_run()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new TransientRateLimitedXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var delays = new List<TimeSpan>();
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance)
+        {
+            DelayAsync = (delay, _) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            }
+        };
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Empty(result.Failures);
+        Assert.Equal(16, result.DatasetCount);
+        Assert.Equal(2, handler.AccountRequests);
+        Assert.Equal([TimeSpan.FromMinutes(2)], delays);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.Null(connection.LastSyncError);
+        Assert.NotNull(connection.LastFullReconciliationAt);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Completed,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
     }
 
     [Fact]
@@ -358,8 +402,57 @@ public sealed class XeroReadOnlySyncServiceTests
             AccountingRequests++;
             var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
             response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(2));
-            response.Headers.TryAddWithoutValidation("X-Rate-Limit-Problem", "minute");
+            response.Headers.TryAddWithoutValidation("X-Rate-Limit-Problem", "day");
             return Task.FromResult(response);
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class TransientRateLimitedXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        public int AccountRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read"}""");
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
+
+            var path = request.RequestUri.AbsolutePath;
+            if (path.EndsWith("/Accounts", StringComparison.Ordinal) && ++AccountRequests == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(2));
+                response.Headers.TryAddWithoutValidation("X-Rate-Limit-Problem", "minute");
+                return Task.FromResult(response);
+            }
+
+            var root = path.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() switch
+            {
+                "TaxRates" => "TaxRates",
+                "Currencies" => "Currencies",
+                "TrackingCategories" => "TrackingCategories",
+                "Invoices" => "Invoices",
+                "CreditNotes" => "CreditNotes",
+                "Payments" => "Payments",
+                "Prepayments" => "Prepayments",
+                "Overpayments" => "Overpayments",
+                "BankTransactions" => "BankTransactions",
+                "BankTransfers" => "BankTransfers",
+                "ManualJournals" => "ManualJournals",
+                "Accounts" => "Accounts",
+                "Contacts" => "Contacts",
+                "Items" => "Items",
+                _ => "Records"
+            };
+            return Json($$"""{"{{root}}":[]}""");
         }
 
         private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

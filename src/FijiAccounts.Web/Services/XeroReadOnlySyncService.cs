@@ -39,11 +39,14 @@ public sealed class XeroReadOnlySyncService(
     private const string SystemActor = "system:xero-read-only-sync";
     private const string LeaseOwnerPrefix = "system:xero-read-only-sync:";
     private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumInlineRateLimitWait = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan LeaseRenewalWaitSlice = TimeSpan.FromMinutes(2);
     private const int MaximumPages = 100;
     private const int ExpectedPageSize = 100;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly XeroApiOptions options = configured.Value;
     private readonly string leaseOwner = LeaseOwnerPrefix + Guid.NewGuid().ToString("N");
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } = Task.Delay;
 
     private static readonly DatasetDefinition[] Datasets =
     [
@@ -391,7 +394,12 @@ public sealed class XeroReadOnlySyncService(
         {
             await RenewLeaseAsync(connection, cancellationToken);
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
-            var bytes = await api.GetJsonAsync(accessToken, connection.XeroTenantId!.Value, endpoint, modifiedSince, cancellationToken);
+            var bytes = await GetJsonWithRateLimitWaitAsync(
+                connection,
+                accessToken,
+                endpoint,
+                modifiedSince,
+                cancellationToken);
             using var document = JsonDocument.Parse(bytes);
             var records = Records(document.RootElement, definition.RootProperty).ToList();
             foreach (var source in records)
@@ -467,6 +475,59 @@ public sealed class XeroReadOnlySyncService(
         }
         await db.SaveChangesAsync(cancellationToken);
         return new(count, changed, archivedCount);
+    }
+
+    private async Task<byte[]> GetJsonWithRateLimitWaitAsync(
+        XeroConnection connection,
+        string accessToken,
+        string endpoint,
+        DateTimeOffset? modifiedSince,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            try
+            {
+                return await api.GetJsonAsync(
+                    accessToken,
+                    connection.XeroTenantId!.Value,
+                    endpoint,
+                    modifiedSince,
+                    cancellationToken);
+            }
+            catch (XeroApiException exception) when (CanWaitInsideRun(exception, out var retryAfter))
+            {
+                logger.LogInformation(
+                    "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before continuing endpoint {Endpoint}.",
+                    connection.OrganisationId,
+                    retryAfter,
+                    endpoint);
+                await WaitAndRenewLeaseAsync(connection, retryAfter, cancellationToken);
+            }
+        }
+    }
+
+    private async Task WaitAndRenewLeaseAsync(
+        XeroConnection connection,
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+    {
+        var remaining = delay;
+        while (remaining > TimeSpan.Zero)
+        {
+            var slice = remaining < LeaseRenewalWaitSlice ? remaining : LeaseRenewalWaitSlice;
+            await DelayAsync(slice, cancellationToken);
+            remaining -= slice;
+            await RenewLeaseAsync(connection, cancellationToken);
+        }
+    }
+
+    private static bool CanWaitInsideRun(XeroApiException exception, out TimeSpan retryAfter)
+    {
+        retryAfter = NormaliseRetryAfter(exception.RetryAfter);
+        return exception.StatusCode == System.Net.HttpStatusCode.TooManyRequests &&
+               !string.Equals(exception.RateLimitProblem, "day", StringComparison.OrdinalIgnoreCase) &&
+               retryAfter <= MaximumInlineRateLimitWait;
     }
 
     private async Task ProjectSafeMasterAsync(
