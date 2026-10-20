@@ -287,6 +287,53 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Rejected_refresh_token_pauses_automatic_sync_until_reconnected()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new RejectedRefreshTokenXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        await sync.SetEnabledAsync(test.UserId, test.Organisation.Id, true);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        connection.AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await test.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<XeroReconnectRequiredException>(() =>
+            sync.RunNowAsync(test.UserId, test.Organisation.Id, true));
+
+        Assert.Contains("Reconnect Xero", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(connection.ContinuousSyncEnabled);
+        Assert.Null(connection.NextSyncAt);
+        Assert.Null(connection.SyncLeaseUntil);
+        Assert.Contains("Reconnect Xero", connection.LastSyncError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Failed,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
+
+        var reconnect = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var reconnectState = Assert.Single(QueryHelpers.ParseQuery(reconnect.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "new-code", reconnectState!);
+
+        Assert.True(connection.ContinuousSyncEnabled);
+        Assert.NotNull(connection.NextSyncAt);
+        Assert.Null(connection.LastSyncError);
+    }
+
+    [Fact]
     public async Task Cancelled_run_releases_lease_and_records_failure()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -415,6 +462,36 @@ public sealed class XeroReadOnlySyncServiceTests
                 _ => "Records"
             };
             return Json($$"""{"{{root}}":[]}""");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+    }
+
+    private sealed class RejectedRefreshTokenXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+            {
+                var form = request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
+                if (form.Contains("grant_type=refresh_token", StringComparison.Ordinal))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        ReasonPhrase = "Bad Request",
+                        Content = new StringContent("{\"error\":\"invalid_grant\"}", Encoding.UTF8, "application/json")
+                    });
+                }
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read"}""");
+            }
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
+            return Json("{}");
         }
 
         private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

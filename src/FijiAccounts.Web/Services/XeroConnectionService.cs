@@ -31,6 +31,10 @@ public sealed record XeroSyncResult(
     IReadOnlyList<XeroSyncFailure> Failures);
 public sealed record XeroSnapshotDownload(byte[] Content, string FileName);
 
+public sealed class XeroReconnectRequiredException(Exception innerException) : InvalidOperationException(
+    "Xero no longer accepts the saved authorisation. Reconnect Xero to resume automatic sync; records already copied into Account Island are safe.",
+    innerException);
+
 public sealed class XeroConnectionService(
     ApplicationDbContext db,
     TenantAccessService access,
@@ -167,6 +171,8 @@ public sealed class XeroConnectionService(
 
         var connection = await db.XeroConnections.SingleOrDefaultAsync(
             x => x.OrganisationId == state.OrganisationId, cancellationToken);
+        var resumeAutomaticSync = connection?.LastSyncError?.Contains(
+            "Reconnect Xero to resume automatic sync", StringComparison.OrdinalIgnoreCase) == true;
         var selected = tenants.Count == 1
             ? tenants[0]
             : tenants.SingleOrDefault(x => x.TenantId == connection?.XeroTenantId);
@@ -192,6 +198,11 @@ public sealed class XeroConnectionService(
         connection.UpdatedAt = DateTimeOffset.UtcNow;
         connection.UpdatedByUserId = userId;
         connection.LastSyncError = null;
+        if (resumeAutomaticSync)
+        {
+            connection.ContinuousSyncEnabled = true;
+            connection.NextSyncAt = DateTimeOffset.UtcNow;
+        }
         db.AuditEvents.Add(Audit(state.OrganisationId, userId, "XeroConnected", connection.Id, new
         {
             TenantCount = tenants.Count,
@@ -490,6 +501,11 @@ public sealed class XeroConnectionService(
         catch (CryptographicException ex)
         {
             throw new InvalidOperationException("The saved Xero credentials cannot be opened. Reconnect Xero.", ex);
+        }
+        catch (XeroApiException ex) when (ex.StatusCode is
+            System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
+        {
+            throw new XeroReconnectRequiredException(ex);
         }
     }
 

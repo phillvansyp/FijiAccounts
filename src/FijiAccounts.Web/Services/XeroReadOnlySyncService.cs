@@ -333,7 +333,15 @@ public sealed class XeroReadOnlySyncService(
             var failedAt = DateTimeOffset.UtcNow;
             connection.SyncLeaseUntil = null;
             connection.ConsecutiveSyncFailures++;
-            connection.NextSyncAt = failedAt.AddMinutes(5);
+            if (ex is XeroReconnectRequiredException)
+            {
+                connection.ContinuousSyncEnabled = false;
+                connection.NextSyncAt = null;
+            }
+            else
+            {
+                connection.NextSyncAt = failedAt.AddMinutes(5);
+            }
             connection.LastSyncError = Limit(ex.Message, 2000);
             connection.UpdatedAt = failedAt;
             connection.UpdatedByUserId = actor;

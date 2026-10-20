@@ -287,6 +287,7 @@ else
         !string.IsNullOrWhiteSpace(error) &&
         (error.Contains("permission", StringComparison.OrdinalIgnoreCase) ||
          error.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("Reconnect Xero", StringComparison.OrdinalIgnoreCase) ||
          error.Contains("renew", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsRateLimit(string? error) =>
