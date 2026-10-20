@@ -19,8 +19,8 @@ jobs:
           output="$({ docker logs --since 2h account-island-app 2>&1 || true; } \
             | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[redacted-email]/g' \
             | sed -E 's/(access_token|refresh_token|client_secret)([^[:space:]]*)/[redacted-secret]/Ig' \
-            | grep -E 'Xero read-only dataset|Xero reached its short request limit|Could not finalise failed Xero read-only sync' \
-            | tail -n 100)"
+            | grep -F -A 16 'Could not finalise failed Xero read-only sync run' \
+            | tail -n 40)"
           if [ -z "$output" ]; then
             echo "No recent Xero sync activity was found." >&2
             exit 1
