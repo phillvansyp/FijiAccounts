@@ -9,6 +9,7 @@
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<XeroSync> Logger
 
 <PageTitle>@(IsConnected ? "Xero sync" : "Set up Xero") · Account Island</PageTitle>
 
@@ -89,13 +90,20 @@ else
                         </div>
                     </div>
                 }
+                else if (RateLimitBackoffActive)
+                {
+                    <div class="alert alert-info">
+                        <strong>Waiting for Xero's request limit to reset.</strong>
+                        Account Island will retry automatically after @FormatDate(status.Connection.NextSyncAt). Keep automatic sync on; reconnecting or refreshing will not shorten Xero's wait.
+                    </div>
+                }
                 else if (!string.IsNullOrWhiteSpace(status.Connection.LastSyncError))
                 {
                     <div class="alert alert-warning"><strong>Last sync needs attention:</strong> @status.Connection.LastSyncError</div>
                 }
                 <div class="d-flex gap-2 flex-wrap">
-                    <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@busy">@(busy ? "Refreshing…" : "Refresh now")</button>
-                    <button type="button" class="btn btn-secondary" @onclick="FullReconciliation" disabled="@busy">Run full reconciliation</button>
+                    <button type="button" class="btn btn-primary" @onclick="SyncNow" disabled="@SyncActionDisabled">@SyncButtonLabel</button>
+                    <button type="button" class="btn btn-secondary" @onclick="FullReconciliation" disabled="@SyncActionDisabled">Run full reconciliation</button>
                     <a class="btn btn-outline-secondary" href="/api/o/@OrganisationId/integrations/xero/connect">Reconnect Xero</a>
                     <button type="button" class="btn @(status.Connection.ContinuousSyncEnabled ? "btn-outline-danger" : "btn-success")" @onclick="ToggleAutomatic" disabled="@busy">
                         @(status.Connection.ContinuousSyncEnabled ? "Turn automatic sync off" : "Turn automatic sync on")
@@ -162,6 +170,12 @@ else
     private bool loading = true;
     private bool busy;
     private bool IsConnected => status?.Connection.IsConnected == true;
+    private bool RateLimitBackoffActive =>
+        status?.Connection.NextSyncAt is { } nextSyncAt &&
+        nextSyncAt > DateTimeOffset.UtcNow &&
+        IsRateLimit(status.Connection.LastSyncError);
+    private bool SyncActionDisabled => busy || RateLimitBackoffActive;
+    private string SyncButtonLabel => busy ? "Refreshing…" : RateLimitBackoffActive ? "Waiting for Xero…" : "Refresh now";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -202,15 +216,25 @@ else
 
     private async Task Sync(bool full) => await RunAction(async () =>
     {
+        if (RateLimitBackoffActive)
+        {
+            message = $"Xero has paused requests until {FormatDate(status?.Connection.NextSyncAt)}. Automatic sync will retry then.";
+            messageClass = "alert-info";
+            return;
+        }
         var result = await SyncService.RunNowAsync(userId, OrganisationId, full);
+        var rateLimited = result.Failures.Any(failure => IsRateLimit(failure.Reason));
         message = result.Failures.Count == 0
             ? $"Xero refresh completed: {result.RecordCount:N0} records checked and {result.ChangedCount:N0} updated."
-            : $"Xero refresh completed with {result.Failures.Count:N0} dataset warning(s).";
-        messageClass = result.Failures.Count == 0 ? "alert-success" : "alert-warning";
+            : rateLimited
+                ? "Xero reached its request limit. Automatic sync will continue after Xero's wait period."
+                : $"Xero refresh completed with {result.Failures.Count:N0} dataset warning(s).";
+        messageClass = result.Failures.Count == 0 ? "alert-success" : rateLimited ? "alert-info" : "alert-warning";
     });
 
     private async Task RunAction(Func<Task> action)
     {
+        if (busy) return;
         busy = true;
         message = null;
         messageClass = "alert-success";
@@ -222,6 +246,12 @@ else
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or XeroApiException)
         {
             message = ex.Message;
+            messageClass = "alert-danger";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "The Xero sync page action failed for organisation {OrganisationId}.", OrganisationId);
+            message = "Account Island could not finish that action. The saved Xero connection and any records already copied are unchanged. Reload this page and try again.";
             messageClass = "alert-danger";
         }
         finally
@@ -237,4 +267,10 @@ else
         (error.Contains("permission", StringComparison.OrdinalIgnoreCase) ||
          error.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
          error.Contains("renew", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsRateLimit(string? error) =>
+        !string.IsNullOrWhiteSpace(error) &&
+        (error.Contains("request limit", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("daily limit", StringComparison.OrdinalIgnoreCase) ||
+         error.Contains("too many requests", StringComparison.OrdinalIgnoreCase));
 }
