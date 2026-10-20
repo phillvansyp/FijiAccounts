@@ -200,6 +200,19 @@ public sealed class XeroConnectionServiceTests
         Assert.NotEqual(XeroMigrationAssistantAction.CopySource, assistant.NextAction);
     }
 
+    [Fact]
+    public async Task ResponseBodyThatStopsArrivingIsTimedOut()
+    {
+        var options = Options.Create(new XeroApiOptions { RequestTimeoutSeconds = 1 });
+        var api = new XeroApiClient(new HttpClient(new StalledResponseHandler()), options);
+
+        var error = await Assert.ThrowsAsync<XeroApiException>(() =>
+            api.GetJsonAsync("access-token", Guid.NewGuid(), "Accounts"));
+
+        Assert.Equal(HttpStatusCode.RequestTimeout, error.StatusCode);
+        Assert.Contains("timed out", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class XeroHandler(Guid firstTenant, Guid secondTenant) : HttpMessageHandler
     {
         public List<string?> TenantHeaders { get; } = [];
@@ -310,5 +323,34 @@ public sealed class XeroConnectionServiceTests
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         });
+    }
+
+    private sealed class StalledResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StalledContent()
+            });
+    }
+
+    private sealed class StalledContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            Task.Delay(Timeout.InfiniteTimeSpan);
+
+        protected override Task SerializeToStreamAsync(
+            Stream stream,
+            TransportContext? context,
+            CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 }

@@ -292,6 +292,13 @@ public sealed class XeroReadOnlySyncService(
                     recordCount += result.Seen;
                     changedCount += result.Changed;
                     archivedCount += result.Archived;
+                    // Publish durable progress after each dataset so a long
+                    // first import does not appear frozen at zero records.
+                    run.DatasetCount = datasetCount;
+                    run.RecordCount = recordCount;
+                    run.ChangedCount = changedCount;
+                    run.ArchivedCount = archivedCount;
+                    await db.SaveChangesAsync(cancellationToken);
                 }
                 catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
                 {

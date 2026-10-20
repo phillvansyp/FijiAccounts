@@ -15,6 +15,7 @@ public sealed class XeroApiOptions
     public string WebhookKey { get; set; } = string.Empty;
     public int SyncIntervalMinutes { get; set; } = 15;
     public int FullReconciliationHours { get; set; } = 24;
+    public int RequestTimeoutSeconds { get; set; } = 120;
     public string Scopes { get; set; } =
         "openid profile email offline_access accounting.settings.read accounting.contacts.read " +
         "accounting.invoices.read accounting.payments.read accounting.banktransactions.read " +
@@ -75,8 +76,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ConnectionsEndpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        var bytes = await ReadCheckedAsync(response, cancellationToken);
+        var bytes = await SendAndReadCheckedAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var payload = JsonSerializer.Deserialize<List<ConnectionPayload>>(bytes, JsonOptions) ?? [];
         return payload
             .Where(x => x.TenantId != Guid.Empty && !string.IsNullOrWhiteSpace(x.Id))
@@ -137,8 +137,7 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
         if (!accept.Equals("application/json", StringComparison.OrdinalIgnoreCase))
             request.Headers.TryAddWithoutValidation("contentType", accept);
         request.Headers.Add("xero-tenant-id", tenantId.ToString());
-        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        return await ReadCheckedAsync(response, cancellationToken);
+        return await SendAndReadCheckedAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 
     private async Task<XeroToken> RequestTokenAsync(
@@ -152,18 +151,18 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             Content = new FormUrlEncodedContent(fields)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
-        using var response = await SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
-        var bytes = await ReadCheckedAsync(response, cancellationToken);
+        var bytes = await SendAndReadCheckedAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        var statusCode = System.Net.HttpStatusCode.OK;
         var payload = JsonSerializer.Deserialize<TokenPayload>(bytes, JsonOptions)
-            ?? throw new XeroApiException("Xero returned an empty token response.", response.StatusCode);
+            ?? throw new XeroApiException("Xero returned an empty token response.", statusCode);
         if (string.IsNullOrWhiteSpace(payload.AccessToken))
         {
-            throw new XeroApiException("Xero did not return an access token.", response.StatusCode);
+            throw new XeroApiException("Xero did not return an access token.", statusCode);
         }
         var refresh = string.IsNullOrWhiteSpace(payload.RefreshToken) ? existingRefreshToken : payload.RefreshToken;
         if (string.IsNullOrWhiteSpace(refresh))
         {
-            throw new XeroApiException("Xero did not grant offline access. Reconnect and approve offline access.", response.StatusCode);
+            throw new XeroApiException("Xero did not grant offline access. Reconnect and approve offline access.", statusCode);
         }
         return new XeroToken(payload.AccessToken, refresh, Math.Max(60, payload.ExpiresIn), payload.Scope ?? string.Empty);
     }
@@ -193,14 +192,17 @@ public sealed class XeroApiClient(HttpClient client, IOptions<XeroApiOptions> co
             rateLimitProblem);
     }
 
-    private async Task<HttpResponseMessage> SendAsync(
+    private async Task<byte[]> SendAndReadCheckedAsync(
         HttpRequestMessage request,
         HttpCompletionOption completion,
         CancellationToken cancellationToken)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.RequestTimeoutSeconds, 1, 600)));
         try
         {
-            return await client.SendAsync(request, completion, cancellationToken);
+            using var response = await client.SendAsync(request, completion, timeout.Token);
+            return await ReadCheckedAsync(response, timeout.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
