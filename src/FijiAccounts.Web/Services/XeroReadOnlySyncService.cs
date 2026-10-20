@@ -335,6 +335,18 @@ public sealed class XeroReadOnlySyncService(
         var links = await db.XeroMirrorEntityLinks
             .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key)
             .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var projectedAccounts = definition.Key == "accounts"
+            ? await db.LedgerAccounts.Where(x => x.OrganisationId == connection.OrganisationId)
+                .ToDictionaryAsync(x => x.Id, cancellationToken)
+            : [];
+        var projectedParties = definition.Key == "contacts"
+            ? await db.BusinessParties.Where(x => x.OrganisationId == connection.OrganisationId)
+                .ToDictionaryAsync(x => x.Id, cancellationToken)
+            : [];
+        var projectedItems = definition.Key == "items"
+            ? await db.ProductItems.Where(x => x.OrganisationId == connection.OrganisationId)
+                .ToDictionaryAsync(x => x.Id, cancellationToken)
+            : [];
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now = DateTimeOffset.UtcNow;
         var changed = 0;
@@ -389,7 +401,16 @@ public sealed class XeroReadOnlySyncService(
                     }
                 }
 
-                await ProjectSafeMasterAsync(connection, definition.Key, externalId, source, links, cancellationToken);
+                await ProjectSafeMasterAsync(
+                    connection,
+                    definition.Key,
+                    externalId,
+                    source,
+                    links,
+                    projectedAccounts,
+                    projectedParties,
+                    projectedItems,
+                    cancellationToken);
             }
 
             if (!definition.Paged || records.Count < ExpectedPageSize) break;
@@ -416,13 +437,16 @@ public sealed class XeroReadOnlySyncService(
         string externalId,
         JsonElement source,
         IDictionary<string, XeroMirrorEntityLink> links,
+        IDictionary<Guid, LedgerAccount> projectedAccounts,
+        IDictionary<Guid, BusinessParty> projectedParties,
+        IDictionary<Guid, ProductItem> projectedItems,
         CancellationToken cancellationToken)
     {
         Guid? targetId = dataset switch
         {
-            "accounts" => await ProjectAccountAsync(connection.OrganisationId, externalId, source, links, cancellationToken),
-            "contacts" => await ProjectContactAsync(connection.OrganisationId, externalId, source, links, cancellationToken),
-            "items" => await ProjectItemAsync(connection.OrganisationId, externalId, source, links, cancellationToken),
+            "accounts" => await ProjectAccountAsync(connection.OrganisationId, externalId, source, links, projectedAccounts, cancellationToken),
+            "contacts" => await ProjectContactAsync(connection.OrganisationId, externalId, source, links, projectedParties, cancellationToken),
+            "items" => await ProjectItemAsync(connection.OrganisationId, externalId, source, links, projectedItems, cancellationToken),
             _ => null
         };
         if (targetId is null || links.ContainsKey(externalId)) return;
@@ -446,13 +470,15 @@ public sealed class XeroReadOnlySyncService(
     }
 
     private async Task<Guid?> ProjectAccountAsync(Guid organisationId, string externalId, JsonElement source,
-        IDictionary<string, XeroMirrorEntityLink> links, CancellationToken cancellationToken)
+        IDictionary<string, XeroMirrorEntityLink> links,
+        IDictionary<Guid, LedgerAccount> projectedAccounts,
+        CancellationToken cancellationToken)
     {
         var name = Text(source, "Name").Trim();
         if (name.Length == 0) return null;
         LedgerAccount? account = null;
         if (links.TryGetValue(externalId, out var link))
-            account = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.Id == link.TargetEntityId && x.OrganisationId == organisationId, cancellationToken);
+            projectedAccounts.TryGetValue(link.TargetEntityId, out account);
         var sourceCode = Text(source, "Code").Trim();
         if (account is null && sourceCode.Length > 0)
             account = await db.LedgerAccounts.SingleOrDefaultAsync(x => x.OrganisationId == organisationId && x.Code == sourceCode, cancellationToken);
@@ -469,17 +495,20 @@ public sealed class XeroReadOnlySyncService(
         account.BankAccountKind = xeroType == "CREDITCARD" ? BankAccountKind.CreditCard : BankAccountKind.Bank;
         account.BankAccountNumber = NullIfBlank(Limit(Text(source, "BankAccountNumber"), 80));
         account.IsActive = !IsArchived(source);
+        projectedAccounts[account.Id] = account;
         return account.Id;
     }
 
     private async Task<Guid?> ProjectContactAsync(Guid organisationId, string externalId, JsonElement source,
-        IDictionary<string, XeroMirrorEntityLink> links, CancellationToken cancellationToken)
+        IDictionary<string, XeroMirrorEntityLink> links,
+        IDictionary<Guid, BusinessParty> projectedParties,
+        CancellationToken cancellationToken)
     {
         var name = Text(source, "Name").Trim();
         if (name.Length == 0) return null;
         BusinessParty? party = null;
         if (links.TryGetValue(externalId, out var link))
-            party = await db.BusinessParties.SingleOrDefaultAsync(x => x.Id == link.TargetEntityId && x.OrganisationId == organisationId, cancellationToken);
+            projectedParties.TryGetValue(link.TargetEntityId, out party);
         var email = NullIfBlank(Text(source, "EmailAddress").Trim());
         if (party is null)
             party = await db.BusinessParties.FirstOrDefaultAsync(x => x.OrganisationId == organisationId &&
@@ -506,17 +535,20 @@ public sealed class XeroReadOnlySyncService(
         party.DefaultSalesCurrency = Currency(Text(source, "DefaultCurrency"));
         party.DefaultPurchaseCurrency = Currency(Text(source, "DefaultCurrency"));
         party.IsActive = !IsArchived(source);
+        projectedParties[party.Id] = party;
         return party.Id;
     }
 
     private async Task<Guid?> ProjectItemAsync(Guid organisationId, string externalId, JsonElement source,
-        IDictionary<string, XeroMirrorEntityLink> links, CancellationToken cancellationToken)
+        IDictionary<string, XeroMirrorEntityLink> links,
+        IDictionary<Guid, ProductItem> projectedItems,
+        CancellationToken cancellationToken)
     {
         var code = Text(source, "Code").Trim();
         if (code.Length == 0) return null;
         ProductItem? item = null;
         if (links.TryGetValue(externalId, out var link))
-            item = await db.ProductItems.SingleOrDefaultAsync(x => x.Id == link.TargetEntityId && x.OrganisationId == organisationId, cancellationToken);
+            projectedItems.TryGetValue(link.TargetEntityId, out item);
         if (item is null)
             item = await db.ProductItems.SingleOrDefaultAsync(x => x.OrganisationId == organisationId && x.Code == code, cancellationToken);
         if (item is null)
@@ -530,6 +562,7 @@ public sealed class XeroReadOnlySyncService(
         item.SalePrice = NestedDecimal(source, "SalesDetails", "UnitPrice");
         item.PurchasePrice = NestedDecimal(source, "PurchaseDetails", "UnitPrice");
         item.IsActive = !IsArchived(source);
+        projectedItems[item.Id] = item;
         return item.Id;
     }
 
