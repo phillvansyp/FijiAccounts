@@ -29,9 +29,9 @@ public sealed class OrganisationTimeTests
     }
 
     [Fact]
-    public void Convert_FallsBackToJurisdictionWhenConfiguredTimeZoneIsInvalid()
+    public void Convert_UsesJurisdictionWhenLegacyConfiguredTimeZoneIsWrong()
     {
-        var organisation = CreateOrganisation("NZ", "Invalid/TimeZone");
+        var organisation = CreateOrganisation("NZ", "Pacific/Fiji");
         var instant = new DateTimeOffset(2026, 10, 20, 22, 11, 0, TimeSpan.Zero);
 
         var local = OrganisationTime.Convert(instant, organisation);
