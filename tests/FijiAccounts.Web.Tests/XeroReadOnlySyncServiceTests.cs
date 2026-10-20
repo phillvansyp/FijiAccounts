@@ -329,6 +329,43 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Dataset_deadline_stops_an_inline_provider_wait_and_schedules_retry()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new PersistentRateLimitedXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback",
+            DatasetTimeoutSeconds = 1
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        var startedAt = DateTimeOffset.UtcNow;
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("Chart of accounts", failure.Dataset);
+        Assert.Contains("safe import window", failure.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, handler.AccountRequests);
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.True(connection.NextSyncAt >= startedAt.AddMinutes(5));
+        Assert.Equal(XeroReadOnlySyncRunStatus.Partial,
+            (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
+    }
+
+    [Fact]
     public async Task New_run_closes_interrupted_running_history_before_resuming()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

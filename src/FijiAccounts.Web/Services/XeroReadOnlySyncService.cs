@@ -279,6 +279,9 @@ public sealed class XeroReadOnlySyncService(
 
             foreach (var definition in Datasets)
             {
+                using var datasetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                datasetTimeout.CancelAfter(TimeSpan.FromSeconds(
+                    Math.Clamp(options.DatasetTimeoutSeconds, 1, 1800)));
                 try
                 {
                     run.ErrorSummary = $"Copying {definition.Name}…";
@@ -291,7 +294,7 @@ public sealed class XeroReadOnlySyncService(
                         definition.SupportsModifiedSince ? modifiedSince : null,
                         full,
                         rateLimitWaitBudget,
-                        cancellationToken);
+                        datasetTimeout.Token);
                     datasetCount++;
                     recordCount += result.Seen;
                     changedCount += result.Changed;
@@ -324,6 +327,19 @@ public sealed class XeroReadOnlySyncService(
                         retryAfter = TimeSpan.FromMinutes(5);
                         break;
                     }
+                }
+                catch (OperationCanceledException) when (
+                    !cancellationToken.IsCancellationRequested && datasetTimeout.IsCancellationRequested)
+                {
+                    const string reason =
+                        "Xero did not finish this dataset within the safe import window. Account Island will retry automatically.";
+                    failures.Add(new(definition.Name, reason));
+                    logger.LogWarning(
+                        "Xero read-only dataset {Dataset} exceeded the dataset deadline for organisation {OrganisationId}.",
+                        definition.Key,
+                        organisationId);
+                    retryAfter = TimeSpan.FromMinutes(5);
+                    break;
                 }
             }
 

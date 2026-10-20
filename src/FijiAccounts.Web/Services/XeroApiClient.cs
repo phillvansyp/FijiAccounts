@@ -16,6 +16,7 @@ public sealed class XeroApiOptions
     public int SyncIntervalMinutes { get; set; } = 15;
     public int FullReconciliationHours { get; set; } = 24;
     public int RequestTimeoutSeconds { get; set; } = 120;
+    public int DatasetTimeoutSeconds { get; set; } = 480;
     public string Scopes { get; set; } =
         "openid profile email offline_access accounting.settings.read accounting.contacts.read " +
         "accounting.invoices.read accounting.payments.read accounting.banktransactions.read " +
