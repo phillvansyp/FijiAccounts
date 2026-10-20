@@ -384,35 +384,7 @@ public sealed class XeroReadOnlySyncService(
         catch (Exception ex)
         {
             var failedAt = DateTimeOffset.UtcNow;
-            // The failed save can leave invalid Added/Modified entities in the
-            // tracker. Reload only the durable connection and run before
-            // recording the failure, otherwise SaveChanges retries the same
-            // invalid batch and leaves the UI permanently showing Running.
-            db.ChangeTracker.Clear();
-            var failedConnection = await db.XeroConnections.SingleAsync(
-                x => x.Id == connection.Id,
-                CancellationToken.None);
-            var failedRun = await db.XeroReadOnlySyncRuns.SingleAsync(
-                x => x.Id == run.Id,
-                CancellationToken.None);
-            failedConnection.SyncLeaseUntil = null;
-            failedConnection.SyncLeaseOwner = null;
-            failedConnection.ConsecutiveSyncFailures++;
-            if (ex is XeroReconnectRequiredException)
-            {
-                failedConnection.ContinuousSyncEnabled = false;
-                failedConnection.NextSyncAt = null;
-            }
-            else
-            {
-                failedConnection.NextSyncAt = failedAt.AddMinutes(5);
-            }
-            failedConnection.LastSyncError = Limit(ex.Message, 2000);
-            failedConnection.UpdatedAt = failedAt;
-            failedConnection.UpdatedByUserId = actor;
-            failedRun.Status = XeroReadOnlySyncRunStatus.Failed;
-            failedRun.ErrorSummary = failedConnection.LastSyncError;
-            failedRun.CompletedAt = failedAt;
+            ApplyFailureState(connection, run, ex, failedAt, actor);
             try
             {
                 // A host shutdown cancels the worker token. Persist the final run
@@ -422,12 +394,60 @@ public sealed class XeroReadOnlySyncService(
             }
             catch (Exception finalisationException)
             {
-                logger.LogError(finalisationException,
-                    "Could not finalise failed Xero read-only sync run {RunId} for organisation {OrganisationId}.",
-                    run.Id, organisationId);
+                try
+                {
+                    // A failed dataset save can leave invalid Added/Modified
+                    // entities in the tracker. Clear that batch, reload only the
+                    // durable connection and run, and save the failure once more.
+                    db.ChangeTracker.Clear();
+                    var failedConnection = await db.XeroConnections.SingleAsync(
+                        x => x.Id == connection.Id,
+                        CancellationToken.None);
+                    var failedRun = await db.XeroReadOnlySyncRuns.SingleAsync(
+                        x => x.Id == run.Id,
+                        CancellationToken.None);
+                    ApplyFailureState(failedConnection, failedRun, ex, failedAt, actor);
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    logger.LogWarning(finalisationException,
+                        "Recovered Xero read-only sync finalisation after clearing the failed dataset batch for run {RunId} and organisation {OrganisationId}.",
+                        run.Id, organisationId);
+                }
+                catch (Exception fallbackException)
+                {
+                    logger.LogError(fallbackException,
+                        "Could not finalise failed Xero read-only sync run {RunId} for organisation {OrganisationId}.",
+                        run.Id, organisationId);
+                }
             }
             throw;
         }
+    }
+
+    private static void ApplyFailureState(
+        XeroConnection connection,
+        XeroReadOnlySyncRun run,
+        Exception exception,
+        DateTimeOffset failedAt,
+        string actor)
+    {
+        connection.SyncLeaseUntil = null;
+        connection.SyncLeaseOwner = null;
+        connection.ConsecutiveSyncFailures++;
+        if (exception is XeroReconnectRequiredException)
+        {
+            connection.ContinuousSyncEnabled = false;
+            connection.NextSyncAt = null;
+        }
+        else
+        {
+            connection.NextSyncAt = failedAt.AddMinutes(5);
+        }
+        connection.LastSyncError = Limit(exception.Message, 2000);
+        connection.UpdatedAt = failedAt;
+        connection.UpdatedByUserId = actor;
+        run.Status = XeroReadOnlySyncRunStatus.Failed;
+        run.ErrorSummary = connection.LastSyncError;
+        run.CompletedAt = failedAt;
     }
 
     private async Task RenewLeaseAsync(XeroConnection connection, CancellationToken cancellationToken)
