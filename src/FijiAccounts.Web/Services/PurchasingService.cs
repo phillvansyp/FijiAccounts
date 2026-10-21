@@ -25,6 +25,7 @@ public sealed class PurchasingService(
     TenantAccessService access,
     JournalPostingService posting,
     BankReconciliationService reconciliation,
+    BankTransactionCodingService bankCoding,
     NotificationService notifications,
     EnterpriseStructureService structures,
     PurchaseApprovalPolicyService approvalPolicies,
@@ -751,13 +752,14 @@ public sealed class PurchasingService(
                     "This bill payment must be connected to its selected, unreconciled bank line.");
             }
         }
+        BankStatementLine? statement = null;
         if (request.StatementLineId is null && connectingStatementLineId is null)
         {
-            var matchingCodedStatement = await db.BankStatementLines
+            var matchingCodedStatements = await db.BankStatementLines
                 .AsNoTracking()
                 .Include(x => x.MatchedPostedJournalLine!)
                     .ThenInclude(x => x.PostedJournal)
-                .FirstOrDefaultAsync(x =>
+                .Where(x =>
                     x.OrganisationId == request.OrganisationId &&
                     x.BankAccountId == request.BankAccountId &&
                     x.TransactionDate == request.Date &&
@@ -766,18 +768,34 @@ public sealed class PurchasingService(
                     x.MatchedPostedJournalLine!.PostedJournal.Description != null &&
                     x.MatchedPostedJournalLine.PostedJournal.Description.StartsWith("Coded from bank statement") &&
                     x.Amount >= -request.Amount - 0.01m &&
-                    x.Amount <= -request.Amount + 0.01m,
-                    ct);
+                    x.Amount <= -request.Amount + 0.01m)
+                .Take(2)
+                .ToListAsync(ct);
 
-            if (matchingCodedStatement is not null)
+            if (matchingCodedStatements.Count > 1)
             {
                 throw new InvalidOperationException(
-                    $"This bank movement is already coded from the statement as " +
-                    $"'{matchingCodedStatement.Description}'. Edit that reconciliation line, reverse its coding, " +
-                    $"then pay and reconcile it against this bill.");
+                    "More than one coded bank movement matches this payment. Open Payments and bank connections to choose the correct one.");
+            }
+
+            if (matchingCodedStatements.SingleOrDefault() is { } matchingCodedStatement)
+            {
+                if (!await bankCoding.ReopenCodingAsync(
+                        userId,
+                        request.OrganisationId,
+                        matchingCodedStatement.Id,
+                        ct))
+                {
+                    throw new InvalidOperationException(
+                        "The matching bank movement could not be reassigned to this supplier bill.");
+                }
+
+                statement = await db.BankStatementLines.SingleAsync(
+                    x => x.Id == matchingCodedStatement.Id &&
+                         x.OrganisationId == request.OrganisationId,
+                    ct);
             }
         }
-        BankStatementLine? statement = null;
         if (request.StatementLineId is Guid statementLineId)
         {
             statement = await db.BankStatementLines.SingleOrDefaultAsync(
@@ -874,6 +892,10 @@ public sealed class PurchasingService(
         db.SupplierPayments.Add(payment); db.AuditEvents.Add(Audit(request.OrganisationId, userId, "SupplierPaymentRecorded", nameof(SupplierPayment), payment.Id, new { bill.BillNumber, payment.Currency, payment.TransactionAmount, payment.Amount, payment.ExchangeRateToBase, payment.RealisedExchangeDifference, SupplierPaymentApprovalId = approval?.Id }));
         if (approval is not null)
         {
+            if (db.Entry(approval).State == EntityState.Detached)
+            {
+                db.SupplierPaymentApprovals.Attach(approval);
+            }
             approval.Status = SupplierPaymentApprovalStatus.Approved;
             approval.DecidedAt = DateTimeOffset.UtcNow;
             approval.DecidedByUserId = userId;

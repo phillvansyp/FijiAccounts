@@ -248,7 +248,7 @@ public async Task PayBillAsync_WhenAccountsPayableControlAccountHasWrongType_IsR
     }
 
     [Fact]
-    public async Task PayBillAsync_WhenStatementMovementAlreadyCoded_IsRejected()
+    public async Task PayBillAsync_WhenStatementMovementAlreadyCoded_ReassignsItToTheBill()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var bank = test.Account("1000");
@@ -280,8 +280,7 @@ public async Task PayBillAsync_WhenAccountsPayableControlAccountHasWrongType_IsR
                 statement.Description,
                 VatTreatment.OutOfScope));
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            test.Purchasing.PayBillAsync(
+        var payment = await test.Purchasing.PayBillAsync(
                 test.UserId,
                 new SupplierPaymentRequest(
                     test.Organisation.Id,
@@ -289,8 +288,34 @@ public async Task PayBillAsync_WhenAccountsPayableControlAccountHasWrongType_IsR
                     date,
                     "PAY-LATER",
                     100m,
-                    bank.Id)));
+                    bank.Id));
 
-        Assert.Contains("already coded from the statement", exception.Message);
+        var storedBill = await test.Db.SupplierBills
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == bill.Id);
+        Assert.Equal(BillStatus.Paid, storedBill.Status);
+        Assert.Equal(100m, storedBill.AmountPaid);
+
+        var storedStatement = await test.Db.BankStatementLines
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == statement.Id);
+        Assert.NotNull(storedStatement.ReconciledAt);
+        Assert.NotNull(storedStatement.MatchedPostedJournalLineId);
+
+        var matchedPaymentLine = await test.Db.PostedJournalLines
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == storedStatement.MatchedPostedJournalLineId);
+        Assert.Equal(payment.PostedJournalId, matchedPaymentLine.PostedJournalId);
+
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.OrganisationId == test.Organisation.Id &&
+            x.EventType == "BankTransactionCodingReopened" &&
+            x.EntityId == statement.Id.ToString()));
+
+        var bankMovement = await test.Db.PostedJournalLines
+            .AsNoTracking()
+            .Where(x => x.LedgerAccountId == bank.Id)
+            .SumAsync(x => x.Debit - x.Credit);
+        Assert.Equal(-100m, bankMovement);
     }
 }

@@ -77,12 +77,20 @@ SalesInvoices =
         structures,
         currencies);
 
+BankCoding =
+    new BankTransactionCodingService(
+        Db,
+        Access,
+        Posting,
+        Reconciliation);
+
 Purchasing =
     new PurchasingService(
         Db,
         Access,
         Posting,
         Reconciliation,
+        BankCoding,
         Notifications,
         structures,
         approvalPolicies,
@@ -95,13 +103,6 @@ CustomerReceipts =
         Posting,
         Reconciliation,
         Notifications);
-
-BankCoding =
-    new BankTransactionCodingService(
-        Db,
-        Access,
-        Posting,
-        Reconciliation);
     }
 
     public ApplicationDbContext Db { get; }
