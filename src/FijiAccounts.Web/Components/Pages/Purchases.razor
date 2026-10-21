@@ -134,7 +134,7 @@ else
             <div class="mb-3"><label class="form-label">Supplier</label><InputSelect class="form-select" @bind-Value="bill.SupplierId" @bind-Value:after="ApplySelectedSupplierDefaults"><option value="@Guid.Empty">Choose a supplier</option>@foreach (var supplier in suppliers) { <option value="@supplier.Id">@supplier.Name</option> }</InputSelect></div>
             <div class="row"><div class="col-md-4 mb-3">
                 <label class="form-label" for="supplier-bill-reference">Supplier reference</label>
-                <input id="supplier-bill-reference" class="form-control" @bind="bill.SupplierReference" @bind:after="CheckSupplierReference" aria-describedby="supplier-reference-check" />
+                <input id="supplier-bill-reference" class="form-control" @bind="bill.SupplierReference" @bind:event="oninput" @bind:after="CheckSupplierReference" aria-describedby="supplier-reference-check" />
                 @if (referenceMatch is not null)
                 {
                     <div id="supplier-reference-check" class="text-danger mt-1" role="alert">
@@ -1183,10 +1183,11 @@ private void ToggleRecurringBill()
         }
 
         var populated = new List<string>();
-        var normalizedText = NormalizeDocumentText(text);
-        var matchedSupplier = suppliers
-            .OrderByDescending(x => NormalizeDocumentText(x.Name).Length)
-            .FirstOrDefault(x => normalizedText.Contains(NormalizeDocumentText(x.Name), StringComparison.Ordinal));
+        var matchedSupplierName = SupplierBillDocumentFieldParser.MatchSupplierName(
+            text,
+            suppliers.Select(x => x.Name));
+        var matchedSupplier = suppliers.FirstOrDefault(x =>
+            string.Equals(x.Name, matchedSupplierName, StringComparison.OrdinalIgnoreCase));
         if (matchedSupplier is not null)
         {
             bill.SupplierId = matchedSupplier.Id;
@@ -1203,15 +1204,16 @@ private void ToggleRecurringBill()
         var reference = SupplierBillDocumentFieldParser.ExtractReference(text, fileName);
         if (reference is not null) { bill.SupplierReference = reference; populated.Add("reference"); }
         await CheckSupplierReference();
-        if (TryExtractDate(text, @"(?:invoice\s+date|bill\s+date|issue\s+date|date\s+issued)", out var billDate)) { bill.BillDate = billDate; populated.Add("bill date"); }
+        if (TryExtractDate(text, @"(?:invoice\s+date|bill\s+date|issue\s+date|date\s+issued|(?<!due\s)\bdate)", out var billDate)) { bill.BillDate = billDate; populated.Add("bill date"); }
         if (TryExtractDate(text, @"(?:due\s+date|date\s+due|payment\s+due|pay(?:able)?\s+by|due\s+on)", out var dueDate)) { bill.DueDate = dueDate; populated.Add("due date"); }
-        else if (TryExtractPaymentTerms(text, out var paymentDays)) { bill.DueDate = bill.BillDate.AddDays(paymentDays); populated.Add($"due date from {paymentDays}-day terms"); }
+        else if (SupplierBillDocumentFieldParser.TryExtractPaymentTerms(text, out var paymentDays)) { bill.DueDate = bill.BillDate.AddDays(paymentDays); populated.Add($"due date from {paymentDays}-day terms"); }
 
-        bill.Description = Path.GetFileNameWithoutExtension(fileName);
+        bill.Description = SupplierBillDocumentFieldParser.ExtractDescription(text)
+            ?? Path.GetFileNameWithoutExtension(fileName);
         populated.Add("description");
-        var hasGross = TryExtractMoney(text, @"(?:amount\s+due|total\s+due|grand\s+total|invoice\s+(?:total|amount)|total\s+(?:amount|incl(?:uding)?\s+(?:vat|tax))|balance\s+due)", out var gross);
-        var hasNet = TryExtractMoney(text, @"(?:sub\s*total|net\s+(?:total|amount)|total\s+excl(?:uding)?\s+(?:vat|tax))", out var net);
-        var hasVat = TryExtractMoney(text, @"(?:(?:total\s+)?vat|tax)\s*(?:total|amount)?", out var vat);
+        var hasGross = SupplierBillDocumentFieldParser.TryExtractMoney(text, @"(?:amount\s+due|total\s+due|grand\s+total|invoice\s+(?:total|amount)|total\s+(?:amount|incl(?:uding)?\s+(?:vat|tax))|balance\s+due)", out var gross);
+        var hasNet = SupplierBillDocumentFieldParser.TryExtractMoney(text, @"(?:sub\s*total|net\s+(?:total|amount)|total\s+excl(?:uding)?\s+(?:vat|tax))", out var net);
+        var hasVat = SupplierBillDocumentFieldParser.TryExtractMoney(text, @"(?:(?:total\s+)?vat|tax)\s*(?:total|amount)?", out var vat);
         if (hasNet || hasGross)
         {
             if (hasNet)
@@ -1243,7 +1245,6 @@ private void ToggleRecurringBill()
                 : "File attached, but no reliable bill details were found. Please enter them manually."
             : $"{(usedOcr ? "Read using OCR. " : string.Empty)}Prefilled {string.Join(", ", populated.Distinct())}. Please review every field, especially the amount, VAT and account, before approving.";
     }
-    private static string NormalizeDocumentText(string value) => Regex.Replace(value.ToUpperInvariant(), @"[^A-Z0-9]+", " ").Trim();
     private static bool TryExtractDate(string text, string labelPattern, out DateOnly value)
     {
         value = default;
@@ -1251,21 +1252,6 @@ private void ToggleRecurringBill()
         if (!match.Success) return false;
         var formats = new[] { "d/M/yyyy", "dd/MM/yyyy", "d-M-yyyy", "dd-MM-yyyy", "d MMM yyyy", "dd MMM yyyy", "d MMMM yyyy", "dd MMMM yyyy", "yyyy-M-d", "yyyy-MM-dd", "d/M/yy", "dd/MM/yy" };
         return DateOnly.TryParseExact(match.Groups[1].Value.Trim(), formats, CultureInfo.GetCultureInfo("en-AU"), DateTimeStyles.AllowWhiteSpaces, out value);
-    }
-    private static bool TryExtractPaymentTerms(string text, out int days)
-    {
-        days = 0;
-        var match = Regex.Match(text, @"(?im)(?:payment\s+terms?|terms?)\s*[:\-]?\s*(?:net\s*)?(\d{1,3})\s*days?");
-        if (!match.Success) match = Regex.Match(text, @"(?im)due\s+(?:within|in)\s+(\d{1,3})\s*days?");
-        return match.Success && int.TryParse(match.Groups[1].Value, out days) && days is >= 0 and <= 365;
-    }
-    private static bool TryExtractMoney(string text, string labelPattern, out decimal value)
-    {
-        value = 0;
-        const string amount = @"(?:FJD\s*|\$\s*)?([0-9][0-9,]*\.\d{2})";
-        var match = Regex.Match(text, $@"(?im){labelPattern}[^\r\n0-9]{{0,80}}{amount}");
-        if (!match.Success) match = Regex.Match(text, $@"(?im){amount}[^\r\nA-Za-z]{{0,20}}{labelPattern}");
-        return match.Success && decimal.TryParse(match.Groups[1].Value.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture, out value);
     }
     private void RemoveAttachment() { pendingAttachment = null; attachmentError = null; documentReadMessage = null; ResetBillAttachmentInput(); }
     private void ResetBillAttachmentInput() => billAttachmentInputKey = Guid.NewGuid();

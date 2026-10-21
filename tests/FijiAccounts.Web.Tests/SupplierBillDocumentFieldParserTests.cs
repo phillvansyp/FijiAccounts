@@ -38,4 +38,59 @@ public sealed class SupplierBillDocumentFieldParserTests
     {
         Assert.Equal(expected, SupplierBillDocumentFieldParser.ExtractReference(text, fileName));
     }
+
+    [Fact]
+    public void ExtractReference_ReadsReferenceNumberLabel()
+    {
+        const string text = "JCR 2006 Limited Reference No. 464-10-26";
+
+        Assert.Equal(
+            "464-10-26",
+            SupplierBillDocumentFieldParser.ExtractReference(text, "JCR 2006 YEAR END.pdf"));
+    }
+
+    [Fact]
+    public void MatchSupplierName_UsesWholeWordsAndDistinctiveLeadingToken()
+    {
+        const string text = "PKF aliz pacific consultation with management and Directors";
+        string[] suppliers = ["LTA", "PKF Accountants", "BOSS PTE Ltd"];
+
+        Assert.Equal(
+            "PKF Accountants",
+            SupplierBillDocumentFieldParser.MatchSupplierName(text, suppliers));
+    }
+
+    [Fact]
+    public void ExtractDescription_ReadsWrappedReLine()
+    {
+        const string text = "Re: Annual Accounting, Company Tax, and Corporate\n" +
+                            "Secretarial for the year ended 31 March 2026:\n" +
+                            "Our fees for the Annual Accounting work";
+
+        Assert.Equal(
+            "Annual Accounting, Company Tax, and Corporate Secretarial for the year ended 31 March 2026",
+            SupplierBillDocumentFieldParser.ExtractDescription(text));
+    }
+
+    [Fact]
+    public void TryExtractMoney_MapsStackedSummaryLabelsToTheirAmounts()
+    {
+        const string text = "Subtotal\nVat amount\nBalance Due and payable\n12.5\n6,155.56\n769.44\n$6,925.00";
+
+        Assert.True(SupplierBillDocumentFieldParser.TryExtractMoney(text, @"sub\s*total", out var net));
+        Assert.True(SupplierBillDocumentFieldParser.TryExtractMoney(text, @"vat\s+amount", out var vat));
+        Assert.True(SupplierBillDocumentFieldParser.TryExtractMoney(text, @"balance\s+due", out var gross));
+        Assert.Equal(6155.56m, net);
+        Assert.Equal(769.44m, vat);
+        Assert.Equal(6925m, gross);
+    }
+
+    [Fact]
+    public void TryExtractPaymentTerms_RecognisesDueUponReceipt()
+    {
+        Assert.True(SupplierBillDocumentFieldParser.TryExtractPaymentTerms(
+            "This bill of cost is due and payable upon receipt.",
+            out var days));
+        Assert.Equal(0, days);
+    }
 }
