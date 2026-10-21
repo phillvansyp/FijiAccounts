@@ -59,8 +59,9 @@ else
     {
         <div class="alert alert-info" role="status">The new bill form is open below. <a href="#draft-editor">Go to bill form</a></div>
     }
+    var billSummary = SupplierBillRegisterSummary.Calculate(bills);
     <div class="bill-summary">
-        <article><span>Total bills</span><strong>@access.Organisation.BaseCurrency @bills.Sum(x => x.Total).ToString("N2")</strong><small>@bills.Count bill@(bills.Count == 1 ? "" : "s")</small></article>
+        <article><span>Total bills</span><strong>@access.Organisation.BaseCurrency @billSummary.Total.ToString("N2")</strong><small>@billSummary.Count bill@(billSummary.Count == 1 ? "" : "s")</small></article>
         <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @bills.Where(x => x.Status != BillStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Still to pay</small></article>
         <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>@access.Organisation.BaseCurrency @OverdueTotal.ToString("N2")</strong><small>@OverdueCount bill@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
