@@ -332,6 +332,7 @@ builder.Services.AddScoped<ProjectRevenueRecognitionService>();
 builder.Services.AddScoped<ProjectWipPostingService>();
 builder.Services.AddScoped<BankRuleService>();
 builder.Services.AddScoped<BankCodingMemoryService>();
+builder.Services.AddScoped<BankCodingAutomationService>();
 builder.Services.AddScoped<BankTransactionCodingService>();
 builder.Services.AddScoped<ProductCatalogService>();
 builder.Services.AddScoped<InventoryService>();

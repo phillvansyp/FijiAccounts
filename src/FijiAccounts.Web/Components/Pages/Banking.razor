@@ -16,6 +16,7 @@
 @inject BankStatementImportService StatementImport
 @inject BankTransactionCodingService TransactionCoding
 @inject BankCodingMemoryService CodingMemory
+@inject BankCodingAutomationService CodingAutomation
 @inject JournalPostingService JournalPosting
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -798,7 +799,7 @@ else
                                         <InputCheckbox id="@($"remember-coding-{item.Id}")" class="form-check-input" @bind-Value="codingModel.RememberCoding" />
                                         <label class="form-check-label" for="@($"remember-coding-{item.Id}")"><strong>Remember this coding</strong></label>
                                     </div>
-                                    <small>When the same supplier or payee and the same amount appear again, prefill this account, branch and division, description, and tax treatment for review.</small>
+                                    <small>Automatically code and reconcile the same supplier or payee and exact amount, including matching transactions already waiting. Anything with an existing ledger match or locked period stays for review.</small>
                                 </div>
                             }
                             <div class="coding-actions">
@@ -978,7 +979,30 @@ private string reconciliationStatusClass = "alert-success";
             await NavigationJS.InvokeVoidAsync("accountIslandNavigation.saveBankView", System.Text.Json.JsonSerializer.Serialize(
                 new BankView(selectedBankAccountId, reconciliationDateFrom, reconciliationDateTo, reconciliationSearch, reconciliationPage, reconciliationStatusFilter)));
     }
-    protected override async Task OnParametersSetAsync() { RestoreBankView(); var state = await AuthenticationStateProvider.GetAuthenticationStateAsync(); userId = UserManager.GetUserId(state.User)!; access = await TenantAccess.FindAsync(userId, OrganisationId); if (access is null) return; canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId); canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId); branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId); accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); await Reload(); }
+    private Guid? rememberedCodingAppliedForOrganisation;
+    protected override async Task OnParametersSetAsync()
+    {
+        RestoreBankView();
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is null) return;
+        canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
+        canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
+        accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray();
+        if (canReconcile && rememberedCodingAppliedForOrganisation != OrganisationId)
+        {
+            rememberedCodingAppliedForOrganisation = OrganisationId;
+            var automatic = await CodingAutomation.ApplyAllAsync(userId, OrganisationId);
+            if (automatic.Applied > 0 || automatic.NeedsReview > 0)
+            {
+                statusClass = automatic.NeedsReview > 0 ? "alert-warning" : "alert-success";
+                status = AutomaticCodingMessage(automatic);
+            }
+        }
+        await Reload();
+    }
     private async Task Reload()
     {
         requireTradePaymentDocuments = await Db.Organisations.Where(x => x.Id == OrganisationId).Select(x => x.RequireTradePaymentDocuments).SingleAsync();
@@ -1297,7 +1321,27 @@ reconciliationSessions =
         }
     }
 }
-    private async Task AddStatement() { try { await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount)); await PayrollMatching.MatchAsync(userId, OrganisationId); statusClass = "alert-success"; status = "Statement line added."; statementModel = new(); showStatement = false; await Reload(); } catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { statusClass = "alert-danger"; status = ex.Message; } }
+    private async Task AddStatement()
+    {
+        try
+        {
+            await Reconciliation.AddStatementLineAsync(userId, new(OrganisationId, statementModel.BankAccountId, statementModel.Date, statementModel.Description, statementModel.Reference, statementModel.Amount));
+            await PayrollMatching.MatchAsync(userId, OrganisationId);
+            var automatic = await CodingAutomation.ApplyAllAsync(userId, OrganisationId);
+            statusClass = automatic.NeedsReview > 0 ? "alert-warning" : "alert-success";
+            status = automatic.Applied > 0 || automatic.NeedsReview > 0
+                ? $"Statement line added. {AutomaticCodingMessage(automatic)}"
+                : "Statement line added.";
+            statementModel = new();
+            showStatement = false;
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            statusClass = "alert-danger";
+            status = ex.Message;
+        }
+    }
     private Guid? multipleStatementId;
     private string multipleSearch = "";
     private string? multipleError;
@@ -1834,7 +1878,7 @@ reconciliationSessions =
                 try
                 {
                     var targetAccountId = codingAccounts.Single(x => x.Code == codingModel.TargetAccountCode).Id;
-                    await CodingMemory.RememberAsync(
+                    var remembered = await CodingMemory.RememberAsync(
                         userId,
                         new(
                             OrganisationId,
@@ -1844,7 +1888,10 @@ reconciliationSessions =
                             codingModel.DivisionId,
                             codingModel.Description,
                             codingModel.VatTreatment));
-                    memoryMessage = " This coding will be prefilled for the same supplier or payee and amount next time.";
+                    var automatic = await CodingAutomation.ApplyAsync(userId, OrganisationId, remembered.Id);
+                    memoryMessage = automatic.Applied > 0 || automatic.NeedsReview > 0
+                        ? $" {AutomaticCodingMessage(automatic)}"
+                        : " This coding will be applied automatically to the same supplier or payee and exact amount.";
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
                 {
@@ -2069,9 +2116,14 @@ await Reload();
                     selectedStatement.ContentType,
                     selectedStatement.Size,
                     selectedStatement.Content));
+            var automatic = await CodingAutomation.ApplyAllAsync(userId, OrganisationId);
             statusClass = "alert-success";
             status = $"Imported {result.Imported} statement line{(result.Imported == 1 ? "" : "s")}. " +
-                     $"Skipped {result.Skipped} duplicate{(result.Skipped == 1 ? "" : "s")}.";
+                     $"Skipped {result.Skipped} duplicate{(result.Skipped == 1 ? "" : "s")}." +
+                     (automatic.Applied > 0 || automatic.NeedsReview > 0
+                         ? $" {AutomaticCodingMessage(automatic)}"
+                         : string.Empty);
+            if (automatic.NeedsReview > 0) statusClass = "alert-warning";
             ResetStatementSelection();
             showImport = false;
             await Reload();
@@ -2096,6 +2148,15 @@ await Reload();
     private string StatementDocumentUrl(Guid batchId) =>
         $"api/o/{OrganisationId}/banking/imports/{batchId}/statement";
     private static bool AmountMatches(decimal left, decimal right) => Math.Round(left, 2, MidpointRounding.AwayFromZero) == Math.Round(right, 2, MidpointRounding.AwayFromZero);
+    private static string AutomaticCodingMessage(BankCodingAutomationResult result)
+    {
+        var applied = result.Applied == 1
+            ? "Remembered coding was applied to 1 matching transaction."
+            : $"Remembered coding was applied to {result.Applied} matching transactions.";
+        return result.NeedsReview == 0
+            ? applied
+            : $"{applied} {result.NeedsReview} matching transaction{(result.NeedsReview == 1 ? " still needs" : "s still need")} review.";
+    }
     private sealed class BankModel
 {
     [Required, StringLength(20)]
