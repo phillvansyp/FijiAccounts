@@ -8,6 +8,9 @@ RUN apk add --no-cache \
     libgcc \
     libssl3 \
     libstdc++ \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
     tzdata \
     zlib
 WORKDIR /app

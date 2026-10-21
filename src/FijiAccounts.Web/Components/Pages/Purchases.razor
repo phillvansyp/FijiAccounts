@@ -13,8 +13,6 @@
 @using FijiAccounts.Domain.Tax
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
-@using UglyToad.PdfPig
-@using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
@@ -23,6 +21,7 @@
 @inject ProjectService ProjectService
 @inject RecurringSupplierBillService RecurringBills
 @inject TransactionCurrencyService CurrencyService
+@inject SupplierBillDocumentReader DocumentReader
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -1145,15 +1144,16 @@ private void ToggleRecurringBill()
         documentReadMessage = null;
         var extension = Path.GetExtension(fileName);
         string text;
+        var usedOcr = false;
+        var ocrAttempted = false;
         try
         {
             if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                using var stream = new MemoryStream(content);
-                using var document = PdfDocument.Open(stream);
-                var extracted = new StringBuilder();
-                foreach (var page in document.GetPages()) extracted.AppendLine(ContentOrderTextExtractor.GetText(page));
-                text = extracted.ToString();
+                var result = await DocumentReader.ReadPdfAsync(content);
+                text = result.Text;
+                usedOcr = result.UsedOcr;
+                ocrAttempted = result.OcrAttempted;
             }
             else if (extension.Equals(".csv", StringComparison.OrdinalIgnoreCase)) text = Encoding.UTF8.GetString(content);
             else if (extension.Equals(".eml", StringComparison.OrdinalIgnoreCase) || extension.Equals(".msg", StringComparison.OrdinalIgnoreCase))
@@ -1175,7 +1175,9 @@ private void ToggleRecurringBill()
 
         if (string.IsNullOrWhiteSpace(text) || text.Count(char.IsLetterOrDigit) < 20)
         {
-            documentReadMessage = "File attached, but it appears to be a scanned image rather than a searchable document. Please enter the bill details manually.";
+            documentReadMessage = ocrAttempted
+                ? "File attached, but it is an image-only PDF and OCR could not read enough text reliably. Please enter the bill details manually."
+                : "File attached, but it does not contain enough searchable text. Please enter the bill details manually.";
             return;
         }
 
@@ -1235,8 +1237,10 @@ private void ToggleRecurringBill()
         }
 
         documentReadMessage = populated.Count == 0
-            ? "File attached, but no reliable bill details were found. Please enter them manually."
-            : $"Prefilled {string.Join(", ", populated.Distinct())}. Please review every field, especially the amount, VAT and account, before approving.";
+            ? usedOcr
+                ? "OCR read the document, but no reliable bill details were found. Please enter them manually."
+                : "File attached, but no reliable bill details were found. Please enter them manually."
+            : $"{(usedOcr ? "Read using OCR. " : string.Empty)}Prefilled {string.Join(", ", populated.Distinct())}. Please review every field, especially the amount, VAT and account, before approving.";
     }
     private static string NormalizeDocumentText(string value) => Regex.Replace(value.ToUpperInvariant(), @"[^A-Z0-9]+", " ").Trim();
     private static bool TryExtractDate(string text, string labelPattern, out DateOnly value)

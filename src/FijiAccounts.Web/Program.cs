@@ -171,6 +171,8 @@ else
 builder.Services.AddScoped<ILoginCodeEmailSender, LoginCodeEmailSender>();
 builder.Services.AddScoped<IOrganisationInvitationEmailSender, OrganisationInvitationEmailSender>();
 builder.Services.AddSingleton<SalesInvoicePdfRenderer>();
+builder.Services.AddSingleton<IPdfOcrEngine, LocalPdfOcrEngine>();
+builder.Services.AddSingleton<SupplierBillDocumentReader>();
 builder.Services.AddScoped<SalesInvoiceEmailSender>();
 
 builder.Services.ConfigureApplicationCookie(options =>
