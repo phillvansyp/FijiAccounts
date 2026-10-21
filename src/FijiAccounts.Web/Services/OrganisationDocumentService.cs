@@ -18,6 +18,7 @@ public sealed class OrganisationDocumentService(ApplicationDbContext db, IImmuta
         "Business licence or permit",
         "Insurance certificate",
         "Lease or property document",
+        "Valuation",
         "Bank confirmation",
         "Compliance certificate",
         "Other"

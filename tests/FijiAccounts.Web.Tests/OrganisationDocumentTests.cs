@@ -22,6 +22,7 @@ public sealed class OrganisationDocumentTests
     [InlineData("Business licence or permit")]
     [InlineData("Insurance certificate")]
     [InlineData("Ownership or shareholder record")]
+    [InlineData("Valuation")]
     public async Task CompanyDocumentTypesCanBeStored(string category)
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
