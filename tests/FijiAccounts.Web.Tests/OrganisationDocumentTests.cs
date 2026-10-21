@@ -16,6 +16,27 @@ public sealed class OrganisationDocumentTests
         Assert.True(await test.Db.AuditEvents.AnyAsync(x => x.EntityId == document.Id.ToString() && x.EventType == "OrganisationDocumentAdded"));
     }
 
+    [Theory]
+    [InlineData("Company registration")]
+    [InlineData("Tax registration")]
+    [InlineData("Business licence or permit")]
+    [InlineData("Insurance certificate")]
+    [InlineData("Ownership or shareholder record")]
+    public async Task CompanyDocumentTypesCanBeStored(string category)
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationDocumentService(test.Db, new DatabaseImmutableDocumentStore(test.Db));
+
+        var document = await service.AddAsync(
+            test.UserId,
+            test.Organisation.Id,
+            category,
+            "company-document.pdf",
+            "%PDF-company evidence"u8.ToArray());
+
+        Assert.Equal(category, document.Category);
+    }
+
     [Fact]
     public async Task OtherUserAndOtherOrganisationCannotReadOrUpload()
     {

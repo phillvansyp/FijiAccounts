@@ -7,7 +7,21 @@ namespace FijiAccounts.Web.Services;
 public sealed class OrganisationDocumentService(ApplicationDbContext db, IImmutableDocumentStore storage)
 {
     public const int MaximumBytes = 10 * 1024 * 1024;
-    public static readonly string[] Categories = ["Company registration", "VAT registration", "Other"];
+    public static readonly string[] Categories =
+    [
+        "Company registration",
+        "Tax registration",
+        "VAT registration",
+        "GST registration",
+        "Constitution or articles",
+        "Ownership or shareholder record",
+        "Business licence or permit",
+        "Insurance certificate",
+        "Lease or property document",
+        "Bank confirmation",
+        "Compliance certificate",
+        "Other"
+    ];
     public Task<bool> CanManageAsync(string user, Guid organisation) => db.OrganisationMemberships.AnyAsync(x =>
         x.UserId == user && x.OrganisationId == organisation &&
         (x.Role == OrganisationRole.Owner || x.Role == OrganisationRole.Administrator));

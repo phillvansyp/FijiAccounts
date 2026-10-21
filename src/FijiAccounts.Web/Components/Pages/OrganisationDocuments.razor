@@ -4,28 +4,37 @@
 @inject AuthenticationStateProvider Authentication
 
 <section class="settings-card mb-3">
-    <h2>Registration documents</h2>
-    <p>Keep company and VAT registration confirmations here. Click a filename to open it.</p>
+    <h2>Company documents</h2>
+    <p>Keep registration certificates, licences, insurance and other company records together. Click a filename to open it.</p>
     @if (error is not null) { <div class="alert alert-danger" role="alert">@error</div> }
     @if (message is not null) { <div class="alert alert-success" role="status">@message</div> }
-    <div class="row align-items-end mb-3">
-        <div class="col-md-4"><label for="registration-category" class="form-label">Document type</label>
-            <select id="registration-category" class="form-select" @bind="category" disabled="@busy">
+    <div class="row align-items-end g-3 mb-3">
+        <div class="col-lg-4"><label for="company-document-category" class="form-label">Document type</label>
+            <select id="company-document-category" class="form-select" @bind="category" disabled="@busy">
                 @foreach (var type in OrganisationDocumentService.Categories) { <option>@type</option> }
             </select>
         </div>
-        <div class="col-md-8"><label for="registration-file" class="form-label">Add PDF (up to 10 MB)</label>
-            <InputFile id="registration-file" class="form-control" accept="application/pdf,.pdf" OnChange="Upload" disabled="@busy" />
+        <div class="col-lg-6"><label for="company-document-file" class="form-label">PDF document (up to 10 MB)</label>
+            <InputFile @key="fileInputVersion" id="company-document-file" class="form-control" accept="application/pdf,.pdf" OnChange="ChooseFile" disabled="@busy" />
+            @if (selectedFile is not null)
+            {
+                <small class="d-block mt-2 text-muted">Selected: @selectedFile.Name · @FormatSize(selectedFile.Size)</small>
+            }
+        </div>
+        <div class="col-lg-2 d-grid">
+            <button type="button" class="btn btn-primary" @onclick="Upload" disabled="@(busy || selectedFile is null)">
+                @(busy ? "Adding…" : "Add document")
+            </button>
         </div>
     </div>
-    @if (busy) { <p role="status">Saving document...</p> }
-    @if (items.Count == 0) { <p>No registration documents added yet.</p> }
+    @if (busy) { <p role="status">Saving document…</p> }
+    @if (items.Count == 0) { <p>No company documents added yet.</p> }
     else
     {
         <div class="table-responsive"><table class="table">
-            <thead><tr><th>Document type</th><th>File</th><th>Added</th></tr></thead>
+            <thead><tr><th>Document type</th><th>File</th><th>Size</th><th>Added</th></tr></thead>
             <tbody>@foreach (var item in items) {
-                <tr><td>@item.Category</td><td><a href="/api/o/@OrganisationId/registration-documents/@item.Id">@item.FileName</a></td><td>@item.UploadedAt.ToString("dd MMM yyyy")</td></tr>
+                <tr><td>@item.Category</td><td><a href="/api/o/@OrganisationId/registration-documents/@item.Id">@item.FileName</a></td><td>@FormatSize(item.Size)</td><td>@item.UploadedAt.ToString("dd MMM yyyy")</td></tr>
             }</tbody>
         </table></div>
     }
@@ -36,24 +45,44 @@
     private string user = "", category = "Company registration";
     private string? error, message;
     private bool busy;
+    private int fileInputVersion;
+    private IBrowserFile? selectedFile;
     private List<OrganisationDocument> items = [];
     protected override async Task OnParametersSetAsync()
     {
         user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value;
         items = await Documents.ListAsync(user, OrganisationId);
     }
-    private async Task Upload(InputFileChangeEventArgs args)
+
+    private void ChooseFile(InputFileChangeEventArgs args)
     {
+        error = null;
+        message = null;
+        selectedFile = args.File;
+    }
+
+    private async Task Upload()
+    {
+        if (selectedFile is null) return;
         busy = true; error = null; message = null;
         try {
-            using var stream = args.File.OpenReadStream(OrganisationDocumentService.MaximumBytes);
+            using var stream = selectedFile.OpenReadStream(OrganisationDocumentService.MaximumBytes);
             using var buffer = new MemoryStream();
             await stream.CopyToAsync(buffer);
-            await Documents.AddAsync(user, OrganisationId, category, args.File.Name, buffer.ToArray());
+            await Documents.AddAsync(user, OrganisationId, category, selectedFile.Name, buffer.ToArray());
             items = await Documents.ListAsync(user, OrganisationId);
-            message = "Document saved.";
+            selectedFile = null;
+            fileInputVersion++;
+            message = "Company document added.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException) { error = ex.Message; }
         finally { busy = false; }
     }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / 1024d / 1024d:N1} MB",
+        >= 1024 => $"{bytes / 1024d:N0} KB",
+        _ => $"{bytes:N0} bytes"
+    };
 }
