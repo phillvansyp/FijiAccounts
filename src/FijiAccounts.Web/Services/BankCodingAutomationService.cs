@@ -26,12 +26,16 @@ public sealed class BankCodingAutomationService(
         if (!await access.CanPostJournalsAsync(userId, organisationId))
             throw new UnauthorizedAccessException("You cannot apply remembered bank coding for this organisation.");
 
-        var memoryIds = await db.BankCodingMemories
+        var memories = await db.BankCodingMemories
             .AsNoTracking()
             .Where(x => x.OrganisationId == organisationId)
-            .OrderBy(x => x.CreatedAt)
-            .Select(x => x.Id)
+            .Select(x => new { x.Id, x.CreatedAt })
             .ToListAsync(ct);
+
+        var memoryIds = memories
+            .OrderBy(x => x.CreatedAt)
+            .ThenBy(x => x.Id)
+            .Select(x => x.Id);
 
         var result = BankCodingAutomationResult.Empty;
         foreach (var memoryId in memoryIds)
