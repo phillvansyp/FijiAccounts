@@ -15,6 +15,7 @@
 @inject BankReconciliationSessionService ReconciliationSessions
 @inject BankStatementImportService StatementImport
 @inject BankTransactionCodingService TransactionCoding
+@inject BankCodingMemoryService CodingMemory
 @inject JournalPostingService JournalPosting
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -762,7 +763,7 @@ else
                                             <option value="@account.Code">@account.Code - @account.Name</option>
                                         }
                                     </InputSelect>
-                                    @if (codingSuggestion is not null) { <small>Suggested from the last matching transaction.</small> }
+                                    @if (codingSuggestion is not null) { <small>@codingSuggestion</small> }
                                 </div>
                             }
                             <div>
@@ -791,6 +792,13 @@ else
                                         <option value="@VatTreatment.OutOfScope">Out of scope</option>
                                     </InputSelect>
                                     <small>Choose standard VAT only when you hold a valid tax invoice.</small>
+                                </div>
+                                <div class="coding-memory">
+                                    <div class="form-check">
+                                        <InputCheckbox id="@($"remember-coding-{item.Id}")" class="form-check-input" @bind-Value="codingModel.RememberCoding" />
+                                        <label class="form-check-label" for="@($"remember-coding-{item.Id}")"><strong>Remember this coding</strong></label>
+                                    </div>
+                                    <small>When the same supplier or payee and the same amount appear again, prefill this account, branch and division, description, and tax treatment for review.</small>
                                 </div>
                             }
                             <div class="coding-actions">
@@ -1645,20 +1653,41 @@ reconciliationSessions =
             ?? branches.SelectMany(x => x.Divisions).FirstOrDefault();
         codingModel = new CodingModel { TargetAccountCode = suggested, Description = item.Description, DivisionId = defaultDivision?.Id ?? Guid.Empty };
 
+        var remembered = await CodingMemory.FindAsync(userId, OrganisationId, item.Description, item.Amount);
+        var rememberedDivisionIsAccessible = remembered is not null &&
+            branches.SelectMany(x => x.Divisions).Any(x => x.Id == remembered.DivisionId);
+        var rememberedApplied = remembered is not null &&
+            remembered.TargetAccount.IsActive &&
+            !remembered.TargetAccount.IsBankAccount &&
+            codingAccounts.Any(x => x.Id == remembered.TargetAccountId) &&
+            rememberedDivisionIsAccessible;
+        if (remembered is not null && rememberedApplied)
+        {
+            codingModel.TargetAccountCode = remembered.TargetAccount.Code;
+            codingModel.DivisionId = remembered.DivisionId;
+            codingModel.Description = remembered.Description;
+            codingModel.VatTreatment = remembered.VatTreatment;
+            codingModel.RememberCoding = true;
+            codingSuggestion = "Remembered for this supplier or payee and amount.";
+        }
+
         // SQLite cannot order DateTimeOffset values. There will only be a small
         // history for one description, so load the tenant-scoped matches and choose
         // the newest one in .NET instead of crashing the Blazor circuit.
         var normalizedDescription = item.Description.Trim().ToUpper();
-        var history = await Db.BankStatementLines.AsNoTracking()
-            .Where(x => x.OrganisationId == OrganisationId && x.Id != item.Id && x.ReconciledAt != null && x.MatchedPostedJournalLineId != null && x.Description.ToUpper() == normalizedDescription)
-            .Select(x => new { x.MatchedPostedJournalLineId, x.ReconciledAt })
-            .ToListAsync();
-        var previous = history.OrderByDescending(x => x.ReconciledAt).FirstOrDefault();
-        var previousAccount = previous?.MatchedPostedJournalLineId is Guid matchedId ? await FindCodedAccount(matchedId, item) : null;
-        if (previousAccount is not null && codingAccounts.Any(x => x.Code == previousAccount.Code))
+        if (!rememberedApplied)
         {
-            codingModel.TargetAccountCode = previousAccount.Code;
-            codingSuggestion = previousAccount.Code;
+            var history = await Db.BankStatementLines.AsNoTracking()
+                .Where(x => x.OrganisationId == OrganisationId && x.Id != item.Id && x.ReconciledAt != null && x.MatchedPostedJournalLineId != null && x.Description.ToUpper() == normalizedDescription && x.Amount == item.Amount)
+                .Select(x => new { x.MatchedPostedJournalLineId, x.ReconciledAt })
+                .ToListAsync();
+            var previous = history.OrderByDescending(x => x.ReconciledAt).FirstOrDefault();
+            var previousAccount = previous?.MatchedPostedJournalLineId is Guid matchedId ? await FindCodedAccount(matchedId, item) : null;
+            if (previousAccount is not null && codingAccounts.Any(x => x.Code == previousAccount.Code))
+            {
+                codingModel.TargetAccountCode = previousAccount.Code;
+                codingSuggestion = "Suggested from the last transaction for this supplier or payee and amount.";
+            }
         }
         if (codingModel.TargetAccountCode == "")
         {
@@ -1799,10 +1828,33 @@ reconciliationSessions =
                     codingModel.VatTreatment,
                     codingModel.TransferToAccountId,
                     DivisionId: codingModel.DivisionId));
+            var memoryMessage = "";
+            if (codingModel.RememberCoding && existingStatement is not null && !codingModel.IsTransfer)
+            {
+                try
+                {
+                    var targetAccountId = codingAccounts.Single(x => x.Code == codingModel.TargetAccountCode).Id;
+                    await CodingMemory.RememberAsync(
+                        userId,
+                        new(
+                            OrganisationId,
+                            existingStatement.Description,
+                            existingStatement.Amount,
+                            targetAccountId,
+                            codingModel.DivisionId,
+                            codingModel.Description,
+                            codingModel.VatTreatment));
+                    memoryMessage = " This coding will be prefilled for the same supplier or payee and amount next time.";
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+                {
+                    memoryMessage = $" The transaction was posted, but its coding could not be remembered: {ex.Message}";
+                }
+            }
             statusClass = "alert-success";
 status =
     $"Transaction posted as journal {journal.SequenceNumber} " +
-    "and reconciled. It is now included in financial reports.";
+    $"and reconciled. It is now included in financial reports.{memoryMessage}";
 
 var statement =
     statementLines.FirstOrDefault(x =>
@@ -2114,6 +2166,7 @@ await Reload();
         public Guid DivisionId { get; set; }
         [Required, StringLength(300)] public string Description { get; set; } = "";
         public VatTreatment VatTreatment { get; set; } = VatTreatment.OutOfScope;
+        public bool RememberCoding { get; set; }
     }
     private sealed record CodedVatInfo(decimal Amount, string Treatment);
     private bool CanTransferFromStatement => accounts.Count > 1;

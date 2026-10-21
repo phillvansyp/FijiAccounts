@@ -250,6 +250,60 @@ namespace FijiAccounts.Web.Migrations
                     b.ToTable("AuditEvents");
                 });
 
+            modelBuilder.Entity("FijiAccounts.Web.Data.BankCodingMemory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DivisionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayeeKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TargetAccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedByUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VatTreatment")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DivisionId");
+
+                    b.HasIndex("TargetAccountId");
+
+                    b.HasIndex("OrganisationId", "PayeeKey", "Amount")
+                        .IsUnique();
+
+                    b.ToTable("BankCodingMemories");
+                });
+
             modelBuilder.Entity("FijiAccounts.Web.Data.BankReconciliationSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -7660,6 +7714,33 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Organisation");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.BankCodingMemory", b =>
+                {
+                    b.HasOne("FijiAccounts.Web.Data.Division", "Division")
+                        .WithMany()
+                        .HasForeignKey("DivisionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.Organisation", "Organisation")
+                        .WithMany()
+                        .HasForeignKey("OrganisationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FijiAccounts.Web.Data.LedgerAccount", "TargetAccount")
+                        .WithMany()
+                        .HasForeignKey("TargetAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Division");
+
+                    b.Navigation("Organisation");
+
+                    b.Navigation("TargetAccount");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.BankReconciliationSession", b =>

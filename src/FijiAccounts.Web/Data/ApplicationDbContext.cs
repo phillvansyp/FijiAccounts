@@ -137,6 +137,7 @@ public DbSet<RecurringSupplierBillGeneration> RecurringSupplierBillGenerations =
     public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
     public DbSet<FixedAssetDepreciation> FixedAssetDepreciations => Set<FixedAssetDepreciation>();
     public DbSet<BankRule> BankRules => Set<BankRule>();
+    public DbSet<BankCodingMemory> BankCodingMemories => Set<BankCodingMemory>();
     public DbSet<ProductItem> ProductItems => Set<ProductItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<FixedAssetDisposal> FixedAssetDisposals =>
@@ -1416,6 +1417,10 @@ builder.Entity<FixedAsset>()
     .HasForeignKey(x => x.AcquisitionBankAccountId)
     .OnDelete(DeleteBehavior.Restrict);
         builder.Entity<BankRule>().HasIndex(x => new { x.OrganisationId, x.Name }).IsUnique(); builder.Entity<BankRule>().HasOne(x => x.TargetAccount).WithMany().HasForeignKey(x => x.TargetAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankCodingMemory>().HasIndex(x => new { x.OrganisationId, x.PayeeKey, x.Amount }).IsUnique();
+        builder.Entity<BankCodingMemory>().Property(x => x.Amount).HasPrecision(18, 2);
+        builder.Entity<BankCodingMemory>().HasOne(x => x.TargetAccount).WithMany().HasForeignKey(x => x.TargetAccountId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<BankCodingMemory>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<ProductItem>().HasIndex(x => new { x.OrganisationId, x.Code }).IsUnique(); builder.Entity<ProductItem>().Property(x => x.SalePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.PurchasePrice).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.QuantityOnHand).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.AverageCost).HasPrecision(18, 4); builder.Entity<ProductItem>().Property(x => x.ReorderLevel).HasPrecision(18, 4); builder.Entity<ProductItem>().HasOne(x => x.RevenueAccount).WithMany().HasForeignKey(x => x.RevenueAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.ExpenseAccount).WithMany().HasForeignKey(x => x.ExpenseAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.InventoryAccount).WithMany().HasForeignKey(x => x.InventoryAccountId).OnDelete(DeleteBehavior.Restrict); builder.Entity<ProductItem>().HasOne(x => x.CostAdjustmentAccount).WithMany().HasForeignKey(x => x.CostAdjustmentAccountId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<InventoryMovement>().HasIndex(x => new { x.OrganisationId, x.ProductItemId, x.MovementDate }); builder.Entity<InventoryMovement>().HasIndex(x => new { x.BranchId, x.DivisionId }); builder.Entity<InventoryMovement>().Property(x => x.QuantityChange).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.UnitCost).HasPrecision(18, 4); builder.Entity<InventoryMovement>().Property(x => x.ValueChange).HasPrecision(18, 2); builder.Entity<InventoryMovement>().HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.Division).WithMany().HasForeignKey(x => x.DivisionId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.ProductItem).WithMany().HasForeignKey(x => x.ProductItemId).OnDelete(DeleteBehavior.Restrict); builder.Entity<InventoryMovement>().HasOne(x => x.PostedJournal).WithMany().HasForeignKey(x => x.PostedJournalId).OnDelete(DeleteBehavior.Restrict);
         builder.Entity<Project>().HasIndex(x => new { x.OrganisationId, x.ProjectNumber }).IsUnique();

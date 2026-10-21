@@ -300,6 +300,7 @@
 }
 
 .coding-actions {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -307,6 +308,22 @@
     gap: .5rem;
     padding-top: 1.72rem;
     white-space: nowrap;
+}
+
+.coding-memory {
+    grid-column: 1 / -1;
+    padding: .75rem .9rem;
+    border: 1px solid #b9ddd2;
+    border-radius: .65rem;
+    background: #eef9f5;
+}
+
+.coding-memory .form-check {
+    margin: 0;
+}
+
+.coding-memory small {
+    margin-left: 1.5rem;
 }
 
 .coding-actions .btn {
