@@ -1,0 +1,123 @@
+name: Repair Coral Bay bank ledger
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type REPAIR AI-FJ-F43AD809 TO 17512.20
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-island-production
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://app.accountisland.com:8443
+    env:
+      DEPLOY_DIR: /mnt/data/account-island
+
+    steps:
+      - name: Validate reviewed repair
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "REPAIR AI-FJ-F43AD809 TO 17512.20"
+
+      - name: Back up, preview, repair, and verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$DEPLOY_DIR/stack"
+          image="$(docker inspect --format '{{.Config.Image}}' account-island-app)"
+          app_was_running="$(docker inspect --format '{{.State.Running}}' account-island-app)"
+          restart_app() {
+            if [ "$app_was_running" = "true" ]; then
+              APP_IMAGE="$image" docker compose up -d app
+            fi
+          }
+          trap restart_app EXIT
+
+          if [ "$app_was_running" = "true" ]; then
+            docker compose stop app
+          fi
+
+          backup_name="account-island-before-coral-bank-repair-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+          docker run --rm \
+            --volume "$DEPLOY_DIR/data:/source:ro" \
+            --volume "$DEPLOY_DIR/backups:/backup" \
+            alpine:3.22 \
+            tar -C /source -czf "/backup/$backup_name" .
+          tar -tzf "$DEPLOY_DIR/backups/$backup_name" >/dev/null
+          (cd "$DEPLOY_DIR/backups" && sha256sum "$backup_name" > "$backup_name.sha256")
+
+          plan='{
+            "repairId":"CORAL-BANK-20261022",
+            "organisationId":"f43ad809-166a-4eef-b94d-2d11cecf2eb2",
+            "bankAccountId":"7a8c2ddc-6733-4d6b-87b8-95f1479cff7d",
+            "userId":"",
+            "balances":[
+              {"date":"2026-09-30","before":-23474.36,"after":17512.20},
+              {"date":"2026-10-22","before":-26385.15,"after":14601.41}
+            ],
+            "journals":[
+              {"key":"DUP-20250131","sourceJournalId":"fac98835-19fd-455d-b248-d41ba0b703ee","reverse":true,"date":"2025-01-31","reason":"Reverse orphan duplicate created while coding the matched Westpac statement transaction."},
+              {"key":"DUP-20250228","sourceJournalId":"cac5f5ce-97ae-497d-aac5-c4a7336a9796","reverse":true,"date":"2025-02-28","reason":"Reverse orphan duplicate created while coding the matched Westpac statement transaction."},
+              {"key":"DUP-20250630-FEE","sourceJournalId":"46998a8a-3039-4c14-824f-dd4a88ed3d48","reverse":true,"date":"2025-06-30","reason":"Reverse orphan duplicate created while coding the matched Westpac statement fee."},
+              {"key":"DUP-20250901","sourceJournalId":"ef6130c8-148a-4cde-8848-f88223f1bd14","reverse":true,"date":"2025-09-01","reason":"Reverse orphan duplicate created while coding the matched Westpac statement transaction."},
+              {"key":"DUP-20251201","sourceJournalId":"81d065b2-c4e3-4feb-9d22-482a7b908a55","reverse":true,"date":"2025-12-01","reason":"Reverse orphan duplicate created while coding the matched Westpac statement transaction."},
+              {"key":"DUP-20260528-FEE","sourceJournalId":"c4d3f7fe-773d-480b-b9a1-c1589f66308c","reverse":true,"date":"2026-05-28","reason":"Reverse orphan duplicate created while coding the matched Westpac statement fee."},
+              {"key":"DUP-20260630","sourceJournalId":"47337f2b-ed3f-4554-b046-0658c23afef8","reverse":true,"date":"2026-06-30","reason":"Reverse orphan duplicate created while coding the matched Westpac statement transaction."},
+              {"key":"DUP-20260831-FEE","sourceJournalId":"758f01c5-edb6-4ce3-9cbc-7fa55a714083","reverse":true,"date":"2026-08-31","reason":"Reverse orphan duplicate created while coding the matched Westpac statement fee."}
+            ],
+            "matches":[],
+            "adjustments":[
+              {"key":"WESTPAC-20260930","date":"2026-09-30","offsetAccountCode":"3200","amount":191.56,"reason":"Align Westpac 9808290333 to the retained 30 September 2026 statement closing balance of FJD 17,512.20 after duplicate reversals."}
+            ]
+          }'
+          run_maintenance() {
+            command="$1"
+            printf '%s' "$plan" | docker run --rm -i \
+              --network none \
+              --env ASPNETCORE_ENVIRONMENT=Production \
+              --env Database__MigrateOnStartup=false \
+              --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+              --volume "$DEPLOY_DIR/data:/app/data" \
+              --volume "$DEPLOY_DIR/keys:/app/keys" \
+              "$image" repair-bank-ledger "$command"
+          }
+
+          echo "Reviewed preview:"
+          run_maintenance preview
+          echo "Repair result:"
+          run_maintenance apply | tee "$DEPLOY_DIR/backups/${backup_name%.tar.gz}-result.txt"
+
+          docker run --rm \
+            --network none \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Database__MigrateOnStartup=false \
+            --env Maintenance__VerifyDatabase__RequireCurrentMigrations=true \
+            --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+            --volume "$DEPLOY_DIR/data:/app/data" \
+            "$image" verify-database
+
+          echo "Verified backup retained at $DEPLOY_DIR/backups/$backup_name"
+
+      - name: Verify production health
+        shell: bash
+        run: |
+          docker run --rm --network host curlimages/curl:8.12.1 \
+            --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
+            --header 'Host: app.accountisland.com' \
+            --header 'X-Forwarded-Proto: https' \
+            http://192.168.1.125:8188/health >/dev/null
