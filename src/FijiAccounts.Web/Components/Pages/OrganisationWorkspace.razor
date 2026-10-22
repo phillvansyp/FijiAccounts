@@ -88,6 +88,10 @@ else
             </div>
             <p class="cashflow-description">
                 Outstanding invoices and bills due from today through each forecast horizon.
+                @if (IncludesXeroForecast)
+                {
+                    <span> Includes current read-only Xero invoices and bills.</span>
+                }
             </p>
             <div class="table-responsive">
                 <table class="cashflow-chart">
@@ -126,15 +130,17 @@ else
                 <summary>View 12-month source breakdown</summary>
                 <div class="table-responsive mt-3">
                     <table class="table">
-                        <thead><tr><th>Month</th><th class="text-end">Posted receipts</th><th class="text-end">Recurring receipts</th><th class="text-end">Posted bills</th><th class="text-end">Recurring bills</th><th class="text-end">Planned purchases</th><th class="text-end">Net</th></tr></thead>
+                        <thead><tr><th>Month</th><th class="text-end">Account Island receipts</th><th class="text-end">Xero receipts</th><th class="text-end">Recurring receipts</th><th class="text-end">Account Island bills</th><th class="text-end">Xero bills</th><th class="text-end">Recurring bills</th><th class="text-end">Planned purchases</th><th class="text-end">Net</th></tr></thead>
                         <tbody>
                             @foreach (var month in cashflowForecast.Monthly)
                             {
                                 <tr>
                                     <th scope="row">@month.MonthStart.ToString("MMM yyyy")</th>
                                     <td class="text-end">$@month.Sources.PostedReceipts.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.XeroReceipts.ToString("N2")</td>
                                     <td class="text-end">$@month.Sources.RecurringReceipts.ToString("N2")</td>
                                     <td class="text-end">$@month.Sources.PostedPayments.ToString("N2")</td>
+                                    <td class="text-end">$@month.Sources.XeroPayments.ToString("N2")</td>
                                     <td class="text-end">$@month.Sources.RecurringPayments.ToString("N2")</td>
                                     <td class="text-end">$@month.Sources.PlannedPurchasePayments.ToString("N2")</td>
                                     <td class="text-end"><strong>@FormatCashflowAmount(month.Summary.NetMovement)</strong></td>
@@ -442,6 +448,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private bool IsTeamPage => Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/').EndsWith("/team", StringComparison.OrdinalIgnoreCase);
     private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<OrganisationPermissionProfile> permissionProfiles = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private TemporaryPasswordModel temporaryPassword = new(); private PermissionProfileModel permissionProfileEditor = new(); private Guid? editingPermissionProfileId; private bool savingPermissionProfile; private string? permissionProfileMessage; private string permissionProfileMessageClass = "alert-success"; private string selectedProfileMemberUserId = ""; private string selectedPermissionProfileId = ""; private string? profileAssignmentMessage; private string profileAssignmentMessageClass = "alert-success"; private string? temporaryPasswordMessage; private string temporaryPasswordMessageClass = "alert-success"; private bool settingTemporaryPassword; private string? invitationLink; private string? invitationError; private string? memberInvitationMessage; private string? memberInvitationLink; private string memberInvitationMessageClass = "alert-success"; private string? memberInvitationActionUserId; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
+    private bool IncludesXeroForecast => cashflowForecast?.Monthly.Any(x => x.Sources.XeroReceipts != 0m || x.Sources.XeroPayments != 0m) == true;
     private List<OrganisationMembership> ProfileAssignableMembers => members.Where(x => x.Role != OrganisationRole.Owner && x.UserId != userId).OrderBy(x => x.User.Email).ToList();
     private List<OrganisationMembership> RestrictableMembers => members.Where(x => x.Role is not OrganisationRole.Owner and not OrganisationRole.Administrator).OrderBy(x => x.User.Email).ToList();
     private OrganisationMembership? SelectedMember => members.SingleOrDefault(x => x.UserId == selectedMemberUserId);

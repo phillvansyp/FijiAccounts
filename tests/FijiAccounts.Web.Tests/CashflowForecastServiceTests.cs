@@ -191,6 +191,58 @@ public sealed class CashflowForecastServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_IncludesAuthorisedXeroOpenItemsAndSkipsLocalDuplicates()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var asAt = new DateOnly(2026, 10, 23);
+        var connection = new XeroConnection
+        {
+            OrganisationId = test.Organisation.Id,
+            ProtectedAccessToken = "access",
+            ProtectedRefreshToken = "refresh",
+            AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            GrantedScopes = "accounting.transactions.read",
+            IsActive = true,
+            ConnectedByUserId = test.UserId,
+            UpdatedByUserId = test.UserId
+        };
+        test.Db.XeroConnections.Add(connection);
+        test.Db.XeroMirrorRecords.AddRange(
+            XeroItem(test, connection, "sales-invoices", "XERO-SALE-1", asAt.AddDays(5), 300m, 1.5m),
+            XeroItem(test, connection, "bills", "XERO-BILL-1", asAt.AddDays(10), 125m),
+            XeroItem(test, connection, "sales-invoices", "LOCAL-SALE", asAt.AddDays(5), 900m),
+            XeroItem(test, connection, "bills", "LOCAL-BILL", asAt.AddDays(10), 800m),
+            XeroItem(test, connection, "sales-invoices", "XERO-DRAFT", asAt.AddDays(5), 700m, status: "DRAFT"));
+
+        var localInvoice = Invoice(test, 1, asAt.AddDays(5), 50m);
+        localInvoice.InvoiceNumber = "LOCAL-SALE";
+        test.Db.SalesInvoices.Add(localInvoice);
+        var journal = new PostedJournal
+        {
+            OrganisationId = test.Organisation.Id,
+            SequenceNumber = 1,
+            EntryDate = asAt,
+            Reference = "XERO-FORECAST-DEDUPE",
+            PostedAt = DateTimeOffset.UtcNow,
+            PostedByUserId = test.UserId
+        };
+        test.Db.PostedJournals.Add(journal);
+        var localBill = Bill(test, journal.Id, 1, asAt.AddDays(10), 20m);
+        localBill.SupplierReference = "LOCAL-BILL";
+        test.Db.SupplierBills.Add(localBill);
+        await test.Db.SaveChangesAsync();
+
+        var forecast = await new CashflowForecastService(test.Db)
+            .GetAsync(test.Organisation.Id, asAt);
+
+        AssertPeriod(forecast.Next30Days, 500m, 145m);
+        Assert.Equal(450m, forecast.Monthly[0].Sources.XeroReceipts);
+        Assert.Equal(125m, forecast.Monthly[1].Sources.XeroPayments);
+        Assert.Equal(50m, forecast.Monthly[0].Sources.PostedReceipts);
+        Assert.Equal(20m, forecast.Monthly[1].Sources.PostedPayments);
+    }
+
+    [Fact]
     public async Task GetForScenarioAsync_AddsOneOffAndMonthlyAssumptionsWithoutChangingBaseline()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -325,6 +377,28 @@ public sealed class CashflowForecastServiceTests
             AmountCredited = credited,
             PostedJournalId = journalId,
             CreatedByUserId = test.UserId
+        };
+
+    private static XeroMirrorRecord XeroItem(
+        AccountingTestDatabase test,
+        XeroConnection connection,
+        string dataset,
+        string number,
+        DateOnly dueDate,
+        decimal amountDue,
+        decimal currencyRate = 1m,
+        string status = "AUTHORISED") =>
+        new()
+        {
+            OrganisationId = test.Organisation.Id,
+            XeroConnectionId = connection.Id,
+            DatasetKey = dataset,
+            ExternalId = Guid.NewGuid().ToString("D"),
+            DisplayName = number,
+            SourceHash = new string('a', 64),
+            SourceJson = $$"""
+                {"InvoiceNumber":"{{number}}","DueDate":"{{dueDate:yyyy-MM-dd}}","Status":"{{status}}","AmountDue":{{amountDue.ToString(System.Globalization.CultureInfo.InvariantCulture)}},"CurrencyRate":{{currencyRate.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}
+                """
         };
 
     private static void AssertPeriod(

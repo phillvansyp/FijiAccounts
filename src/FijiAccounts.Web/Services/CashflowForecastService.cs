@@ -2,6 +2,8 @@ using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
+using System.Text.Json;
 
 namespace FijiAccounts.Web.Services;
 
@@ -17,7 +19,9 @@ public sealed record CashflowSourceBreakdown(
     decimal RecurringPayments,
     decimal PlannedPurchasePayments,
     decimal ScenarioReceipts = 0m,
-    decimal ScenarioPayments = 0m);
+    decimal ScenarioPayments = 0m,
+    decimal XeroReceipts = 0m,
+    decimal XeroPayments = 0m);
 
 public sealed record CashflowMonthlyProjection(
     DateOnly MonthStart,
@@ -81,6 +85,8 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
                 x.Total - x.AmountPaid - x.AmountCredited,
                 CashflowDirection.Payment, CashflowSource.PostedDocument))
             .ToListAsync(ct));
+
+        await AddXeroOpenItemsAsync(events, organisationId, asAt, horizon, ct);
 
         var recurringSales = await db.RecurringSalesInvoices.AsNoTracking()
             .Include(x => x.Lines)
@@ -271,11 +277,142 @@ public sealed class CashflowForecastService(ApplicationDbContext db)
             Total(CashflowDirection.Payment, CashflowSource.RecurringTemplate),
             Total(CashflowDirection.Payment, CashflowSource.PlannedPurchase),
             Total(CashflowDirection.Receipt, CashflowSource.Scenario),
-            Total(CashflowDirection.Payment, CashflowSource.Scenario));
+            Total(CashflowDirection.Payment, CashflowSource.Scenario),
+            Total(CashflowDirection.Receipt, CashflowSource.XeroReadOnly),
+            Total(CashflowDirection.Payment, CashflowSource.XeroReadOnly));
+    }
+
+    private async Task AddXeroOpenItemsAsync(
+        List<CashflowEvent> events,
+        Guid organisationId,
+        DateOnly asAt,
+        DateOnly horizon,
+        CancellationToken ct)
+    {
+        var records = await db.XeroMirrorRecords.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && !x.IsArchived &&
+                (x.DatasetKey == "sales-invoices" || x.DatasetKey == "bills") &&
+                x.Connection.IsActive)
+            .Select(x => new { x.DatasetKey, x.ExternalId, x.SourceJson })
+            .ToListAsync(ct);
+        if (records.Count == 0) return;
+
+        var localInvoiceNumbers = (await db.SalesInvoices.AsNoTracking()
+                .Where(x => x.OrganisationId == organisationId)
+                .Select(x => x.InvoiceNumber)
+                .ToListAsync(ct))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var localBillReferences = (await db.SupplierBills.AsNoTracking()
+                .Where(x => x.OrganisationId == organisationId)
+                .Select(x => x.SupplierReference)
+                .ToListAsync(ct))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var record in records)
+        {
+            if (!TryReadXeroOpenItem(record.SourceJson, out var item) ||
+                item.DueDate < asAt || item.DueDate > horizon)
+            {
+                continue;
+            }
+
+            var sourceReference = item.InvoiceNumber.Trim();
+            if (record.DatasetKey == "sales-invoices" &&
+                sourceReference.Length > 0 && localInvoiceNumbers.Contains(sourceReference))
+            {
+                continue;
+            }
+
+            if (record.DatasetKey == "bills" &&
+                sourceReference.Length > 0 && localBillReferences.Contains(sourceReference))
+            {
+                continue;
+            }
+
+            events.Add(new CashflowEvent(
+                item.DueDate,
+                decimal.Round(item.AmountDue * item.CurrencyRate, 2, MidpointRounding.AwayFromZero),
+                record.DatasetKey == "sales-invoices" ? CashflowDirection.Receipt : CashflowDirection.Payment,
+                CashflowSource.XeroReadOnly));
+        }
+    }
+
+    private static bool TryReadXeroOpenItem(string sourceJson, out XeroOpenItem item)
+    {
+        item = default;
+        try
+        {
+            using var document = JsonDocument.Parse(sourceJson);
+            var source = document.RootElement;
+            var status = Text(source, "Status");
+            if (!status.Equals("AUTHORISED", StringComparison.OrdinalIgnoreCase)) return false;
+
+            var amountDue = Decimal(source, "AmountDue");
+            if (amountDue <= 0m || !TryDate(source, "DueDate", out var dueDate)) return false;
+
+            var rate = Decimal(source, "CurrencyRate", 1m);
+            if (rate <= 0m) rate = 1m;
+            item = new XeroOpenItem(dueDate, amountDue, rate, Text(source, "InvoiceNumber", "Reference"));
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string Text(JsonElement source, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (source.ValueKind == JsonValueKind.Object && source.TryGetProperty(name, out var value) &&
+                value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+            {
+                return value.ToString();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static decimal Decimal(JsonElement source, string name, decimal fallback = 0m) =>
+        source.ValueKind == JsonValueKind.Object && source.TryGetProperty(name, out var value) &&
+        decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var number)
+            ? number
+            : fallback;
+
+    private static bool TryDate(JsonElement source, string name, out DateOnly date)
+    {
+        var value = Text(source, name);
+        if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true;
+        if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp))
+        {
+            date = DateOnly.FromDateTime(timestamp.DateTime);
+            return true;
+        }
+
+        if (value.StartsWith("/Date(", StringComparison.Ordinal))
+        {
+            var end = value.IndexOfAny(['+', '-', ')'], 6);
+            if (end < 0) end = value.Length;
+            if (long.TryParse(value[6..end], NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds))
+            {
+                date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds).UtcDateTime);
+                return true;
+            }
+        }
+
+        date = default;
+        return false;
     }
 
     private enum CashflowDirection { Receipt, Payment }
-    private enum CashflowSource { PostedDocument, RecurringTemplate, PlannedPurchase, Scenario }
+    private enum CashflowSource { PostedDocument, RecurringTemplate, PlannedPurchase, Scenario, XeroReadOnly }
+    private readonly record struct XeroOpenItem(DateOnly DueDate, decimal AmountDue, decimal CurrencyRate, string InvoiceNumber);
     private sealed record CashflowEvent(
         DateOnly Date,
         decimal Amount,
