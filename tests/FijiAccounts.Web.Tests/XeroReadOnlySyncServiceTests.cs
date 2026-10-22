@@ -14,6 +14,43 @@ namespace FijiAccounts.Web.Tests;
 public sealed class XeroReadOnlySyncServiceTests
 {
     [Fact]
+    public async Task Large_datasets_continue_beyond_ten_thousand_records_and_items_are_read_once()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new LargeReadOnlyXeroHandler(tenantId);
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback",
+            DatasetTimeoutSeconds = 1_800
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(
+            test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        await connectionService.SelectTenantAsync(test.UserId, test.Organisation.Id, tenantId);
+
+        var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Empty(result.Failures);
+        Assert.Equal(16, result.DatasetCount);
+        Assert.Equal(10_250, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "sales-invoices"));
+        Assert.Equal(127, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "items"));
+        Assert.Equal(42, handler.SalesInvoiceRequests);
+        Assert.Equal(1, handler.ItemRequests);
+        Assert.All(handler.RequestedPageSizes, size => Assert.Equal(250, size));
+        Assert.NotNull((await test.Db.XeroConnections.SingleAsync()).LastFullReconciliationAt);
+    }
+
+    [Fact]
     public async Task Sync_is_one_way_idempotent_and_refreshes_safe_master_data()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -644,6 +681,77 @@ public sealed class XeroReadOnlySyncServiceTests
         Assert.Null(connection.SyncLeaseOwner);
         Assert.Equal(XeroReadOnlySyncRunStatus.Completed,
             (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
+    }
+
+    private sealed class LargeReadOnlyXeroHandler(Guid tenantId) : HttpMessageHandler
+    {
+        public int SalesInvoiceRequests { get; private set; }
+        public int ItemRequests { get; private set; }
+        public List<int> RequestedPageSizes { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri == "https://identity.xero.com/connect/token")
+                return Json("""{"access_token":"access-token","refresh_token":"refresh-token","expires_in":1800,"scope":"offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read"}""");
+            if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
+                return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
+
+            var path = request.RequestUri.AbsolutePath;
+            if (path.EndsWith("/Items", StringComparison.Ordinal))
+            {
+                ItemRequests++;
+                var items = string.Join(',', Enumerable.Range(1, 127)
+                    .Select(index => $$"""{"ItemID":"item-{{index}}","Code":"ITEM{{index:000}}","Name":"Item {{index}}","Status":"ACTIVE"}"""));
+                return Json($$"""{"Items":[{{items}}]}""");
+            }
+
+            if (path.EndsWith("/Invoices", StringComparison.Ordinal) &&
+                request.RequestUri.Query.Contains("ACCREC", StringComparison.OrdinalIgnoreCase))
+            {
+                SalesInvoiceRequests++;
+                var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+                var page = int.Parse(Assert.Single(query["page"])!);
+                var pageSize = int.Parse(Assert.Single(query["pageSize"])!);
+                RequestedPageSizes.Add(pageSize);
+                if (page > 41) return Json("""{"Invoices":[]}""");
+
+                var start = (page - 1) * pageSize + 1;
+                var invoices = string.Join(',', Enumerable.Range(start, pageSize)
+                    .Select(index => $$"""{"InvoiceID":"invoice-{{index}}","InvoiceNumber":"INV-{{index:000000}}","Status":"AUTHORISED"}"""));
+                return Json($$"""{"Invoices":[{{invoices}}]}""");
+            }
+
+            return EmptyFor(path);
+        }
+
+        private static Task<HttpResponseMessage> EmptyFor(string path)
+        {
+            var root = path.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() switch
+            {
+                "TaxRates" => "TaxRates",
+                "Currencies" => "Currencies",
+                "TrackingCategories" => "TrackingCategories",
+                "Invoices" => "Invoices",
+                "CreditNotes" => "CreditNotes",
+                "Payments" => "Payments",
+                "Prepayments" => "Prepayments",
+                "Overpayments" => "Overpayments",
+                "BankTransactions" => "BankTransactions",
+                "BankTransfers" => "BankTransfers",
+                "ManualJournals" => "ManualJournals",
+                "Accounts" => "Accounts",
+                "Contacts" => "Contacts",
+                _ => "Records"
+            };
+            return Json($$"""{"{{root}}":[ ]}""");
+        }
+
+        private static Task<HttpResponseMessage> Json(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
     }
 
     private sealed class ReadOnlyXeroHandler(Guid tenantId, Guid accountId, Guid contactId, Guid itemId) : HttpMessageHandler

@@ -49,8 +49,13 @@ public sealed class XeroReadOnlySyncService(
     private static readonly TimeSpan MaximumInlineRateLimitWait = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan LeaseRenewalWaitSlice = TimeSpan.FromMinutes(2);
     private const int MaximumInlineRateLimitRetries = 1;
-    private const int MaximumPages = 100;
-    private const int ExpectedPageSize = 100;
+    // Xero supports up to 1,000 records per page on its paged Accounting API
+    // endpoints. Use a moderate page size so large organisations need far
+    // fewer requests without creating very large invoice responses in memory.
+    // The upper bound protects a bad provider response while allowing a full
+    // mirror of up to 500,000 records in any one dataset.
+    private const int PageSize = 250;
+    private const int MaximumPages = 2_000;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly XeroApiOptions options = configured.Value;
     private readonly string leaseOwner = LeaseOwnerPrefix + Guid.NewGuid().ToString("N");
@@ -63,7 +68,9 @@ public sealed class XeroReadOnlySyncService(
         new("currencies", "Currencies", "Currencies", "Currencies", false, false),
         new("tracking", "Tracking categories", "TrackingCategories", "TrackingCategories", false, false),
         new("contacts", "Contacts", "Contacts", "Contacts", true, true),
-        new("items", "Items", "Items", "Items", true, true),
+        // Xero's Items endpoint is not a paged Accounting API resource. Adding
+        // page=N is ignored and returns the same collection repeatedly.
+        new("items", "Items", "Items", "Items", false, true),
         new("sales-invoices", "Sales invoices", "Invoices?where=Type%3D%3D%22ACCREC%22", "Invoices", true, true),
         new("bills", "Supplier bills", "Invoices?where=Type%3D%3D%22ACCPAY%22", "Invoices", true, true),
         new("sales-credits", "Sales credit notes", "CreditNotes?where=Type%3D%3D%22ACCRECCREDIT%22", "CreditNotes", true, true),
@@ -567,7 +574,7 @@ public sealed class XeroReadOnlySyncService(
 
             await RenewLeaseAsync(connection, cancellationToken);
 
-            if (!definition.Paged || records.Count < ExpectedPageSize) break;
+            if (!definition.Paged || records.Count < PageSize) break;
             if (page == MaximumPages) throw new InvalidOperationException($"{definition.Name} exceeded the safe page limit.");
         }
 
@@ -801,7 +808,8 @@ public sealed class XeroReadOnlySyncService(
     }
 
     private static string AddPage(string endpoint, int page) =>
-        endpoint + (endpoint.Contains('?', StringComparison.Ordinal) ? "&" : "?") + $"page={page}";
+        endpoint + (endpoint.Contains('?', StringComparison.Ordinal) ? "&" : "?") +
+        $"page={page}&pageSize={PageSize}";
 
     private static string ExternalId(string dataset, JsonElement source, int ordinal)
     {
