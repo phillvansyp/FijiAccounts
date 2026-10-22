@@ -1,0 +1,53 @@
+name: Inspect Coral Bay bank ledger
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type INSPECT AI-FJ-F43AD809
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-island-production
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://app.accountisland.com:8443
+    env:
+      DEPLOY_DIR: /mnt/data/account-island
+
+    steps:
+      - name: Validate requested workspace
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "INSPECT AI-FJ-F43AD809"
+
+      - name: Inspect accounting evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(docker inspect --format '{{.Config.Image}}' account-island-app)"
+          request='{
+            "organisationId":"f43ad809-166a-4eef-b94d-2d11cecf2eb2",
+            "expectedLegalName":"Coral Bay Beach PTE Limited",
+            "statementEndDate":"2026-09-30"
+          }'
+          printf '%s' "$request" | docker run --rm -i \
+            --network none \
+            --env ASPNETCORE_ENVIRONMENT=Production \
+            --env Database__MigrateOnStartup=false \
+            --env 'ConnectionStrings__DefaultConnection=Data Source=/app/data/account-island.db;Cache=Shared' \
+            --volume "$DEPLOY_DIR/data:/app/data:ro" \
+            "$image" inspect-bank-ledger

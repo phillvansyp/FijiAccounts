@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using FijiAccounts.Domain.Accounting;
 using FijiAccounts.Domain.Tax;
@@ -22,6 +23,8 @@ public sealed class BankTransactionCodingService(
     JournalPostingService posting,
     BankReconciliationService reconciliation)
 {
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> CodingLocks = new();
+
     public async Task<bool> ReopenCodingAsync(
         string userId,
         Guid organisationId,
@@ -205,6 +208,36 @@ if (completedReconciliationExists)
         string userId,
         BankTransactionCodingRequest request,
         CancellationToken ct = default)
+    {
+        var codingLock = CodingLocks.GetOrAdd(
+            request.StatementLineId,
+            static _ => new SemaphoreSlim(1, 1));
+
+        await codingLock.WaitAsync(ct);
+        try
+        {
+            // A statement transaction can create only one journal. Serialising
+            // this operation prevents a double click or two browser requests
+            // from posting a second, orphaned journal before reconciliation is saved.
+            return await PostAndReconcileCoreAsync(userId, request, ct);
+        }
+        finally
+        {
+            codingLock.Release();
+            if (codingLock.CurrentCount == 1)
+            {
+                CodingLocks.TryRemove(
+                    new KeyValuePair<Guid, SemaphoreSlim>(
+                        request.StatementLineId,
+                        codingLock));
+            }
+        }
+    }
+
+    private async Task<PostedJournal> PostAndReconcileCoreAsync(
+        string userId,
+        BankTransactionCodingRequest request,
+        CancellationToken ct)
     {
         if (!await access.CanPostJournalsAsync(
                 userId,

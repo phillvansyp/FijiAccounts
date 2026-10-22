@@ -43,7 +43,7 @@ else
                     <div class="col-md-6 mb-3"><label class="form-label">Reference</label><input class="form-control" @bind="model.Reference" @bind:event="oninput" /></div>
                 </div>
                 <div class="row">
-                    <div class="col-md-6 mb-3"><label class="form-label">Deposit account</label><InputSelect class="form-select" @bind-Value="model.BankAccountId">@foreach (var account in bankAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">Deposit account</label><InputSelect class="form-select" @bind-Value="model.BankAccountId"><option value="@Guid.Empty">Choose bank account</option>@foreach (var account in bankAccounts) { <option value="@account.Id">@account.Code - @account.Name</option> }</InputSelect></div>
                     @if (SelectedInvoice is not null && IsForeignInvoice)
                     {
                         <div class="col-md-3 mb-3"><label class="form-label">Amount received (@SelectedInvoice.Currency)</label><input type="number" step="0.01" class="form-control" @bind="model.TransactionAmount" @bind:event="oninput" @bind:after="TransactionAmountChanged" /></div>
@@ -108,7 +108,7 @@ else
     {
         model = new();
         if (openInvoices.Count > 0) { model.InvoiceId = openInvoices[0].Id; await SetOutstanding(); }
-        if (bankAccounts.Count > 0) model.BankAccountId = bankAccounts[0].Id;
+        if (bankAccounts.Count == 1) model.BankAccountId = bankAccounts[0].Id;
     }
 
     private async Task SetOutstanding()

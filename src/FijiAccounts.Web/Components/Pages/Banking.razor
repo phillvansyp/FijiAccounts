@@ -1068,8 +1068,8 @@ reconciliationSessions =
         balances = (await BankAccounts.GetBalancesAsync(
             userId,
             OrganisationId)).ToDictionary();
-        if (accounts.Count > 0 && statementModel.BankAccountId == Guid.Empty) statementModel.BankAccountId = accounts[0].Id;
-        if (accounts.Count > 0 && importBankAccountId == Guid.Empty) importBankAccountId = accounts[0].Id;
+        if (accounts.Count == 1 && statementModel.BankAccountId == Guid.Empty) statementModel.BankAccountId = accounts[0].Id;
+        if (accounts.Count == 1 && importBankAccountId == Guid.Empty) importBankAccountId = accounts[0].Id;
     }
 
     private async Task LoadReconciliationPage(IReadOnlyCollection<Guid> bankAccountIds)

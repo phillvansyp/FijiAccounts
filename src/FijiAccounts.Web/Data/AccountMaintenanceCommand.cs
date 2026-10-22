@@ -70,6 +70,20 @@ public static class AccountMaintenanceCommand
             Console.WriteLine(await service.RunAsync(plan, arguments[1] == "apply"));
             return true;
         }
+        if (arguments.Count > 0 && arguments[0] == "inspect-bank-ledger")
+        {
+            if (arguments.Count != 1)
+                throw new InvalidOperationException("Usage: inspect-bank-ledger, with a reviewed JSON request on stdin.");
+            var json = await Console.In.ReadToEndAsync();
+            var request = System.Text.Json.JsonSerializer.Deserialize<BankLedgerInspectionRequest>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Bank ledger inspection request required.");
+            await using var inspectionScope = app.Services.CreateAsyncScope();
+            Console.WriteLine(await inspectionScope.ServiceProvider
+                .GetRequiredService<BankLedgerInspectionService>()
+                .RunAsync(request));
+            return true;
+        }
 
         if (arguments.Count == 0)
         {

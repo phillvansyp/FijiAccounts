@@ -892,7 +892,7 @@ protected override async Task OnParametersSetAsync()
         billRegisterSortDescending = false;
     }
     private void ResetBillForm() { var billDate = DateOnly.FromDateTime(DateTime.Today); var termType = access?.Organisation.DefaultSupplierBillPaymentTermType ?? PaymentTermType.DaysAfterDocumentDate; var termValue = access?.Organisation.DefaultSupplierBillDueDays ?? 30; var accessibleDivisions = branches.SelectMany(x => x.Divisions).ToList(); bill = new BillModel { SupplierId = Guid.Empty, DivisionId = (accessibleDivisions.FirstOrDefault(x => x.IsDefault) ?? accessibleDivisions.FirstOrDefault())?.Id ?? Guid.Empty, BillDate = billDate, DueDate = PaymentTermCalculator.CalculateDueDate(billDate, termType, termValue), ExpenseAccountId = expenseAccounts.FirstOrDefault()?.Id ?? Guid.Empty, VatTreatment = VatTreatment.Standard, Currency = access?.Organisation.BaseCurrency ?? "FJD", ExchangeRateToBase = 1m }; additionalBillLines = []; editingDraftId = null; editingRecurringBillId = null; pendingAttachment = null; attachmentError = null; documentReadMessage = null; referenceMatch = null; isRecurringBill = false; ResetRecurringBill(); }
-    private void ResetPayment() { payment = new(); if (openBills.Count > 0) { payment.BillId = openBills[0].Id; SetOutstanding(); } if (bankAccounts.Count > 0) payment.BankAccountId = bankAccounts[0].Id; }
+    private void ResetPayment() { payment = new(); if (openBills.Count > 0) { payment.BillId = openBills[0].Id; SetOutstanding(); } if (bankAccounts.Count == 1) payment.BankAccountId = bankAccounts[0].Id; }
     private void ResetRecurringBill()
     {
         recurringBill = new RecurringBillModel();
