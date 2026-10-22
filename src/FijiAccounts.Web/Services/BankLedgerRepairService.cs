@@ -24,14 +24,17 @@ public sealed class BankLedgerRepairService(ApplicationDbContext db, TenantAcces
         var actingUserId = plan.UserId;
         if (string.IsNullOrWhiteSpace(actingUserId))
         {
-            actingUserId = await db.OrganisationMemberships
+            var owners = await db.OrganisationMemberships
                 .AsNoTracking()
                 .Where(x =>
                     x.OrganisationId == plan.OrganisationId &&
                     x.Role == OrganisationRole.Owner)
+                .Select(x => new { x.UserId, x.CreatedAt })
+                .ToListAsync(ct);
+            actingUserId = owners
                 .OrderBy(x => x.CreatedAt)
                 .Select(x => x.UserId)
-                .FirstOrDefaultAsync(ct)
+                .FirstOrDefault()
                 ?? throw new InvalidOperationException(
                     "The organisation has no owner to attribute the repair to.");
         }
