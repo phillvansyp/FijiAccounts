@@ -33,3 +33,4 @@
     }
 }
 .invoice-match-cell{width:3rem;text-align:center}.invoice-match{display:inline-flex;align-items:center;justify-content:center;min-width:2rem;min-height:2rem;border-radius:50%;background:#fff3cd;color:#805b10;font-weight:800;text-decoration:none;border:1px solid #e6bd50}.invoice-match:hover,.invoice-match:focus-visible{background:#ffe69c;outline:2px solid #805b10;outline-offset:2px}
+.xero-source-badge{display:block;width:max-content;margin-top:.3rem;padding:.18rem .45rem;border-radius:999px;background:#e8f8fb;color:#08758b;font-size:.67rem;font-weight:800;letter-spacing:.025em}
