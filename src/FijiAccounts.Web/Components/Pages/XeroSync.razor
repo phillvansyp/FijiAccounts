@@ -41,6 +41,18 @@ else
         </div>
     </div>
 
+    @if (IsFullySynced)
+    {
+        <div class="alert alert-success" role="status">
+            <strong>Fully synced with Xero.</strong>
+            All available Xero datasets were checked successfully at @FormatDate(status!.Connection.LastSyncedAt).
+            @if (status.Connection.ContinuousSyncEnabled)
+            {
+                <span>Automatic sync will keep Account Island up to date.</span>
+            }
+        </div>
+    }
+
     @if (message is not null)
     {
         <div class="alert @messageClass" role="status">@message</div>
@@ -190,6 +202,14 @@ else
         IsRateLimit(CurrentSyncError);
     private bool ServerSyncRunning => status?.IsRunning == true;
     private string? CurrentSyncError => status?.Connection.LastSyncError;
+    private bool IsFullySynced =>
+        status?.Connection.IsConnected == true &&
+        status.Connection.TenantId is not null &&
+        status.Connection.LastSyncedAt is not null &&
+        status.Connection.LastFullReconciliationAt is not null &&
+        status.RecentRuns.FirstOrDefault()?.Status == XeroReadOnlySyncRunStatus.Completed &&
+        !ServerSyncRunning &&
+        string.IsNullOrWhiteSpace(CurrentSyncError);
     private bool SyncActionDisabled => busy || RateLimitBackoffActive || ServerSyncRunning;
     private string SyncButtonLabel => busy
         ? "Refreshing…"
