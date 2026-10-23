@@ -6,3 +6,12 @@
 .profit-comparison td a{color:#007eae;text-decoration:underline;text-underline-offset:3px}.profit-comparison td.negative a{color:#b42318}
 
 .financial-report-wide{width:100%;max-width:none;min-width:0;box-sizing:border-box}
+
+@media print{
+    .financial-report{box-sizing:border-box;width:100%;max-width:none;margin:0;padding:0;border:0;border-radius:0;box-shadow:none}
+    .comparison-table-scroll{overflow:visible}
+    .profit-comparison{width:100%;min-width:0!important;table-layout:fixed;font-size:9pt}
+    .profit-comparison th:first-child{width:34%}
+    .profit-comparison th,.profit-comparison td{padding:.35rem .3rem;overflow-wrap:anywhere}
+    .profit-comparison .number{white-space:nowrap}
+}
