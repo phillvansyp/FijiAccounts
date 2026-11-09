@@ -25,7 +25,8 @@ public sealed record CreateBusinessPartyRequest(
     string? DefaultSalesCurrency = null,
     string? DefaultPurchaseCurrency = null,
     string? AccountsEmail = null,
-    string? Address = null);
+    string? Address = null,
+    BusinessPartyDocumentUploadRequest? InitialContract = null);
 
 public sealed record UpdateBusinessPartyEmailsRequest(
     Guid OrganisationId,
@@ -88,7 +89,8 @@ public sealed record LearnSupplierPurchaseDefaultsRequest(
 public sealed class BusinessPartyService(
     ApplicationDbContext db,
     TenantAccessService access,
-    TransactionCurrencyService? currencyService = null)
+    TransactionCurrencyService? currencyService = null,
+    BusinessPartyDocumentService? documentService = null)
 {
     private readonly TransactionCurrencyService currencies =
         currencyService ?? new TransactionCurrencyService(db, access);
@@ -198,6 +200,19 @@ public sealed class BusinessPartyService(
                 AccountNumber = initialSupplierAccountNumber,
                 IsDefault = true
             });
+        }
+
+        if (request.InitialContract is { } contract)
+        {
+            if ((party.Type & PartyType.Supplier) == 0 ||
+                contract.Type != BusinessPartyDocumentType.Contract ||
+                contract.OrganisationId != party.OrganisationId ||
+                contract.BusinessPartyId != Guid.Empty)
+            {
+                throw new InvalidOperationException("Choose a contract for the new supplier.");
+            }
+
+            (documentService ?? new BusinessPartyDocumentService(db, access)).StageUpload(userId, party, contract);
         }
 
         db.BusinessParties.Add(party);
