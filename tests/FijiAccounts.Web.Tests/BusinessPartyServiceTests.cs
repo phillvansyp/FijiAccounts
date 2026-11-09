@@ -9,6 +9,33 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BusinessPartyServiceTests
 {
     [Fact]
+    public async Task CreateSupplierWithContract_RejectsInvalidFileAndPersistsValidContract()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var request = CreateRequest(test.Organisation.Id, null, test.Account("6000").Id)
+            with { Name = "New supplier with contract", Type = PartyType.Supplier };
+        var contract = new BusinessPartyDocumentUploadRequest(
+            test.Organisation.Id, Guid.Empty, BusinessPartyDocumentType.Contract,
+            "Supply agreement", null, "Supply agreement.pdf", "application/pdf",
+            [37, 80, 68, 70], 4, false, null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateAsync(
+            test.UserId, request with { InitialContract = contract with { Content = [] } }));
+        Assert.False(await test.Db.BusinessParties.AnyAsync(x => x.Name == request.Name));
+        Assert.Empty(await test.Db.BusinessPartyDocuments.ToListAsync());
+
+        var supplier = await service.CreateAsync(test.UserId, request with { InitialContract = contract });
+        var document = await test.Db.BusinessPartyDocuments.AsNoTracking().SingleAsync();
+        Assert.Equal(supplier.Id, document.BusinessPartyId);
+        Assert.Equal(test.Organisation.Id, document.OrganisationId);
+        Assert.Equal(BusinessPartyDocumentType.Contract, document.Type);
+        Assert.NotNull(document.ImmutableDocumentObjectId);
+        Assert.True(await test.Db.AuditEvents.AnyAsync(x =>
+            x.EventType == "BusinessPartyDocumentAdded" && x.EntityId == document.Id.ToString()));
+    }
+
+    [Fact]
     public async Task ContactCurrencyDefaults_AreSavedAndAudited()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

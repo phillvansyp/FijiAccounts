@@ -8,6 +8,7 @@
 @using Microsoft.EntityFrameworkCore
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
+@using FijiAccounts.Web.Components.Documents
 @using FijiAccounts.Domain.Tax
 @using FijiAccounts.Domain.Accounting
 @inject ApplicationDbContext Db
@@ -49,7 +50,7 @@ else
         <div class="mb-3"><label class="form-label">Name</label><input class="form-control" @bind="model.Name" @bind:event="oninput" /></div>
         <div class="row"><div class="col-md-4 mb-3"><label class="form-label">Primary email</label><input class="form-control" @bind="model.Email" @bind:event="oninput" /></div><div class="col-md-4 mb-3"><label class="form-label">Accounts email</label><input class="form-control" @bind="model.AccountsEmail" @bind:event="oninput" /><div class="form-text">Invoices and account documents are sent here when provided.</div></div><div class="col-md-4 mb-3"><label class="form-label">TIN</label><input class="form-control" @bind="model.Tin" @bind:event="oninput" /></div></div>
         <div class="mb-3"><label class="form-label">Address</label><textarea class="form-control" rows="2" @bind="model.Address" @bind:event="oninput"></textarea><div class="form-text">Required when issuing a full Fiji tax invoice.</div></div>
-        <div class="mb-3"><label class="form-label">Type</label><select class="form-select" @bind="contactTypeSelection"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="Both">Customer and supplier</option></select></div>
+        <div class="mb-3"><label class="form-label">Type</label><select class="form-select" @bind="contactTypeSelection" disabled="@(readingContract || creatingContact)"><option value="Customer">Customer</option><option value="Supplier">Supplier</option><option value="Both">Customer and supplier</option></select></div>
         @if ((model.Type & PartyType.Customer) != 0) { <div class="row"><div class="col-md-3 mb-3"><label class="form-label">Default sales account</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesAccountId"><option value="">Choose when entering an invoice</option>@foreach (var account in salesAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default sales VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesVatTreatment"><option value="">Choose when entering an invoice</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default invoice currency</label><InputSelect class="form-select" @bind-Value="model.DefaultSalesCurrency">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code - @currency.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Sales invoice payment terms</label><div class="input-group"><input type="number" step="1" class="form-control" @bind="model.DefaultSalesInvoiceDueDays" @bind:event="oninput" /><span class="input-group-text">days</span></div><div class="form-text">Due date will default to this many days after the invoice date.</div></div></div> }
         @if ((model.Type & PartyType.Supplier) != 0)
         {
@@ -65,7 +66,32 @@ else
             </div>
             <div class="row"><div class="col-md-5 mb-3"><label class="form-label">Default purchase account</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseAccountId"><option value="">Choose when entering a bill</option>@foreach (var account in purchaseAccounts) { <option value="@account.Id">@account.Code — @account.Name</option> }</InputSelect></div><div class="col-md-3 mb-3"><label class="form-label">Default VAT</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseVatTreatment"><option value="">Choose when entering a bill</option>@foreach (var vat in Enum.GetValues<VatTreatment>()) { <option value="@vat">@vat</option> }</InputSelect></div><div class="col-md-4 mb-3"><label class="form-label">Default bill currency</label><InputSelect class="form-select" @bind-Value="model.DefaultPurchaseCurrency">@foreach (var currency in currencies.Where(x => x.IsActive)) { <option value="@currency.Code">@currency.Code - @currency.Name</option> }</InputSelect></div></div>
         }
-        <button class="btn btn-primary">Add contact</button>
+        @if ((model.Type & PartyType.Supplier) != 0)
+        {
+            <div class="mb-3">
+                <h3 class="h6">Supplier contract <span class="text-muted fw-normal">(optional)</span></h3>
+                <ContactDocumentDropZone Prompt="Drop a supplier contract here"
+                                         Disabled="creatingContact"
+                                         OnChange="SelectContract" />
+                @if (initialContract is not null || contractError is not null)
+                {
+                    <div class="mt-2 d-flex align-items-center gap-2">
+                        @if (contractError is not null)
+                        {
+                            <span class="text-danger" role="alert">@contractError</span>
+                        }
+                        else
+                        {
+                            <span role="status">@initialContract?.FileName will be saved with this supplier.</span>
+                        }
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                disabled="@(readingContract || creatingContact)"
+                                @onclick="ClearContract">Clear</button>
+                    </div>
+                }
+            </div>
+        }
+        <button class="btn btn-primary" disabled="@(readingContract || creatingContact || contractError is not null)">Add contact</button>
     </EditForm></div> }
     @if (!string.IsNullOrWhiteSpace(searchTerm))
     {
@@ -609,6 +635,10 @@ else
     private List<LedgerAccount> purchaseAccounts = [];
     private IReadOnlyList<CurrencyOption> currencies = [];
     private ContactModel model = new();
+    private BusinessPartyDocumentUploadRequest? initialContract;
+    private string? contractError;
+    private bool readingContract;
+    private bool creatingContact;
     private string contactTypeSelection
     {
         get => model.Type switch
@@ -617,12 +647,16 @@ else
             PartyType.Supplier => "Supplier",
             _ => "Both"
         };
-        set => model.Type = value switch
+        set
         {
-            "Supplier" => PartyType.Supplier,
-            "Both" => PartyType.Customer | PartyType.Supplier,
-            _ => PartyType.Customer
-        };
+            model.Type = value switch
+            {
+                "Supplier" => PartyType.Supplier,
+                "Both" => PartyType.Customer | PartyType.Supplier,
+                _ => PartyType.Customer
+            };
+            if ((model.Type & PartyType.Supplier) == 0) ClearContract();
+        }
     }
     private Guid? editingEmailPartyId;
     private string? editingEmail;
@@ -715,6 +749,7 @@ else
             canVerifyBankAccounts = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             searchTerm = Query?.Trim() ?? string.Empty;
             currencies = await CurrencyService.ListAsync(userId, OrganisationId);
+            ClearContract();
             model = new ContactModel
         {
             Type = NormalizedView == "suppliers"
@@ -768,9 +803,52 @@ else
             .ToListAsync();
     }
 
+    private void ClearContract()
+    {
+        initialContract = null;
+        contractError = null;
+    }
+
+    private async Task SelectContract(InputFileChangeEventArgs args)
+    {
+        ClearContract();
+        if (args.FileCount != 1)
+        {
+            contractError = "Choose one supplier contract.";
+            return;
+        }
+
+        var organisationId = OrganisationId;
+        var contact = model;
+        readingContract = true;
+        try
+        {
+            var contract = await ContactDocumentDropZone.ReadAsync(
+                args.File, organisationId, Guid.Empty, BusinessPartyDocumentType.Contract);
+            if (OrganisationId == organisationId && model == contact &&
+                (contact.Type & PartyType.Supplier) != 0)
+            {
+                initialContract = contract;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            contractError = ex.Message;
+        }
+        catch (IOException)
+        {
+            contractError = "The contract could not be read. Choose the file again.";
+        }
+        finally
+        {
+            readingContract = false;
+        }
+    }
+
     private async Task Create()
     {
-        if (!canEdit) return;
+        if (!canEdit || readingContract || creatingContact || contractError is not null) return;
+        creatingContact = true;
         try
         {
             var party = await BusinessParties.CreateAsync(
@@ -794,7 +872,10 @@ else
                     model.DefaultSalesCurrency,
                     model.DefaultPurchaseCurrency,
                     model.AccountsEmail,
-                    model.Address));
+                    model.Address,
+                    initialContract));
+            var hasContract = initialContract is not null;
+            ClearContract();
             model = new ContactModel
             {
                 Type = NormalizedView == "suppliers"
@@ -814,12 +895,16 @@ else
                 DefaultPurchaseCurrency = access?.Organisation.BaseCurrency ?? "FJD"
             };
             showAddContact = false;
-            ShowStatus($"{party.Name} added successfully.", "alert-success");
+            ShowStatus(hasContract ? $"{party.Name} added with its contract." : $"{party.Name} added successfully.", "alert-success");
             await Reload();
         }
         catch (Exception ex)
         {
             ShowStatus($"Contact was not added: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            creatingContact = false;
         }
     }
 

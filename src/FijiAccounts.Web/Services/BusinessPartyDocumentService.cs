@@ -50,6 +50,61 @@ public sealed class BusinessPartyDocumentService(
             throw new UnauthorizedAccessException();
         }
 
+        var party =
+            await db.BusinessParties
+                .SingleOrDefaultAsync(
+                    x =>
+                        x.Id == request.BusinessPartyId &&
+                        x.OrganisationId == request.OrganisationId,
+                    ct);
+
+        if (party is null)
+        {
+            throw new InvalidOperationException(
+                "Business party not found.");
+        }
+
+        var document = StageUpload(userId, party, request);
+        await db.SaveChangesAsync(ct);
+        return document;
+    }
+
+    internal BusinessPartyDocument StageUpload(
+        string userId, BusinessParty party, BusinessPartyDocumentUploadRequest request)
+    {
+        request = ValidateUpload(request);
+        var document =
+            new BusinessPartyDocument
+            {
+                OrganisationId = party.OrganisationId,
+                BusinessPartyId = party.Id,
+                Type = request.Type,
+                Name = request.Name,
+                Description = request.Description,
+                FileName = request.FileName,
+                ContentType = request.ContentType,
+                Content = request.Content,
+                OriginalSize = request.OriginalSize,
+                StoredSize = request.Content.LongLength,
+                IsCompressed = request.IsCompressed,
+                ExpiryDate = request.ExpiryDate,
+                UploadedByUserId = userId
+            };
+
+        var storedObject = DocumentStore.Stage(
+            party.OrganisationId,
+            userId,
+            request.Content);
+        document.ImmutableDocumentObjectId = storedObject.Id;
+
+        db.BusinessPartyDocuments.Add(document);
+        db.AuditEvents.Add(Audit(party.OrganisationId, userId, "BusinessPartyDocumentAdded", document, party.Name));
+
+        return document;
+    }
+
+    internal static BusinessPartyDocumentUploadRequest ValidateUpload(BusinessPartyDocumentUploadRequest request)
+    {
         var name = request.Name.Trim();
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
         var fileName = request.FileName.Trim();
@@ -68,50 +123,7 @@ public sealed class BusinessPartyDocumentService(
                 "The document must have valid metadata and non-empty supported content no larger than 10 MB.");
         }
 
-        var party =
-            await db.BusinessParties
-                .SingleOrDefaultAsync(
-                    x =>
-                        x.Id == request.BusinessPartyId &&
-                        x.OrganisationId == request.OrganisationId,
-                    ct);
-
-        if (party is null)
-        {
-            throw new InvalidOperationException(
-                "Business party not found.");
-        }
-
-        var document =
-            new BusinessPartyDocument
-            {
-                OrganisationId = request.OrganisationId,
-                BusinessPartyId = request.BusinessPartyId,
-                Type = request.Type,
-                Name = name,
-                Description = description,
-                FileName = fileName,
-                ContentType = contentType,
-                Content = request.Content,
-                OriginalSize = request.OriginalSize,
-                StoredSize = request.Content.LongLength,
-                IsCompressed = request.IsCompressed,
-                ExpiryDate = request.ExpiryDate,
-                UploadedByUserId = userId
-            };
-
-        var storedObject = DocumentStore.Stage(
-            request.OrganisationId,
-            userId,
-            request.Content);
-        document.ImmutableDocumentObjectId = storedObject.Id;
-
-        db.BusinessPartyDocuments.Add(document);
-        db.AuditEvents.Add(Audit(request.OrganisationId, userId, "BusinessPartyDocumentAdded", document, party.Name));
-
-        await db.SaveChangesAsync(ct);
-
-        return document;
+        return request with { Name = name, Description = description, FileName = fileName, ContentType = contentType };
     }
 
 

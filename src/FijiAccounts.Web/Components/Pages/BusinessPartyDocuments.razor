@@ -1,6 +1,5 @@
 @page "/o/{OrganisationId:guid}/contacts/{PartyId:guid}/documents"
 
-@using System.IO.Compression
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.AspNetCore.Identity
@@ -64,24 +63,9 @@ else
                        @bind-Value="expiryDate" />
         </div>
 
-        <div class="document-drop-zone"
->
-
-    <InputFile id="documentUpload"
-               class="document-file-input"
-               OnChange="Upload"
-               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-               multiple />
-
-    <strong>
-        Drop documents here
-    </strong>
-
-    <span>
-        or click to choose files. Maximum 10 MB per file.
-    </span>
-
-</div>
+        <ContactDocumentDropZone Prompt="Drop documents here"
+                                 Multiple="true"
+                                 OnChange="Upload" />
 
         @if (!string.IsNullOrWhiteSpace(message))
         {
@@ -204,195 +188,48 @@ else
     }
 
 
-    private static bool IsValidExpiryDate(
-        DateOnly? date)
+    private async Task Upload(InputFileChangeEventArgs args)
     {
-        if (!date.HasValue)
+        const int maximumFiles = 10;
+        if (args.FileCount > maximumFiles)
         {
-            return true;
+            message = $"Choose up to {maximumFiles} files at a time.";
+            return;
         }
 
-        var today =
-            DateOnly.FromDateTime(DateTime.Today);
-
-        return date.Value >= today.AddYears(-1)
-            && date.Value <= today.AddYears(20);
-    }
-
-    private async Task Upload(
-    InputFileChangeEventArgs e)
-{
-    try
-    {
-
-            var files =
-                e.GetMultipleFiles(10);
-
-        foreach (var file in files)
+        var uploaded = 0;
+        var errors = new List<string>();
+        var organisationId = OrganisationId;
+        var partyId = PartyId;
+        var documentType = type;
+        var documentName = name;
+        var documentExpiryDate = expiryDate;
+        foreach (var file in args.GetMultipleFiles(maximumFiles))
         {
-            if (file.Size <= 0)
+            try
             {
-                continue;
+                var request = await ContactDocumentDropZone.ReadAsync(
+                    file, organisationId, partyId, documentType, documentName, documentExpiryDate);
+                await Documents.AddAsync(userId, request);
+                uploaded++;
             }
-
-            if (file.Size > 10 * 1024 * 1024)
+            catch (Exception ex)
             {
-                message =
-                    $"{file.Name} is larger than the 10 MB limit.";
-
-                continue;
+                errors.Add($"{file.Name}: {ex.Message}");
             }
-
-            var contentType =
-                string.IsNullOrWhiteSpace(file.ContentType)
-                    ? "application/octet-stream"
-                    : file.ContentType.ToLowerInvariant();
-
-            var allowed =
-                new[]
-                {
-                    "application/pdf",
-                    "application/msword",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-excel",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "image/jpeg",
-                    "image/png"
-                };
-
-            if (!allowed.Contains(contentType))
-            {
-                message =
-                    $"{file.Name} is not a supported file type.";
-
-                continue;
-            }
-
-            await using var stream =
-                file.OpenReadStream(10 * 1024 * 1024);
-
-            using var input =
-                new MemoryStream();
-
-            await stream.CopyToAsync(input);
-
-            var original =
-                input.ToArray();
-
-            using var compressed =
-                new MemoryStream();
-
-            using (var brotli =
-                new BrotliStream(
-                    compressed,
-                    CompressionLevel.Optimal,
-                    true))
-            {
-                await brotli.WriteAsync(original);
-            }
-
-            var stored =
-                compressed.Length < original.Length
-                    ? compressed.ToArray()
-                    : original;
-
-            await Documents.AddAsync(
-                userId,
-                new BusinessPartyDocumentUploadRequest(
-                    OrganisationId,
-                    PartyId,
-                    type,
-                    string.IsNullOrWhiteSpace(name)
-                        ? Path.GetFileNameWithoutExtension(file.Name)
-                        : name,
-                    null,
-                    file.Name,
-                    contentType,
-                    stored,
-                    original.LongLength,
-                    stored.Length < original.Length,
-                    expiryDate));
         }
 
-        name = "";
-        expiryDate = null;
-
-        documents =
-            await Documents.GetForPartyAsync(
-                userId,
-                OrganisationId,
-                PartyId);
-
-        StateHasChanged();
-
-        message =
-    $"{files.Count} document(s) uploaded. Total documents now: {documents.Count}";
-    }
-    catch (Exception ex)
-    {
-        message =
-            $"Upload failed: {ex.Message}";
-    }
-    }
-
-    private static string GetExpiryStatus(
-        DateOnly? expiryDate)
-    {
-        if (!expiryDate.HasValue)
+        if (uploaded > 0)
         {
-            return "";
+            name = "";
+            expiryDate = null;
+            documents = await Documents.GetForPartyAsync(userId, organisationId, partyId);
         }
 
-        var today =
-            DateOnly.FromDateTime(
-                DateTime.Today);
-
-        if (expiryDate.Value < today)
-        {
-            return "Expired";
-        }
-
-        if (expiryDate.Value <= today.AddDays(30))
-        {
-            return "Expiring soon";
-        }
-
-        return "";
+        message = $"{uploaded} of {args.FileCount} document(s) uploaded. {string.Join(" ", errors)}".TrimEnd();
     }
 
-    private static string GetExpiryClass(
-        DateOnly? expiryDate)
-    {
-        var status =
-            GetExpiryStatus(expiryDate);
 
-        return status switch
-        {
-            "Expired" => "text-danger",
-            "Expiring soon" => "text-warning",
-            _ => ""
-        };
-    }
-    private static string GetDocumentIcon(
-        string fileName)
-    {
-        var extension =
-            Path.GetExtension(fileName)
-                .ToLowerInvariant();
-
-        return extension switch
-        {
-            ".pdf" => "📄",
-            ".doc" => "📝",
-            ".docx" => "📝",
-            ".xls" => "📊",
-            ".xlsx" => "📊",
-            ".jpg" => "🖼️",
-            ".jpeg" => "🖼️",
-            ".png" => "🖼️",
-            _ => "📁"
-        };
-    }
     private async Task DeleteDocument(Guid id)
     {
         try
