@@ -42,7 +42,7 @@ window.fileDrop = {
 
             const input = document.getElementById(inputId);
 
-            if (!input || !event.dataTransfer || event.dataTransfer.files.length === 0) {
+            if (!input || input.disabled || !event.dataTransfer || event.dataTransfer.files.length === 0) {
                 return;
             }
 
