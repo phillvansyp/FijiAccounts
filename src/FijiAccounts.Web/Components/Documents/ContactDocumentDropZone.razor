@@ -1,0 +1,78 @@
+@using System.IO.Compression
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject IJSRuntime JS
+
+<label @ref="dropZone" class="document-drop-zone" aria-busy="@reading">
+    <InputFile @key="inputVersion"
+               id="@inputId"
+               class="document-file-input"
+               OnChange="FilesSelected"
+               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+               multiple="@Multiple"
+               disabled="@(Disabled || reading)" />
+    <strong>@Prompt</strong>
+    <span>or click to choose @(Multiple ? "files" : "a file"). Maximum 10 MB per file.</span>
+</label>
+
+@code {
+    [Parameter, EditorRequired] public string Prompt { get; set; } = "";
+    [Parameter, EditorRequired] public EventCallback<InputFileChangeEventArgs> OnChange { get; set; }
+    [Parameter] public bool Multiple { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private bool reading;
+    private int inputVersion;
+    private readonly string inputId = $"contact-document-{Guid.NewGuid():N}";
+    private ElementReference dropZone;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("fileDrop.register", dropZone, inputId);
+    }
+
+    private async Task FilesSelected(InputFileChangeEventArgs args)
+    {
+        if (Disabled || reading) return;
+
+        reading = true;
+        try
+        {
+            await OnChange.InvokeAsync(args);
+        }
+        finally
+        {
+            reading = false;
+            inputVersion++;
+        }
+    }
+
+    internal static async Task<BusinessPartyDocumentUploadRequest> ReadAsync(
+        IBrowserFile file, Guid organisationId, Guid partyId, BusinessPartyDocumentType type,
+        string? name = null, DateOnly? expiryDate = null)
+    {
+        if (file.Size <= 0 || file.Size > BusinessPartyDocumentService.MaximumDocumentBytes)
+            throw new InvalidOperationException("Choose a non-empty file no larger than 10 MB.");
+
+        await using var stream = file.OpenReadStream(BusinessPartyDocumentService.MaximumDocumentBytes);
+        using var input = new MemoryStream();
+        await stream.CopyToAsync(input);
+        var original = input.ToArray();
+
+        using var compressed = new MemoryStream();
+        using (var brotli = new BrotliStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            await brotli.WriteAsync(original);
+        }
+
+        var useCompression = compressed.Length < original.Length;
+        var request = new BusinessPartyDocumentUploadRequest(
+            organisationId, partyId, type,
+            string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(file.Name) : name,
+            null, file.Name, file.ContentType, useCompression ? compressed.ToArray() : original,
+            original.LongLength, useCompression, expiryDate);
+        BusinessPartyDocumentService.ValidateUpload(request);
+        return request;
+    }
+}

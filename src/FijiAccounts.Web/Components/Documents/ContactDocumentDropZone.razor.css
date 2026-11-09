@@ -1,0 +1,29 @@
+.document-drop-zone {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 110px;
+    padding: 1rem;
+    border: 2px dashed #cbd5e1;
+    border-radius: 12px;
+    text-align: center;
+}
+
+.document-drop-zone:hover,
+.document-drop-zone:focus-within,
+.document-drop-zone.drag-over {
+    border-color: #2563eb;
+    background: #f8fafc;
+}
+
+/* Keep the file input focusable and make the full target clickable. */
+.document-drop-zone ::deep .document-file-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
