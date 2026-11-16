@@ -14,6 +14,55 @@ namespace FijiAccounts.Web.Tests;
 public sealed class XeroReadOnlySyncServiceTests
 {
     [Fact]
+    public async Task Fixed_asset_register_waits_for_all_pages_and_preserves_source_amounts()
+    {
+        var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        var seen = new List<string>();
+        var bytes = await XeroFixedAssetRegister.ReadSourceAsync(endpoint =>
+        {
+            var query = QueryHelpers.ParseQuery(new Uri(endpoint).Query);
+            var status = query["status"].ToString();
+            var page = int.Parse(query["page"].ToString());
+            seen.Add($"{status}:{page}");
+            var (count, pages, asset) = status switch
+            {
+                "REGISTERED" => (2, 2, Asset(ids[page - 1], "Registered")),
+                "DISPOSED" => (1, 1, Asset(ids[2], "Disposed")),
+                _ => (0, 0, "")
+            };
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                $$"""{"pagination":{"page":{{page}},"pageCount":{{pages}},"itemCount":{{count}}},"items":[{{asset}}]}"""));
+        }, CancellationToken.None);
+
+        Assert.Equal(["DRAFT:1", "REGISTERED:1", "REGISTERED:2", "DISPOSED:1"], seen);
+        using var document = System.Text.Json.JsonDocument.Parse(bytes);
+        var assets = XeroFixedAssetRegister.ReadSnapshot(document.RootElement.GetProperty("registers")[0].GetRawText());
+        Assert.Equal(ids, assets.Select(x => x.AssetId));
+        Assert.Equal(28.50m, assets[0].AccountingBookValue);
+        Assert.Equal(71.50m, assets[0].BookDepreciationDetail?.CurrentAccumDepreciationAmount);
+        Assert.Equal("Disposed", assets[2].AssetStatus);
+
+        static string Asset(Guid id, string status) =>
+            $$$"""{"assetId":"{{{id}}}","assetName":"Asset","assetStatus":"{{{status}}}","accountingBookValue":28.50,"bookDepreciationDetail":{"currentAccumDepreciationAmount":71.50}}""";
+    }
+
+    [Fact]
+    public void Fixed_asset_export_keeps_the_Xero_date_convention_and_disposal_status()
+    {
+        const string header = "*AssetName,*AssetNumber,AssetStatus,PurchaseDate,PurchasePrice,AssetType,Book_BookValue,AccumulatedDepreciation,DisposalDate";
+        const string row = "\"Bench, two seats\",FA-1,Disposed,1/02/2025,100.00,Office,18.75,81.25,20/11/2025";
+        var assets = XeroFixedAssetRegister.ReadExport(header + "\n" + row);
+        var asset = Assert.Single(XeroFixedAssetRegister.ReadSnapshot(XeroFixedAssetRegister.CreateExportSnapshot(assets)));
+        Assert.Equal("Bench, two seats", asset.AssetName);
+        Assert.Equal("2025-02-01", asset.PurchaseDate);
+        Assert.Equal("2025-11-20", asset.DisposalDate);
+        Assert.Equal("Disposed", asset.AssetStatus);
+        Assert.Equal(18.75m, asset.AccountingBookValue);
+        Assert.Equal(81.25m, asset.BookDepreciationDetail?.CurrentAccumDepreciationAmount);
+        Assert.Throws<InvalidOperationException>(() => XeroFixedAssetRegister.ReadExport(header + "\n" + row + "\n" + row));
+    }
+
+    [Fact]
     public async Task Large_datasets_continue_beyond_ten_thousand_records_and_items_are_read_once()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

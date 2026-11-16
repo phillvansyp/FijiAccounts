@@ -45,7 +45,8 @@ public sealed class XeroReportingService(
         var identityKey = (connection.Id, tenantId, "xero-report-identity");
         cache.TryGetValue<OrganisationInfo>(identityKey, out var identity);
         var endpoint = Endpoint(kind, from, to);
-        var reportKey = (connection.Id, tenantId, "xero-report", endpoint ?? kind);
+        var reportKey = (connection.Id, tenantId, "xero-report",
+            kind == "gst" ? $"gst:{from:yyyy-MM-dd}:{to:yyyy-MM-dd}" : endpoint ?? kind);
         cache.TryGetValue<XeroReportResult>(reportKey, out var saved);
         if (saved?.RetrievedAt is { } retrieved && now - retrieved < FreshFor)
             return saved;
@@ -118,6 +119,15 @@ public sealed class XeroReportingService(
             if (endpoint is null)
                 return Unavailable(DirectReportMessage(kind));
 
+            if (kind == "gst")
+            {
+                var index = await api.GetJsonAsync(token, tenantId, endpoint, ct);
+                var reportId = FindFinalisedGstReport(index, from, to);
+                if (reportId is null)
+                    return Unavailable("Open Xero for the GST return for this period. Finalised returns appear here when Xero provides an exact date match.");
+                endpoint = $"Reports/{reportId}";
+            }
+
             var result = ParseReport(await api.GetJsonAsync(token, tenantId, endpoint, ct),
                 connected.XeroTenantName, source, identity?.TaxBasis, DateTimeOffset.UtcNow);
             cache.Set(reportKey, result, RetainFor);
@@ -159,8 +169,32 @@ public sealed class XeroReportingService(
             "balance-sheet" => $"Reports/BalanceSheet?date={to:yyyy-MM-dd}&paymentsOnly=false",
             "trial-balance" => $"Reports/TrialBalance?date={to:yyyy-MM-dd}&paymentsOnly=false",
             "bank-summary" => $"Reports/BankSummary?{range}",
+            "budget" => $"Reports/BudgetSummary?date={to:yyyy-MM-dd}&periods=12&timeframe=1",
+            "gst" => "Reports",
             _ => null
         };
+    }
+
+    internal static string? FindFinalisedGstReport(byte[] payload, DateOnly from, DateOnly to)
+    {
+        using var document = JsonDocument.Parse(payload);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in RequiredArray(document.RootElement, "Reports").EnumerateArray())
+        {
+            if (PropertyText(item, "ReportName")?.Contains("GST", StringComparison.OrdinalIgnoreCase) != true ||
+                PropertyText(item, "ReportID") is not { } id || id.Length == 0 ||
+                !(id.All(char.IsAsciiDigit) || Guid.TryParseExact(id, "D", out _)) ||
+                PropertyText(item, "ReportDate")?.Split(" to ", StringSplitOptions.TrimEntries) is not [var first, var last] ||
+                !DateOnly.TryParseExact(first, "d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var start) ||
+                !DateOnly.TryParseExact(last, "d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var end) ||
+                start != from || end != to)
+                continue;
+
+            ids.Add(id);
+        }
+        return ids.Count == 1 ? ids.Single() : null;
     }
 
     internal static XeroReportResult ParseReport(
