@@ -68,6 +68,7 @@ public sealed class XeroReadOnlySyncService(
         new("currencies", "Currencies", "Currencies", "Currencies", false, false),
         new("tracking", "Tracking categories", "TrackingCategories", "TrackingCategories", false, false),
         new("contacts", "Contacts", "Contacts?includeArchived=true", "Contacts", true, true),
+        new(XeroContactGroups.Key, "Contact groups", XeroContactGroups.Endpoint, "ContactGroups", false, false),
         // Xero's Items endpoint is not a paged Accounting API resource. Adding
         // page=N is ignored and returns the same collection repeatedly.
         new("items", "Items", "Items", "Items", false, true),
@@ -452,6 +453,9 @@ public sealed class XeroReadOnlySyncService(
             {
                 if (definition.Key == "fixed-assets" && !XeroFixedAssetRegister.HasReadScope(connection.GrantedScopes))
                     continue;
+                if (definition.Key == XeroContactGroups.Key &&
+                    (!full || !XeroContactGroups.HasReadScope(connection.GrantedScopes)))
+                    continue;
                 var scan = definition.OpenDocumentSweep ? null : progress.Datasets.GetValueOrDefault(definition.Key);
                 if (scan?.Completed == true) continue;
                 using var datasetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -721,16 +725,16 @@ public sealed class XeroReadOnlySyncService(
         {
             await RenewLeaseAsync(connection, cancellationToken);
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
-            var bytes = definition.Key == "fixed-assets"
-                ? await XeroFixedAssetRegister.ReadSourceAsync(
+            var bytes = definition.Key switch
+            {
+                "fixed-assets" => await XeroFixedAssetRegister.ReadSourceAsync(
                     path => GetJsonWithRateLimitWaitAsync(connection, actor, path, null, cancellationToken),
-                    cancellationToken)
-                : await GetJsonWithRateLimitWaitAsync(
-                connection,
-                actor,
-                endpoint,
-                modifiedSince,
-                cancellationToken);
+                    cancellationToken),
+                XeroContactGroups.Key => await XeroContactGroups.ReadSourceAsync(
+                    path => GetJsonWithRateLimitWaitAsync(connection, actor, path, null, cancellationToken),
+                    cancellationToken),
+                _ => await GetJsonWithRateLimitWaitAsync(connection, actor, endpoint, modifiedSince, cancellationToken)
+            };
             using var document = JsonDocument.Parse(bytes);
             var records = ReadSourceArray(document.RootElement, definition.RootProperty);
             if (paged)
@@ -1244,6 +1248,7 @@ public sealed class XeroReadOnlySyncService(
             "currencies" => new[] { "Code" },
             "tracking" => new[] { "TrackingCategoryID", "Name" },
             "contacts" => new[] { "ContactID", "Name" },
+            XeroContactGroups.Key => new[] { "ContactGroupId" },
             "items" => new[] { "ItemID", "Code" },
             "sales-invoices" or "bills" => new[] { "InvoiceID", "InvoiceNumber" },
             "sales-credits" or "supplier-credits" => new[] { "CreditNoteID", "CreditNoteNumber" },

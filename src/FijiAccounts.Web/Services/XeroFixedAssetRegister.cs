@@ -10,6 +10,7 @@ namespace FijiAccounts.Web.Services;
 internal static class XeroFixedAssetRegister
 {
     internal const string Endpoint = "https://api.xero.com/assets.xro/1.0/Assets";
+    private const string AssetTypesEndpoint = "https://api.xero.com/assets.xro/1.0/AssetTypes";
     private static readonly string[] Statuses = ["DRAFT", "REGISTERED", "DISPOSED"];
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
@@ -62,16 +63,39 @@ internal static class XeroFixedAssetRegister
                 throw new InvalidOperationException("Xero returned an incomplete fixed-asset register.");
         }
 
+        var assetTypes = assets.Any(asset => asset.TryGetProperty("assetTypeId", out var value) &&
+            value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var id) && id != Guid.Empty)
+            ? ReadAssetTypes(await read(AssetTypesEndpoint))
+            : [];
         return JsonSerializer.SerializeToUtf8Bytes(new
         {
-            Registers = new[] { new { Id = "register", Name = "Xero fixed-asset register", Assets = assets } }
+            Registers = new[] { new { Id = "register", Name = "Xero fixed-asset register", Assets = assets, AssetTypes = assetTypes } }
         }, Options);
     }
 
     internal static IReadOnlyList<Asset> ReadSnapshot(string json)
     {
         using var document = JsonDocument.Parse(json);
-        return document.RootElement.GetProperty("assets").Deserialize<List<Asset>>(Options) ?? [];
+        var root = document.RootElement;
+        var assets = root.GetProperty("assets").Deserialize<List<Asset>>(Options) ?? [];
+        if (!root.TryGetProperty("assetTypes", out var types))
+            return assets;
+        var names = (types.Deserialize<AssetType[]>(Options) ?? [])
+            .ToDictionary(type => type.AssetTypeId, type => type.AssetTypeName);
+        return assets.Select(asset => string.IsNullOrWhiteSpace(asset.AssetTypeName) &&
+            asset.AssetTypeId is { } id && names.TryGetValue(id, out var name)
+                ? asset with { AssetTypeName = name }
+                : asset).ToArray();
+    }
+
+    private static AssetType[] ReadAssetTypes(byte[] response)
+    {
+        var types = JsonSerializer.Deserialize<AssetType[]>(response, Options);
+        if (types is null || types.Any(type => type is null || type.AssetTypeId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(type.AssetTypeName)) ||
+            types.Select(type => type.AssetTypeId).Distinct().Count() != types.Length)
+            throw new InvalidOperationException("Xero did not return a valid list of fixed-asset types.");
+        return types;
     }
 
     internal static IReadOnlyList<Asset> ReadExport(string csv)
@@ -150,10 +174,20 @@ internal static class XeroFixedAssetRegister
         string? DisposalDate,
         decimal? DisposalPrice,
         Depreciation? BookDepreciationDetail,
-        string? AssetTypeName);
+        string? AssetTypeName,
+        Guid? AssetTypeId = null);
 
-    internal sealed record Depreciation(decimal? CurrentAccumDepreciationAmount, decimal? CurrentGainLoss);
+    internal sealed record Depreciation(
+        decimal? CurrentAccumDepreciationAmount, decimal? CurrentGainLoss, decimal? PriorAccumDepreciationAmount = null)
+    {
+        [JsonIgnore]
+        internal decimal? AccumulatedDepreciationAmount =>
+            CurrentAccumDepreciationAmount is null && PriorAccumDepreciationAmount is null
+                ? null
+                : CurrentAccumDepreciationAmount.GetValueOrDefault() + PriorAccumDepreciationAmount.GetValueOrDefault();
+    }
 
+    private sealed record AssetType(Guid AssetTypeId, string AssetTypeName);
     private sealed record AssetPage(Pagination? Pagination, List<JsonElement>? Items);
     private sealed record Pagination(int? Page, int? PageCount, int? ItemCount);
 }
