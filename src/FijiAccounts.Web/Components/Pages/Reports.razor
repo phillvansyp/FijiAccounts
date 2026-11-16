@@ -10,6 +10,7 @@
 @using FijiAccounts.Web.Services
 
 @inject FinancialReportService FinancialReports
+@inject XeroReportingService XeroReports
 @inject TenantAccessService TenantAccess
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
@@ -23,6 +24,15 @@
     <div class="alert alert-danger">
         You do not have access to this organisation.
     </div>
+}
+else if (usesXero)
+{
+    <XeroReportPanel OrganisationId="OrganisationId" Kind="@NormalisedReportType" Title="@ReportTitle"
+                     From="@(ViewState is null ? null : period.From)" To="@(ViewState is null ? null : period.To)" />
+}
+else if (NormalisedReportType == "bank-summary")
+{
+    <p>A live Xero connection is required to open the Xero Bank Summary.</p>
 }
 else
 {
@@ -394,6 +404,7 @@ else
 }
 
 @code {
+    private bool usesXero;
     [Parameter]
     public Guid OrganisationId { get; set; }
 
@@ -401,7 +412,7 @@ else
     public string? ReportType { get; set; }
 
     private string NormalisedReportType =>
-        ReportType is "balance-sheet" or "trial-balance"
+        ReportType is "balance-sheet" or "trial-balance" or "bank-summary"
             ? ReportType
             : "profit-loss";
 
@@ -410,6 +421,7 @@ else
         {
             "balance-sheet" => "Balance Sheet",
             "trial-balance" => "Trial Balance",
+            "bank-summary" => "Bank Summary",
             _ => "Profit & Loss"
         };
 
@@ -425,7 +437,7 @@ else
     }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (access is not null && !isLoading && loadError is null)
+        if (access is not null && !usesXero && !isLoading && loadError is null)
             await JS.InvokeVoidAsync("accountIslandNavigation.saveView", JsonSerializer.Serialize(new ReportView { Period = period, Comparison = comparisonOptions }));
     }
     private PeriodModel period = new();
@@ -598,6 +610,7 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
         var state =
             await AuthenticationStateProvider
                 .GetAuthenticationStateAsync();
@@ -670,7 +683,8 @@ else
             }
             catch (JsonException) { }
         }
-        await Load();
+        if (!usesXero && NormalisedReportType != "bank-summary")
+            await Load();
     }
 
     private async Task Load()

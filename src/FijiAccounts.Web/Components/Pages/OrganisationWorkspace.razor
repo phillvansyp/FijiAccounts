@@ -10,6 +10,8 @@
 @using FijiAccounts.Web.Components.Account
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
+@inject XeroReportingService XeroReports
+@inject XeroOpenBalanceService XeroOpenBalances
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject OrganisationInvitationService Invitations
@@ -39,10 +41,24 @@ else
 
     <section class="dashboard-intro"><div><span class="eyebrow">Business overview</span><h2>Your finances, without the fog.</h2><p>Live balances and the work that needs attention, drawn directly from the ledger.</p></div><span class="as-at">As at @DateTime.Today.ToString("dd MMM yyyy")</span></section>
     <section class="kpi-grid">
-        <a href="o/@OrganisationId/journals" class="kpi-card cash"><span>Cash position</span><strong>$@cashPosition.ToString("N2")</strong><small>Posted bank ledger balance</small><i>↗</i></a>
+        @if (usesXero)
+        {
+            <a href="o/@OrganisationId/banking" class="kpi-card cash"><span>Cash position</span><strong>Xero Bank Summary</strong><small>Bank balances and movements</small></a>
+        }
+        else
+        {
+            <a href="o/@OrganisationId/journals" class="kpi-card cash"><span>Cash position</span><strong>$@cashPosition.ToString("N2")</strong><small>Posted bank ledger balance</small><i>↗</i></a>
+        }
         <a href="o/@OrganisationId/sales" class="kpi-card"><span>Receivables</span><strong>$@receivables.ToString("N2")</strong><small>@overdueInvoices overdue invoice@(overdueInvoices == 1 ? "" : "s")</small><i>↗</i></a>
         <a href="o/@OrganisationId/purchases" class="kpi-card"><span>Payables</span><strong>$@payables.ToString("N2")</strong><small>@overdueBills overdue bill@(overdueBills == 1 ? "" : "s")</small><i>↗</i></a>
-        <a id="tax-position" href="help?from=vat" class="kpi-card tax"><span>Net VAT position</span><strong>$@vatPosition.ToString("N2")</strong><small>@(vatPosition >= 0 ? "Collected less purchase VAT" : "Potential VAT credit")</small><i>↗</i></a>
+        @if (usesXero)
+        {
+            <a href="o/@OrganisationId/tax" class="kpi-card tax"><span>@access.Organisation.TaxLabel position</span><strong>Xero tax report</strong><small>Connected accounting basis</small></a>
+        }
+        else
+        {
+            <a id="tax-position" href="help?from=vat" class="kpi-card tax"><span>Net VAT position</span><strong>$@vatPosition.ToString("N2")</strong><small>@(vatPosition >= 0 ? "Collected less purchase VAT" : "Potential VAT credit")</small><i>↗</i></a>
+        }
     </section>
 
     <section class="dashboard-grid"><article class="work-card"><div class="card-heading"><div><span class="eyebrow">Work queue</span><h2>Needs attention</h2></div><span class="count-badge">@(overdueInvoices + overdueBills)</span></div>
@@ -153,7 +169,20 @@ else
         </section>
     }
 
-    @if (cashflowForecast is not null && financialRisk is not null && cashRunway is not null && financialIntelligence is not null)
+    @if (usesXero)
+    {
+        <section class="detail-card intelligence-card">
+            <h2>Balances and ageing in Xero</h2>
+            <p>Receivables and payables include unapplied Xero credits from the current copy.</p>
+            <div class="d-flex flex-wrap gap-3">
+                <a href="o/@OrganisationId/reports/aging/receivables">Aged receivables</a>
+                <a href="o/@OrganisationId/reports/aging/payables">Aged payables</a>
+                <a href="o/@OrganisationId/reports/cash-summary">Cash Summary</a>
+                <a href="o/@OrganisationId/integrations/xero">Xero sync status</a>
+            </div>
+        </section>
+    }
+    else if (cashflowForecast is not null && financialRisk is not null && cashRunway is not null && financialIntelligence is not null)
     {
         <section class="detail-card intelligence-card">
             <div class="card-heading">
@@ -445,6 +474,7 @@ else
 }
 
 @code {
+    private bool usesXero;
     [Parameter] public Guid OrganisationId { get; set; }
     private bool IsTeamPage => Navigation.ToBaseRelativePath(Navigation.Uri).TrimEnd('/').EndsWith("/team", StringComparison.OrdinalIgnoreCase);
     private bool loading = true, canManageTeam; private AccessibleOrganisation? access; private List<LedgerAccount> accounts = []; private List<OrganisationMembership> members = []; private List<OrganisationPermissionProfile> permissionProfiles = []; private List<Branch> branches = []; private List<OrganisationDimensionAccessGrant> dimensionGrants = []; private List<PendingInvitationSummary> pendingInvitations = []; private InviteModel invite = new(); private TemporaryPasswordModel temporaryPassword = new(); private PermissionProfileModel permissionProfileEditor = new(); private Guid? editingPermissionProfileId; private bool savingPermissionProfile; private string? permissionProfileMessage; private string permissionProfileMessageClass = "alert-success"; private string selectedProfileMemberUserId = ""; private string selectedPermissionProfileId = ""; private string? profileAssignmentMessage; private string profileAssignmentMessageClass = "alert-success"; private string? temporaryPasswordMessage; private string temporaryPasswordMessageClass = "alert-success"; private bool settingTemporaryPassword; private string? invitationLink; private string? invitationError; private string? memberInvitationMessage; private string? memberInvitationLink; private string memberInvitationMessageClass = "alert-success"; private string? memberInvitationActionUserId; private string? pendingInvitationMessage; private string? pendingInvitationLink; private string pendingInvitationMessageClass = "alert-success"; private Guid? pendingInvitationActionId; private Guid? pendingRevocationId; private string userId = ""; private string selectedMemberUserId = ""; private string selectedDimensionGrant = ""; private string? dimensionAccessMessage; private string dimensionAccessMessageClass = "alert-success"; private decimal cashPosition, receivables, payables, vatPosition; private int overdueInvoices, overdueBills, contactCount; private int financialAlertCount, documentAlertCount, systemAlertCount;
@@ -555,7 +585,18 @@ else
                 x.AmountPaid + x.AmountCredited < x.Total &&
                 x.Status != BillStatus.Voided);
 
-        if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
+        var organisationWide = await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null;
+        usesXero = organisationWide && await XeroReports.UsesXeroAsync(OrganisationId);
+        if (usesXero)
+        {
+            var importedInvoices = await XeroOpenBalances.ReadAsync(OrganisationId, payables: false);
+            var importedBills = await XeroOpenBalances.ReadAsync(OrganisationId, payables: true);
+            receivables = importedInvoices.Sum(x => x.Amount);
+            payables = importedBills.Sum(x => x.Amount);
+            overdueInvoices = importedInvoices.Count(x => x.DueDate < today);
+            overdueBills = importedBills.Count(x => x.DueDate < today);
+        }
+        else if (organisationWide)
         {
             var importedInvoices = await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(db, OrganisationId, openOnly: true);
             var importedBills = await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(db, OrganisationId,

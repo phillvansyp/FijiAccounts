@@ -10,6 +10,7 @@
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
+@inject XeroReportingService XeroReports
 @inject PayrollBankMatchingService PayrollMatching
 @inject BankReconciliationService Reconciliation
 @inject BankReconciliationSessionService ReconciliationSessions
@@ -27,6 +28,11 @@
 
 <PageTitle>Banking - Account Island</PageTitle>
     @if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+else if (usesXero)
+{
+    <XeroReportPanel OrganisationId="OrganisationId" Kind="bank-summary" Title="Bank accounts" />
+    <XeroReportPanel OrganisationId="OrganisationId" Kind="bank-reconciliation" Title="Bank reconciliation" />
+}
 else
 {
     <div class="bank-heading"><div><p class="eyebrow">Banking</p><h1>Bank accounts</h1><p>Balances, statement lines and reconciliation from the posted ledger.</p></div><div class="heading-actions"><a class="btn btn-outline-primary" href="@($"/o/{OrganisationId}/payments")">Payments and documents</a>@if (canReconcile) { <button class="btn btn-outline-primary" @onclick="() => showFeeds = !showFeeds">Bank feeds</button><button class="btn btn-outline-primary" @onclick="ToggleImportHistory">Import history</button><button class="btn btn-outline-primary" @onclick="ToggleStatementImport">Read statement</button><button class="btn btn-outline-primary" @onclick="() => showStatement = !showStatement">+ Statement line</button> }@if (canManage) { <button class="btn btn-primary" @onclick="ToggleAddAccountForm">+ Add bank account</button> }</div></div>
@@ -933,6 +939,7 @@ else
 </style>
 
 @code {
+    private bool usesXero;
     [Parameter] public Guid OrganisationId { get; set; }
     private const long MaxStatementBytes = 5 * 1024 * 1024;
     private const int ReconciliationPageSize = 25;
@@ -987,6 +994,8 @@ private string reconciliationStatusClass = "alert-success";
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is null) return;
+        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
+        if (usesXero) return;
         canManage = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
         canReconcile = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);

@@ -1,0 +1,149 @@
+@using FijiAccounts.Web.Services
+@using Microsoft.AspNetCore.Components.Authorization
+@inject XeroReportingService XeroReports
+@inject AuthenticationStateProvider Authentication
+
+<section class="detail-card">
+    <header class="mb-3">
+        <h1>@Title</h1>
+        <p class="text-muted mb-1">Xero is the source for this organisation’s reports.</p>
+        @if (result?.Organisation is { Length: > 0 } name)
+        {
+            <p class="mb-1">@name</p>
+        }
+    </header>
+
+    @if (HasDateFilter)
+    {
+        <EditForm Model="period" OnValidSubmit="LoadAsync" FormName="xero-source-report">
+            <div class="d-flex align-items-end flex-wrap gap-3 mb-3">
+                @if (HasStartDate)
+                {
+                    <label>From
+                        <InputDate class="form-control" @bind-Value="period.From" />
+                    </label>
+                }
+                <label>@(HasStartDate ? "To" : "As at")
+                    <InputDate class="form-control" @bind-Value="period.To" />
+                </label>
+                <button class="btn btn-primary" type="submit" disabled="@loading">Update report</button>
+                @if (result is not null)
+                {
+                    <a class="btn btn-outline-secondary" href="@result.Source" target="_blank" rel="noopener">Open in Xero</a>
+                }
+            </div>
+        </EditForm>
+    }
+    else if (result is not null)
+    {
+        <a class="btn btn-primary mb-3" href="@result.Source" target="_blank" rel="noopener">Open in Xero</a>
+    }
+
+    @if (Kind == "cash-summary")
+    {
+        <a class="btn btn-outline-secondary mb-3" href="@($"o/{OrganisationId:D}/reports/bank-summary")">View Xero Bank Summary</a>
+    }
+
+    @if (loading)
+    {
+        <p role="status">Loading the Xero report…</p>
+    }
+    else if (result is not null)
+    {
+        @if (Kind == "gst" && result.TaxBasis is { } basis)
+        {
+            <p><strong>Xero GST basis</strong> @(basis == "PAYMENTS" ? "Payments basis" : basis == "INVOICE" ? "Invoice basis" : basis)</p>
+        }
+        @if (result.Message is { } message)
+        {
+            <p class="alert alert-warning" role="status">@message</p>
+        }
+        @if (result.RetrievedAt is { } checkedAt)
+        {
+            <small class="text-muted">Retrieved from Xero @checkedAt.ToString("dd MMM yyyy HH:mm 'UTC'")</small>
+        }
+        @if (result.Rows.Count > 0)
+        {
+            <h2 class="h4 mt-3">@(result.Title ?? Title)</h2>
+            @foreach (var subtitle in result.Subtitles)
+            {
+                <div>@subtitle</div>
+            }
+            <div class="table-responsive mt-3">
+                <table class="table table-sm align-middle">
+                    <tbody>
+                    @foreach (var row in result.Rows)
+                    {
+                        if (row.Kind == "Section" && !string.IsNullOrWhiteSpace(row.Title))
+                        {
+                            <tr class="table-light"><th scope="rowgroup" colspan="@result.Rows.Max(x => x.Cells.Count)">@row.Title</th></tr>
+                        }
+                        if (row.Cells.Count > 0)
+                        {
+                            <tr class="@(row.Kind == "SummaryRow" ? "fw-semibold" : null)">
+                                @for (var i = 0; i < row.Cells.Count; i++)
+                                {
+                                    if (row.Kind == "Header")
+                                    {
+                                        <th scope="col" class="@(i == 0 ? null : "text-end")">@row.Cells[i]</th>
+                                    }
+                                    else
+                                    {
+                                        <td class="@(i == 0 ? null : "text-end")">@row.Cells[i]</td>
+                                    }
+                                }
+                            </tr>
+                        }
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid OrganisationId { get; set; }
+    [Parameter, EditorRequired] public string Kind { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public DateOnly? From { get; set; }
+    [Parameter] public DateOnly? To { get; set; }
+
+    private Period period = new();
+    private XeroReportResult? result;
+    private bool loading;
+    private bool HasStartDate => Kind is "profit-loss" or "bank-summary" or "gst";
+    private bool HasDateFilter => HasStartDate || Kind is "balance-sheet" or "trial-balance" or "receivables" or "payables";
+    private string userId = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var lastMonthEnd = new DateOnly(today.Year, today.Month, 1).AddDays(-1);
+        var to = To ?? (Kind is "balance-sheet" or "profit-loss" or "gst" ? lastMonthEnd : today);
+        period = new() { From = From ?? new DateOnly(to.Year, to.Month, 1), To = to };
+        userId = (await Authentication.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (loading) return;
+        loading = true;
+        try
+        {
+            result = await XeroReports.ReadAsync(userId, OrganisationId, Kind,
+                HasStartDate ? period.From : period.To, period.To);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private sealed class Period
+    {
+        public DateOnly From { get; set; }
+        public DateOnly To { get; set; }
+    }
+}
