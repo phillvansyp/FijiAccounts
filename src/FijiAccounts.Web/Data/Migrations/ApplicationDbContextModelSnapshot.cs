@@ -6508,6 +6508,9 @@ namespace FijiAccounts.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SyncCheckpointJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("SyncLeaseOwner")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
