@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using FijiAccounts.Web.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
@@ -34,8 +35,9 @@ public sealed record XeroSalesInvoiceProjection(
 {
     public decimal BaseTotal => Base(Total);
     public decimal BaseAmountDue => Base(AmountDue);
-    public bool IsOverdue => AmountDue > 0m && DueDate < DateOnly.FromDateTime(DateTime.Today) &&
-        SourceStatus is not "VOIDED" and not "DELETED";
+    public decimal BaseAmountPaid => Base(AmountPaid);
+    public bool IsAwaitingPayment => SourceStatus == "AUTHORISED" && AmountDue > 0m;
+    public bool IsOverdue => IsAwaitingPayment && DueDate < DateOnly.FromDateTime(DateTime.Today);
     public string StatusKey => IsOverdue
         ? "Overdue"
         : SourceStatus switch
@@ -60,13 +62,18 @@ public sealed record XeroSalesInvoiceProjection(
 
 public static class XeroSalesInvoiceProjectionParser
 {
+    internal static (string Supplier, string Reference) BillKey(string supplier, string reference) =>
+        (supplier.Trim().ToUpperInvariant(), reference.Trim().ToUpperInvariant());
+
     public static bool TryParse(
         XeroMirrorRecord record,
         out XeroSalesInvoiceProjection invoice,
-        bool includeLines = true)
+        bool includeLines = true,
+        bool supplierBill = false)
     {
         invoice = null!;
-        if (!record.DatasetKey.Equals("sales-invoices", StringComparison.OrdinalIgnoreCase) || record.IsArchived)
+        var datasetKey = supplierBill ? "bills" : "sales-invoices";
+        if (!record.DatasetKey.Equals(datasetKey, StringComparison.OrdinalIgnoreCase) || record.IsArchived)
             return false;
 
         try
@@ -98,7 +105,7 @@ public static class XeroSalesInvoiceProjectionParser
                 record.Id,
                 record.ExternalId,
                 Fallback(Text(source, "InvoiceNumber"), record.DisplayName),
-                ContactName(source),
+                ContactName(source, supplierBill ? "Xero supplier" : "Xero customer"),
                 Text(source, "Reference"),
                 issueDate,
                 dueDate,
@@ -120,11 +127,29 @@ public static class XeroSalesInvoiceProjectionParser
         }
     }
 
-    private static string ContactName(JsonElement source)
+    internal static async Task<List<XeroSalesInvoiceProjection>> ReadCurrentAsync(
+        ApplicationDbContext db, Guid organisationId, bool supplierBills = false, bool openOnly = false)
+    {
+        var datasetKey = supplierBills ? "bills" : "sales-invoices";
+        var results = new List<XeroSalesInvoiceProjection>();
+        var records = db.XeroMirrorRecords.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.DatasetKey == datasetKey &&
+                !x.IsArchived && x.Connection.IsActive)
+            .AsAsyncEnumerable();
+        await foreach (var record in records)
+        {
+            if (TryParse(record, out var projection, includeLines: false, supplierBill: supplierBills) &&
+                (!openOnly || projection.IsAwaitingPayment))
+                results.Add(projection);
+        }
+        return results;
+    }
+
+    private static string ContactName(JsonElement source, string fallback)
     {
         if (source.TryGetProperty("Contact", out var contact) && contact.ValueKind == JsonValueKind.Object)
-            return Fallback(Text(contact, "Name"), "Xero customer");
-        return "Xero customer";
+            return Fallback(Text(contact, "Name"), fallback);
+        return fallback;
     }
 
     private static string Fallback(string value, string fallback) =>

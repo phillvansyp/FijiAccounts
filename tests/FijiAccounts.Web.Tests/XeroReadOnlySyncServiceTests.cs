@@ -326,7 +326,7 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
-    public async Task Inline_rate_limit_retry_budget_is_shared_across_the_whole_run()
+    public async Task A_later_request_can_retry_after_another_short_rate_limit()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
         var tenantId = Guid.NewGuid();
@@ -358,12 +358,11 @@ public sealed class XeroReadOnlySyncServiceTests
 
         var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
 
-        var failure = Assert.Single(result.Failures);
-        Assert.Equal("Tax rates", failure.Dataset);
+        Assert.Empty(result.Failures);
         Assert.Equal(2, handler.AccountRequests);
-        Assert.Equal(1, handler.TaxRateRequests);
-        Assert.Equal([TimeSpan.FromMinutes(2)], delays);
-        Assert.Equal(XeroReadOnlySyncRunStatus.Partial,
+        Assert.Equal(2, handler.TaxRateRequests);
+        Assert.Equal([TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2)], delays);
+        Assert.Equal(XeroReadOnlySyncRunStatus.Completed,
             (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).Status);
     }
 
@@ -998,7 +997,8 @@ public sealed class XeroReadOnlySyncServiceTests
             if (path.EndsWith("/TaxRates", StringComparison.Ordinal))
             {
                 TaxRateRequests++;
-                return RateLimited();
+                if (TaxRateRequests == 1) return RateLimited();
+                return Json("""{"TaxRates":[]}""");
             }
             return Json("{}");
         }

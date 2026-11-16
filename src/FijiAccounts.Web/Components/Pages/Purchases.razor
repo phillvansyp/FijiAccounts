@@ -60,9 +60,10 @@ else
         <div class="alert alert-info" role="status">The new bill form is open below. <a href="#draft-editor">Go to bill form</a></div>
     }
     var billSummary = SupplierBillRegisterSummary.Calculate(bills);
+    var totalBillCount = billSummary.Count + xeroBills.Count;
     <div class="bill-summary">
-        <article><span>Total bills</span><strong>@access.Organisation.BaseCurrency @billSummary.Total.ToString("N2")</strong><small>@billSummary.Count bill@(billSummary.Count == 1 ? "" : "s")</small></article>
-        <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @bills.Where(x => x.Status != BillStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited).ToString("N2")</strong><small>Still to pay</small></article>
+        <article><span>Total bills</span><strong>@access.Organisation.BaseCurrency @((billSummary.Total + XeroBillTotal).ToString("N2"))</strong><small>@totalBillCount bill@(totalBillCount == 1 ? "" : "s")</small></article>
+        <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @((bills.Where(x => x.Status != BillStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited) + XeroOutstandingTotal).ToString("N2"))</strong><small>Still to pay</small></article>
         <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>@access.Organisation.BaseCurrency @OverdueTotal.ToString("N2")</strong><small>@OverdueCount bill@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
     @if (pendingPaymentApprovals.Count > 0)
@@ -367,6 +368,7 @@ else
             <input class="form-control"
                    @bind="billRegisterSearch"
                    @bind:event="oninput"
+                   @bind:after="ResetXeroBillPage"
                    placeholder="Search supplier, reference or bill" />
         </div>
 
@@ -452,7 +454,7 @@ else
         </div>
 
         <span class="status-badge status-draft">
-            @FilteredBillRegisterCount of @(drafts.Count + bills.Count) total
+            @FilteredBillRegisterCount of @(drafts.Count + bills.Count + xeroBills.Count) total
         </span>
     </div>
 
@@ -466,25 +468,25 @@ else
         <button type="button"
                 class="btn @(billRegisterFilter == "Awaiting" ? "btn-primary" : "btn-outline-secondary")"
                 @onclick='() => SetBillRegisterFilter("Awaiting")'>
-            Awaiting payment (@openBills.Count)
+            Awaiting payment (@(openBills.Count + xeroBills.Count(x => x.IsAwaitingPayment)))
         </button>
 
         <button type="button"
                 class="btn @(billRegisterFilter == "Paid" ? "btn-primary" : "btn-outline-secondary")"
                 @onclick='() => SetBillRegisterFilter("Paid")'>
-            Paid (@bills.Count(x => x.Status == BillStatus.Paid))
+            Paid (@(bills.Count(x => x.Status == BillStatus.Paid) + xeroBills.Count(x => x.SourceStatus == "PAID")))
         </button>
 
         <button type="button"
                 class="btn @(billRegisterFilter == "Overdue" ? "btn-primary" : "btn-outline-secondary")"
                 @onclick='() => SetBillRegisterFilter("Overdue")'>
-            Overdue (@bills.Count(IsOverdue))
+            Overdue (@OverdueCount)
         </button>
 
         <button type="button"
                 class="btn @(billRegisterFilter == "All" ? "btn-primary" : "btn-outline-secondary")"
                 @onclick='() => SetBillRegisterFilter("All")'>
-            All (@(drafts.Count + bills.Count))
+            All (@(drafts.Count + bills.Count + xeroBills.Count))
         </button>
     </div>
 
@@ -598,8 +600,10 @@ else
     else
     {
         var registerBills = FilteredAndSortedBills.ToList();
+        var importedBillCount = FilteredXeroBills.Count();
+        var importedOffset = xeroBillPage * XeroBillPageSize;
 
-        @if (registerBills.Count == 0)
+        @if (registerBills.Count == 0 && importedBillCount == 0)
         {
             <div class="empty-state">
                 <strong>No supplier bills in this view</strong>
@@ -684,9 +688,33 @@ else
                                 </td>
                             </tr>
                         }
+                        @foreach (var item in SortedXeroBills.Skip(importedOffset).Take(XeroBillPageSize))
+                        {
+                            <tr class="@(item.IsOverdue ? "overdue-row" : null)">
+                                <td><a class="btn btn-sm btn-outline-primary" href="o/@OrganisationId/purchases/xero/@item.RecordId">View</a></td>
+                                <td class="bill-register-from">@item.ContactName <small class="text-muted">Xero · read-only</small></td>
+                                <td><span class="status-badge status-@item.StatusKey.ToLowerInvariant()">@item.StatusLabel</span></td>
+                                <td>@item.InvoiceNumber</td>
+                                <td>@item.IssueDate.ToString("dd MMM yyyy")</td>
+                                <td>@item.DueDate.ToString("dd MMM yyyy")</td>
+                                <td class="text-end">@access.Organisation.BaseCurrency @item.BaseAmountPaid.ToString("N2")</td>
+                                <td class="text-end outstanding">@access.Organisation.BaseCurrency @item.BaseAmountDue.ToString("N2")</td>
+                                <td></td>
+                            </tr>
+                        }
                     </tbody>
                 </table>
             </div>
+            @if (importedBillCount > XeroBillPageSize)
+            {
+                <nav class="d-flex align-items-center gap-2 mt-3" aria-label="Xero bill pages">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(xeroBillPage == 0)"
+                            @onclick="() => xeroBillPage--">Previous</button>
+                    <span>Xero bills @(importedOffset + 1)–@Math.Min(importedOffset + XeroBillPageSize, importedBillCount) of @importedBillCount</span>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(importedOffset + XeroBillPageSize >= importedBillCount)"
+                            @onclick="() => xeroBillPage++">Next</button>
+                </nav>
+            }
         }
     }
 </section>
@@ -699,6 +727,9 @@ else
     [SupplyParameterFromQuery(Name = "draft")]
     public Guid? DraftId { get; set; }
     private const long MaxAttachmentBytes = 10 * 1024 * 1024;
+    private const int XeroBillPageSize = 100;
+    private int xeroBillPage;
+    private List<XeroSalesInvoiceProjection> xeroBills = [];
     private static readonly HashSet<string> AllowedAttachmentExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".eml", ".msg" };
 private AccessibleOrganisation? access; private string userId = string.Empty; private bool canPost, canManageContacts, creatingSupplier; private string supplierName = ""; private string? supplierSetupError; private bool showBillForm; private bool showRecurringBills; private bool isRecurringBill; private string billRegisterFilter = "Awaiting"; private string billRegisterSearch = string.Empty; private string billRegisterSort = "Date"; private bool billRegisterSortDescending = true; private List<BusinessParty> suppliers = []; private List<LedgerAccount> expenseAccounts = [], bankAccounts = []; private List<Branch> branches = []; private List<Project> projects = []; private IReadOnlyList<CurrencyOption> currencies = []; private List<SupplierBill> bills = [], openBills = []; private List<SupplierPaymentApproval> pendingPaymentApprovals = []; private List<SupplierBillDraft> drafts = []; private List<RecurringSupplierBill> recurringBills = []; private Guid? editingDraftId; private Guid? editingRecurringBillId; private BillModel bill = new(); private List<BillLineModel> additionalBillLines = []; private PaymentModel payment = new(); private RecurringBillModel recurringBill = new(); private PendingAttachment? pendingAttachment; private string? attachmentError; private string? documentReadMessage; private string? billEditorError; private string? status; private string statusClass = "alert-success"; private bool isReadingBillAttachment; private Guid billAttachmentInputKey = Guid.NewGuid(); private decimal BillSubtotal => bill.Quantity * bill.UnitPrice + additionalBillLines.Sum(x => x.Quantity * x.UnitPrice); private bool IsBaseBillCurrency => access is not null && string.Equals(bill.Currency, access.Organisation.BaseCurrency, StringComparison.OrdinalIgnoreCase);
 private SupplierReferenceMatch? referenceMatch;
@@ -793,7 +824,39 @@ protected override async Task OnParametersSetAsync()
     }
 }
 }
-    private async Task Reload() { var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray(); bills = (await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.SequenceNumber).ToList(); drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value)).ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList(); recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines).Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value) && x.Status != RecurringSupplierBillStatus.Ended).OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync(); pendingPaymentApprovals = (await Db.SupplierPaymentApprovals.AsNoTracking().Include(x => x.Supplier).Include(x => x.SupplierBill).Where(x => x.OrganisationId == OrganisationId && x.Status == SupplierPaymentApprovalStatus.Pending && (x.DivisionId == null || accessibleDivisionIds.Contains(x.DivisionId.Value))).ToListAsync()).OrderByDescending(x => x.RequestedAt).ToList(); openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid).Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList(); }
+    private async Task Reload()
+    {
+        var accessibleDivisionIds = branches.SelectMany(x => x.Divisions).Select(x => x.Id).ToArray();
+        bills = await Db.SupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Attachments)
+            .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
+            .ToListAsync();
+        bills = bills.OrderByDescending(x => x.SequenceNumber).ToList();
+        drafts = (await Db.SupplierBillDrafts.AsNoTracking().Include(x => x.Supplier)
+            .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null && accessibleDivisionIds.Contains(x.DivisionId.Value))
+            .ToListAsync()).OrderByDescending(x => x.UpdatedAt).ToList();
+        recurringBills = await Db.RecurringSupplierBills.AsNoTracking().Include(x => x.Supplier).Include(x => x.Lines)
+            .Where(x => x.OrganisationId == OrganisationId && x.DivisionId != null &&
+                accessibleDivisionIds.Contains(x.DivisionId.Value) && x.Status != RecurringSupplierBillStatus.Ended)
+            .OrderBy(x => x.Status).ThenBy(x => x.NextBillDate).ToListAsync();
+        pendingPaymentApprovals = (await Db.SupplierPaymentApprovals.AsNoTracking().Include(x => x.Supplier).Include(x => x.SupplierBill)
+            .Where(x => x.OrganisationId == OrganisationId && x.Status == SupplierPaymentApprovalStatus.Pending &&
+                (x.DivisionId == null || accessibleDivisionIds.Contains(x.DivisionId.Value)))
+            .ToListAsync()).OrderByDescending(x => x.RequestedAt).ToList();
+        openBills = bills.Where(x => x.Status is BillStatus.Posted or BillStatus.PartPaid)
+            .Where(x => Outstanding(x) > 0).OrderBy(x => x.DueDate).ToList();
+
+        ResetXeroBillPage();
+        xeroBills = [];
+        if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
+        {
+            var localBillReferences = bills.Where(x => !string.IsNullOrWhiteSpace(x.SupplierReference))
+                .Select(x => XeroSalesInvoiceProjectionParser.BillKey(x.Supplier.Name, x.SupplierReference!))
+                .ToHashSet();
+            xeroBills = (await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(Db, OrganisationId, supplierBills: true))
+                .Where(x => !localBillReferences.Contains(XeroSalesInvoiceProjectionParser.BillKey(x.ContactName, x.InvoiceNumber)))
+                .ToList();
+        }
+    }
 
     private static decimal Outstanding(SupplierBill item) => Math.Max(0m, item.Total - item.AmountPaid - item.AmountCredited);
     private string BillRegisterStatus(SupplierBill item) => IsOverdue(item) ? "Overdue" : item.Status switch { BillStatus.Posted => "Awaiting payment", BillStatus.PartPaid => "Part paid", BillStatus.Paid => "Paid", BillStatus.Credited => "Credited", BillStatus.Voided => "Voided", _ => item.Status.ToString() };
@@ -802,7 +865,34 @@ protected override async Task OnParametersSetAsync()
     private int FilteredBillRegisterCount =>
         billRegisterFilter == "Drafts"
             ? FilteredDrafts.Count()
-            : FilteredAndSortedBills.Count();
+            : FilteredAndSortedBills.Count() + FilteredXeroBills.Count();
+
+    private IEnumerable<XeroSalesInvoiceProjection> FilteredXeroBills =>
+        xeroBills.Where(x => (billRegisterFilter switch
+        {
+            "Awaiting" => x.IsAwaitingPayment,
+            "Paid" => x.SourceStatus == "PAID",
+            "Overdue" => x.IsOverdue,
+            _ => true
+        }) && (string.IsNullOrWhiteSpace(billRegisterSearch) ||
+            x.ContactName.Contains(billRegisterSearch, StringComparison.OrdinalIgnoreCase) ||
+            x.InvoiceNumber.Contains(billRegisterSearch, StringComparison.OrdinalIgnoreCase) ||
+            x.Reference.Contains(billRegisterSearch, StringComparison.OrdinalIgnoreCase)));
+
+    private IEnumerable<XeroSalesInvoiceProjection> SortedXeroBills => billRegisterSort switch
+    {
+        "From" => SortXeroBills(x => x.ContactName),
+        "Status" => SortXeroBills(x => x.StatusLabel),
+        "Date" => SortXeroBills(x => x.IssueDate),
+        _ => SortXeroBills(x => x.DueDate)
+    };
+
+    private IEnumerable<XeroSalesInvoiceProjection> SortXeroBills<TKey>(Func<XeroSalesInvoiceProjection, TKey> key) =>
+        (billRegisterSortDescending ? FilteredXeroBills.OrderByDescending(key) : FilteredXeroBills.OrderBy(key))
+            .ThenBy(x => x.RecordId);
+
+    private decimal XeroBillTotal => xeroBills.Where(x => x.SourceStatus is not "VOIDED" and not "DELETED").Sum(x => x.BaseTotal);
+    private decimal XeroOutstandingTotal => xeroBills.Where(x => x.IsAwaitingPayment).Sum(x => x.BaseAmountDue);
 
     private IEnumerable<SupplierBillDraft> FilteredDrafts =>
         drafts.Where(item =>
@@ -877,10 +967,14 @@ protected override async Task OnParametersSetAsync()
     private void SetBillRegisterFilter(string filter)
     {
         billRegisterFilter = filter;
+        ResetXeroBillPage();
     }
+
+    private void ResetXeroBillPage() => xeroBillPage = 0;
 
     private void SortBillRegisterBy(string sort)
     {
+        ResetXeroBillPage();
         if (billRegisterSort == sort)
         {
             billRegisterSortDescending =
@@ -1850,8 +1944,9 @@ private void ToggleRecurringBill()
         billEditorError = string.Join(" ", context.GetValidationMessages().Distinct());
     private async Task PayBill() { try { var request = new SupplierPaymentRequest(OrganisationId, payment.BillId, payment.Date, payment.Reference, payment.Amount, payment.BankAccountId); if (access?.Organisation.RequireSupplierPaymentApproval == true) { var result = await Purchasing.RequestPaymentApprovalAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} submitted for approval for ${result.Amount:N2}."; } else { var result = await Purchasing.PayBillAsync(userId, request); statusClass="alert-success"; status=$"Payment {result.Reference} recorded for ${result.Amount:N2}."; } await Reload(); ResetPayment(); } catch(Exception ex) when(ex is InvalidOperationException or UnauthorizedAccessException or DomainException) { statusClass="alert-danger"; status=ex.Message; } }
     private static bool IsOverdue(SupplierBill item) => item.Status is not BillStatus.Paid and not BillStatus.Credited and not BillStatus.Voided && item.DueDate < DateOnly.FromDateTime(DateTime.Today) && item.AmountPaid + item.AmountCredited < item.Total;
-    private int OverdueCount => bills.Count(IsOverdue);
-    private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited);
+    private int OverdueCount => bills.Count(IsOverdue) + xeroBills.Count(x => x.IsOverdue);
+    private decimal OverdueTotal => bills.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited) +
+        xeroBills.Where(x => x.IsOverdue).Sum(x => x.BaseAmountDue);
     private IEnumerable<Project> EligibleProjects => projects.Where(x => x.DivisionId == bill.DivisionId && x.Status is ProjectStatus.Active or ProjectStatus.OnHold);
     private IEnumerable<ProjectCostCode> CostCodes(Guid? projectId) => projects.SingleOrDefault(x => x.Id == projectId)?.CostCodes.Where(x => x.IsActive) ?? [];
     private Task BillProjectChanged(BillLineModel line) { line.ProjectCostCodeId = null; return Task.CompletedTask; }
