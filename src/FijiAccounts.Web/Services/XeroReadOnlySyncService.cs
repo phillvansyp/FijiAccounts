@@ -500,7 +500,7 @@ public sealed class XeroReadOnlySyncService(
         CancellationToken cancellationToken)
     {
         var paged = definition.Paged && progress is not null;
-        var scan = progress?.Datasets.GetValueOrDefault(definition.Key) ?? new([], false, false, false);
+        var scan = progress?.Datasets.GetValueOrDefault(definition.Key) ?? new([], false, false, false, null);
         var hashes = scan.PageHashes.ToList();
         var resumed = scan.Resumed || hashes.Count > 0;
         var datasetRecords = db.XeroMirrorRecords
@@ -555,7 +555,13 @@ public sealed class XeroReadOnlySyncService(
                     hashes.RemoveRange(anchor, hashes.Count - anchor);
                     break;
                 }
-                if (anchor == 1) hashes.Clear();
+                if (anchor == 1)
+                {
+                    hashes.Clear();
+                    // Every old page will be checked again. Rows seen only
+                    // before this rewind must be confirmed against Xero.
+                    scan = scan with { VerifiedSince = now };
+                }
             }
         }
 
@@ -661,7 +667,7 @@ public sealed class XeroReadOnlySyncService(
             {
                 // A cursor and the data it covers commit in the same transaction.
                 hashes.Add(PageHash(definition, records, page));
-                scan = new(hashes.ToArray(), endOfPages, false, resumed);
+                scan = new(hashes.ToArray(), endOfPages, false, resumed, scan.VerifiedSince);
                 run.RecordCount += count;
                 run.ChangedCount += changed;
                 await SaveProgressAsync(connection, progress!, definition.Key, scan, cancellationToken);
@@ -712,7 +718,7 @@ public sealed class XeroReadOnlySyncService(
             if (paged)
             {
                 (changed, archivedCount) = await ReconcileUnseenAsync(connection, actor, definition,
-                    datasetRecords, progress!.StartedAt, resumed, now, cancellationToken);
+                    datasetRecords, scan.VerifiedSince ?? progress!.StartedAt, resumed, now, cancellationToken);
             }
             else
             {
@@ -728,7 +734,7 @@ public sealed class XeroReadOnlySyncService(
             await db.SaveChangesAsync(cancellationToken);
         else
             await SaveProgressAsync(connection, progress, definition.Key,
-                new([], true, true, false), cancellationToken);
+                new([], true, true, false, null), cancellationToken);
         return new(count, changed, archivedCount);
     }
 
@@ -1221,7 +1227,8 @@ public sealed class XeroReadOnlySyncService(
     private sealed record SyncProgress(Guid TenantId, DateTimeOffset StartedAt, bool Full,
         DateTimeOffset? ModifiedSince, Dictionary<string, DatasetProgress> Datasets);
 
-    private sealed record DatasetProgress(IReadOnlyList<string> PageHashes, bool EndOfPages, bool Completed, bool Resumed);
+    private sealed record DatasetProgress(IReadOnlyList<string> PageHashes, bool EndOfPages, bool Completed,
+        bool Resumed, DateTimeOffset? VerifiedSince);
 
     private sealed record DatasetSyncResult(int Seen, int Changed, int Archived);
 
