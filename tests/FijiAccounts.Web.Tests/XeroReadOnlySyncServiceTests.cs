@@ -848,7 +848,7 @@ public sealed class XeroReadOnlySyncServiceTests
             Requests.Add((request.Method.Method, request.RequestUri.AbsoluteUri));
             if (request.RequestUri.AbsoluteUri == "https://api.xero.com/connections")
                 return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
-            if (ReturnNoRecords) return EmptyFor(request.RequestUri.AbsolutePath);
+            if (ReturnNoRecords) return EmptyCollectionFor(request.RequestUri.AbsolutePath);
             var path = request.RequestUri.AbsolutePath;
             if (path.EndsWith("/Accounts", StringComparison.Ordinal))
             {
@@ -860,10 +860,10 @@ public sealed class XeroReadOnlySyncServiceTests
                 return Json($$"""{"Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer","EmailAddress":"{{(Revision == 1 ? "first" : "second")}}@example.test","IsCustomer":true,"ContactStatus":"ACTIVE","UpdatedDateUTC":"2026-10-19T00:0{{Revision}}:00Z"}]}""");
             if (path.EndsWith("/Items", StringComparison.Ordinal))
                 return Json($$$"""{"Items":[{"ItemID":"{{{itemId}}}","Code":"CONSULT","Name":"Consulting","Status":"ACTIVE","SalesDetails":{"UnitPrice":42}}]}""");
-            return EmptyFor(path);
+            return EmptyCollectionFor(path);
         }
 
-        private static Task<HttpResponseMessage> EmptyFor(string path)
+        public static Task<HttpResponseMessage> EmptyCollectionFor(string path)
         {
             var root = path.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() switch
             {
@@ -1076,7 +1076,7 @@ public sealed class XeroReadOnlySyncServiceTests
                 if (TaxRateRequests == 1) return RateLimited();
                 return Json("""{"TaxRates":[]}""");
             }
-            return Json("{}");
+            return ReadOnlyXeroHandler.EmptyCollectionFor(path);
         }
 
         private static Task<HttpResponseMessage> RateLimited()
