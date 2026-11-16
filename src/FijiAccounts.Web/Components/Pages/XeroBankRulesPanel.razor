@@ -1,0 +1,145 @@
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject XeroReadOnlySyncService XeroSync
+
+<div class="page-heading">
+    <h1>Bank rules</h1>
+    <a class="btn btn-outline-secondary" href="o/@OrganisationId/banking">Bank reconciliation</a>
+</div>
+
+@if (status is not null)
+{
+    <p class="alert @statusClass" role="status">@status</p>
+}
+@if (tenant is not null && CanManage)
+{
+    <details class="setup-card mb-3">
+        <summary>Copy the verified rules from Xero</summary>
+        <p>Paste the complete rules and priorities verified in the connected Xero organisation.</p>
+        <label class="form-label" for="xero-rules-json">Xero bank rules JSON</label>
+        <textarea id="xero-rules-json" class="form-control mb-2" rows="5" @bind="input"></textarea>
+        <button type="button" class="btn btn-primary" disabled="@saving" @onclick="SaveAsync">Copy Xero bank rules</button>
+    </details>
+}
+
+@if (snapshot is { } source)
+{
+    <p>
+        @source.Rules.Count Xero bank rules copied @copiedAt?.ToLocalTime().ToString("dd MMM yyyy HH:mm").
+    </p>
+    @foreach (var group in source.Rules.GroupBy(rule => rule.Direction).OrderBy(g => Array.IndexOf(Directions, g.Key)))
+    {
+        <section class="setup-card mb-3">
+            <h2>@group.Key money rules <small>(@group.Count())</small></h2>
+            @foreach (var rule in group.OrderBy(rule => rule.Order))
+            {
+                <details class="mb-2" @key="rule.Id">
+                    <summary><strong>@rule.Order. @rule.Name</strong></summary>
+                    <dl class="mt-2">
+                        <dt>Conditions</dt>
+                        <dd>@(rule.Match == "Single" ? "One condition" : $"{rule.Match} conditions must match")</dd>
+                        <dt>Bank account</dt><dd>@rule.AccountScope</dd>
+                        <dt>Contact</dt><dd>@rule.Contact</dd>
+                        <dt>Reference</dt><dd>@rule.Reference</dd>
+                    </dl>
+                    <ul>
+                        @foreach (var condition in rule.Conditions)
+                        {
+                            <li>@condition.Field @condition.Condition @condition.Value</li>
+                        }
+                    </ul>
+                    @if (rule.Allocations.Count > 0)
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr><th>Allocation</th><th>Description</th><th>Account</th><th>Tax</th><th>Tracking</th><th>Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var allocation in rule.Allocations)
+                                    {
+                                        <tr>
+                                            <td>@allocation.Kind</td><td>@allocation.Description</td><td>@allocation.Account</td>
+                                            <td>@allocation.Tax</td><td>@allocation.Tracking</td><td>@allocation.Amount</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    <a href="@source.SourceLink(rule)" target="_blank" rel="noopener">Open rule in Xero</a>
+                </details>
+            }
+        </section>
+    }
+}
+else if (tenant is not null)
+{
+    <p>Copy the rules from Xero to view them here.</p>
+}
+
+@code {
+    private static readonly string[] Directions = ["Spend", "Receive", "Transfer"];
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter, EditorRequired] public string UserId { get; set; } = "";
+    [Parameter] public bool CanManage { get; set; }
+    private XeroBankRuleSnapshot? snapshot;
+    private DateTimeOffset? copiedAt;
+    private Guid? tenant;
+    private bool saving;
+    private string input = "";
+    private string? status;
+    private string statusClass = "alert-success";
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        tenant = null;
+        snapshot = null;
+        if (await TenantAccess.GetReportDivisionScopeAsync(UserId, OrganisationId) is not null)
+        {
+            status = "The Xero bank rules require organisation-wide reporting access.";
+            statusClass = "alert-warning";
+            return;
+        }
+
+        var connection = await Db.XeroConnections.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.OrganisationId == OrganisationId && x.IsActive && x.ContinuousSyncEnabled);
+        if (connection?.XeroTenantId is not { } connectedTenant) return;
+        tenant = connectedTenant;
+        var saved = await Db.XeroMirrorRecords.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.XeroConnectionId == connection.Id && x.DatasetKey == "bank-rules" &&
+            x.ExternalId == "rules" && !x.IsArchived);
+        if (saved is null) return;
+        snapshot = XeroBankRuleSnapshot.Parse(saved.SourceJson);
+        copiedAt = saved.LastSeenAt;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (tenant is not { } connectedTenant || !CanManage || saving) return;
+        saving = true;
+        status = null;
+        try
+        {
+            var count = await XeroSync.ImportBankRuleSnapshotAsync(UserId, OrganisationId, connectedTenant, input);
+            await LoadAsync();
+            input = "";
+            status = $"Copied {count:N0} bank rules from Xero.";
+            statusClass = "alert-success";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            status = ex is System.Text.Json.JsonException ? "Enter a valid Xero bank rule list." : ex.Message;
+            statusClass = "alert-danger";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}
