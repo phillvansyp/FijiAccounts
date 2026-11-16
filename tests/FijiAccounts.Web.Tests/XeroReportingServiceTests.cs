@@ -84,7 +84,24 @@ public sealed class XeroReportingServiceTests
         var total = ageing[^1].Cells;
         Assert.Equal("30.00", total[1]);
         Assert.Equal("100.00", total[2]);
-        Assert.Equal("-25.50", total[6]);
-        Assert.Equal("104.50", total[7]);
+        Assert.Equal("-25.50", total[7]);
+        Assert.Equal("104.50", total[8]);
+    }
+
+    [Fact]
+    public void Ages_xero_invoices_in_months_back_from_the_report_date()
+    {
+        var report = XeroReportingService.RenderAgeing(
+            [new("Customer", "Current", new(2026, 11, 18), 1m),
+             new("Customer", "Due on the report date", new(2026, 11, 17), 2m),
+             new("Customer", "Within one month", new(2026, 10, 18), 3m),
+             new("Customer", "One month", new(2026, 10, 17), 4m),
+             new("Customer", "Two months", new(2026, 9, 17), 5m),
+             new("Customer", "Three months", new(2026, 8, 17), 6m),
+             new("Customer", "Four months", new(2026, 7, 17), 7m)],
+            new(2026, 11, 17));
+
+        Assert.Equal(["Total", "1.00", "5.00", "4.00", "5.00", "6.00", "7.00", "0.00", "28.00"],
+            report[^1].Cells);
     }
 }
