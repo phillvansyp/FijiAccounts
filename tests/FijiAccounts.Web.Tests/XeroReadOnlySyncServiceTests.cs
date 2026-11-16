@@ -50,6 +50,61 @@ public sealed class XeroReadOnlySyncServiceTests
         Assert.NotNull((await test.Db.XeroConnections.SingleAsync()).LastFullReconciliationAt);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Historical_scan_resumes_saved_pages_and_checks_missing_invoices(bool shifted)
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new LargeReadOnlyXeroHandler(tenantId) { InvoicePages = 3, RateLimitedPage = 3 };
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connectionService = new XeroConnectionService(
+            test.Db, test.Access, api, new DatabaseImmutableDocumentStore(test.Db),
+            new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(test.Db, test.Access, api, connectionService, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connectionService.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connectionService.CompleteAuthorizationAsync(test.UserId, "code", state!);
+
+        var interrupted = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+
+        Assert.Single(interrupted.Failures);
+        Assert.True(interrupted.RecordCount >= 500);
+        Assert.Equal(500, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "sales-invoices"));
+        Assert.False(await test.Db.XeroMirrorRecords.AnyAsync(x => x.IsArchived));
+        var connection = await test.Db.XeroConnections.SingleAsync();
+        Assert.NotNull(connection.SyncCheckpointJson);
+        Assert.Null(connection.LastFullReconciliationAt);
+        var scanStarted = (await test.Db.XeroReadOnlySyncRuns.SingleAsync()).StartedAt;
+        test.Db.ChangeTracker.Clear();
+
+        handler.RateLimitedPage = null;
+        handler.ShiftInvoices = shifted;
+        handler.InvoicePageRequests.Clear();
+        var completed = await sync.RunNowAsync(test.UserId, test.Organisation.Id);
+
+        Assert.Empty(completed.Failures);
+        Assert.Equal(16, completed.DatasetCount);
+        Assert.Equal(1, handler.ItemRequests);
+        Assert.Equal(shifted ? new[] { 2, 1, 1, 2, 3 } : [2, 3, 4], handler.InvoicePageRequests);
+        var invoices = test.Db.XeroMirrorRecords.Where(x => x.DatasetKey == "sales-invoices");
+        Assert.Equal(750, await invoices.CountAsync());
+        Assert.Equal(shifted ? 1 : 0, await invoices.CountAsync(x => x.IsArchived));
+        Assert.False((await invoices.SingleAsync(x => x.ExternalId == LargeReadOnlyXeroHandler.InvoiceId(2))).IsArchived);
+        var finished = await test.Db.XeroConnections.SingleAsync();
+        Assert.Null(finished.SyncCheckpointJson);
+        Assert.NotNull(finished.LastFullReconciliationAt);
+        Assert.Equal(scanStarted, finished.LastSyncedAt);
+    }
+
     [Fact]
     public async Task Sync_is_one_way_idempotent_and_refreshes_safe_master_data()
     {
@@ -687,6 +742,15 @@ public sealed class XeroReadOnlySyncServiceTests
         public int SalesInvoiceRequests { get; private set; }
         public int ItemRequests { get; private set; }
         public List<int> RequestedPageSizes { get; } = [];
+        public List<int> InvoicePageRequests { get; } = [];
+        public int InvoicePages { get; init; } = 41;
+        public int? RateLimitedPage { get; set; }
+        public bool ShiftInvoices { get; set; }
+
+        public static string InvoiceId(int index) => new Guid(index, 0, 0, new byte[8]).ToString("D");
+
+        private static string Invoice(int index) =>
+            $$"""{"InvoiceID":"{{InvoiceId(index)}}","InvoiceNumber":"INV-{{index:000000}}","Status":"AUTHORISED"}""";
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -709,19 +773,31 @@ public sealed class XeroReadOnlySyncServiceTests
             if (path.EndsWith("/Invoices", StringComparison.Ordinal) &&
                 request.RequestUri.Query.Contains("ACCREC", StringComparison.OrdinalIgnoreCase))
             {
-                SalesInvoiceRequests++;
                 var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+                if (query.ContainsKey("Statuses")) return Json("""{"Invoices":[]}""");
+                SalesInvoiceRequests++;
                 var page = int.Parse(Assert.Single(query["page"])!);
                 var pageSize = int.Parse(Assert.Single(query["pageSize"])!);
                 RequestedPageSizes.Add(pageSize);
-                if (page > 41) return Json("""{"Invoices":[]}""");
+                InvoicePageRequests.Add(page);
+                if (page == RateLimitedPage)
+                {
+                    var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    response.Headers.Add("X-Rate-Limit-Problem", "day");
+                    response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromHours(1));
+                    return Task.FromResult(response);
+                }
 
-                var start = (page - 1) * pageSize + 1;
-                var invoices = string.Join(',', Enumerable.Range(start, pageSize)
-                    .Select(index => $$"""{"InvoiceID":"invoice-{{index}}","InvoiceNumber":"INV-{{index:000000}}","Status":"AUTHORISED"}"""));
+                var records = Enumerable.Range(1, InvoicePages * pageSize);
+                if (ShiftInvoices) records = records.Where(index => index > 2);
+                var invoices = string.Join(',', records.Skip((page - 1) * pageSize).Take(pageSize).Select(Invoice));
                 return Json($$"""{"Invoices":[{{invoices}}]}""");
             }
 
+            if (path.EndsWith("/Invoices/" + InvoiceId(1), StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            if (path.EndsWith("/Invoices/" + InvoiceId(2), StringComparison.Ordinal))
+                return Json($$"""{"Invoices":[{{Invoice(2)}}]}""");
             return EmptyFor(path);
         }
 

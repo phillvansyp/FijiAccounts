@@ -256,9 +256,17 @@ public sealed class XeroReadOnlySyncService(
             interruptedRun.ErrorSummary = "The previous Xero refresh was interrupted before it could finish. Account Island resumed it automatically.";
             interruptedRun.CompletedAt = now;
         }
-        var full = forceFullReconciliation || connection.LastSyncedAt is null ||
-                   connection.LastFullReconciliationAt is null ||
-                   connection.LastFullReconciliationAt <= now.AddHours(-Math.Clamp(options.FullReconciliationHours, 1, 168));
+        var dueForFull = forceFullReconciliation || connection.LastSyncedAt is null ||
+                         connection.LastFullReconciliationAt is null ||
+                         connection.LastFullReconciliationAt <= now.AddHours(-Math.Clamp(options.FullReconciliationHours, 1, 168));
+        var progress = ReadProgress(connection);
+        if (progress is null || forceFullReconciliation && !progress.Full)
+        {
+            progress = new(connection.XeroTenantId!.Value, now, dueForFull,
+                dueForFull ? null : connection.LastSyncedAt?.AddMinutes(-2), []);
+            connection.SyncCheckpointJson = JsonSerializer.Serialize(progress, JsonOptions);
+        }
+        var full = progress.Full;
         var run = new XeroReadOnlySyncRun
         {
             OrganisationId = organisationId,
@@ -274,12 +282,8 @@ public sealed class XeroReadOnlySyncService(
         {
             run.ErrorSummary = "Connecting to Xero…";
             await db.SaveChangesAsync(cancellationToken);
-            var modifiedSince = full ? null : connection.LastSyncedAt?.AddMinutes(-2);
             var failures = new List<XeroSyncFailure>();
-            var recordCount = 0;
-            var changedCount = 0;
-            var archivedCount = 0;
-            var datasetCount = 0;
+            run.DatasetCount = progress.Datasets.Values.Count(x => x.Completed);
             TimeSpan? retryAfter = null;
 
             IEnumerable<DatasetDefinition> work = Datasets;
@@ -299,36 +303,37 @@ public sealed class XeroReadOnlySyncService(
 
             foreach (var definition in work)
             {
+                var scan = definition.OpenDocumentSweep ? null : progress.Datasets.GetValueOrDefault(definition.Key);
+                if (scan?.Completed == true) continue;
                 using var datasetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 datasetTimeout.CancelAfter(TimeSpan.FromSeconds(
                     Math.Clamp(options.DatasetTimeoutSeconds, 1, 1800)));
                 try
                 {
-                    run.ErrorSummary = $"Copying {definition.Name}…";
+                    run.ErrorSummary = scan is { EndOfPages: false, PageHashes.Count: > 0 }
+                        ? $"Resuming {definition.Name} from page {scan.PageHashes.Count + 1}."
+                        : $"Copying {definition.Name}.";
                     await db.SaveChangesAsync(cancellationToken);
                     await RenewLeaseAsync(connection, cancellationToken);
                     var result = await SyncDatasetAsync(
                         connection,
                         actor,
                         definition,
-                        definition.SupportsModifiedSince && !definition.OpenDocumentSweep ? modifiedSince : null,
+                        definition.SupportsModifiedSince && !definition.OpenDocumentSweep ? progress.ModifiedSince : null,
                         full && !definition.OpenDocumentSweep,
+                        definition.OpenDocumentSweep ? null : progress,
+                        run,
                         datasetTimeout.Token);
-                    if (!definition.OpenDocumentSweep) datasetCount++;
-                    recordCount += result.Seen;
-                    changedCount += result.Changed;
-                    archivedCount += result.Archived;
-                    // Publish durable progress after each dataset so a long
-                    // first import does not appear frozen at zero records.
-                    run.DatasetCount = datasetCount;
-                    run.RecordCount = recordCount;
-                    run.ChangedCount = changedCount;
-                    run.ArchivedCount = archivedCount;
+                    if (!definition.OpenDocumentSweep) run.DatasetCount++;
+                    run.RecordCount += result.Seen;
+                    run.ChangedCount += result.Changed;
+                    run.ArchivedCount += result.Archived;
                     await db.SaveChangesAsync(cancellationToken);
                 }
                 catch (Exception ex) when (ex is not XeroReconnectRequiredException &&
                     ex is XeroApiException or JsonException or InvalidOperationException)
                 {
+                    DiscardUncommittedDatasetChanges(connection, run);
                     failures.Add(new(definition.Name, FriendlyFailure(ex)));
                     logger.LogWarning(ex, "Xero read-only dataset {Dataset} failed for organisation {OrganisationId}.",
                         definition.Key, organisationId);
@@ -351,15 +356,16 @@ public sealed class XeroReadOnlySyncService(
                 catch (OperationCanceledException) when (
                     !cancellationToken.IsCancellationRequested && datasetTimeout.IsCancellationRequested)
                 {
+                    DiscardUncommittedDatasetChanges(connection, run);
                     const string reason =
-                        "Xero did not finish this dataset within the safe import window. Account Island will retry automatically.";
+                        "Xero did not finish this dataset within the safe import window. Account Island will retry automatically using saved progress.";
                     failures.Add(new(definition.Name, reason));
                     logger.LogWarning(
                         "Xero read-only dataset {Dataset} exceeded the dataset deadline for organisation {OrganisationId}.",
                         definition.Key,
                         organisationId);
                     retryAfter = TimeSpan.FromMinutes(5);
-                    break;
+                    if (!definition.OpenDocumentSweep) break;
                 }
             }
 
@@ -369,8 +375,9 @@ public sealed class XeroReadOnlySyncService(
             {
                 // A long pass can read a record before Xero updates it. Start the
                 // next incremental pass from the beginning of this pass.
-                connection.LastSyncedAt = run.StartedAt;
+                connection.LastSyncedAt = progress.StartedAt;
                 if (full) connection.LastFullReconciliationAt = completedAt;
+                connection.SyncCheckpointJson = null;
             }
             connection.ConsecutiveSyncFailures = failures.Count == 0 ? 0 : connection.ConsecutiveSyncFailures + 1;
             connection.NextSyncAt = completedAt.Add(
@@ -384,27 +391,24 @@ public sealed class XeroReadOnlySyncService(
             connection.UpdatedAt = completedAt;
             connection.UpdatedByUserId = actor;
             run.Status = failures.Count == 0 ? XeroReadOnlySyncRunStatus.Completed : XeroReadOnlySyncRunStatus.Partial;
-            run.DatasetCount = datasetCount;
-            run.RecordCount = recordCount;
-            run.ChangedCount = changedCount;
-            run.ArchivedCount = archivedCount;
             run.ErrorSummary = connection.LastSyncError;
             run.CompletedAt = completedAt;
             db.AuditEvents.Add(Audit(organisationId, actor, "XeroReadOnlySyncCompleted", run.Id, new
             {
                 Trigger = trigger,
                 FullReconciliation = full,
-                DatasetCount = datasetCount,
-                RecordCount = recordCount,
-                ChangedCount = changedCount,
-                ArchivedCount = archivedCount,
+                run.DatasetCount,
+                run.RecordCount,
+                run.ChangedCount,
+                run.ArchivedCount,
                 FailedDatasets = failures.Select(x => x.Dataset).ToArray()
             }, nameof(XeroReadOnlySyncRun)));
             await db.SaveChangesAsync(cancellationToken);
-            return new(full, datasetCount, recordCount, changedCount, archivedCount, failures);
+            return new(full, run.DatasetCount, run.RecordCount, run.ChangedCount, run.ArchivedCount, failures);
         }
         catch (Exception ex)
         {
+            DiscardUncommittedDatasetChanges(connection, run);
             var failedAt = DateTimeOffset.UtcNow;
             ApplyFailureState(connection, run, ex, failedAt, actor);
             try
@@ -491,15 +495,22 @@ public sealed class XeroReadOnlySyncService(
         DatasetDefinition definition,
         DateTimeOffset? modifiedSince,
         bool fullReconciliation,
+        SyncProgress? progress,
+        XeroReadOnlySyncRun run,
         CancellationToken cancellationToken)
     {
+        var paged = definition.Paged && progress is not null;
+        var scan = progress?.Datasets.GetValueOrDefault(definition.Key) ?? new([], false, false, false);
+        var hashes = scan.PageHashes.ToList();
+        var resumed = scan.Resumed || hashes.Count > 0;
         var datasetRecords = db.XeroMirrorRecords
             .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key);
         var initialRecords = definition.OpenDocumentSweep
             ? datasetRecords.Where(x => !x.IsArchived && x.SourceJson.Contains("\"AUTHORISED\""))
             : datasetRecords;
-        var existing = await initialRecords
-            .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var existing = paged
+            ? new Dictionary<string, XeroMirrorRecord>(StringComparer.OrdinalIgnoreCase)
+            : await initialRecords.ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var links = await db.XeroMirrorEntityLinks
             .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key)
             .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -528,7 +539,30 @@ public sealed class XeroReadOnlySyncService(
         var changed = 0;
         var count = 0;
 
-        for (var page = 1; page <= MaximumPages; page++)
+        if (paged && !scan.EndOfPages && hashes.Count > 0)
+        {
+            // Verify the page before the saved cursor. If pagination shifted
+            // while paused, rewind to a boundary Xero still returns unchanged.
+            for (var anchor = hashes.Count; anchor > 0; anchor /= 2)
+            {
+                await RenewLeaseAsync(connection, cancellationToken);
+                var bytes = await GetJsonWithRateLimitWaitAsync(connection, actor,
+                    AddPage(definition.Endpoint, anchor), modifiedSince, cancellationToken);
+                using var document = JsonDocument.Parse(bytes);
+                var anchorRecords = ReadSourceArray(document.RootElement, definition.RootProperty);
+                if (PageHash(definition, anchorRecords, anchor) == hashes[anchor - 1])
+                {
+                    hashes.RemoveRange(anchor, hashes.Count - anchor);
+                    break;
+                }
+                if (anchor == 1) hashes.Clear();
+            }
+        }
+
+        if (!scan.EndOfPages && hashes.Count >= MaximumPages)
+            throw new InvalidOperationException($"Xero {definition.Name} exceeded the safe page limit.");
+
+        for (var page = hashes.Count + 1; !scan.EndOfPages && page <= MaximumPages; page++)
         {
             await RenewLeaseAsync(connection, cancellationToken);
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
@@ -539,12 +573,18 @@ public sealed class XeroReadOnlySyncService(
                 modifiedSince,
                 cancellationToken);
             using var document = JsonDocument.Parse(bytes);
-            var records = Records(document.RootElement, definition.RootProperty).ToList();
+            var records = ReadSourceArray(document.RootElement, definition.RootProperty);
+            if (paged)
+            {
+                var pageIds = records.Select((source, index) => ExternalId(definition.Key, source,
+                    (page - 1) * PageSize + index + 1)).ToArray();
+                if (pageIds.Length != pageIds.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+                    throw new InvalidOperationException($"Xero returned duplicate records on page {page} of {definition.Name}.");
+                existing = await datasetRecords.Where(x => pageIds.Contains(x.ExternalId))
+                    .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
+            }
             if (definition.OpenDocumentSweep)
             {
-                if (!TryProperty(document.RootElement, definition.RootProperty, out var sourceArray) ||
-                    sourceArray.ValueKind != JsonValueKind.Array)
-                    throw new InvalidOperationException("Xero did not return the open documents collection.");
                 var providerIds = records.Select(x => Text(x, "InvoiceID")).ToArray();
                 if (providerIds.Any(x => !Guid.TryParse(x, out _)))
                     throw new InvalidOperationException("Xero returned an open document without its invoice ID.");
@@ -556,12 +596,14 @@ public sealed class XeroReadOnlySyncService(
                         existing[old.ExternalId] = old;
                 }
             }
-            foreach (var source in records)
+            for (var index = 0; index < records.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var source = records[index];
                 count++;
-                var externalId = ExternalId(definition.Key, source, count);
-                seen.Add(externalId);
+                var ordinal = paged ? (page - 1) * PageSize + index + 1 : count;
+                var externalId = ExternalId(definition.Key, source, ordinal);
+                if (!paged) seen.Add(externalId);
                 var sourceJson = source.GetRawText();
                 var hash = Hash(sourceJson);
                 var archived = IsArchived(source);
@@ -614,7 +656,20 @@ public sealed class XeroReadOnlySyncService(
 
             await RenewLeaseAsync(connection, cancellationToken);
 
-            if (!definition.Paged || records.Count < PageSize) break;
+            var endOfPages = !definition.Paged || records.Count < PageSize;
+            if (paged)
+            {
+                // A cursor and the data it covers commit in the same transaction.
+                hashes.Add(PageHash(definition, records, page));
+                scan = new(hashes.ToArray(), endOfPages, false, resumed);
+                run.RecordCount += count;
+                run.ChangedCount += changed;
+                await SaveProgressAsync(connection, progress!, definition.Key, scan, cancellationToken);
+                foreach (var record in existing.Values) db.Entry(record).State = EntityState.Detached;
+                count = 0;
+                changed = 0;
+            }
+            if (endOfPages) break;
             if (page == MaximumPages) throw new InvalidOperationException($"{definition.Name} exceeded the safe page limit.");
         }
 
@@ -654,15 +709,124 @@ public sealed class XeroReadOnlySyncService(
         var archivedCount = 0;
         if (fullReconciliation)
         {
-            foreach (var stale in existing.Values.Where(x => !seen.Contains(x.ExternalId) && !x.IsArchived))
+            if (paged)
             {
-                stale.IsArchived = true;
-                stale.LastSeenAt = now;
-                archivedCount++;
+                (changed, archivedCount) = await ReconcileUnseenAsync(connection, actor, definition,
+                    datasetRecords, progress!.StartedAt, resumed, now, cancellationToken);
+            }
+            else
+            {
+                foreach (var stale in existing.Values.Where(x => !seen.Contains(x.ExternalId) && !x.IsArchived))
+                {
+                    stale.IsArchived = true;
+                    stale.LastSeenAt = now;
+                    archivedCount++;
+                }
             }
         }
-        await db.SaveChangesAsync(cancellationToken);
+        if (progress is null)
+            await db.SaveChangesAsync(cancellationToken);
+        else
+            await SaveProgressAsync(connection, progress, definition.Key,
+                new([], true, true, false), cancellationToken);
         return new(count, changed, archivedCount);
+    }
+
+    private async Task<(int Changed, int Archived)> ReconcileUnseenAsync(
+        XeroConnection connection, string actor, DatasetDefinition definition,
+        IQueryable<XeroMirrorRecord> datasetRecords, DateTimeOffset startedAt, bool resumed,
+        DateTimeOffset checkedAt, CancellationToken cancellationToken)
+    {
+        // SQLite does not translate DateTimeOffset comparisons. Read only
+        // identities and timestamps here, then load the few unchecked rows.
+        var active = await datasetRecords.AsNoTracking().Where(x => !x.IsArchived)
+            .Select(x => new { x.Id, x.LastSeenAt }).ToListAsync(cancellationToken);
+        var changed = 0;
+        var archived = 0;
+        foreach (var batch in active.Where(x => x.LastSeenAt < startedAt).Select(x => x.Id).Chunk(PageSize))
+        {
+            var uncheckedRecords = await datasetRecords.Where(x => batch.Contains(x.Id))
+                .ToListAsync(cancellationToken);
+            foreach (var record in uncheckedRecords)
+            {
+                if (resumed)
+                {
+                    // Edits in Xero can move records between pages during a
+                    // multi-run scan. Verify each missing identity directly.
+                    if (!Guid.TryParse(record.ExternalId, out var id))
+                        continue;
+                    var endpoint = definition.Endpoint.Split('?')[0] + "/" + id.ToString("D");
+                    try
+                    {
+                        var bytes = await GetJsonWithRateLimitWaitAsync(connection, actor, endpoint,
+                            null, cancellationToken);
+                        using var document = JsonDocument.Parse(bytes);
+                        var source = ReadSourceArray(document.RootElement, definition.RootProperty);
+                        if (source.Count != 0)
+                        {
+                            if (source.Count != 1 || !Guid.TryParse(ExternalId(definition.Key, source[0], 0), out var returnedId) ||
+                                id != returnedId)
+                                throw new InvalidOperationException("Xero returned a different record during the reconciliation check.");
+                            var json = source[0].GetRawText();
+                            var hash = Hash(json);
+                            if (record.SourceHash != hash) changed++;
+                            record.SourceHash = hash;
+                            record.SourceJson = json;
+                            record.DisplayName = DisplayName(source[0], record.ExternalId);
+                            record.SourceUpdatedAt = SourceUpdatedAt(source[0]);
+                            record.LastSeenAt = checkedAt;
+                            record.IsArchived = IsArchived(source[0]);
+                            if (record.IsArchived) archived++;
+                            continue;
+                        }
+                    }
+                    catch (XeroApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    {
+                        // The provider has confirmed that this identity is absent.
+                    }
+                }
+                record.IsArchived = true;
+                record.LastSeenAt = checkedAt;
+                archived++;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var record in uncheckedRecords) db.Entry(record).State = EntityState.Detached;
+        }
+        return (changed, archived);
+    }
+
+    private static SyncProgress? ReadProgress(XeroConnection connection)
+    {
+        if (connection.SyncCheckpointJson is not { } json) return null;
+        var progress = JsonSerializer.Deserialize<SyncProgress>(json, JsonOptions);
+        return progress?.TenantId == connection.XeroTenantId ? progress : null;
+    }
+
+    private async Task SaveProgressAsync(XeroConnection connection, SyncProgress progress,
+        string dataset, DatasetProgress scan, CancellationToken cancellationToken)
+    {
+        var next = new Dictionary<string, DatasetProgress>(progress.Datasets) { [dataset] = scan };
+        connection.SyncCheckpointJson = JsonSerializer.Serialize(progress with { Datasets = next }, JsonOptions);
+        await db.SaveChangesAsync(cancellationToken);
+        progress.Datasets[dataset] = scan;
+    }
+
+    private void DiscardUncommittedDatasetChanges(XeroConnection connection, XeroReadOnlySyncRun run)
+    {
+        foreach (var entry in db.ChangeTracker.Entries().ToArray())
+        {
+            if (entry.State is not (EntityState.Added or EntityState.Modified))
+                continue;
+            if (entry.Entity is XeroMirrorRecord or XeroMirrorEntityLink or LedgerAccount or BusinessParty or ProductItem)
+                entry.State = EntityState.Detached;
+        }
+        var checkpoint = db.Entry(connection).Property(x => x.SyncCheckpointJson);
+        checkpoint.CurrentValue = checkpoint.OriginalValue;
+        var runEntry = db.Entry(run);
+        run.RecordCount = runEntry.Property(x => x.RecordCount).OriginalValue;
+        run.ChangedCount = runEntry.Property(x => x.ChangedCount).OriginalValue;
+        run.ArchivedCount = runEntry.Property(x => x.ArchivedCount).OriginalValue;
+        run.DatasetCount = runEntry.Property(x => x.DatasetCount).OriginalValue;
     }
 
     private async Task<byte[]> GetJsonWithRateLimitWaitAsync(
@@ -885,6 +1049,17 @@ public sealed class XeroReadOnlySyncService(
             foreach (var record in records.EnumerateArray()) yield return record;
     }
 
+    private static List<JsonElement> ReadSourceArray(JsonElement root, string property)
+    {
+        if (!TryProperty(root, property, out var records) || records.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"Xero did not return the {property} collection.");
+        return records.EnumerateArray().ToList();
+    }
+
+    private static string PageHash(DatasetDefinition definition, IReadOnlyList<JsonElement> records, int page) =>
+        Hash(string.Join('\n', records.Select((record, index) =>
+            ExternalId(definition.Key, record, (page - 1) * PageSize + index + 1))));
+
     private static string AddPage(string endpoint, int page) =>
         endpoint + (endpoint.Contains('?', StringComparison.Ordinal) ? "&" : "?") +
         $"page={page}&pageSize={PageSize}";
@@ -1042,6 +1217,11 @@ public sealed class XeroReadOnlySyncService(
         bool Paged,
         bool SupportsModifiedSince,
         bool OpenDocumentSweep = false);
+
+    private sealed record SyncProgress(Guid TenantId, DateTimeOffset StartedAt, bool Full,
+        DateTimeOffset? ModifiedSince, Dictionary<string, DatasetProgress> Datasets);
+
+    private sealed record DatasetProgress(IReadOnlyList<string> PageHashes, bool EndOfPages, bool Completed, bool Resumed);
 
     private sealed record DatasetSyncResult(int Seen, int Changed, int Archived);
 
