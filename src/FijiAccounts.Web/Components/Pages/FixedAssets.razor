@@ -12,6 +12,8 @@
 @inject ApplicationDbContext Db
 @inject TenantAccessService TenantAccess
 @inject FixedAssetService AssetService
+@inject XeroReportingService XeroReports
+@inject XeroReadOnlySyncService XeroSync
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -22,6 +24,81 @@
     <div class="alert alert-danger">
         You do not have access to this organisation.
     </div>
+}
+else if (usesXero)
+{
+    <div class="page-heading">
+        <h1>Fixed assets</h1>
+        <a class="btn btn-outline-secondary" href="o/@OrganisationId/integrations/xero">Xero sync status</a>
+    </div>
+
+    @if (canManage && xeroTenantId is not null)
+    {
+        <details class="setup-card mb-3">
+            <summary>Copy an export from Xero</summary>
+            <p>Use the complete CSV from the Fixed assets page in the connected Xero organisation.</p>
+            <label class="form-label" for="xero-assets-export">Xero fixed assets CSV</label>
+            <InputFile class="form-control mb-2" id="xero-assets-export" accept=".csv"
+                       OnChange="e => xeroExport = e.File" disabled="@importingXeroExport" />
+            <button type="button" class="btn btn-primary" @onclick="ImportXeroExportAsync"
+                    disabled="@(xeroExport is null || importingXeroExport)">Copy Xero asset register</button>
+        </details>
+    }
+    @if (message is not null)
+    {
+        <p class="alert @messageClass" role="status">@message</p>
+    }
+
+    @if (xeroRegisterMessage is not null)
+    {
+        <p role="status">@xeroRegisterMessage</p>
+    }
+    else if (xeroRegisterCopiedAt is { } copied)
+    {
+        <p>
+            @xeroRegisterSource copied @copied.ToLocalTime().ToString("dd MMM yyyy HH:mm").
+            @xeroAssets.Count(x => IsAssetStatus(x, "Registered")) registered,
+            @xeroAssets.Count(x => IsAssetStatus(x, "Disposed")) sold or disposed,
+            @xeroAssets.Count(x => IsAssetStatus(x, "Draft")) draft.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th scope="col">Number</th>
+                        <th scope="col">Asset</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Acquired</th>
+                        <th scope="col" class="text-end">Cost</th>
+                        <th scope="col" class="text-end">Accumulated depreciation</th>
+                        <th scope="col" class="text-end">Book value</th>
+                        <th scope="col">Disposal date</th>
+                        <th scope="col" class="text-end">Disposal proceeds</th>
+                        <th scope="col" class="text-end">Gain or loss</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var asset in xeroAssets)
+                    {
+                        <tr @key="asset.AssetId">
+                            <td>@asset.AssetNumber</td>
+                            <th scope="row">@asset.AssetName</th>
+                            <td>@asset.AssetTypeName</td>
+                            <td>@asset.AssetStatus</td>
+                            <td>@SourceDate(asset.PurchaseDate)</td>
+                            <td class="text-end">@SourceAmount(asset.PurchasePrice)</td>
+                            <td class="text-end">@SourceAmount(asset.BookDepreciationDetail?.CurrentAccumDepreciationAmount)</td>
+                            <td class="text-end">@SourceAmount(asset.AccountingBookValue)</td>
+                            <td>@SourceDate(asset.DisposalDate)</td>
+                            <td class="text-end">@SourceAmount(IsAssetStatus(asset, "Disposed") ? asset.DisposalPrice : null)</td>
+                            <td class="text-end">@SourceAmount(IsAssetStatus(asset, "Disposed") ? asset.BookDepreciationDetail?.CurrentGainLoss : null)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
 }
 else
 {
@@ -581,6 +658,14 @@ else
     private AccessibleOrganisation? access;
     private string userId = "";
     private bool canManage;
+    private bool usesXero;
+    private Guid? xeroTenantId;
+    private IBrowserFile? xeroExport;
+    private bool importingXeroExport;
+    private string? xeroRegisterSource;
+    private string? xeroRegisterMessage;
+    private DateTimeOffset? xeroRegisterCopiedAt;
+    private IReadOnlyList<XeroFixedAssetRegister.Asset> xeroAssets = [];
 
     private List<LedgerAccount> assetAccounts = [];
     private List<LedgerAccount> expenseAccounts = [];
@@ -625,10 +710,13 @@ private Guid? selectedHistoryAssetId;
             return;
         }
 
-        canManage =
-            await TenantAccess.CanPostJournalsAsync(
-                userId,
-                OrganisationId);
+        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
+        canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+        if (usesXero)
+        {
+            await LoadXeroRegisterAsync();
+            return;
+        }
 
         assetAccounts =
             await Db.LedgerAccounts
@@ -944,6 +1032,79 @@ private string DisposalGainLossText(FixedAsset asset)
 
     return "No gain or loss";
 }
+
+    private async Task LoadXeroRegisterAsync()
+    {
+        xeroTenantId = null;
+        xeroRegisterMessage = null;
+        xeroRegisterCopiedAt = null;
+        xeroAssets = [];
+        if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is not null)
+        {
+            xeroRegisterMessage = "The Xero asset register requires organisation-wide reporting access.";
+            return;
+        }
+
+        var connection = await Db.XeroConnections.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.OrganisationId == OrganisationId && x.IsActive && x.ContinuousSyncEnabled && x.XeroTenantId != null);
+        if (connection is null) return;
+        xeroTenantId = connection.XeroTenantId;
+
+        var register = await Db.XeroMirrorRecords.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.XeroConnectionId == connection.Id && x.DatasetKey == "fixed-assets" && x.ExternalId == "register" && !x.IsArchived);
+        if (register is null)
+        {
+            xeroRegisterMessage = XeroFixedAssetRegister.HasReadScope(connection.GrantedScopes)
+                ? "The fixed-asset register will appear after it is copied from Xero."
+                : "The current connection needs Xero fixed-asset read access.";
+            return;
+        }
+
+        xeroAssets = XeroFixedAssetRegister.ReadSnapshot(register.SourceJson)
+            .OrderBy(x => x.AssetStatus).ThenBy(x => x.AssetNumber).ToArray();
+        xeroRegisterCopiedAt = register.LastSeenAt;
+        xeroRegisterSource = XeroFixedAssetRegister.SnapshotSource(register.SourceJson);
+    }
+
+    private async Task ImportXeroExportAsync()
+    {
+        if (xeroExport is null || xeroTenantId is not { } tenantId) return;
+        importingXeroExport = true;
+        message = null;
+        try
+        {
+            using var stream = xeroExport.OpenReadStream(5 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var count = await XeroSync.ImportFixedAssetExportAsync(
+                userId, OrganisationId, tenantId, await reader.ReadToEndAsync());
+            await LoadXeroRegisterAsync();
+            xeroExport = null;
+            messageClass = "alert-success";
+            message = $"Copied {count:N0} assets from Xero.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or
+            IOException or Microsoft.VisualBasic.FileIO.MalformedLineException)
+        {
+            messageClass = "alert-danger";
+            message = ex is IOException or Microsoft.VisualBasic.FileIO.MalformedLineException
+                ? "Account Island could not read the Xero fixed-assets CSV."
+                : ex.Message;
+        }
+        finally
+        {
+            importingXeroExport = false;
+        }
+    }
+
+    private static bool IsAssetStatus(XeroFixedAssetRegister.Asset asset, string status) =>
+        string.Equals(asset.AssetStatus, status, StringComparison.OrdinalIgnoreCase);
+
+    private static string SourceDate(string? date) =>
+        date is { Length: >= 10 } && DateOnly.TryParseExact(date[..10], "yyyy-MM-dd", out var day)
+            ? day.ToString("dd MMM yyyy")
+            : "—";
+
+    private static string SourceAmount(decimal? amount) => amount?.ToString("N2") ?? "—";
 
     private async Task Dispose(Guid id)
     {
