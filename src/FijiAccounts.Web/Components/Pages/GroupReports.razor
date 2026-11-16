@@ -10,6 +10,7 @@
 @inject GroupExchangeRateService ExchangeRates
 @inject GroupEliminationService Eliminations
 @inject TenantAccessService TenantAccess
+@inject XeroReportingService XeroReports
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -18,6 +19,10 @@
 @if (access is null)
 {
     <div class="alert alert-danger">You do not have access to this organisation.</div>
+}
+else if (usesXero)
+{
+    <XeroReportPanel OrganisationId="OrganisationId" Kind="group" Title="Group consolidation" />
 }
 else
 {
@@ -151,6 +156,7 @@ else
 }
 
 @code {
+    private bool usesXero;
     [Parameter] public Guid OrganisationId { get; set; }
     private AccessibleOrganisation? access;
     private string userId = "";
@@ -184,10 +190,11 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
-        if (access is null) return;
+        if (access is null || usesXero) return;
         var today = DateOnly.FromDateTime(DateTime.Today);
         filter.To = today;
         filter.From = new DateOnly(today.Year, 1, 1);

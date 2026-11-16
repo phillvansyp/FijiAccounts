@@ -7,6 +7,7 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject TenantAccessService TenantAccess
+@inject XeroReportingService XeroReports
 @inject VatWorkpaperService VatWorkpapers
 @inject NewZealandGstReturnService NewZealandGstReturns
 @inject VatTurnoverMonitorService VatTurnoverMonitor
@@ -20,6 +21,10 @@
     <div class="alert alert-danger">
         You do not have access to this organisation.
     </div>
+}
+else if (usesXero && IsNewZealand)
+{
+    <XeroReportPanel OrganisationId="OrganisationId" Kind="gst" Title="GST workpaper" />
 }
 else
 {
@@ -307,6 +312,7 @@ else
 }
 
 @code {
+    private bool usesXero;
     [Parameter]
     public Guid OrganisationId { get; set; }
 
@@ -326,6 +332,7 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
         var state =
             await AuthenticationStateProvider.GetAuthenticationStateAsync();
 
@@ -336,7 +343,7 @@ else
                 userId,
                 OrganisationId);
 
-        if (access is null)
+        if (access is null || (usesXero && IsNewZealand))
         {
             return;
         }
