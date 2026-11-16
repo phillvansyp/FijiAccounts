@@ -67,7 +67,7 @@ public sealed class XeroReadOnlySyncService(
         new("tax-rates", "Tax rates", "TaxRates", "TaxRates", false, false),
         new("currencies", "Currencies", "Currencies", "Currencies", false, false),
         new("tracking", "Tracking categories", "TrackingCategories", "TrackingCategories", false, false),
-        new("contacts", "Contacts", "Contacts", "Contacts", true, true),
+        new("contacts", "Contacts", "Contacts?includeArchived=true", "Contacts", true, true),
         // Xero's Items endpoint is not a paged Accounting API resource. Adding
         // page=N is ignored and returns the same collection repeatedly.
         new("items", "Items", "Items", "Items", false, true),
@@ -335,7 +335,7 @@ public sealed class XeroReadOnlySyncService(
         if (progress is null || forceFullReconciliation && !progress.Full)
         {
             progress = new(connection.XeroTenantId!.Value, now, dueForFull,
-                dueForFull ? null : connection.LastSyncedAt?.AddMinutes(-2), []);
+                dueForFull ? null : connection.LastSyncedAt?.AddMinutes(-2), [], IncludesArchivedContacts: true);
             connection.SyncCheckpointJson = JsonSerializer.Serialize(progress, JsonOptions);
         }
         var full = progress.Full;
@@ -881,7 +881,11 @@ public sealed class XeroReadOnlySyncService(
     {
         if (connection.SyncCheckpointJson is not { } json) return null;
         var progress = JsonSerializer.Deserialize<SyncProgress>(json, JsonOptions);
-        return progress?.TenantId == connection.XeroTenantId ? progress : null;
+        if (progress is null || progress.TenantId != connection.XeroTenantId) return null;
+        if (progress.IncludesArchivedContacts) return progress;
+        // Including archived contacts changes the pages returned by Xero.
+        progress.Datasets.Remove("contacts");
+        return progress with { IncludesArchivedContacts = true };
     }
 
     private async Task SaveProgressAsync(XeroConnection connection, SyncProgress progress,
@@ -1070,8 +1074,10 @@ public sealed class XeroReadOnlySyncService(
         if (links.TryGetValue(externalId, out var link))
             projectedParties.TryGetValue(link.TargetEntityId, out party);
         var email = NullIfBlank(Text(source, "EmailAddress").Trim());
-        if (party is null)
-            party = await db.BusinessParties.FirstOrDefaultAsync(x => x.OrganisationId == organisationId &&
+        var archived = IsArchived(source);
+        // Archived source contacts can share a name or email with their active replacement.
+        if (party is null && !archived)
+            party = await db.BusinessParties.FirstOrDefaultAsync(x => x.OrganisationId == organisationId && x.IsActive &&
                 (x.Name == name || (email != null && x.Email == email)), cancellationToken);
         var sourceType = (Bool(source, "IsCustomer") ? PartyType.Customer : 0) |
                          (Bool(source, "IsSupplier") ? PartyType.Supplier : 0);
@@ -1094,7 +1100,7 @@ public sealed class XeroReadOnlySyncService(
         if (sourceType != 0) party.Type = sourceType;
         party.DefaultSalesCurrency = Currency(Text(source, "DefaultCurrency"));
         party.DefaultPurchaseCurrency = Currency(Text(source, "DefaultCurrency"));
-        party.IsActive = !IsArchived(source);
+        party.IsActive = !archived;
         projectedParties[party.Id] = party;
         return party.Id;
     }
@@ -1310,7 +1316,7 @@ public sealed class XeroReadOnlySyncService(
         bool OpenDocumentSweep = false);
 
     private sealed record SyncProgress(Guid TenantId, DateTimeOffset StartedAt, bool Full,
-        DateTimeOffset? ModifiedSince, Dictionary<string, DatasetProgress> Datasets);
+        DateTimeOffset? ModifiedSince, Dictionary<string, DatasetProgress> Datasets, bool IncludesArchivedContacts = false);
 
     private sealed record DatasetProgress(IReadOnlyList<string> PageHashes, bool EndOfPages, bool Completed,
         bool Resumed, DateTimeOffset? VerifiedSince);
