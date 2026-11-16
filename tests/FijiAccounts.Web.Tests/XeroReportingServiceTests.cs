@@ -42,7 +42,25 @@ public sealed class XeroReportingServiceTests
             XeroReportingService.Endpoint("profit-loss", from, to));
         Assert.Equal("Reports/TrialBalance?date=2026-10-31&paymentsOnly=false",
             XeroReportingService.Endpoint("trial-balance", from, to));
-        Assert.Null(XeroReportingService.Endpoint("gst", from, to));
+        Assert.Equal("Reports", XeroReportingService.Endpoint("gst", from, to));
+        Assert.Equal("Reports/BudgetSummary?date=2026-10-31&periods=12&timeframe=1",
+            XeroReportingService.Endpoint("budget", from, to));
+    }
+
+    [Fact]
+    public void Selects_a_finalised_GST_return_only_for_an_exact_period()
+    {
+        var json = Encoding.UTF8.GetBytes("""
+            {"Reports":[
+              {"ReportID":"1234","ReportName":"GST and Provisional Tax Return","ReportDate":"01 Oct 2026 to 31 Oct 2026"},
+              {"ReportID":"1235","ReportName":"GST Return","ReportDate":"1 Sep 2026 to 30 Sep 2026"},
+              {"ReportID":"../invalid","ReportName":"GST Return","ReportDate":"01 Oct 2026 to 31 Oct 2026"}
+            ]}
+            """);
+        Assert.Equal("1234", XeroReportingService.FindFinalisedGstReport(
+            json, new(2026, 10, 1), new(2026, 10, 31)));
+        Assert.Null(XeroReportingService.FindFinalisedGstReport(
+            json, new(2026, 10, 1), new(2026, 11, 30)));
     }
 
     [Fact]
