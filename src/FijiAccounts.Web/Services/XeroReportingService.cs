@@ -219,19 +219,27 @@ public sealed class XeroReportingService(
     {
         var rows = new List<XeroReportRow>
         {
-            new("Header", null, ["Contact", "Current", "Overdue this month", "1 month", "2 months", "3+ months", "Unapplied credits", "Total"], 0)
+            new("Header", null, ["Contact", "Current", "< 1 Month", "1 Month", "2 Months", "3 Months", "Older", "Unapplied credits", "Total"], 0)
         };
-        var totals = new decimal[6];
+        var oneMonthAgo = asAt.AddMonths(-1);
+        var twoMonthsAgo = asAt.AddMonths(-2);
+        var threeMonthsAgo = asAt.AddMonths(-3);
+        var fourMonthsAgo = asAt.AddMonths(-4);
+        var totals = new decimal[7];
         foreach (var contact in balances.GroupBy(x => x.Contact).OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var columns = new decimal[6];
+            var columns = new decimal[totals.Length];
             foreach (var item in contact)
             {
                 var bucket = item.DueDate switch
                 {
-                    null => 5,
-                    DateOnly due when due >= asAt => 0,
-                    DateOnly due => 1 + Math.Min(3, (asAt.Year - due.Year) * 12 + asAt.Month - due.Month)
+                    null => 6,
+                    DateOnly due when due > asAt => 0,
+                    DateOnly due when due > oneMonthAgo => 1,
+                    DateOnly due when due > twoMonthsAgo => 2,
+                    DateOnly due when due > threeMonthsAgo => 3,
+                    DateOnly due when due > fourMonthsAgo => 4,
+                    _ => 5
                 };
                 columns[bucket] += item.Amount;
                 totals[bucket] += item.Amount;
