@@ -117,7 +117,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var accountId = Guid.NewGuid();
         var contactId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
-        var handler = new ReadOnlyXeroHandler(tenantId, accountId, contactId, itemId);
+        var handler = new ReadOnlyXeroHandler(tenantId, accountId, contactId, itemId) { HasArchivedContact = true };
         var options = Options.Create(new XeroApiOptions
         {
             ClientId = "client-id",
@@ -144,14 +144,18 @@ public sealed class XeroReadOnlySyncServiceTests
 
         Assert.Empty(first.Failures);
         Assert.True(first.FullReconciliation);
-        Assert.Equal(3, await test.Db.XeroMirrorRecords.CountAsync());
+        Assert.Equal(4, await test.Db.XeroMirrorRecords.CountAsync());
         var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "6200");
         var contact = await test.Db.BusinessParties.SingleAsync(x => x.Name == "Xero Customer");
+        var archivedContact = await test.Db.BusinessParties.SingleAsync(x => x.Name == "Archived Xero Customer");
         var item = await test.Db.ProductItems.SingleAsync(x => x.Code == "CONSULT");
         Assert.Equal("Office expenses", account.Name);
         Assert.Equal("first@example.test", contact.Email);
+        Assert.Equal(contact.Email, archivedContact.Email);
+        Assert.True(contact.IsActive);
+        Assert.False(archivedContact.IsActive);
         Assert.Equal(42m, item.SalePrice);
-        Assert.Equal(3, await test.Db.XeroMirrorEntityLinks.CountAsync());
+        Assert.Equal(4, await test.Db.XeroMirrorEntityLinks.CountAsync());
         Assert.DoesNotContain(handler.Requests, request => request.Method is not ("GET" or "POST_TOKEN"));
 
         await sync.SetEnabledAsync(test.UserId, test.Organisation.Id, false);
@@ -171,9 +175,9 @@ public sealed class XeroReadOnlySyncServiceTests
 
         Assert.Empty(second.Failures);
         Assert.False(second.FullReconciliation);
-        Assert.Equal(3, await test.Db.XeroMirrorRecords.CountAsync());
+        Assert.Equal(4, await test.Db.XeroMirrorRecords.CountAsync());
         Assert.Equal("second@example.test", (await test.Db.BusinessParties.SingleAsync(x => x.Name == "Xero Customer")).Email);
-        Assert.Equal(3, await test.Db.XeroMirrorEntityLinks.CountAsync());
+        Assert.Equal(4, await test.Db.XeroMirrorEntityLinks.CountAsync());
         var connection = await test.Db.XeroConnections.SingleAsync();
         Assert.True(connection.ContinuousSyncEnabled);
         Assert.NotNull(connection.LastSyncedAt);
@@ -183,6 +187,7 @@ public sealed class XeroReadOnlySyncServiceTests
         Assert.Equal(2, status.RecentRuns.Count);
         Assert.True(status.RecentRuns[0].StartedAt >= status.RecentRuns[1].StartedAt);
         Assert.Equal(3, status.Datasets.Sum(x => x.ActiveRecords));
+        Assert.Equal(1, status.Datasets.Single(x => x.Key == "contacts").ArchivedRecords);
     }
 
     [Fact]
@@ -874,7 +879,9 @@ public sealed class XeroReadOnlySyncServiceTests
 
     private sealed class ReadOnlyXeroHandler(Guid tenantId, Guid accountId, Guid contactId, Guid itemId) : HttpMessageHandler
     {
+        private readonly Guid archivedContactId = Guid.NewGuid();
         public int Revision { get; set; } = 1;
+        public bool HasArchivedContact { get; set; }
         public bool ReturnNoRecords { get; set; }
         public bool ReturnDuplicateAccountCode { get; set; }
         public bool OmitItemStatus { get; set; }
@@ -901,7 +908,13 @@ public sealed class XeroReadOnlySyncServiceTests
                 return Json($$"""{"Accounts":[{"AccountID":"{{accountId}}","Code":"6200","Name":"Office expenses","Type":"EXPENSE","Status":"ACTIVE"}]}""");
             }
             if (path.EndsWith("/Contacts", StringComparison.Ordinal))
-                return Json($$"""{"Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer","EmailAddress":"{{(Revision == 1 ? "first" : "second")}}@example.test","IsCustomer":true,"ContactStatus":"ACTIVE","UpdatedDateUTC":"2026-10-19T00:0{{Revision}}:00Z"}]}""");
+            {
+                var includeArchived = QueryHelpers.ParseQuery(request.RequestUri.Query)["includeArchived"] == "true";
+                var archived = HasArchivedContact && includeArchived
+                    ? $$""",{"ContactID":"{{archivedContactId}}","Name":"Archived Xero Customer","EmailAddress":"first@example.test","IsCustomer":true,"ContactStatus":"ARCHIVED"}"""
+                    : "";
+                return Json($$"""{"Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer","EmailAddress":"{{(Revision == 1 ? "first" : "second")}}@example.test","IsCustomer":true,"ContactStatus":"ACTIVE","UpdatedDateUTC":"2026-10-19T00:0{{Revision}}:00Z"}{{archived}}]}""");
+            }
             if (path.EndsWith("/Items", StringComparison.Ordinal))
             {
                 var status = OmitItemStatus ? "" : "\"Status\":\"ACTIVE\",";
