@@ -88,7 +88,7 @@ else if (usesXero)
                             <td>@asset.AssetStatus</td>
                             <td>@SourceDate(asset.PurchaseDate)</td>
                             <td class="text-end">@SourceAmount(asset.PurchasePrice)</td>
-                            <td class="text-end">@SourceAmount(asset.BookDepreciationDetail?.CurrentAccumDepreciationAmount)</td>
+                            <td class="text-end">@SourceAmount(asset.BookDepreciationDetail?.AccumulatedDepreciationAmount)</td>
                             <td class="text-end">@SourceAmount(asset.AccountingBookValue)</td>
                             <td>@SourceDate(asset.DisposalDate)</td>
                             <td class="text-end">@SourceAmount(IsAssetStatus(asset, "Disposed") ? asset.DisposalPrice : null)</td>

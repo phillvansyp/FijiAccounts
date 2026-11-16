@@ -14,6 +14,39 @@ namespace FijiAccounts.Web.Tests;
 public sealed class XeroReadOnlySyncServiceTests
 {
     [Fact]
+    public async Task Asset_register_uses_Xero_type_names_and_includes_prior_depreciation()
+    {
+        var assetId = Guid.NewGuid();
+        var assetTypeId = Guid.NewGuid();
+        var bytes = await XeroFixedAssetRegister.ReadSourceAsync(endpoint =>
+        {
+            var response = endpoint.EndsWith("/AssetTypes", StringComparison.Ordinal)
+                ? $$"""[{"assetTypeId":"{{assetTypeId}}","assetTypeName":"Computer equipment"}]"""
+                : endpoint.Contains("status=REGISTERED", StringComparison.Ordinal)
+                    ? $$"""
+                        {"pagination":{"page":1,"pageCount":1,"itemCount":1},"items":[
+                          {"assetId":"{{assetId}}","assetTypeId":"{{assetTypeId}}","assetNumber":"FA-1",
+                           "assetName":"Computer","assetStatus":"Registered","purchasePrice":100,
+                           "accountingBookValue":70,"bookDepreciationDetail":{
+                              "priorAccumDepreciationAmount":25,"currentAccumDepreciationAmount":5
+                           }
+                          }
+                        ]}
+                        """
+                    : """{"pagination":{"page":1,"pageCount":0,"itemCount":0},"items":[]}""";
+            return Task.FromResult(Encoding.UTF8.GetBytes(response));
+        }, CancellationToken.None);
+
+        using var payload = System.Text.Json.JsonDocument.Parse(bytes);
+        var asset = Assert.Single(XeroFixedAssetRegister.ReadSnapshot(
+            payload.RootElement.GetProperty("registers")[0].GetRawText()));
+        Assert.Equal("Computer equipment", asset.AssetTypeName);
+        Assert.Equal(30m, asset.BookDepreciationDetail?.AccumulatedDepreciationAmount);
+        Assert.Equal(asset.PurchasePrice - asset.AccountingBookValue,
+            asset.BookDepreciationDetail?.AccumulatedDepreciationAmount);
+    }
+
+    [Fact]
     public void Bank_rules_preserve_source_priority_and_reject_duplicate_source_ids()
     {
         var ruleId = Guid.NewGuid();
@@ -109,7 +142,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
 
         Assert.Empty(result.Failures);
-        Assert.Equal(16, result.DatasetCount);
+        Assert.Equal(17, result.DatasetCount);
         Assert.Equal(10_250, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "sales-invoices"));
         Assert.Equal(127, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "items"));
         Assert.Equal(42, handler.SalesInvoiceRequests);
@@ -160,7 +193,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var completed = await sync.RunNowAsync(test.UserId, test.Organisation.Id);
 
         Assert.Empty(completed.Failures);
-        Assert.Equal(16, completed.DatasetCount);
+        Assert.Equal(17, completed.DatasetCount);
         Assert.Equal(1, handler.ItemRequests);
         Assert.Equal(shifted ? new[] { 2, 1, 1, 2, 3 } : [2, 3, 4], handler.InvoicePageRequests);
         var invoices = test.Db.XeroMirrorRecords.Where(x => x.DatasetKey == "sales-invoices");
@@ -185,7 +218,11 @@ public sealed class XeroReadOnlySyncServiceTests
         var accountId = Guid.NewGuid();
         var contactId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
-        var handler = new ReadOnlyXeroHandler(tenantId, accountId, contactId, itemId) { HasArchivedContact = true };
+        var handler = new ReadOnlyXeroHandler(tenantId, accountId, contactId, itemId)
+        {
+            HasArchivedContact = true,
+            HasContactGroup = true
+        };
         var options = Options.Create(new XeroApiOptions
         {
             ClientId = "client-id",
@@ -212,7 +249,11 @@ public sealed class XeroReadOnlySyncServiceTests
 
         Assert.Empty(first.Failures);
         Assert.True(first.FullReconciliation);
-        Assert.Equal(4, await test.Db.XeroMirrorRecords.CountAsync());
+        Assert.Equal(5, await test.Db.XeroMirrorRecords.CountAsync());
+        var copiedGroup = await test.Db.XeroMirrorRecords.SingleAsync(x => x.DatasetKey == XeroContactGroups.Key);
+        var xeroGroup = XeroContactGroups.ReadSaved(copiedGroup.SourceJson);
+        Assert.Equal("Preferred customers", xeroGroup.Name);
+        Assert.Equal(new XeroContactGroups.Member(contactId, "Xero Customer"), Assert.Single(xeroGroup.Contacts));
         var account = await test.Db.LedgerAccounts.SingleAsync(x => x.Code == "6200");
         var contact = await test.Db.BusinessParties.SingleAsync(x => x.Name == "Xero Customer");
         var archivedContact = await test.Db.BusinessParties.SingleAsync(x => x.Name == "Archived Xero Customer");
@@ -243,7 +284,7 @@ public sealed class XeroReadOnlySyncServiceTests
 
         Assert.Empty(second.Failures);
         Assert.False(second.FullReconciliation);
-        Assert.Equal(4, await test.Db.XeroMirrorRecords.CountAsync());
+        Assert.Equal(5, await test.Db.XeroMirrorRecords.CountAsync());
         Assert.Equal("second@example.test", (await test.Db.BusinessParties.SingleAsync(x => x.Name == "Xero Customer")).Email);
         Assert.Equal(4, await test.Db.XeroMirrorEntityLinks.CountAsync());
         var connection = await test.Db.XeroConnections.SingleAsync();
@@ -254,8 +295,13 @@ public sealed class XeroReadOnlySyncServiceTests
         var status = await sync.GetStatusAsync(test.UserId, test.Organisation.Id);
         Assert.Equal(2, status.RecentRuns.Count);
         Assert.True(status.RecentRuns[0].StartedAt >= status.RecentRuns[1].StartedAt);
-        Assert.Equal(3, status.Datasets.Sum(x => x.ActiveRecords));
+        Assert.Equal(4, status.Datasets.Sum(x => x.ActiveRecords));
         Assert.Equal(1, status.Datasets.Single(x => x.Key == "contacts").ArchivedRecords);
+
+        handler.HasContactGroup = false;
+        var third = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
+        Assert.Empty(third.Failures);
+        Assert.True((await test.Db.XeroMirrorRecords.SingleAsync(x => x.Id == copiedGroup.Id)).IsArchived);
     }
 
     [Fact]
@@ -934,6 +980,7 @@ public sealed class XeroReadOnlySyncServiceTests
                 "ManualJournals" => "ManualJournals",
                 "Accounts" => "Accounts",
                 "Contacts" => "Contacts",
+                "ContactGroups" => "ContactGroups",
                 _ => "Records"
             };
             return Json($$"""{"{{root}}":[ ]}""");
@@ -948,8 +995,10 @@ public sealed class XeroReadOnlySyncServiceTests
     private sealed class ReadOnlyXeroHandler(Guid tenantId, Guid accountId, Guid contactId, Guid itemId) : HttpMessageHandler
     {
         private readonly Guid archivedContactId = Guid.NewGuid();
+        private readonly Guid contactGroupId = Guid.NewGuid();
         public int Revision { get; set; } = 1;
         public bool HasArchivedContact { get; set; }
+        public bool HasContactGroup { get; set; }
         public bool ReturnNoRecords { get; set; }
         public bool ReturnDuplicateAccountCode { get; set; }
         public bool OmitItemStatus { get; set; }
@@ -969,6 +1018,10 @@ public sealed class XeroReadOnlySyncServiceTests
                 return Json($$"""[{"id":"connection-one","tenantId":"{{tenantId}}","tenantName":"Source Books Ltd","tenantType":"ORGANISATION"}]""");
             if (ReturnNoRecords) return EmptyCollectionFor(request.RequestUri.AbsolutePath);
             var path = request.RequestUri.AbsolutePath;
+            if (HasContactGroup && path.EndsWith("/ContactGroups", StringComparison.Ordinal))
+                return Json($$"""{"ContactGroups":[{"ContactGroupID":"{{contactGroupId}}","Name":"Preferred customers","Status":"ACTIVE","Contacts":[]}]}""");
+            if (HasContactGroup && path.EndsWith($"/ContactGroups/{contactGroupId:D}", StringComparison.Ordinal))
+                return Json($$"""{"ContactGroups":[{"ContactGroupID":"{{contactGroupId}}","Name":"Preferred customers","Status":"ACTIVE","Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer"}]}]}""");
             if (path.EndsWith("/Accounts", StringComparison.Ordinal))
             {
                 if (ReturnDuplicateAccountCode)
@@ -1008,6 +1061,7 @@ public sealed class XeroReadOnlySyncServiceTests
                 "ManualJournals" => "ManualJournals",
                 "Accounts" => "Accounts",
                 "Contacts" => "Contacts",
+                "ContactGroups" => "ContactGroups",
                 "Items" => "Items",
                 _ => "Records"
             };

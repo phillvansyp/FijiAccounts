@@ -15,6 +15,7 @@
 @inject TenantAccessService TenantAccess
 @inject BusinessPartyService BusinessParties
 @inject TransactionCurrencyService CurrencyService
+@inject XeroReportingService XeroReports
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -34,6 +35,24 @@ else
             </button>
         }
     </div>
+    @if (xeroGroups.Count > 0)
+    {
+        <details class="setup-card mb-3">
+            <summary>Xero contact groups (@xeroGroups.Count)</summary>
+            @foreach (var group in xeroGroups)
+            {
+                <details class="mt-2" @key="group.ContactGroupId">
+                    <summary>@group.Name (@group.Contacts.Length)</summary>
+                    <ul class="mb-2">
+                        @foreach (var member in group.Contacts.OrderBy(contact => contact.Name, StringComparer.OrdinalIgnoreCase))
+                        {
+                            <li @key="member.ContactId">@member.Name</li>
+                        }
+                    </ul>
+                </details>
+            }
+        </details>
+    }
     @if (status is not null)
     {
         <div class="alert @statusClass contact-status"
@@ -631,6 +650,7 @@ else
     private bool canVerifyBankAccounts;
     private bool showAddContact;
     private List<BusinessParty> parties = [];
+    private List<XeroContactGroups.Group> xeroGroups = [];
     private List<LedgerAccount> salesAccounts = [];
     private List<LedgerAccount> purchaseAccounts = [];
     private IReadOnlyList<CurrencyOption> currencies = [];
@@ -743,8 +763,23 @@ else
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
+        xeroGroups = [];
         if (access is not null)
         {
+            if (NormalizedView == "all" && await XeroReports.UsesXeroAsync(OrganisationId) &&
+                await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
+            {
+                var groups = await (
+                    from groupRecord in Db.XeroMirrorRecords.AsNoTracking()
+                    join connection in Db.XeroConnections.AsNoTracking()
+                        on groupRecord.XeroConnectionId equals connection.Id
+                    where groupRecord.OrganisationId == OrganisationId && connection.OrganisationId == OrganisationId &&
+                          connection.IsActive && connection.ContinuousSyncEnabled &&
+                          groupRecord.DatasetKey == XeroContactGroups.Key && !groupRecord.IsArchived
+                    orderby groupRecord.DisplayName
+                    select groupRecord.SourceJson).ToListAsync();
+                xeroGroups = groups.Select(XeroContactGroups.ReadSaved).ToList();
+            }
             canEdit = await TenantAccess.CanManageContactsAsync(userId, OrganisationId);
             canVerifyBankAccounts = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
             searchTerm = Query?.Trim() ?? string.Empty;
