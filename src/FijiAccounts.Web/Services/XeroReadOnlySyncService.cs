@@ -203,6 +203,18 @@ public sealed class XeroReadOnlySyncService(
         return assets.Count;
     }
 
+    public async Task<int> ImportBankRuleSnapshotAsync(
+        string userId, Guid organisationId, Guid tenantId, string json, CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("Only an owner or administrator can copy Xero bank rules.");
+
+        var snapshot = XeroBankRuleSnapshot.Parse(json);
+        await StoreVerifiedSourceAsync(userId, organisationId, tenantId, "bank-rules", "rules",
+            "Xero bank rules", snapshot.Serialise(), snapshot.Rules.Count, cancellationToken);
+        return snapshot.Rules.Count;
+    }
+
     private async Task StoreVerifiedSourceAsync(
         string userId, Guid organisationId, Guid tenantId, string dataset, string externalId,
         string name, string json, int recordCount, CancellationToken cancellationToken)
