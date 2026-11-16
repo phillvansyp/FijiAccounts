@@ -71,6 +71,7 @@ public sealed class XeroReadOnlySyncService(
         // Xero's Items endpoint is not a paged Accounting API resource. Adding
         // page=N is ignored and returns the same collection repeatedly.
         new("items", "Items", "Items", "Items", false, true),
+        new("fixed-assets", "Fixed-asset register", XeroFixedAssetRegister.Endpoint, "Registers", false, false),
         new("sales-invoices", "Sales invoices", "Invoices?where=Type%3D%3D%22ACCREC%22", "Invoices", true, true),
         new("bills", "Supplier bills", "Invoices?where=Type%3D%3D%22ACCPAY%22", "Invoices", true, true),
         new("sales-credits", "Sales credit notes", "CreditNotes?where=Type%3D%3D%22ACCRECCREDIT%22", "CreditNotes", true, true),
@@ -187,6 +188,68 @@ public sealed class XeroReadOnlySyncService(
             if (!statuses.TryAdd(code, archived))
                 throw new InvalidOperationException("Each product code must appear once across the two lists.");
         }
+    }
+
+    public async Task<int> ImportFixedAssetExportAsync(
+        string userId, Guid organisationId, Guid tenantId, string csv, CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("Only an owner or administrator can copy the Xero fixed-asset register.");
+
+        var assets = XeroFixedAssetRegister.ReadExport(csv);
+        await StoreVerifiedSourceAsync(userId, organisationId, tenantId, "fixed-assets", "register",
+            "Xero fixed-asset register", XeroFixedAssetRegister.CreateExportSnapshot(assets), assets.Count,
+            cancellationToken);
+        return assets.Count;
+    }
+
+    private async Task StoreVerifiedSourceAsync(
+        string userId, Guid organisationId, Guid tenantId, string dataset, string externalId,
+        string name, string json, int recordCount, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var connection = await db.XeroConnections.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.OrganisationId == organisationId && x.IsActive && x.ContinuousSyncEnabled &&
+            x.XeroTenantId == tenantId, cancellationToken)
+            ?? throw new InvalidOperationException("The selected Xero organisation has changed. Reload the page.");
+        if (connection.SyncLeaseUntil > DateTimeOffset.UtcNow)
+            throw new InvalidOperationException("Wait for the current Xero refresh to finish before copying the export.");
+
+        var now = DateTimeOffset.UtcNow;
+        var hash = Hash(json);
+        var record = await db.XeroMirrorRecords.SingleOrDefaultAsync(x =>
+            x.XeroConnectionId == connection.Id && x.DatasetKey == dataset && x.ExternalId == externalId, cancellationToken);
+        if (record is { IsArchived: false } && record.SourceHash == hash) return;
+        if (record is null)
+        {
+            record = new()
+            {
+                OrganisationId = organisationId,
+                XeroConnectionId = connection.Id,
+                DatasetKey = dataset,
+                ExternalId = externalId,
+                DisplayName = name,
+                SourceHash = hash,
+                SourceJson = json,
+                FirstSeenAt = now,
+                LastSeenAt = now
+            };
+            db.XeroMirrorRecords.Add(record);
+        }
+        else
+        {
+            record.DisplayName = name;
+            record.SourceHash = hash;
+            record.SourceJson = json;
+            record.SourceUpdatedAt = null;
+            record.LastSeenAt = now;
+            record.IsArchived = false;
+        }
+
+        db.AuditEvents.Add(Audit(organisationId, userId, "VerifiedXeroSourceCopied", connection.Id,
+            new { XeroTenantId = tenantId, Dataset = dataset, Records = recordCount, SourceHash = hash }));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task SetEnabledAsync(
@@ -375,6 +438,8 @@ public sealed class XeroReadOnlySyncService(
 
             foreach (var definition in work)
             {
+                if (definition.Key == "fixed-assets" && !XeroFixedAssetRegister.HasReadScope(connection.GrantedScopes))
+                    continue;
                 var scan = definition.OpenDocumentSweep ? null : progress.Datasets.GetValueOrDefault(definition.Key);
                 if (scan?.Completed == true) continue;
                 using var datasetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -644,7 +709,11 @@ public sealed class XeroReadOnlySyncService(
         {
             await RenewLeaseAsync(connection, cancellationToken);
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
-            var bytes = await GetJsonWithRateLimitWaitAsync(
+            var bytes = definition.Key == "fixed-assets"
+                ? await XeroFixedAssetRegister.ReadSourceAsync(
+                    path => GetJsonWithRateLimitWaitAsync(connection, actor, path, null, cancellationToken),
+                    cancellationToken)
+                : await GetJsonWithRateLimitWaitAsync(
                 connection,
                 actor,
                 endpoint,
