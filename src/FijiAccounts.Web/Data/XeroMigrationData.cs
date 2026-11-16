@@ -216,6 +216,7 @@ public sealed class XeroConnection
     public DateTimeOffset? LastSyncedAt { get; set; }
     public DateTimeOffset? LastFullReconciliationAt { get; set; }
     public DateTimeOffset? NextSyncAt { get; set; }
+    public string? SyncCheckpointJson { get; set; }
     public DateTimeOffset? SyncLeaseUntil { get; set; }
     [MaxLength(100)] public string? SyncLeaseOwner { get; set; }
     public bool ContinuousSyncEnabled { get; set; }
