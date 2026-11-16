@@ -14,6 +14,25 @@ namespace FijiAccounts.Web.Tests;
 public sealed class XeroReadOnlySyncServiceTests
 {
     [Fact]
+    public void Bank_rules_preserve_source_priority_and_reject_duplicate_source_ids()
+    {
+        var ruleId = Guid.NewGuid();
+        var rule = new XeroBankRuleSnapshot.Rule(ruleId, "Example", "Spend", 53, "All",
+            [new("Payee", "equals", "Example"), new("Description", "contains", "Office")],
+            [new("Percentage", "Office supplies", "6200 – Office expenses", "GST on Expenses", "Head office", "100")],
+            "Payee", "Description", "All bank accounts");
+        var snapshot = new XeroBankRuleSnapshot("!test", [rule]);
+        var parsed = XeroBankRuleSnapshot.Parse(snapshot.Serialise());
+        var copied = Assert.Single(parsed.Rules);
+        Assert.Equal(53, copied.Order);
+        Assert.Equal(rule.Conditions.ToArray(), copied.Conditions.ToArray());
+        Assert.Equal(rule.Allocations.ToArray(), copied.Allocations.ToArray());
+        Assert.Equal($"https://go.xero.com/app/!test/bank-rules/edit/{ruleId:D}", parsed.SourceLink(copied).AbsoluteUri);
+        Assert.Throws<InvalidOperationException>(() => XeroBankRuleSnapshot.Parse(
+            (snapshot with { Rules = [rule, rule with { Order = 54 }] }).Serialise()));
+    }
+
+    [Fact]
     public async Task Fixed_asset_register_waits_for_all_pages_and_preserves_source_amounts()
     {
         var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
