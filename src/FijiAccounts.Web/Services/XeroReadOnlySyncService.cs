@@ -48,7 +48,7 @@ public sealed class XeroReadOnlySyncService(
     private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MaximumInlineRateLimitWait = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan LeaseRenewalWaitSlice = TimeSpan.FromMinutes(2);
-    private const int MaximumInlineRateLimitRetries = 1;
+    private static readonly TimeSpan TransientGatewayRetryDelay = TimeSpan.FromSeconds(2);
     // Xero supports up to 1,000 records per page on its paged Accounting API
     // endpoints. Use a moderate page size so large organisations need far
     // fewer requests without creating very large invoice responses in memory.
@@ -274,7 +274,6 @@ public sealed class XeroReadOnlySyncService(
         {
             run.ErrorSummary = "Connecting to Xero…";
             await db.SaveChangesAsync(cancellationToken);
-            var accessToken = await connections.GetAccessTokenAsync(connection, actor, cancellationToken);
             var modifiedSince = full ? null : connection.LastSyncedAt?.AddMinutes(-2);
             var failures = new List<XeroSyncFailure>();
             var recordCount = 0;
@@ -282,7 +281,6 @@ public sealed class XeroReadOnlySyncService(
             var archivedCount = 0;
             var datasetCount = 0;
             TimeSpan? retryAfter = null;
-            var rateLimitWaitBudget = new InlineRateLimitWaitBudget(MaximumInlineRateLimitRetries);
 
             foreach (var definition in Datasets)
             {
@@ -296,11 +294,10 @@ public sealed class XeroReadOnlySyncService(
                     await RenewLeaseAsync(connection, cancellationToken);
                     var result = await SyncDatasetAsync(
                         connection,
-                        accessToken,
+                        actor,
                         definition,
                         definition.SupportsModifiedSince ? modifiedSince : null,
                         full,
-                        rateLimitWaitBudget,
                         datasetTimeout.Token);
                     datasetCount++;
                     recordCount += result.Seen;
@@ -314,7 +311,8 @@ public sealed class XeroReadOnlySyncService(
                     run.ArchivedCount = archivedCount;
                     await db.SaveChangesAsync(cancellationToken);
                 }
-                catch (Exception ex) when (ex is XeroApiException or JsonException or InvalidOperationException)
+                catch (Exception ex) when (ex is not XeroReconnectRequiredException &&
+                    ex is XeroApiException or JsonException or InvalidOperationException)
                 {
                     failures.Add(new(definition.Name, FriendlyFailure(ex)));
                     logger.LogWarning(ex, "Xero read-only dataset {Dataset} failed for organisation {OrganisationId}.",
@@ -354,7 +352,9 @@ public sealed class XeroReadOnlySyncService(
             await RenewLeaseAsync(connection, cancellationToken);
             if (failures.Count == 0)
             {
-                connection.LastSyncedAt = completedAt;
+                // A long pass can read a record before Xero updates it. Start the
+                // next incremental pass from the beginning of this pass.
+                connection.LastSyncedAt = run.StartedAt;
                 if (full) connection.LastFullReconciliationAt = completedAt;
             }
             connection.ConsecutiveSyncFailures = failures.Count == 0 ? 0 : connection.ConsecutiveSyncFailures + 1;
@@ -472,11 +472,10 @@ public sealed class XeroReadOnlySyncService(
 
     private async Task<DatasetSyncResult> SyncDatasetAsync(
         XeroConnection connection,
-        string accessToken,
+        string actor,
         DatasetDefinition definition,
         DateTimeOffset? modifiedSince,
         bool fullReconciliation,
-        InlineRateLimitWaitBudget rateLimitWaitBudget,
         CancellationToken cancellationToken)
     {
         var existing = await db.XeroMirrorRecords
@@ -509,10 +508,9 @@ public sealed class XeroReadOnlySyncService(
             var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
             var bytes = await GetJsonWithRateLimitWaitAsync(
                 connection,
-                accessToken,
+                actor,
                 endpoint,
                 modifiedSince,
-                rateLimitWaitBudget,
                 cancellationToken);
             using var document = JsonDocument.Parse(bytes);
             var records = Records(document.RootElement, definition.RootProperty).ToList();
@@ -594,37 +592,42 @@ public sealed class XeroReadOnlySyncService(
 
     private async Task<byte[]> GetJsonWithRateLimitWaitAsync(
         XeroConnection connection,
-        string accessToken,
+        string actor,
         string endpoint,
         DateTimeOffset? modifiedSince,
-        InlineRateLimitWaitBudget rateLimitWaitBudget,
         CancellationToken cancellationToken)
     {
-        while (true)
+        async Task<byte[]> ReadAsync()
         {
-            try
-            {
-                return await api.GetJsonAsync(
-                    accessToken,
-                    connection.XeroTenantId!.Value,
-                    endpoint,
-                    modifiedSince,
-                    cancellationToken);
-            }
-            catch (XeroApiException exception) when (
-                CanWaitInsideRun(exception, out var retryAfter) &&
-                rateLimitWaitBudget.TryConsume())
-            {
-                logger.LogInformation(
-                    "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before retry {RetryNumber} of {MaximumRetries} for endpoint {Endpoint}.",
-                    connection.OrganisationId,
-                    retryAfter,
-                    rateLimitWaitBudget.Consumed,
-                    MaximumInlineRateLimitRetries,
-                    endpoint);
-                await WaitAndRenewLeaseAsync(connection, retryAfter, cancellationToken);
-            }
+            var accessToken = await connections.GetAccessTokenAsync(connection, actor, cancellationToken);
+            return await api.GetJsonAsync(
+                accessToken,
+                connection.XeroTenantId!.Value,
+                endpoint,
+                modifiedSince,
+                cancellationToken);
         }
+
+        try
+        {
+            return await ReadAsync();
+        }
+        catch (XeroApiException exception) when (CanWaitInsideRun(exception, out var retryAfter))
+        {
+            logger.LogInformation(
+                "Xero reached its short request limit for organisation {OrganisationId}. Waiting {RetryAfter} before retrying endpoint {Endpoint}.",
+                connection.OrganisationId, retryAfter, endpoint);
+            await WaitAndRenewLeaseAsync(connection, retryAfter, cancellationToken);
+        }
+        catch (XeroApiException exception) when (exception.StatusCode is
+            System.Net.HttpStatusCode.BadGateway or System.Net.HttpStatusCode.GatewayTimeout)
+        {
+            await WaitAndRenewLeaseAsync(connection, TransientGatewayRetryDelay, cancellationToken);
+        }
+
+        // Bound retries per request. A different page can still encounter a new
+        // minute window later in the same import.
+        return await ReadAsync();
     }
 
     private async Task WaitAndRenewLeaseAsync(
@@ -966,17 +969,6 @@ public sealed class XeroReadOnlySyncService(
 
     private sealed record DatasetSyncResult(int Seen, int Changed, int Archived);
 
-    private sealed class InlineRateLimitWaitBudget(int maximumRetries)
-    {
-        public int Consumed { get; private set; }
-
-        public bool TryConsume()
-        {
-            if (Consumed >= maximumRetries) return false;
-            Consumed++;
-            return true;
-        }
-    }
 }
 
 public sealed class XeroReadOnlySyncWorker(
