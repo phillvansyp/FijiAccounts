@@ -29,7 +29,8 @@ public sealed class XeroReadOnlySyncServiceTests
                            "assetName":"Computer","assetStatus":"Registered","purchasePrice":100,
                            "accountingBookValue":70,"bookDepreciationDetail":{
                               "priorAccumDepreciationAmount":25,"currentAccumDepreciationAmount":5
-                           }}
+                           }
+                          }
                         ]}
                         """
                     : """{"pagination":{"page":1,"pageCount":0,"itemCount":0},"items":[]}""";
