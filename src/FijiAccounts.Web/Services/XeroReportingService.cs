@@ -217,16 +217,25 @@ public sealed class XeroReportingService(
 
     internal static IReadOnlyList<XeroReportRow> RenderAgeing(IEnumerable<XeroOpenBalance> balances, DateOnly asAt)
     {
+        var documents = balances.ToArray();
+        var showUndatedCredits = documents.Any(document => document.DueDate is null);
+        var columnsForReport = new List<string>
+        {
+            "Contact", "Current", "< 1 Month", "1 Month", "2 Months", "3 Months", "Older"
+        };
+        if (showUndatedCredits)
+            columnsForReport.Add("Unapplied credits");
+        columnsForReport.Add("Total");
         var rows = new List<XeroReportRow>
         {
-            new("Header", null, ["Contact", "Current", "< 1 Month", "1 Month", "2 Months", "3 Months", "Older", "Unapplied credits", "Total"], 0)
+            new("Header", null, columnsForReport, 0)
         };
         var oneMonthAgo = asAt.AddMonths(-1);
         var twoMonthsAgo = asAt.AddMonths(-2);
         var threeMonthsAgo = asAt.AddMonths(-3);
         var fourMonthsAgo = asAt.AddMonths(-4);
-        var totals = new decimal[7];
-        foreach (var contact in balances.GroupBy(x => x.Contact).OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        var totals = new decimal[showUndatedCredits ? 7 : 6];
+        foreach (var contact in documents.GroupBy(x => x.Contact).OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
             var columns = new decimal[totals.Length];
             foreach (var item in contact)

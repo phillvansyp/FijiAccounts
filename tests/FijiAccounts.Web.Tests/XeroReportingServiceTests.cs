@@ -101,7 +101,27 @@ public sealed class XeroReportingServiceTests
              new("Customer", "Four months", new(2026, 7, 17), 7m)],
             new(2026, 11, 17));
 
-        Assert.Equal(["Total", "1.00", "5.00", "4.00", "5.00", "6.00", "7.00", "0.00", "28.00"],
+        Assert.Equal(["Total", "1.00", "5.00", "4.00", "5.00", "6.00", "7.00", "28.00"],
+            report[^1].Cells);
+    }
+
+    [Fact]
+    public void Uses_the_credit_document_date_to_age_a_credit_without_a_due_date()
+    {
+        var row = new XeroMirrorRecord
+        {
+            DatasetKey = "sales-credits", ExternalId = "dated-credit", DisplayName = "Credit note",
+            SourceHash = "", SourceJson = """
+                {"Type":"ACCRECCREDIT","Status":"AUTHORISED","RemainingCredit":25.50,
+                 "Date":"/Date(1782259200000+0000)/","CurrencyCode":"NZD","CreditNoteNumber":"CN-1",
+                 "Contact":{"Name":"Customer A"}}
+                """
+        };
+        var credit = XeroOpenBalanceService.TryReadCredit(row, "NZD", payables: false);
+        Assert.NotNull(credit);
+        Assert.Equal(new DateOnly(2026, 6, 24), credit.DueDate);
+        var report = XeroReportingService.RenderAgeing([credit], new(2026, 11, 17));
+        Assert.Equal(["Total", "0.00", "0.00", "0.00", "0.00", "0.00", "-25.50", "-25.50"],
             report[^1].Cells);
     }
 }

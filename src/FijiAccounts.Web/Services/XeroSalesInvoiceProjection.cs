@@ -166,7 +166,7 @@ public static class XeroSalesInvoiceProjectionParser
             ? value
             : fallback;
 
-    private static bool TryDate(JsonElement source, string name, out DateOnly date)
+    internal static bool TryDate(JsonElement source, string name, out DateOnly date)
     {
         var value = Text(source, name);
         if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true;
