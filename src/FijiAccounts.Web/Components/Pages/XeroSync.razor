@@ -153,6 +153,28 @@ else
         </section>
     }
 
+    @if (canManage && status?.Connection.TenantId is not null && status.Datasets.Any(x => x.Key == "items"))
+    {
+        <details class="card mb-4">
+            <summary class="card-header">Update product statuses from Xero</summary>
+            <div class="card-body">
+                <p>Use the complete Products and services list from the Xero organisation shown above. Enter one code per line, in the list that matches its status in Xero.</p>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="xero-active-product-codes">Active product codes</label>
+                        <textarea id="xero-active-product-codes" class="form-control" rows="5" maxlength="100000" @bind="activeProductCodes"></textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="xero-archived-product-codes">Archived product codes</label>
+                        <textarea id="xero-archived-product-codes" class="form-control" rows="5" maxlength="100000" @bind="archivedProductCodes"></textarea>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary mt-3" @onclick="ApplyProductStatuses"
+                        disabled="@(busy || ServerSyncRunning)">Apply Xero product statuses</button>
+            </div>
+        </details>
+    }
+
     @if (status is not null && status.RecentRuns.Count > 0)
     {
         <section class="card">
@@ -195,6 +217,9 @@ else
     private string messageClass = "alert-success";
     private bool loading = true;
     private bool busy;
+    private bool canManage;
+    private string activeProductCodes = string.Empty;
+    private string archivedProductCodes = string.Empty;
     private bool IsConnected => status?.Connection.IsConnected == true;
     private bool RateLimitBackoffActive =>
         status?.Connection.NextSyncAt is { } nextSyncAt &&
@@ -224,7 +249,11 @@ else
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User) ?? string.Empty;
         access = string.IsNullOrWhiteSpace(userId) ? null : await TenantAccess.FindAsync(userId, OrganisationId);
-        if (access is not null) await ReloadAsync();
+        if (access is not null)
+        {
+            canManage = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
+            await ReloadAsync();
+        }
         if (string.Equals(XeroResult, "connected", StringComparison.OrdinalIgnoreCase))
         {
             message = status?.Connection.TenantId is null
@@ -251,6 +280,18 @@ else
         var enabled = !(status?.Connection.ContinuousSyncEnabled ?? false);
         await SyncService.SetEnabledAsync(userId, OrganisationId, enabled);
         message = enabled ? "Automatic read-only Xero sync is on." : "Automatic Xero sync is off.";
+    });
+
+    private async Task ApplyProductStatuses() => await RunAction(async () =>
+    {
+        if (status?.Connection.TenantId is not Guid tenantId)
+            throw new InvalidOperationException("Select the Xero organisation first.");
+        var count = await SyncService.ApplyXeroItemStatusesAsync(
+            userId, OrganisationId, tenantId, activeProductCodes, archivedProductCodes);
+        activeProductCodes = string.Empty;
+        archivedProductCodes = string.Empty;
+        message = count == 0 ? "Product statuses already match the Xero lists."
+            : $"Updated {count:N0} product status(es) from the Xero lists.";
     });
 
     private async Task SyncNow() => await Sync(false);

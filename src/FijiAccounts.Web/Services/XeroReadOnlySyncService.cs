@@ -117,6 +117,78 @@ public sealed class XeroReadOnlySyncService(
         return new(connection, datasets, recentRuns, syncLeaseUntil > DateTimeOffset.UtcNow);
     }
 
+    public async Task<int> ApplyXeroItemStatusesAsync(
+        string userId, Guid organisationId, Guid tenantId, string activeCodes, string archivedCodes,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await access.CanPostJournalsAsync(userId, organisationId))
+            throw new UnauthorizedAccessException("Only an owner or administrator can update Xero product statuses.");
+
+        var statuses = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        AddItemStatuses(statuses, activeCodes, archived: false);
+        AddItemStatuses(statuses, archivedCodes, archived: true);
+        if (statuses.Count == 0)
+            throw new InvalidOperationException("Enter the active and archived codes from the complete Xero product list.");
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var connection = await db.XeroConnections.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.OrganisationId == organisationId && x.IsActive &&
+                x.XeroTenantId == tenantId, cancellationToken)
+            ?? throw new InvalidOperationException("The selected Xero organisation has changed. Reload the page.");
+        if (connection.SyncLeaseUntil > DateTimeOffset.UtcNow)
+            throw new InvalidOperationException("Wait for the current Xero refresh to finish before updating product statuses.");
+
+        var links = await db.XeroMirrorEntityLinks.AsNoTracking()
+            .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == "items" &&
+                x.TargetEntityType == nameof(ProductItem))
+            .ToListAsync(cancellationToken);
+        var mirrors = await db.XeroMirrorRecords
+            .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == "items")
+            .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var itemIds = links.Select(x => x.TargetEntityId).ToArray();
+        var items = await db.ProductItems.Where(x => x.OrganisationId == organisationId && itemIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+        if (links.Count != statuses.Count || links.Count != mirrors.Count || links.Count != items.Count ||
+            links.Any(link => !mirrors.ContainsKey(link.ExternalId)) ||
+            !statuses.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(items.Values.Select(x => x.Code)))
+            throw new InvalidOperationException("The lists must contain each product code in the Xero copy exactly once. Compare the complete lists before applying.");
+
+        var changed = new List<string>();
+        foreach (var link in links)
+        {
+            var item = items[link.TargetEntityId];
+            var mirror = mirrors[link.ExternalId];
+            var archived = statuses[item.Code];
+            if (mirror.IsArchived == archived && item.IsActive == !archived) continue;
+
+            mirror.IsArchived = archived;
+            item.IsActive = !archived;
+            changed.Add(item.Code);
+        }
+        if (changed.Count > 0)
+        {
+            db.AuditEvents.Add(Audit(organisationId, userId, "XeroItemStatusesApplied", connection.Id, new
+            {
+                XeroTenantId = tenantId,
+                Active = statuses.Count(x => !x.Value),
+                Archived = statuses.Count(x => x.Value),
+                Changed = changed
+            }));
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changed.Count;
+    }
+
+    private static void AddItemStatuses(Dictionary<string, bool> statuses, string codes, bool archived)
+    {
+        foreach (var code in codes.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!statuses.TryAdd(code, archived))
+                throw new InvalidOperationException("Each product code must appear once across the two lists.");
+        }
+    }
+
     public async Task SetEnabledAsync(
         string userId,
         Guid organisationId,
@@ -612,8 +684,11 @@ public sealed class XeroReadOnlySyncService(
                 if (!paged) seen.Add(externalId);
                 var sourceJson = source.GetRawText();
                 var hash = Hash(sourceJson);
-                var archived = IsArchived(source);
-                if (!existing.TryGetValue(externalId, out var mirror))
+                existing.TryGetValue(externalId, out var mirror);
+                var archived = definition.Key == "items"
+                    ? ItemArchiveStatus(source) ?? mirror?.IsArchived ?? false
+                    : IsArchived(source);
+                if (mirror is null)
                 {
                     mirror = new XeroMirrorRecord
                     {
@@ -657,6 +732,7 @@ public sealed class XeroReadOnlySyncService(
                     activeAccountCodes,
                     projectedParties,
                     projectedItems,
+                    archived,
                     cancellationToken);
             }
 
@@ -908,13 +984,14 @@ public sealed class XeroReadOnlySyncService(
         ISet<string> activeAccountCodes,
         IDictionary<Guid, BusinessParty> projectedParties,
         IDictionary<Guid, ProductItem> projectedItems,
+        bool archived,
         CancellationToken cancellationToken)
     {
         Guid? targetId = dataset switch
         {
             "accounts" => await ProjectAccountAsync(connection.OrganisationId, externalId, source, links, projectedAccounts, activeAccountCodes, cancellationToken),
             "contacts" => await ProjectContactAsync(connection.OrganisationId, externalId, source, links, projectedParties, cancellationToken),
-            "items" => await ProjectItemAsync(connection.OrganisationId, externalId, source, links, projectedItems, cancellationToken),
+            "items" => await ProjectItemAsync(connection.OrganisationId, externalId, source, links, projectedItems, archived, cancellationToken),
             _ => null
         };
         if (targetId is null || links.ContainsKey(externalId)) return;
@@ -1025,6 +1102,7 @@ public sealed class XeroReadOnlySyncService(
     private async Task<Guid?> ProjectItemAsync(Guid organisationId, string externalId, JsonElement source,
         IDictionary<string, XeroMirrorEntityLink> links,
         IDictionary<Guid, ProductItem> projectedItems,
+        bool archived,
         CancellationToken cancellationToken)
     {
         var code = Text(source, "Code").Trim();
@@ -1044,7 +1122,7 @@ public sealed class XeroReadOnlySyncService(
         item.Kind = Bool(source, "IsTrackedAsInventory") ? ProductKind.TrackedItem : ProductKind.NonTrackedItem;
         item.SalePrice = NestedDecimal(source, "SalesDetails", "UnitPrice");
         item.PurchasePrice = NestedDecimal(source, "PurchaseDetails", "UnitPrice");
-        item.IsActive = !IsArchived(source);
+        item.IsActive = !archived;
         projectedItems[item.Id] = item;
         return item.Id;
     }
@@ -1106,6 +1184,13 @@ public sealed class XeroReadOnlySyncService(
         return status.Equals("ARCHIVED", StringComparison.OrdinalIgnoreCase) ||
                status.Equals("DELETED", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool? ItemArchiveStatus(JsonElement source) => Text(source, "Status").Trim().ToUpperInvariant() switch
+    {
+        "ACTIVE" => false,
+        "ARCHIVED" or "DELETED" => true,
+        _ => null
+    };
 
     private static DateTimeOffset? SourceUpdatedAt(JsonElement source)
     {

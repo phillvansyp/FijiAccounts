@@ -186,6 +186,49 @@ public sealed class XeroReadOnlySyncServiceTests
     }
 
     [Fact]
+    public async Task Product_statuses_from_Xero_are_saved_when_the_API_omits_status()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var handler = new ReadOnlyXeroHandler(tenantId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var options = Options.Create(new XeroApiOptions
+        {
+            ClientId = "client-id",
+            ClientSecret = "client-secret",
+            RedirectUri = "https://account.example/api/integrations/xero/callback"
+        });
+        var api = new XeroApiClient(new HttpClient(handler), options);
+        var connections = new XeroConnectionService(test.Db, test.Access, api,
+            new DatabaseImmutableDocumentStore(test.Db), new EphemeralDataProtectionProvider(), options);
+        var sync = new XeroReadOnlySyncService(test.Db, test.Access, api, connections, options,
+            NullLogger<XeroReadOnlySyncService>.Instance);
+        var authorize = new Uri(await connections.CreateAuthorizationUriAsync(test.UserId, test.Organisation.Id));
+        var state = Assert.Single(QueryHelpers.ParseQuery(authorize.Query)["state"]);
+        await connections.CompleteAuthorizationAsync(test.UserId, "code", state!);
+        Assert.Empty((await sync.RunNowAsync(test.UserId, test.Organisation.Id)).Failures);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sync.ApplyXeroItemStatusesAsync(test.UserId, test.Organisation.Id, tenantId, "", "OTHER"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sync.ApplyXeroItemStatusesAsync(test.UserId, test.Organisation.Id, tenantId, "CONSULT", "CONSULT"));
+        Assert.True((await test.Db.ProductItems.SingleAsync()).IsActive);
+
+        var updated = await sync.ApplyXeroItemStatusesAsync(
+            test.UserId, test.Organisation.Id, tenantId, "", "CONSULT");
+        Assert.Equal(1, updated);
+
+        handler.OmitItemStatus = true;
+        Assert.Empty((await sync.RunNowAsync(test.UserId, test.Organisation.Id)).Failures);
+        Assert.False((await test.Db.ProductItems.SingleAsync()).IsActive);
+        Assert.True((await test.Db.XeroMirrorRecords.SingleAsync(x => x.DatasetKey == "items")).IsArchived);
+
+        handler.OmitItemStatus = false;
+        Assert.Empty((await sync.RunNowAsync(test.UserId, test.Organisation.Id)).Failures);
+        Assert.True((await test.Db.ProductItems.SingleAsync()).IsActive);
+        Assert.False((await test.Db.XeroMirrorRecords.SingleAsync(x => x.DatasetKey == "items")).IsArchived);
+    }
+
+    [Fact]
     public async Task Xero_account_codes_that_collide_after_local_limit_share_one_local_account()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();
@@ -834,6 +877,7 @@ public sealed class XeroReadOnlySyncServiceTests
         public int Revision { get; set; } = 1;
         public bool ReturnNoRecords { get; set; }
         public bool ReturnDuplicateAccountCode { get; set; }
+        public bool OmitItemStatus { get; set; }
         public List<(string Method, string Url)> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -859,7 +903,10 @@ public sealed class XeroReadOnlySyncServiceTests
             if (path.EndsWith("/Contacts", StringComparison.Ordinal))
                 return Json($$"""{"Contacts":[{"ContactID":"{{contactId}}","Name":"Xero Customer","EmailAddress":"{{(Revision == 1 ? "first" : "second")}}@example.test","IsCustomer":true,"ContactStatus":"ACTIVE","UpdatedDateUTC":"2026-10-19T00:0{{Revision}}:00Z"}]}""");
             if (path.EndsWith("/Items", StringComparison.Ordinal))
-                return Json($$$"""{"Items":[{"ItemID":"{{{itemId}}}","Code":"CONSULT","Name":"Consulting","Status":"ACTIVE","SalesDetails":{"UnitPrice":42}}]}""");
+            {
+                var status = OmitItemStatus ? "" : "\"Status\":\"ACTIVE\",";
+                return Json($$$"""{"Items":[{"ItemID":"{{{itemId}}}","Code":"CONSULT","Name":"Consulting",{{{status}}}"SalesDetails":{"UnitPrice":42}}]}""");
+            }
             return EmptyCollectionFor(path);
         }
 
