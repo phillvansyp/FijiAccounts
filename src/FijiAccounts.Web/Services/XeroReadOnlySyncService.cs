@@ -282,7 +282,22 @@ public sealed class XeroReadOnlySyncService(
             var datasetCount = 0;
             TimeSpan? retryAfter = null;
 
-            foreach (var definition in Datasets)
+            IEnumerable<DatasetDefinition> work = Datasets;
+            if (connection.ConsecutiveSyncFailures > 0 &&
+                await db.XeroMirrorRecords.AsNoTracking().AnyAsync(x => x.XeroConnectionId == connection.Id &&
+                    (x.DatasetKey == "sales-invoices" || x.DatasetKey == "bills"), cancellationToken))
+            {
+                // Keep balances current even when copying years of paid history times out.
+                work = Datasets.Where(x => x.Key is "sales-invoices" or "bills")
+                    .Select(x => x with
+                    {
+                        Name = $"Open {x.Name.ToLowerInvariant()}",
+                        Endpoint = x.Endpoint + "&Statuses=AUTHORISED",
+                        OpenDocumentSweep = true
+                    }).Concat(Datasets);
+            }
+
+            foreach (var definition in work)
             {
                 using var datasetTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 datasetTimeout.CancelAfter(TimeSpan.FromSeconds(
@@ -296,10 +311,10 @@ public sealed class XeroReadOnlySyncService(
                         connection,
                         actor,
                         definition,
-                        definition.SupportsModifiedSince ? modifiedSince : null,
-                        full,
+                        definition.SupportsModifiedSince && !definition.OpenDocumentSweep ? modifiedSince : null,
+                        full && !definition.OpenDocumentSweep,
                         datasetTimeout.Token);
-                    datasetCount++;
+                    if (!definition.OpenDocumentSweep) datasetCount++;
                     recordCount += result.Seen;
                     changedCount += result.Changed;
                     archivedCount += result.Archived;
@@ -478,8 +493,12 @@ public sealed class XeroReadOnlySyncService(
         bool fullReconciliation,
         CancellationToken cancellationToken)
     {
-        var existing = await db.XeroMirrorRecords
-            .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key)
+        var datasetRecords = db.XeroMirrorRecords
+            .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key);
+        var initialRecords = definition.OpenDocumentSweep
+            ? datasetRecords.Where(x => !x.IsArchived && x.SourceJson.Contains("\"AUTHORISED\""))
+            : datasetRecords;
+        var existing = await initialRecords
             .ToDictionaryAsync(x => x.ExternalId, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var links = await db.XeroMirrorEntityLinks
             .Where(x => x.XeroConnectionId == connection.Id && x.DatasetKey == definition.Key)
@@ -498,6 +517,13 @@ public sealed class XeroReadOnlySyncService(
                 .ToDictionaryAsync(x => x.Id, cancellationToken)
             : [];
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var previouslyOpen = definition.OpenDocumentSweep
+            ? existing.Values.Where(x => !x.IsArchived &&
+                    x.SourceJson.Contains("\"AUTHORISED\"", StringComparison.OrdinalIgnoreCase) &&
+                    XeroSalesInvoiceProjectionParser.TryParse(x, out var invoice, includeLines: false,
+                        supplierBill: definition.Key == "bills") && invoice.IsAwaitingPayment)
+                .Select(x => x.ExternalId).ToArray()
+            : [];
         var now = DateTimeOffset.UtcNow;
         var changed = 0;
         var count = 0;
@@ -514,6 +540,22 @@ public sealed class XeroReadOnlySyncService(
                 cancellationToken);
             using var document = JsonDocument.Parse(bytes);
             var records = Records(document.RootElement, definition.RootProperty).ToList();
+            if (definition.OpenDocumentSweep)
+            {
+                if (!TryProperty(document.RootElement, definition.RootProperty, out var sourceArray) ||
+                    sourceArray.ValueKind != JsonValueKind.Array)
+                    throw new InvalidOperationException("Xero did not return the open documents collection.");
+                var providerIds = records.Select(x => Text(x, "InvoiceID")).ToArray();
+                if (providerIds.Any(x => !Guid.TryParse(x, out _)))
+                    throw new InvalidOperationException("Xero returned an open document without its invoice ID.");
+                var unknownIds = providerIds.Where(x => !existing.ContainsKey(x)).ToArray();
+                if (unknownIds.Length > 0)
+                {
+                    foreach (var old in await datasetRecords.Where(x => unknownIds.Contains(x.ExternalId))
+                                 .ToListAsync(cancellationToken))
+                        existing[old.ExternalId] = old;
+                }
+            }
             foreach (var source in records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -574,6 +616,39 @@ public sealed class XeroReadOnlySyncService(
 
             if (!definition.Paged || records.Count < PageSize) break;
             if (page == MaximumPages) throw new InvalidOperationException($"{definition.Name} exceeded the safe page limit.");
+        }
+
+        if (definition.OpenDocumentSweep)
+        {
+            // A payment can move a document out of the open result. Re-read its
+            // source status explicitly before changing any outstanding balance.
+            foreach (var batch in previouslyOpen.Where(x => !seen.Contains(x)).Chunk(50))
+            {
+                var ids = batch.Select(x => Guid.TryParse(x, out var id) ? id.ToString("D") :
+                    throw new InvalidOperationException("An open Xero document has no stable invoice ID.")).ToArray();
+                var endpoint = AddPage("Invoices?IDs=" + string.Join(',', ids), 1);
+                using var response = JsonDocument.Parse(await GetJsonWithRateLimitWaitAsync(
+                    connection, actor, endpoint, null, cancellationToken));
+                var fetched = Records(response.RootElement, "Invoices").ToDictionary(x =>
+                    ExternalId(definition.Key, x, 0), StringComparer.OrdinalIgnoreCase);
+                if (ids.Any(id => !fetched.ContainsKey(id)))
+                    throw new InvalidOperationException("Xero did not return every previously open document for rechecking.");
+                foreach (var id in ids)
+                {
+                    var source = fetched[id];
+                    var mirror = existing[id];
+                    var json = source.GetRawText();
+                    var hash = Hash(json);
+                    if (mirror.SourceHash != hash) changed++;
+                    mirror.SourceJson = json;
+                    mirror.SourceHash = hash;
+                    mirror.DisplayName = DisplayName(source, id);
+                    mirror.SourceUpdatedAt = SourceUpdatedAt(source);
+                    mirror.LastSeenAt = now;
+                    mirror.IsArchived = IsArchived(source);
+                    count++;
+                }
+            }
         }
 
         var archivedCount = 0;
@@ -965,7 +1040,8 @@ public sealed class XeroReadOnlySyncService(
         string Endpoint,
         string RootProperty,
         bool Paged,
-        bool SupportsModifiedSince);
+        bool SupportsModifiedSince,
+        bool OpenDocumentSweep = false);
 
     private sealed record DatasetSyncResult(int Seen, int Changed, int Archived);
 
