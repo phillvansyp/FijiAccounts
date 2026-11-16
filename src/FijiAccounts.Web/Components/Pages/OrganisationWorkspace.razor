@@ -555,6 +555,32 @@ else
                 x.AmountPaid + x.AmountCredited < x.Total &&
                 x.Status != BillStatus.Voided);
 
+        if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
+        {
+            var importedInvoices = await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(db, OrganisationId, openOnly: true);
+            var importedBills = await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(db, OrganisationId,
+                supplierBills: true, openOnly: true);
+            var localInvoiceNumbers = (await db.SalesInvoices.AsNoTracking()
+                .Where(x => x.OrganisationId == OrganisationId)
+                .Select(x => x.InvoiceNumber)
+                .ToListAsync()).Select(x => x.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            importedInvoices.RemoveAll(x => localInvoiceNumbers.Contains(x.InvoiceNumber));
+            var localBills = await db.SupplierBills.AsNoTracking()
+                .Where(x => x.OrganisationId == OrganisationId)
+                .Select(x => new { x.Supplier.Name, x.SupplierReference })
+                .ToListAsync();
+            var localBillReferences = localBills
+                .Where(x => !string.IsNullOrWhiteSpace(x.SupplierReference))
+                .Select(x => XeroSalesInvoiceProjectionParser.BillKey(x.Name, x.SupplierReference!))
+                .ToHashSet();
+            importedBills.RemoveAll(x => localBillReferences.Contains(
+                XeroSalesInvoiceProjectionParser.BillKey(x.ContactName, x.InvoiceNumber)));
+            receivables += importedInvoices.Sum(x => x.BaseAmountDue);
+            payables += importedBills.Sum(x => x.BaseAmountDue);
+            overdueInvoices += importedInvoices.Count(x => x.IsOverdue);
+            overdueBills += importedBills.Count(x => x.IsOverdue);
+        }
+
         financialAlertCount =
             await notifications.GetFinancialAlertCountAsync(userId, OrganisationId);
         documentAlertCount =
