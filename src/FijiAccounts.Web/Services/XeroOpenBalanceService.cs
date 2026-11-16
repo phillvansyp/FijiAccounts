@@ -63,7 +63,9 @@ public sealed class XeroOpenBalanceService(ApplicationDbContext db)
             if (label.Length == 0)
                 label = row.DisplayName;
             var contact = body.TryGetProperty("Contact", out var c) ? Text(c, "Name") : "";
-            return new(contact, label, null, -remaining);
+            var hasAgeingDate = XeroSalesInvoiceProjectionParser.TryDate(body, "DueDate", out var ageingDate) ||
+                                XeroSalesInvoiceProjectionParser.TryDate(body, "Date", out ageingDate);
+            return new(contact, label, hasAgeingDate ? ageingDate : null, -remaining);
         }
         catch (JsonException)
         {
