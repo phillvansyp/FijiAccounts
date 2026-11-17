@@ -22,7 +22,8 @@ public sealed record UpdateOrganisationSettingsRequest(
     bool? RequireTradePaymentDocuments = null,
     string? Industry = null,
     string? Nzbn = null,
-    string? NzCompanyNumber = null);
+    string? NzCompanyNumber = null,
+    string? PostalAddress = null);
 
 public sealed record UpdateProjectWipAccountsRequest(
     Guid OrganisationId,
@@ -92,6 +93,9 @@ public sealed class OrganisationSettingsService(
         }
 
         var industry = request.Industry is null ? organisation.Industry : OrganisationIndustries.Validate(request.Industry);
+        var postalAddress = request.PostalAddress is null
+            ? organisation.PostalAddress
+            : OptionalText(request.PostalAddress, 500, "postal address");
 
         var previous = new
         {
@@ -102,6 +106,7 @@ public sealed class OrganisationSettingsService(
             organisation.Nzbn,
             organisation.NzCompanyNumber,
             organisation.BusinessAddress,
+            organisation.PostalAddress,
             organisation.IsVatRegistered,
             organisation.VatRegistrationDate,
             organisation.ConversionDate,
@@ -123,6 +128,7 @@ public sealed class OrganisationSettingsService(
             Nzbn = nzbn,
             NzCompanyNumber = nzCompanyNumber,
             BusinessAddress = businessAddress,
+            PostalAddress = postalAddress,
             request.IsVatRegistered,
             request.VatRegistrationDate,
             request.ConversionDate,
@@ -147,6 +153,7 @@ public sealed class OrganisationSettingsService(
         organisation.Nzbn = nzbn;
         organisation.NzCompanyNumber = nzCompanyNumber;
         organisation.BusinessAddress = businessAddress;
+        organisation.PostalAddress = postalAddress;
         organisation.IsVatRegistered = request.IsVatRegistered;
         organisation.VatRegistrationDate = request.IsVatRegistered
             ? request.VatRegistrationDate
