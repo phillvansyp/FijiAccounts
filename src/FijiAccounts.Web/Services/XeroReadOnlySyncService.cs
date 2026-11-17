@@ -1172,7 +1172,7 @@ public sealed class XeroReadOnlySyncService(
             {
                 OrganisationId = organisationId,
                 Name = Limit(name, 160),
-                Type = sourceType == 0 ? PartyType.Customer | PartyType.Supplier : sourceType
+                Type = sourceType
             };
             db.BusinessParties.Add(party);
         }

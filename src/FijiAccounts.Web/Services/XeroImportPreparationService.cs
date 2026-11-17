@@ -688,7 +688,6 @@ public sealed class XeroImportPreparationService(
         var isCustomer = Bool(source, "IsCustomer");
         var isSupplier = Bool(source, "IsSupplier");
         var type = (isCustomer ? PartyType.Customer : 0) | (isSupplier ? PartyType.Supplier : 0);
-        if (type == 0) type = PartyType.Customer | PartyType.Supplier;
         if (contact is null)
         {
             contact = new BusinessParty
