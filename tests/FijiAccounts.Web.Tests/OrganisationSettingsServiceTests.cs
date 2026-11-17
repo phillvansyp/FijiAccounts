@@ -8,6 +8,29 @@ namespace FijiAccounts.Web.Tests;
 public sealed class OrganisationSettingsServiceTests
 {
     [Fact]
+    public async Task PostalAddressCanBeSavedAndClearedIndependentlyOfBusinessAddress()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new OrganisationSettingsService(test.Db);
+        var request = Request(test.Organisation.Id);
+        const string address = "PO Box 123\nSuva, Fiji";
+        var organisations = test.Db.Organisations.AsNoTracking();
+
+        await service.UpdateAsync(test.UserId, request with { PostalAddress = $" {address} " });
+        var saved = await organisations.SingleAsync();
+        Assert.Equal(address, saved.PostalAddress);
+        Assert.Equal("Level 3, Test House, Suva", saved.BusinessAddress);
+
+        await service.UpdateAsync(test.UserId, request);
+        Assert.Equal(address, (await organisations.SingleAsync()).PostalAddress);
+
+        await service.UpdateAsync(test.UserId, request with { PostalAddress = "" });
+        var cleared = await organisations.SingleAsync();
+        Assert.Null(cleared.PostalAddress);
+        Assert.Equal(saved.BusinessAddress, cleared.BusinessAddress);
+    }
+
+    [Fact]
     public async Task Industry_can_be_changed_preserved_and_cleared_without_changing_workspace_type()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

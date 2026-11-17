@@ -91,6 +91,7 @@ public sealed class Organisation
     [MaxLength(13)] public string? Nzbn { get; set; }
     [MaxLength(10)] public string? NzCompanyNumber { get; set; }
     [MaxLength(500)] public string? BusinessAddress { get; set; }
+    [MaxLength(500)] public string? PostalAddress { get; set; }
     public bool IsVatRegistered { get; set; }
     public DateOnly? VatRegistrationDate { get; set; }
     public decimal? ExpectedTaxableTurnoverNext12Months { get; set; }

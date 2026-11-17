@@ -154,6 +154,13 @@ else
                     <div class="mb-3"><label class="form-label">NZ company number</label><input class="form-control" inputmode="numeric" maxlength="10" @bind="model.NzCompanyNumber" @bind:event="oninput" disabled="@(!canManage)" /><div class="form-text">The number issued by the New Zealand Companies Register. Leave blank for entities that are not registered companies.</div></div>
                 }
                 <div class="mb-3"><label class="form-label">Business address</label><textarea class="form-control" @bind="model.BusinessAddress" @bind:event="oninput" disabled="@(!canManage)"></textarea><div class="form-text">Printed on customer documents where required.</div></div>
+                <div class="mb-3">
+                    <label class="form-label" for="organisation-postal-address">Postal address</label>
+                    <textarea id="organisation-postal-address" class="form-control" maxlength="500"
+                              aria-describedby="organisation-postal-address-help"
+                              @bind="model.PostalAddress" @bind:event="oninput" disabled="@(!canManage)"></textarea>
+                    <div id="organisation-postal-address-help" class="form-text">Optional. Enter the address where the company receives mail, including a PO Box if applicable.</div>
+                </div>
                 @if (string.Equals(access.Organisation.CountryCode, "FJ", StringComparison.OrdinalIgnoreCase))
                 {
                     <div class="border rounded p-3 mb-3">
@@ -605,7 +612,8 @@ else
                     model.RequireTradePaymentDocuments,
                     model.Industry,
                     model.Nzbn,
-                    model.NzCompanyNumber));
+                    model.NzCompanyNumber,
+                    PostalAddress: model.PostalAddress ?? ""));
             model = ModelFrom(stored);
             access = access with { Organisation = stored };
             statusClass = "alert-success";
@@ -924,8 +932,47 @@ else
         }
     }
 
-    private static SettingsModel ModelFrom(Organisation organisation) => new() { LegalName = organisation.LegalName, TradingName = organisation.TradingName, Industry = organisation.Industry ?? "", Tin = organisation.Tin, Nzbn = organisation.Nzbn, NzCompanyNumber = organisation.NzCompanyNumber, BusinessAddress = organisation.BusinessAddress, IsVatRegistered = organisation.IsVatRegistered, VatRegistrationDate = organisation.VatRegistrationDate, ConversionDate = organisation.ConversionDate, DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType, DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays, DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType, DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays, RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval, RequireTradePaymentDocuments = organisation.RequireTradePaymentDocuments };
-    private sealed class SettingsModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [StringLength(10)] public string? NzCompanyNumber { get; set; } [StringLength(500)] public string? BusinessAddress { get; set; } public bool IsVatRegistered { get; set; } public DateOnly? VatRegistrationDate { get; set; } public DateOnly? ConversionDate { get; set; } public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30; public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate; [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30; public bool RequireSupplierPaymentApproval { get; set; } public bool RequireTradePaymentDocuments { get; set; } }
+    private static SettingsModel ModelFrom(Organisation organisation) => new()
+    {
+        LegalName = organisation.LegalName,
+        TradingName = organisation.TradingName,
+        Industry = organisation.Industry ?? "",
+        Tin = organisation.Tin,
+        Nzbn = organisation.Nzbn,
+        NzCompanyNumber = organisation.NzCompanyNumber,
+        BusinessAddress = organisation.BusinessAddress,
+        PostalAddress = organisation.PostalAddress,
+        IsVatRegistered = organisation.IsVatRegistered,
+        VatRegistrationDate = organisation.VatRegistrationDate,
+        ConversionDate = organisation.ConversionDate,
+        DefaultSalesInvoicePaymentTermType = organisation.DefaultSalesInvoicePaymentTermType,
+        DefaultSalesInvoiceDueDays = organisation.DefaultSalesInvoiceDueDays,
+        DefaultSupplierBillPaymentTermType = organisation.DefaultSupplierBillPaymentTermType,
+        DefaultSupplierBillDueDays = organisation.DefaultSupplierBillDueDays,
+        RequireSupplierPaymentApproval = organisation.RequireSupplierPaymentApproval,
+        RequireTradePaymentDocuments = organisation.RequireTradePaymentDocuments
+    };
+
+    private sealed class SettingsModel
+    {
+        [Required, StringLength(160)] public string LegalName { get; set; } = "";
+        [StringLength(80)] public string? TradingName { get; set; }
+        public string Industry { get; set; } = "";
+        [StringLength(32)] public string? Tin { get; set; }
+        [StringLength(13)] public string? Nzbn { get; set; }
+        [StringLength(10)] public string? NzCompanyNumber { get; set; }
+        [StringLength(500)] public string? BusinessAddress { get; set; }
+        [StringLength(500)] public string? PostalAddress { get; set; }
+        public bool IsVatRegistered { get; set; }
+        public DateOnly? VatRegistrationDate { get; set; }
+        public DateOnly? ConversionDate { get; set; }
+        public PaymentTermType DefaultSalesInvoicePaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate;
+        [Range(0, 365)] public int DefaultSalesInvoiceDueDays { get; set; } = 30;
+        public PaymentTermType DefaultSupplierBillPaymentTermType { get; set; } = PaymentTermType.DaysAfterDocumentDate;
+        [Range(0, 365)] public int DefaultSupplierBillDueDays { get; set; } = 30;
+        public bool RequireSupplierPaymentApproval { get; set; }
+        public bool RequireTradePaymentDocuments { get; set; }
+    }
     private sealed class WipAccountsModel { public Guid ContractAssetAccountId { get; set; } public Guid ContractLiabilityAccountId { get; set; } public Guid RevenueRecognitionAccountId { get; set; } }
     private sealed class GroupModel { [Required, StringLength(160)] public string Name { get; set; } = ""; }
     private sealed class CompanyModel { [Required, StringLength(160)] public string LegalName { get; set; } = ""; [StringLength(80)] public string? TradingName { get; set; } public string Industry { get; set; } = ""; [StringLength(32)] public string? Tin { get; set; } [StringLength(13)] public string? Nzbn { get; set; } [StringLength(10)] public string? NzCompanyNumber { get; set; } [Required] public string CountryCode { get; set; } = "FJ"; public OrganisationKind Kind { get; set; } }
