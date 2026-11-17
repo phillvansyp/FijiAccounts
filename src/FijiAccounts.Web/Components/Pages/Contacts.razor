@@ -120,6 +120,7 @@ else
                 <a class="@(NormalizedView == "all" ? "active" : null)" aria-current="@(NormalizedView == "all" ? "page" : null)" href="o/@OrganisationId/contacts">All contacts</a>
                 <a class="@(NormalizedView == "customers" ? "active" : null)" aria-current="@(NormalizedView == "customers" ? "page" : null)" href="o/@OrganisationId/contacts/customers">Customers</a>
                 <a class="@(NormalizedView == "suppliers" ? "active" : null)" aria-current="@(NormalizedView == "suppliers" ? "page" : null)" href="o/@OrganisationId/contacts/suppliers">Suppliers</a>
+                <a class="@(NormalizedView == "archive" ? "active" : null)" aria-current="@(NormalizedView == "archive" ? "page" : null)" href="o/@OrganisationId/contacts/archive">Archive</a>
             </nav>
             <form class="contacts-search" @onsubmit="SearchContacts" @onsubmit:preventDefault>
                 <label class="visually-hidden" for="contact-search">Search contacts</label>
@@ -150,6 +151,14 @@ else
             {
                 <span>Matching “@searchTerm”</span>
             }
+            @if (NormalizedView == "archive")
+            {
+                <span>Archived contacts and contacts with no activity for 24 months.</span>
+            }
+            else if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                <span>Includes archived contacts.</span>
+            }
         </div>
         <div class="contacts-table-scroll">
         <table class="table contacts-table">
@@ -173,6 +182,10 @@ else
                             <button type="button" class="contact-name" @onclick="() => ToggleDetails(party.Id)" aria-expanded="@(expandedPartyId == party.Id)" aria-controls="contact-details-@party.Id">@party.Name</button>
                             <a class="small" href="o/@OrganisationId/contacts/@party.Id/balances">Invoices &amp; balances</a>
                             <div class="contact-types">
+                                @if (archivedIds.Contains(party.Id))
+                                {
+                                    <span class="contact-type">Archived</span>
+                                }
                                 @if (party.Type == 0)
                                 {
                                     <span class="contact-muted">No trading role</span>
@@ -685,6 +698,7 @@ else
     private const int PageSize = 50;
     private int currentPage = 1;
     private int totalContacts;
+    private HashSet<Guid> archivedIds = [];
     private int TotalPages => Math.Max(1, (int)Math.Ceiling(totalContacts / (double)PageSize));
     private int FirstContact => (currentPage - 1) * PageSize + 1;
     private int LastContact => Math.Min(currentPage * PageSize, totalContacts);
@@ -806,12 +820,14 @@ else
     {
         "customers" => "customers",
         "suppliers" => "suppliers",
+        "archive" => "archive",
         _ => "all"
     };
     private string PageHeading => NormalizedView switch
     {
         "customers" => "Customers",
         "suppliers" => "Suppliers",
+        "archive" => "Contact archive",
         _ => "All contacts"
     };
     private static string NormalizeForSearch(string value) => value.Trim().ToUpperInvariant();
@@ -876,7 +892,9 @@ else
 
     private async Task Reload()
     {
-        var query = Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive);
+        var today = DateOnly.FromDateTime(OrganisationTime.Convert(DateTimeOffset.UtcNow, access!.Organisation).Date);
+        archivedIds = await ContactArchive.FindArchivedAsync(Db, access.Organisation, today);
+        var query = Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId);
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             var normalized = NormalizeForSearch(searchTerm);
@@ -894,18 +912,25 @@ else
             "suppliers" => query.Where(x => (x.Type & PartyType.Supplier) != 0),
             _ => query
         };
-        totalContacts = await query.CountAsync();
+        // Filter a compact, ordered list of IDs before paging so counts and search share the same archive rules.
+        var roleView = NormalizedView is "customers" or "suppliers";
+        var ids = await query.OrderBy(x => roleView && x.Type == (PartyType.Customer | PartyType.Supplier))
+            .ThenBy(x => x.Name).ThenBy(x => x.Id).Select(x => x.Id).ToListAsync();
+        if (NormalizedView == "archive")
+            ids.RemoveAll(id => !archivedIds.Contains(id));
+        else if (string.IsNullOrWhiteSpace(searchTerm))
+            ids.RemoveAll(archivedIds.Contains);
+        totalContacts = ids.Count;
         currentPage = Math.Min(currentPage, TotalPages);
-        parties = await query
+        var pageIds = ids.Skip((currentPage - 1) * PageSize).Take(PageSize).ToArray();
+        parties = await query.Where(x => pageIds.Contains(x.Id))
             .Include(x => x.DefaultSalesAccount)
             .Include(x => x.DefaultPurchaseAccount)
             .Include(x => x.SupplierAccounts)
             .Include(x => x.SupplierBankAccounts.Where(a => a.IsActive))
-            .OrderBy(x => NormalizedView != "all" && x.Type == (PartyType.Customer | PartyType.Supplier))
+            .OrderBy(x => roleView && x.Type == (PartyType.Customer | PartyType.Supplier))
             .ThenBy(x => x.Name)
             .ThenBy(x => x.Id)
-            .Skip((currentPage - 1) * PageSize)
-            .Take(PageSize)
             .ToListAsync();
     }
 
