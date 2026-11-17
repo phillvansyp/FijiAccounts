@@ -34,15 +34,18 @@ internal static class ContactArchive
                 WHERE r.OrganisationId={org} AND c.OrganisationId={org} AND c.IsActive AND NOT r.IsArchived
                     AND r.DatasetKey IN ('sales-invoices','bills','sales-credits','supplier-credits','payments','overpayments','prepayments','bank-transactions')
                     AND json_valid(r.SourceJson)
-            ), xeroDates(Conn, ContactKey, Stamp) AS (
+            ), xeroDates(Conn, ContactKey, Stamp) AS MATERIALIZED (
                 SELECT Conn, ContactKey, TradeDate FROM documents WHERE ContactKey IS NOT NULL
                 UNION ALL SELECT Conn, ContactKey, PaidDate FROM documents WHERE PaidDate IS NOT NULL
                 UNION ALL SELECT p.Conn,d.ContactKey,p.TradeDate FROM documents p JOIN documents d
                     ON d.Conn=p.Conn AND d.External=p.ParentKey AND d.Kind IN ('sales-invoices','bills','sales-credits','supplier-credits','prepayments','overpayments')
                     WHERE p.Kind='payments' AND p.ContactKey IS NULL
+            ), latestXero AS MATERIALIZED (
+                SELECT Conn,ContactKey,max(CASE WHEN Stamp LIKE '/Date(%' THEN date(CAST(substr(Stamp,7) AS INTEGER)/1000,'unixepoch')
+                    ELSE date(substr(Stamp,1,10)) END) AS Used
+                FROM xeroDates WHERE ContactKey IS NOT NULL GROUP BY Conn,ContactKey
             ), trades(Party, Used) AS (
-                SELECT l.Party, CASE WHEN x.Stamp LIKE '/Date(%' THEN date(CAST(substr(x.Stamp,7) AS INTEGER)/1000,'unixepoch')
-                    ELSE date(substr(x.Stamp,1,10)) END FROM xeroDates x JOIN links l ON l.Conn=x.Conn AND l.External=x.ContactKey
+                SELECT l.Party,x.Used FROM links l LEFT JOIN latestXero x ON x.Conn=l.Conn AND x.ContactKey=l.External
                 UNION ALL SELECT CustomerId,IssueDate FROM SalesInvoices WHERE OrganisationId={org}
                 UNION ALL SELECT CustomerId,ReceiptDate FROM CustomerReceipts WHERE OrganisationId={org}
                 UNION ALL SELECT CustomerId,QuoteDate FROM SalesQuotes WHERE OrganisationId={org}
