@@ -1,0 +1,215 @@
+@page "/o/{OrganisationId:guid}/contacts/{ContactId:guid}/balances"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using System.Globalization
+@using System.Text.Json
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@inject ApplicationDbContext Db
+@inject TenantAccessService TenantAccess
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Invoices and balances</PageTitle>
+@if (loading)
+{
+    <p role="status">Loading contact balances…</p>
+}
+else if (contact is null || access is null)
+{
+    <div class="alert alert-warning">Contact unavailable.</div>
+}
+else
+{
+    <a href="o/@OrganisationId/contacts">Back to contacts</a>
+    <h1 class="mt-2">@contact.Name</h1>
+    @if (sourceNote is not null)
+    {
+        <p class="text-muted">@sourceNote</p>
+    }
+    @if (incompleteData)
+    {
+        <p class="alert alert-warning">Some Xero records could not be read. The amounts below are partial.</p>
+    }
+    <label class="mb-3"><input type="checkbox" @bind="onlyOutstanding" /> Show outstanding items only</label>
+    @foreach (var supplier in new[] { false, true })
+    {
+        var items = rows.Where(x => x.Supplier == supplier).ToList();
+        if (items.Count == 0 && !contact.Type.HasFlag(supplier ? PartyType.Supplier : PartyType.Customer)) { continue; }
+        <section class="setup-card mb-3">
+            <h2>@(supplier ? "Supplier bills" : "Customer invoices")</h2>
+            @foreach (var group in items.GroupBy(x => x.Currency).OrderBy(x => x.Key))
+            {
+                var net = group.Sum(x => x.Due);
+                <p><strong>@(net < 0 ? "Credit balance" : supplier ? "You owe" : "Owed to you") &nbsp; @group.Key @Math.Abs(net).ToString("N2")</strong>
+                    <span class="ms-3">@group.Count(x => x.Due > 0) outstanding</span></p>
+            }
+            @if (items.Count == 0)
+            {
+                <p>No documents recorded for this contact in the available data.</p>
+            }
+            else if (onlyOutstanding && items.All(x => x.Due == 0m))
+            {
+                <p>No outstanding items.</p>
+            }
+            else
+            {
+                <div class="table-responsive"><table class="table align-middle">
+                    <thead><tr><th>Document</th><th>Date</th><th>Due date</th><th>Status</th><th>Currency</th><th class="text-end">Total</th><th class="text-end">Owing</th></tr></thead>
+                    <tbody>
+                    @foreach (var item in items.Where(x => !onlyOutstanding || x.Due != 0m).OrderByDescending(x => x.Date).ThenBy(x => x.Number))
+                    {
+                        <tr><td>@if (item.Path is not null) { <a href="o/@OrganisationId/@item.Path">@item.Number</a> } else { @item.Number }</td>
+                            <td>@item.Date?.ToString("dd MMM yyyy")</td><td>@item.DueDate?.ToString("dd MMM yyyy")</td>
+                            <td>@item.Status</td><td>@item.Currency</td><td class="text-end">@item.Total?.ToString("N2")</td><td class="text-end">@item.Due.ToString("N2")</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid ContactId { get; set; }
+    private AccessibleOrganisation? access;
+    private BusinessParty? contact;
+    private List<Entry> rows = [];
+    private bool loading = true, onlyOutstanding, incompleteData;
+    private string? sourceNote;
+    private sealed record Entry(bool Supplier, string Number, DateOnly? Date, DateOnly? DueDate, string Status,
+        string Currency, decimal? Total, decimal Due, string? Path);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        rows = [];
+        contact = null;
+        sourceNote = null;
+        incompleteData = false;
+        onlyOutstanding = false;
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(state.User)!;
+        access = await TenantAccess.FindAsync(userId, OrganisationId);
+        if (access is not null)
+        {
+            contact = await Db.BusinessParties.AsNoTracking().SingleOrDefaultAsync(x => x.Id == ContactId && x.OrganisationId == OrganisationId);
+            if (contact is not null)
+            {
+                var divisions = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
+                await LoadLocal(divisions, access.Organisation.BaseCurrency);
+                if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
+                    await LoadXero(access.Organisation.BaseCurrency);
+                else
+                    sourceNote = "Showing Account Island documents for your accessible divisions.";
+            }
+        }
+        loading = false;
+    }
+
+    private async Task LoadLocal(Guid[] divisions, string currency)
+    {
+        var invoices = await Db.SalesInvoices.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.CustomerId == ContactId && x.DivisionId.HasValue && divisions.Contains(x.DivisionId.Value))
+            .Select(x => new { x.Id, x.InvoiceNumber, x.IssueDate, x.DueDate, x.Status, x.Total, x.AmountPaid, x.AmountCredited }).ToListAsync();
+        foreach (var x in invoices)
+        {
+            var due = x.Status is InvoiceStatus.Posted or InvoiceStatus.PartPaid ? Math.Max(0m, x.Total - x.AmountPaid - x.AmountCredited) : 0m;
+            rows.Add(new(false, x.InvoiceNumber, x.IssueDate, x.DueDate, StatusText(x.Status.ToString()), currency, x.Total, due, $"sales/{x.Id}"));
+        }
+        var bills = await Db.SupplierBills.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.SupplierId == ContactId && x.DivisionId.HasValue && divisions.Contains(x.DivisionId.Value))
+            .Select(x => new { x.Id, x.SupplierReference, x.BillNumber, x.BillDate, x.DueDate, x.Status, x.Total, x.AmountPaid, x.AmountCredited }).ToListAsync();
+        foreach (var x in bills)
+        {
+            var due = x.Status is BillStatus.Posted or BillStatus.PartPaid ? Math.Max(0m, x.Total - x.AmountPaid - x.AmountCredited) : 0m;
+            rows.Add(new(true, string.IsNullOrWhiteSpace(x.SupplierReference) ? x.BillNumber : x.SupplierReference,
+                x.BillDate, x.DueDate, StatusText(x.Status.ToString()), currency, x.Total, due, $"purchases/{x.Id}"));
+        }
+        var drafts = await Db.SupplierBillDrafts.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.SupplierId == ContactId && x.DivisionId.HasValue && divisions.Contains(x.DivisionId.Value))
+            .Select(x => new { x.Id, x.SupplierReference, x.BillDate, x.DueDate, x.Currency }).ToListAsync();
+        foreach (var x in drafts)
+            rows.Add(new(true, string.IsNullOrWhiteSpace(x.SupplierReference) ? "Draft bill" : x.SupplierReference,
+                x.BillDate, x.DueDate, "Draft", x.Currency, null, 0m, $"purchases?draft={x.Id}"));
+    }
+
+    private static string StatusText(string status) => status switch
+    {
+        "Posted" => "Awaiting payment", "PartPaid" => "Part paid", _ => status
+    };
+
+    private async Task LoadXero(string baseCurrency)
+    {
+        var connection = await Db.XeroConnections.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive)
+            .Select(x => new { x.Id, x.LastSyncedAt }).FirstOrDefaultAsync();
+        var credits = await Db.SupplierCreditNotes.AsNoTracking().Where(x => x.OrganisationId == OrganisationId &&
+            x.SupplierId == ContactId && x.SupplierBillId == null && !Db.SupplierCreditNoteReversals.Any(r => r.SupplierCreditNoteId == x.Id))
+            .Select(x => new { x.CreditNoteNumber, x.CreditDate, x.Total }).ToListAsync();
+        foreach (var credit in credits)
+            rows.Add(new(true, credit.CreditNoteNumber, credit.CreditDate, null, "Credit", baseCurrency, null, -credit.Total, null));
+        if (connection is null) return;
+        sourceNote = connection.LastSyncedAt is { } synced
+            ? $"Includes saved Xero data. Last sync {synced.UtcDateTime:dd MMM yyyy HH:mm} UTC."
+            : "Xero sync is incomplete. Balances reflect available documents.";
+        var keys = await Db.XeroMirrorEntityLinks.AsNoTracking().Where(x => x.OrganisationId == OrganisationId &&
+            x.XeroConnectionId == connection.Id && x.DatasetKey == "contacts" && x.TargetEntityType == nameof(BusinessParty) && x.TargetEntityId == ContactId)
+            .Select(x => x.ExternalId).ToListAsync();
+        if (keys.Count == 0)
+        {
+            sourceNote += " No linked Xero contact was found.";
+            return;
+        }
+        var localNumbers = rows.Where(x => x.Path is not null && x.Status != "Draft")
+            .Select(x => (x.Supplier, x.Number.Trim().ToUpperInvariant())).ToHashSet();
+        string[] datasets = ["sales-invoices", "bills", "sales-credits", "supplier-credits", "prepayments", "overpayments"];
+        foreach (var key in keys.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var needle = key.ToUpperInvariant();
+            var records = Db.XeroMirrorRecords.AsNoTracking().Where(x => x.OrganisationId == OrganisationId &&
+                x.XeroConnectionId == connection.Id && !x.IsArchived && datasets.Contains(x.DatasetKey) &&
+                x.SourceJson.ToUpper().Contains(needle)).AsAsyncEnumerable();
+            await foreach (var record in records)
+            {
+                try { ReadMirrorRecord(record, key, baseCurrency, localNumbers); }
+                catch (JsonException) { incompleteData = true; }
+            }
+        }
+    }
+
+    private void ReadMirrorRecord(XeroMirrorRecord record, string key, string baseCurrency, HashSet<(bool, string)> localNumbers)
+    {
+        using var json = JsonDocument.Parse(record.SourceJson);
+        var body = json.RootElement;
+        if (!body.TryGetProperty("Contact", out var c) || c.ValueKind != JsonValueKind.Object ||
+            !c.TryGetProperty("ContactID", out var id) || !string.Equals(id.ToString(), key, StringComparison.OrdinalIgnoreCase)) return;
+        var currency = body.TryGetProperty("CurrencyCode", out var code) ? code.ToString() : baseCurrency;
+        if (record.DatasetKey is "sales-invoices" or "bills")
+        {
+            bool supplier = record.DatasetKey == "bills";
+            string Field(string field) => body.TryGetProperty(field, out var v) ? v.ToString() : "";
+            var number = Field("InvoiceNumber");
+            if (string.IsNullOrWhiteSpace(number)) number = record.DisplayName;
+            if (localNumbers.Contains((supplier, number.Trim().ToUpperInvariant()))) return;
+            var status = Field("Status").ToUpperInvariant();
+            decimal? Money(string field) => decimal.TryParse(Field(field), NumberStyles.Number | NumberStyles.AllowExponent,
+                CultureInfo.InvariantCulture, out var value) ? value : null;
+            var due = status == "AUTHORISED" ? Money("AmountDue") : 0m;
+            if (due is null) { incompleteData = true; return; }
+            var label = status switch { "AUTHORISED" when due == 0 => "Settled", "AUTHORISED" when Money("AmountPaid") > 0 || Money("AmountCredited") > 0 => "Part paid", "AUTHORISED" => "Awaiting payment", "PAID" => "Paid", "DRAFT" => "Draft", "SUBMITTED" => "Awaiting approval", "VOIDED" => "Voided", _ => status };
+            DateOnly? Date(string field) => XeroSalesInvoiceProjectionParser.TryDate(body, field, out var value) ? value : null;
+            rows.Add(new(supplier, number, Date("Date"), Date("DueDate"), label, currency,
+                Money("Total"), due.Value,
+                Date("Date").HasValue && Date("DueDate").HasValue ? $"{(supplier ? "purchases" : "sales")}/xero/{record.Id}" : null));
+        }
+        else
+        {
+            foreach (var supplier in new[] { false, true })
+                if (XeroOpenBalanceService.TryReadCredit(record, currency, supplier) is { } credit)
+                    rows.Add(new(supplier, credit.Document, null, null, "Available credit", currency, null, credit.Amount, null));
+        }
+    }
+}

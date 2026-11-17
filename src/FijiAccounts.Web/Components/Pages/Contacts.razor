@@ -131,6 +131,12 @@ else
                 }
             </form>
         </div>
+        <nav class="d-flex flex-wrap gap-3 px-3 pt-2 small" aria-label="Invoice and bill registers">
+            <a href="o/@OrganisationId/sales">All invoices</a>
+            <a href="o/@OrganisationId/purchases">All bills</a>
+            <a href="o/@OrganisationId/reports/aging/receivables">Customer balances</a>
+            <a href="o/@OrganisationId/reports/aging/payables">Supplier balances</a>
+        </nav>
         <div class="contacts-results" role="status">
             @if (totalContacts == 0)
             {
@@ -165,6 +171,7 @@ else
                     <tr @key="party.Id" class="contact-row">
                         <td>
                             <button type="button" class="contact-name" @onclick="() => ToggleDetails(party.Id)" aria-expanded="@(expandedPartyId == party.Id)" aria-controls="contact-details-@party.Id">@party.Name</button>
+                            <a class="small" href="o/@OrganisationId/contacts/@party.Id/balances">Invoices &amp; balances</a>
                             <div class="contact-types">
                                 @if ((party.Type & PartyType.Customer) != 0)
                                 {
