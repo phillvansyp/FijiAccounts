@@ -2607,6 +2607,10 @@ namespace FijiAccounts.Web.Migrations
                     b.Property<Guid?>("OrganisationGroupId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PostalAddress")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("ProjectContractAssetAccountId")
                         .HasColumnType("TEXT");
 
