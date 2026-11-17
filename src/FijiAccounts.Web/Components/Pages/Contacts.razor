@@ -173,6 +173,10 @@ else
                             <button type="button" class="contact-name" @onclick="() => ToggleDetails(party.Id)" aria-expanded="@(expandedPartyId == party.Id)" aria-controls="contact-details-@party.Id">@party.Name</button>
                             <a class="small" href="o/@OrganisationId/contacts/@party.Id/balances">Invoices &amp; balances</a>
                             <div class="contact-types">
+                                @if (party.Type == 0)
+                                {
+                                    <span class="contact-muted">No trading role</span>
+                                }
                                 @if ((party.Type & PartyType.Customer) != 0)
                                 {
                                     <span class="contact-type customer">Customer</span>
@@ -897,7 +901,8 @@ else
             .Include(x => x.DefaultPurchaseAccount)
             .Include(x => x.SupplierAccounts)
             .Include(x => x.SupplierBankAccounts.Where(a => a.IsActive))
-            .OrderBy(x => x.Name)
+            .OrderBy(x => NormalizedView != "all" && x.Type == (PartyType.Customer | PartyType.Supplier))
+            .ThenBy(x => x.Name)
             .ThenBy(x => x.Id)
             .Skip((currentPage - 1) * PageSize)
             .Take(PageSize)
