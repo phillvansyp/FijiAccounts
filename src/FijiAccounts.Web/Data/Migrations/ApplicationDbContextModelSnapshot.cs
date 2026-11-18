@@ -6553,6 +6553,25 @@ namespace FijiAccounts.Web.Migrations
                     b.ToTable("XeroConnections");
                 });
 
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroDatasetCheck", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Dataset")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ConnectionId", "TenantId", "Dataset");
+
+                    b.ToTable("XeroDatasetChecks");
+                });
+
             modelBuilder.Entity("FijiAccounts.Web.Data.XeroMigration", b =>
                 {
                     b.Property<Guid>("Id")
@@ -7030,6 +7049,35 @@ namespace FijiAccounts.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("XeroMirrorRecords");
+                });
+
+            modelBuilder.Entity("FijiAccounts.Web.Data.XeroPeriodReport", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("PeriodFrom")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("PeriodTo")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Payload")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<DateTimeOffset>("RetrievedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ConnectionId", "TenantId", "Kind", "PeriodFrom", "PeriodTo");
+
+                    b.ToTable("XeroPeriodReports");
                 });
 
             modelBuilder.Entity("FijiAccounts.Web.Data.XeroReadOnlySyncRun", b =>

@@ -137,14 +137,15 @@ else
         <section class="card mb-4">
             <div class="card-body">
                 <h2>Read-only Xero records</h2>
+                <a href="o/@OrganisationId/integrations/xero/reconciliation">Reconciliation and monthly reports</a>
                 <p>Accounts, contacts and items are projected into their Account Island lists. Financial transactions remain read-only Xero records so local workflows cannot alter Xero accounting.</p>
                 <div class="table-responsive">
                     <table class="table">
-                        <thead><tr><th>Dataset</th><th class="text-end">Current</th><th class="text-end">Archived</th></tr></thead>
+                        <thead><tr><th>Dataset</th><th class="text-end">Current</th><th class="text-end">Archived</th><th>Last successful dataset check</th></tr></thead>
                         <tbody>
                         @foreach (var dataset in status.Datasets)
                         {
-                            <tr><td>@dataset.Name</td><td class="text-end">@dataset.ActiveRecords.ToString("N0")</td><td class="text-end">@dataset.ArchivedRecords.ToString("N0")</td></tr>
+                            <tr><td>@dataset.Name</td><td class="text-end">@dataset.ActiveRecords.ToString("N0")</td><td class="text-end">@dataset.ArchivedRecords.ToString("N0")</td><td>@(dataset.LastCheckedAt.HasValue ? FormatDate(dataset.LastCheckedAt) : "No completed check recorded")</td></tr>
                         }
                         </tbody>
                     </table>

@@ -142,7 +142,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var result = await sync.RunNowAsync(test.UserId, test.Organisation.Id, true);
 
         Assert.Empty(result.Failures);
-        Assert.Equal(17, result.DatasetCount);
+        Assert.Equal(20, result.DatasetCount);
         Assert.Equal(10_250, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "sales-invoices"));
         Assert.Equal(127, await test.Db.XeroMirrorRecords.CountAsync(x => x.DatasetKey == "items"));
         Assert.Equal(42, handler.SalesInvoiceRequests);
@@ -193,7 +193,7 @@ public sealed class XeroReadOnlySyncServiceTests
         var completed = await sync.RunNowAsync(test.UserId, test.Organisation.Id);
 
         Assert.Empty(completed.Failures);
-        Assert.Equal(17, completed.DatasetCount);
+        Assert.Equal(20, completed.DatasetCount);
         Assert.Equal(1, handler.ItemRequests);
         Assert.Equal(shifted ? new[] { 2, 1, 1, 2, 3 } : [2, 3, 4], handler.InvoicePageRequests);
         var invoices = test.Db.XeroMirrorRecords.Where(x => x.DatasetKey == "sales-invoices");
@@ -975,6 +975,9 @@ public sealed class XeroReadOnlySyncServiceTests
                 "Payments" => "Payments",
                 "Prepayments" => "Prepayments",
                 "Overpayments" => "Overpayments",
+                "Quotes" => "Quotes",
+                "PurchaseOrders" => "PurchaseOrders",
+                "RepeatingInvoices" => "RepeatingInvoices",
                 "BankTransactions" => "BankTransactions",
                 "BankTransfers" => "BankTransfers",
                 "ManualJournals" => "ManualJournals",
@@ -1056,6 +1059,9 @@ public sealed class XeroReadOnlySyncServiceTests
                 "Payments" => "Payments",
                 "Prepayments" => "Prepayments",
                 "Overpayments" => "Overpayments",
+                "Quotes" => "Quotes",
+                "PurchaseOrders" => "PurchaseOrders",
+                "RepeatingInvoices" => "RepeatingInvoices",
                 "BankTransactions" => "BankTransactions",
                 "BankTransfers" => "BankTransfers",
                 "ManualJournals" => "ManualJournals",
@@ -1188,6 +1194,9 @@ public sealed class XeroReadOnlySyncServiceTests
                 "Payments" => "Payments",
                 "Prepayments" => "Prepayments",
                 "Overpayments" => "Overpayments",
+                "Quotes" => "Quotes",
+                "PurchaseOrders" => "PurchaseOrders",
+                "RepeatingInvoices" => "RepeatingInvoices",
                 "BankTransactions" => "BankTransactions",
                 "BankTransfers" => "BankTransfers",
                 "ManualJournals" => "ManualJournals",

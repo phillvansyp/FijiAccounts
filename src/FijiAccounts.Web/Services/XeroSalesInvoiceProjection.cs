@@ -33,6 +33,8 @@ public sealed record XeroSalesInvoiceProjection(
     decimal AmountCredited,
     IReadOnlyList<XeroSalesInvoiceLineProjection> Lines)
 {
+    public Guid? SourceContactId { get; init; }
+    public decimal? SourceExchangeRate { get; init; }
     public decimal BaseTotal => Base(Total);
     public decimal BaseAmountDue => Base(AmountDue);
     public decimal BaseAmountPaid => Base(AmountPaid);
@@ -118,7 +120,12 @@ public static class XeroSalesInvoiceProjectionParser
                 Decimal(source, "AmountDue"),
                 Decimal(source, "AmountPaid"),
                 Decimal(source, "AmountCredited"),
-                lines);
+                lines)
+            {
+                SourceContactId = source.TryGetProperty("Contact", out var party) &&
+                    Guid.TryParse(Text(party, "ContactID"), out var contactId) ? contactId : null,
+                SourceExchangeRate = Decimal(source, "CurrencyRate", 0m)
+            };
             return true;
         }
         catch (JsonException)

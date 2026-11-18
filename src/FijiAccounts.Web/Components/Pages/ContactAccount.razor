@@ -25,6 +25,7 @@ else
 {
     <a href="o/@OrganisationId/contacts">Back to contacts</a>
     <h1 class="mt-2">@contact.Name</h1>
+    <XeroDatasetDates OrganisationId="OrganisationId" />
     @if (sourceNote is not null)
     {
         <p class="text-muted">@sourceNote</p>

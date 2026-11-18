@@ -527,17 +527,30 @@ public sealed class XeroConnectionService(
     {
         var pages = new List<JsonDocument>();
         var total = 0;
+        var journalOffset = 0;
         try
         {
             for (var page = 1; page <= (definition.Paged ? MaximumPages : 1); page++)
             {
-                var endpoint = definition.Paged ? AddPage(definition.Path, page) : definition.Path;
+                var endpoint = definition.Key == "journals" ? $"Journals?offset={journalOffset}" :
+                    definition.Paged ? AddPage(definition.Path, page) : definition.Path;
                 var bytes = await api.GetJsonAsync(accessToken, tenantId, endpoint, cancellationToken);
                 var document = JsonDocument.Parse(bytes);
                 var count = CountRecords(document.RootElement, definition.RootProperty);
                 pages.Add(document);
                 total += count;
-                if (!definition.Paged || count < ExpectedPageSize) break;
+                if (definition.Key == "journals")
+                {
+                    var journals = document.RootElement.GetProperty("Journals");
+                    if (journals.GetArrayLength() == 0) break;
+                    foreach (var journal in journals.EnumerateArray())
+                    {
+                        var number = journal.GetProperty("JournalNumber").GetInt32();
+                        if (number <= journalOffset) throw new InvalidOperationException("Xero journal numbers did not advance.");
+                        journalOffset = number;
+                    }
+                }
+                else if (!definition.Paged || count < ExpectedPageSize) break;
                 if (page == MaximumPages)
                 {
                     throw new InvalidOperationException($"{definition.Name} exceeds the safe import limit. Export the remaining history from Xero.");

@@ -13,6 +13,7 @@
         }
     </header>
 
+    <XeroDatasetDates OrganisationId="OrganisationId" Kind="@Kind" />
     @if (HasDateFilter)
     {
         <EditForm Model="period" OnValidSubmit="LoadAsync" FormName="xero-source-report">

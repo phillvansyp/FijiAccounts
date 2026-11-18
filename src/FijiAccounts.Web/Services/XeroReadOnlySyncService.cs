@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record XeroMirrorDatasetStatus(string Key, string Name, int ActiveRecords, int ArchivedRecords);
+public sealed record XeroMirrorDatasetStatus(string Key, string Name, int ActiveRecords, int ArchivedRecords, DateTimeOffset? LastCheckedAt = null);
 
 public sealed record XeroReadOnlySyncStatus(
     XeroConnectionStatus Connection,
@@ -82,7 +82,10 @@ public sealed class XeroReadOnlySyncService(
         new("overpayments", "Overpayments", "Overpayments", "Overpayments", true, true),
         new("bank-transactions", "Bank transactions", "BankTransactions", "BankTransactions", true, true),
         new("bank-transfers", "Bank transfers", "BankTransfers", "BankTransfers", false, true),
-        new("manual-journals", "Manual journals", "ManualJournals", "ManualJournals", true, true)
+        new("manual-journals", "Manual journals", "ManualJournals", "ManualJournals", true, true),
+        new("quotes", "Quotes", "Quotes", "Quotes", true, true, FixedPageSize: 100),
+        new("purchase-orders", "Purchase orders", "PurchaseOrders", "PurchaseOrders", true, true, FixedPageSize: 100),
+        new("repeating-invoices", "Repeating invoices and bills", "RepeatingInvoices", "RepeatingInvoices", false, false)
     ];
 
     public async Task<XeroReadOnlySyncStatus> GetStatusAsync(
@@ -92,7 +95,14 @@ public sealed class XeroReadOnlySyncService(
     {
         if (await access.FindAsync(userId, organisationId) is null) throw new UnauthorizedAccessException();
         var connection = await connections.GetStatusAsync(userId, organisationId, cancellationToken);
-        var counts = await db.XeroMirrorRecords.AsNoTracking()
+        var selected = await db.XeroConnections.AsNoTracking().Where(x => x.OrganisationId == organisationId && x.IsActive)
+            .Select(x => new { x.Id, x.XeroTenantId }).SingleOrDefaultAsync(cancellationToken);
+        var selectedId = selected?.Id ?? Guid.Empty;
+        var selectedTenant = selected?.XeroTenantId ?? Guid.Empty;
+        var checks = await db.XeroDatasetChecks.AsNoTracking()
+            .Where(x => x.ConnectionId == selectedId && x.TenantId == selectedTenant)
+            .ToDictionaryAsync(x => x.Dataset, x => (DateTimeOffset?)x.CheckedAt, cancellationToken);
+        var counts = await db.XeroMirrorRecords.AsNoTracking().Where(x => x.XeroConnectionId == selectedId)
             .Where(x => x.OrganisationId == organisationId)
             .GroupBy(x => new { x.DatasetKey, x.IsArchived })
             .Select(x => new { x.Key.DatasetKey, x.Key.IsArchived, Count = x.Count() })
@@ -101,8 +111,8 @@ public sealed class XeroReadOnlySyncService(
                 definition.Key,
                 definition.Name,
                 counts.Where(x => x.DatasetKey == definition.Key && !x.IsArchived).Sum(x => x.Count),
-                counts.Where(x => x.DatasetKey == definition.Key && x.IsArchived).Sum(x => x.Count)))
-            .Where(x => x.ActiveRecords > 0 || x.ArchivedRecords > 0)
+                counts.Where(x => x.DatasetKey == definition.Key && x.IsArchived).Sum(x => x.Count),
+                checks.GetValueOrDefault(definition.Key)))
             .ToList();
         // SQLite cannot translate ORDER BY for DateTimeOffset. Materialise this
         // organisation's small run history first, then order it in memory.
@@ -451,6 +461,9 @@ public sealed class XeroReadOnlySyncService(
 
             foreach (var definition in work)
             {
+                if (definition.Key is "quotes" or "purchase-orders" or "repeating-invoices" &&
+                    !connection.GrantedScopes.Split(' ').Any(s => s is "accounting.invoices.read" or "accounting.invoices" or "accounting.transactions.read" or "accounting.transactions"))
+                    continue;
                 if (definition.Key == "fixed-assets" && !XeroFixedAssetRegister.HasReadScope(connection.GrantedScopes))
                     continue;
                 if (definition.Key == XeroContactGroups.Key &&
@@ -652,6 +665,10 @@ public sealed class XeroReadOnlySyncService(
         XeroReadOnlySyncRun run,
         CancellationToken cancellationToken)
     {
+        var tenant = connection.XeroTenantId!.Value;
+        var check = definition.OpenDocumentSweep ? null : await db.XeroDatasetChecks.FindAsync(
+            new object[] { connection.Id, tenant, definition.Key }, cancellationToken);
+        if (check is null && definition.Key is "quotes" or "purchase-orders") modifiedSince = null;
         var paged = definition.Paged && progress is not null;
         var scan = progress?.Datasets.GetValueOrDefault(definition.Key) ?? new([], false, false, false, null);
         var hashes = scan.PageHashes.ToList();
@@ -700,7 +717,7 @@ public sealed class XeroReadOnlySyncService(
             {
                 await RenewLeaseAsync(connection, cancellationToken);
                 var bytes = await GetJsonWithRateLimitWaitAsync(connection, actor,
-                    AddPage(definition.Endpoint, anchor), modifiedSince, cancellationToken);
+                    DatasetPage(definition, anchor), modifiedSince, cancellationToken);
                 using var document = JsonDocument.Parse(bytes);
                 var anchorRecords = ReadSourceArray(document.RootElement, definition.RootProperty);
                 if (PageHash(definition, anchorRecords, anchor) == hashes[anchor - 1])
@@ -724,7 +741,7 @@ public sealed class XeroReadOnlySyncService(
         for (var page = hashes.Count + 1; !scan.EndOfPages && page <= MaximumPages; page++)
         {
             await RenewLeaseAsync(connection, cancellationToken);
-            var endpoint = definition.Paged ? AddPage(definition.Endpoint, page) : definition.Endpoint;
+            var endpoint = definition.Paged ? DatasetPage(definition, page) : definition.Endpoint;
             var bytes = definition.Key switch
             {
                 "fixed-assets" => await XeroFixedAssetRegister.ReadSourceAsync(
@@ -740,7 +757,7 @@ public sealed class XeroReadOnlySyncService(
             if (paged)
             {
                 var pageIds = records.Select((source, index) => ExternalId(definition.Key, source,
-                    (page - 1) * PageSize + index + 1)).ToArray();
+                    (page - 1) * (definition.FixedPageSize ?? PageSize) + index + 1)).ToArray();
                 if (pageIds.Length != pageIds.Distinct(StringComparer.OrdinalIgnoreCase).Count())
                     throw new InvalidOperationException($"Xero returned duplicate records on page {page} of {definition.Name}.");
                 existing = await datasetRecords.Where(x => pageIds.Contains(x.ExternalId))
@@ -764,7 +781,7 @@ public sealed class XeroReadOnlySyncService(
                 cancellationToken.ThrowIfCancellationRequested();
                 var source = records[index];
                 count++;
-                var ordinal = paged ? (page - 1) * PageSize + index + 1 : count;
+                var ordinal = paged ? (page - 1) * (definition.FixedPageSize ?? PageSize) + index + 1 : count;
                 var externalId = ExternalId(definition.Key, source, ordinal);
                 if (!paged) seen.Add(externalId);
                 var sourceJson = source.GetRawText();
@@ -823,7 +840,7 @@ public sealed class XeroReadOnlySyncService(
 
             await RenewLeaseAsync(connection, cancellationToken);
 
-            var endOfPages = !definition.Paged || records.Count < PageSize;
+            var endOfPages = !definition.Paged || records.Count < (definition.FixedPageSize ?? PageSize);
             if (paged)
             {
                 // A cursor and the data it covers commit in the same transaction.
@@ -890,6 +907,15 @@ public sealed class XeroReadOnlySyncService(
                     archivedCount++;
                 }
             }
+        }
+        if (!definition.OpenDocumentSweep)
+        {
+            if (check is null)
+            {
+                check = new XeroDatasetCheck { ConnectionId = connection.Id, TenantId = tenant, Dataset = definition.Key };
+                db.XeroDatasetChecks.Add(check);
+            }
+            check.CheckedAt = DateTimeOffset.UtcNow;
         }
         if (progress is null)
             await db.SaveChangesAsync(cancellationToken);
@@ -988,7 +1014,7 @@ public sealed class XeroReadOnlySyncService(
         {
             if (entry.State is not (EntityState.Added or EntityState.Modified))
                 continue;
-            if (entry.Entity is XeroMirrorRecord or XeroMirrorEntityLink or LedgerAccount or BusinessParty or ProductItem)
+            if (entry.Entity is XeroDatasetCheck or XeroMirrorRecord or XeroMirrorEntityLink or LedgerAccount or BusinessParty or ProductItem)
                 entry.State = EntityState.Detached;
         }
         var checkpoint = db.Entry(connection).Property(x => x.SyncCheckpointJson);
@@ -1233,7 +1259,10 @@ public sealed class XeroReadOnlySyncService(
 
     private static string PageHash(DatasetDefinition definition, IReadOnlyList<JsonElement> records, int page) =>
         Hash(string.Join('\n', records.Select((record, index) =>
-            ExternalId(definition.Key, record, (page - 1) * PageSize + index + 1))));
+            ExternalId(definition.Key, record, (page - 1) * (definition.FixedPageSize ?? PageSize) + index + 1))));
+
+    private static string DatasetPage(DatasetDefinition definition, int page) =>
+        definition.FixedPageSize.HasValue ? $"{definition.Endpoint}?page={page}" : AddPage(definition.Endpoint, page);
 
     private static string AddPage(string endpoint, int page) =>
         endpoint + (endpoint.Contains('?', StringComparison.Ordinal) ? "&" : "?") +
@@ -1252,6 +1281,9 @@ public sealed class XeroReadOnlySyncService(
             "items" => new[] { "ItemID", "Code" },
             "sales-invoices" or "bills" => new[] { "InvoiceID", "InvoiceNumber" },
             "sales-credits" or "supplier-credits" => new[] { "CreditNoteID", "CreditNoteNumber" },
+            "quotes" => new[] { "QuoteID" },
+            "purchase-orders" => new[] { "PurchaseOrderID" },
+            "repeating-invoices" => new[] { "RepeatingInvoiceID" },
             "payments" => new[] { "PaymentID" },
             "prepayments" => new[] { "PrepaymentID" },
             "overpayments" => new[] { "OverpaymentID" },
@@ -1399,7 +1431,7 @@ public sealed class XeroReadOnlySyncService(
         string RootProperty,
         bool Paged,
         bool SupportsModifiedSince,
-        bool OpenDocumentSweep = false);
+        bool OpenDocumentSweep = false, int? FixedPageSize = null);
 
     private sealed record SyncProgress(Guid TenantId, DateTimeOffset StartedAt, bool Full,
         DateTimeOffset? ModifiedSince, Dictionary<string, DatasetProgress> Datasets, bool IncludesArchivedContacts = false);

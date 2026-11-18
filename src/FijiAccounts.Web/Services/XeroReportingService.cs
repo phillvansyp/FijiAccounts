@@ -48,6 +48,16 @@ public sealed class XeroReportingService(
         var reportKey = (connection.Id, tenantId, "xero-report",
             kind == "gst" ? $"gst:{from:yyyy-MM-dd}:{to:yyyy-MM-dd}" : endpoint ?? kind);
         cache.TryGetValue<XeroReportResult>(reportKey, out var saved);
+        var copyFrom = kind is "profit-loss" or "bank-summary" or "gst" ? from : to;
+        if (endpoint is not null && saved is null)
+        {
+            var retained = await db.XeroPeriodReports.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.ConnectionId == connection.Id && x.TenantId == tenantId && x.Kind == kind &&
+                x.PeriodFrom == copyFrom && x.PeriodTo == to, ct);
+            if (retained is not null)
+                saved = ParseReport(retained.Payload, connection.XeroTenantName, SourceLink(identity, kind, from, to),
+                    identity?.TaxBasis, retained.RetrievedAt);
+        }
         if (saved?.RetrievedAt is { } retrieved && now - retrieved < FreshFor)
             return saved;
 
@@ -128,8 +138,19 @@ public sealed class XeroReportingService(
                 endpoint = $"Reports/{reportId}";
             }
 
-            var result = ParseReport(await api.GetJsonAsync(token, tenantId, endpoint, ct),
-                connected.XeroTenantName, source, identity?.TaxBasis, DateTimeOffset.UtcNow);
+            var payload = await api.GetJsonAsync(token, tenantId, endpoint, ct);
+            var readAt = DateTimeOffset.UtcNow;
+            var result = ParseReport(payload, connected.XeroTenantName, source, identity?.TaxBasis, readAt);
+            var retained = await db.XeroPeriodReports.FindAsync(new object[] { connection.Id, tenantId, kind, copyFrom, to }, ct);
+            if (retained is null)
+                db.XeroPeriodReports.Add(new XeroPeriodReport { ConnectionId = connection.Id, TenantId = tenantId,
+                    Kind = kind, PeriodFrom = copyFrom, PeriodTo = to, RetrievedAt = readAt, Payload = payload });
+            else
+            {
+                retained.RetrievedAt = readAt;
+                retained.Payload = payload;
+            }
+            await db.SaveChangesAsync(ct);
             cache.Set(reportKey, result, RetainFor);
             return result;
         }
@@ -162,6 +183,12 @@ public sealed class XeroReportingService(
 
     internal static string? Endpoint(string kind, DateOnly from, DateOnly to)
     {
+        if (kind.Split(':') is [var direction, var external] && Guid.TryParseExact(external, "D", out var contactId) &&
+            direction is "contact-receivables" or "contact-payables")
+        {
+            var report = direction == "contact-receivables" ? "AgedReceivablesByContact" : "AgedPayablesByContact";
+            return $"Reports/{report}?contactID={contactId:D}&date={to:yyyy-MM-dd}";
+        }
         var range = $"fromDate={from:yyyy-MM-dd}&toDate={to:yyyy-MM-dd}";
         return kind switch
         {
