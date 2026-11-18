@@ -1,6 +1,7 @@
 using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 
 namespace FijiAccounts.Web.Services;
 
@@ -32,6 +33,8 @@ public sealed record VatWorkpaper(
     public VatTreatmentSummary? PurchasesBeforeAdjustments { get; init; }
     public IReadOnlyList<VatBillAdjustment> BillAdjustments { get; init; } = [];
 
+    public FijiVatReconciliation? Reconciliation { get; init; }
+
     public decimal OutputTax =>
         Sales.TotalTax - SalesCredits.Tax;
 
@@ -57,6 +60,28 @@ public sealed class VatWorkpaperService(
                 "The start date must be before the end date.");
         }
 
+        // Read documents, bank evidence and control journals from the same SQLite snapshot.
+        if (db.Database.CurrentTransaction is not null || !db.Database.IsSqlite())
+            return await ReadAsync(organisationId, from, to, ct);
+
+        await db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            var connection = (SqliteConnection)db.Database.GetDbConnection();
+            await using var snapshot = connection.BeginTransaction(deferred: true);
+            await using var transaction = await db.Database.UseTransactionAsync(snapshot, ct);
+            var report = await ReadAsync(organisationId, from, to, ct);
+            await snapshot.CommitAsync(ct);
+            return report;
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
+    private async Task<VatWorkpaper> ReadAsync(Guid organisationId, DateOnly from, DateOnly to, CancellationToken ct)
+    {
         var sales =
             await db.SalesInvoiceLines
                 .AsNoTracking()
@@ -69,25 +94,17 @@ public sealed class VatWorkpaperService(
                     new VatLine(
                         x.VatTreatment,
                         x.NetAmount,
-                        x.VatAmount))
+                        x.VatAmount,
+                        new VatSource(x.SalesInvoice.PostedJournalId, x.SalesInvoiceId, x.SalesInvoice.IssueDate, x.SalesInvoice.InvoiceNumber, false, 0m)))
                 .ToListAsync(ct);
 
         var salesVoids =
-            await db.SalesInvoiceLines
-                .AsNoTracking()
-                .Where(x =>
-                    x.SalesInvoice.OrganisationId == organisationId &&
-                    db.SalesInvoiceVoids.Any(v =>
-                        v.OrganisationId == organisationId &&
-                        v.SalesInvoiceId == x.SalesInvoiceId &&
-                        v.Status == SalesInvoiceVoidStatus.Posted &&
-                        v.VoidDate >= from &&
-                        v.VoidDate <= to))
-                .Select(x =>
-                    new VatLine(
-                        x.VatTreatment,
-                        -x.NetAmount,
-                        -x.VatAmount))
+            await db.SalesInvoiceVoids.AsNoTracking()
+                .Where(v => v.OrganisationId == organisationId && v.Status == SalesInvoiceVoidStatus.Posted &&
+                    v.VoidDate >= from && v.VoidDate <= to)
+                .Join(db.SalesInvoiceLines, v => v.SalesInvoiceId, x => x.SalesInvoiceId, (v, x) => new VatLine(
+                    x.VatTreatment, -x.NetAmount, -x.VatAmount,
+                    new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SalesInvoice.InvoiceNumber, false, 0m)))
                 .ToListAsync(ct);
 
         sales.AddRange(salesVoids);
@@ -103,7 +120,8 @@ public sealed class VatWorkpaperService(
                     new VatLine(
                         x.VatTreatment,
                         x.NetAmount,
-                        x.VatAmount))
+                        x.VatAmount,
+                        new VatSource(x.SupplierBill.PostedJournalId, x.SupplierBillId, x.SupplierBill.BillDate, x.SupplierBill.BillNumber, true, 0m)))
                 .ToListAsync(ct);
 
         var purchasesBeforeAdjustments = Summarise(purchases);
@@ -120,13 +138,15 @@ public sealed class VatWorkpaperService(
 
         var purchaseVoids = await db.SupplierBillVoids.AsNoTracking()
             .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
-            .SelectMany(v => v.SupplierBill.Lines.Select(x => new VatLine(x.VatTreatment, -x.NetAmount, -x.VatAmount)))
+            .Join(db.SupplierBillLines, v => v.SupplierBillId, x => x.SupplierBillId, (v, x) => new VatLine(x.VatTreatment, -x.NetAmount, -x.VatAmount,
+                new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SupplierBill.BillNumber, true, 0m)))
             .ToListAsync(ct);
         purchases.AddRange(purchaseVoids);
 
         var purchaseReinstatements = await db.SupplierBillReinstatements.AsNoTracking()
             .Where(r => r.OrganisationId == organisationId && r.ReinstatementDate >= from && r.ReinstatementDate <= to)
-            .SelectMany(r => r.SupplierBill.Lines.Select(x => new VatLine(x.VatTreatment, x.NetAmount, x.VatAmount)))
+            .Join(db.SupplierBillLines, r => r.SupplierBillId, x => x.SupplierBillId, (r, x) => new VatLine(x.VatTreatment, x.NetAmount, x.VatAmount,
+                new VatSource(r.PostedJournalId, r.Id, r.ReinstatementDate, r.SupplierBill.BillNumber, true, 0m)))
             .ToListAsync(ct);
         purchases.AddRange(purchaseReinstatements);
 
@@ -139,9 +159,8 @@ public sealed class VatWorkpaperService(
                     x.CreditDate >= from &&
                     x.CreditDate <= to)
                 .Select(x =>
-                    new VatAdjustmentSummary(
-                        x.Subtotal,
-                        x.VatTotal))
+                    new CreditEntry(x.Subtotal, x.VatTotal,
+                        new VatSource(x.PostedJournalId, x.Id, x.CreditDate, x.CreditNoteNumber, false, 0m)))
                 .ToListAsync(ct);
 
         var salesCreditReversals =
@@ -153,9 +172,8 @@ public sealed class VatWorkpaperService(
                     x.ReversalDate >= from &&
                     x.ReversalDate <= to)
                 .Select(x =>
-                    new VatAdjustmentSummary(
-                        x.SalesCreditNote.Subtotal,
-                        x.SalesCreditNote.VatTotal))
+                    new CreditEntry(x.SalesCreditNote.Subtotal, x.SalesCreditNote.VatTotal,
+                        new VatSource(x.PostedJournalId, x.Id, x.ReversalDate, x.SalesCreditNote.CreditNoteNumber, false, 0m)))
                 .ToListAsync(ct);
 
         var supplierCredits =
@@ -166,9 +184,8 @@ public sealed class VatWorkpaperService(
                     x.CreditDate >= from &&
                     x.CreditDate <= to)
                 .Select(x =>
-                    new VatAdjustmentSummary(
-                        x.Subtotal,
-                        x.VatTotal))
+                    new CreditEntry(x.Subtotal, x.VatTotal,
+                        new VatSource(x.PostedJournalId, x.Id, x.CreditDate, x.CreditNoteNumber, true, 0m)))
                 .ToListAsync(ct);
 
         var supplierCreditReversals =
@@ -179,10 +196,31 @@ public sealed class VatWorkpaperService(
                     x.ReversalDate >= from &&
                     x.ReversalDate <= to)
                 .Select(x =>
-                    new VatAdjustmentSummary(
-                        x.SupplierCreditNote.Subtotal,
-                        x.SupplierCreditNote.VatTotal))
+                    new CreditEntry(x.SupplierCreditNote.Subtotal, x.SupplierCreditNote.VatTotal,
+                        new VatSource(x.PostedJournalId, x.Id, x.ReversalDate, x.SupplierCreditNote.CreditNoteNumber, true, 0m)))
                 .ToListAsync(ct);
+
+        var isFiji = await db.Organisations.AnyAsync(x => x.Id == organisationId && x.CountryCode == "FJ", ct);
+        FijiVatReconciliation? reconciliation = null;
+        if (isFiji)
+        {
+            var documents = sales.Concat(purchases).Where(x => x.Treatment == VatTreatment.Standard && x.Tax != 0m)
+                .Select(x => x.Source with { Tax = x.Tax });
+            var credits = salesCredits.Concat(supplierCredits).Select(x => x.Source with { Tax = -x.Tax });
+            var reversals = salesCreditReversals.Concat(supplierCreditReversals).Select(x => x.Source with { Tax = x.Tax });
+            reconciliation = await FijiVatReconciliation.ReadAsync(db, organisationId, from, to,
+                documents.Concat(credits).Concat(reversals), ct);
+            foreach (var bank in reconciliation.BankEntries)
+            {
+                var lines = bank.Source.IsInput ? purchases : sales;
+                lines.Add(new VatLine(VatTreatment.Standard, bank.Net, bank.Source.Tax, bank.Source));
+            }
+            purchasesBeforeAdjustments = purchasesBeforeAdjustments with
+            {
+                StandardTax = purchasesBeforeAdjustments.StandardTax + reconciliation.BankEntries.Where(x => x.Source.IsInput).Sum(x => x.Source.Tax),
+                StandardNet = purchasesBeforeAdjustments.StandardNet + reconciliation.BankEntries.Where(x => x.Source.IsInput).Sum(x => x.Net)
+            };
+        }
 
         return new VatWorkpaper(
             from,
@@ -196,6 +234,7 @@ public sealed class VatWorkpaperService(
                 supplierCredits,
                 supplierCreditReversals))
         {
+            Reconciliation = reconciliation,
             PurchasesBeforeAdjustments = purchasesBeforeAdjustments,
             BillAdjustments = adjustments.OrderBy(x => x.Date).ThenBy(x => x.BillNumber).ToArray()
         };
@@ -211,8 +250,8 @@ public sealed class VatWorkpaperService(
             SumNet(lines, VatTreatment.OutOfScope));
 
     private static VatAdjustmentSummary NetAdjustments(
-        IEnumerable<VatAdjustmentSummary> credits,
-        IEnumerable<VatAdjustmentSummary> reversals) =>
+        IEnumerable<CreditEntry> credits,
+        IEnumerable<CreditEntry> reversals) =>
         new(
             credits.Sum(x => x.Net) -
                 reversals.Sum(x => x.Net),
@@ -233,8 +272,11 @@ public sealed class VatWorkpaperService(
             .Where(x => x.Treatment == treatment)
             .Sum(x => x.Tax);
 
+    private sealed record CreditEntry(decimal Net, decimal Tax, VatSource Source);
+
     private sealed record VatLine(
         VatTreatment Treatment,
         decimal Net,
-        decimal Tax);
+        decimal Tax,
+        VatSource Source);
 }
