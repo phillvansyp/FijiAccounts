@@ -1,0 +1,71 @@
+@using FijiAccounts.Web.Services
+
+<section class="financial-report">
+    <header>
+        <div>
+            <h2>Fiji VAT reconciliation</h2>
+            <p>@Workpaper.From.ToString("dd MMM yyyy") to @Workpaper.To.ToString("dd MMM yyyy") · @Currency</p>
+        </div>
+    </header>
+    @if (UsesXero || Review.HasXeroEvidence)
+    {
+        <div class="alert alert-warning">Xero coverage needs review. These figures include local postings only. Compare Xero-only transactions for this period before using the totals to file.</div>
+    }
+    <table class="report-table">
+        <thead><tr><th>VAT</th><th class="number">Workpaper</th><th class="number">Ledger movement</th><th class="number">Ledger less workpaper</th></tr></thead>
+        <tbody>
+            @foreach (var row in new[] { ("Output", Workpaper.OutputTax, Review.LedgerOutput), ("Input", Workpaper.InputTax, Review.LedgerInput), ("Net payable / (refundable)", Workpaper.NetTax, Review.LedgerOutput - Review.LedgerInput) })
+            {
+                <tr><th scope="row">@row.Item1</th><td class="number">@row.Item2.ToString("N2")</td><td class="number">@row.Item3.ToString("N2")</td><td class="number">@((row.Item3 - row.Item2).ToString("N2"))</td></tr>
+            }
+        </tbody>
+    </table>
+    @if (Review.Differences.Count == 0)
+    {
+        <p>All local VAT amounts match by journal.</p>
+    }
+    else
+    {
+        <h3>Transactions explaining differences</h3>
+        <p>VAT settlements and manual journals can move a control account without changing VAT on supplies. Review each entry before adjusting the return.</p>
+        <table class="report-table">
+            <thead><tr><th>Date</th><th>Reference</th><th>VAT</th><th class="number">Workpaper</th><th class="number">Ledger</th><th class="number">Difference</th></tr></thead>
+            <tbody>
+                @foreach (var row in Review.Differences)
+                {
+                    <tr><td>@row.Source.Date.ToString("dd MMM yyyy")</td>
+                        <td>@if (row.Source.JournalId is Guid id)
+                            { <a href="@JournalUrl(id)">@row.Source.Reference</a> }
+                            else { @row.Source.Reference }</td>
+                        <td>@(row.Source.IsInput ? "Input" : "Output")</td><td class="number">@row.Workpaper.ToString("N2")</td>
+                        <td class="number">@row.Ledger.ToString("N2")</td><td class="number">@row.Difference.ToString("N2")</td></tr>
+                }
+            </tbody>
+        </table>
+    }
+    @if (Review.BankEntries.Count > 0)
+    {
+        <details>
+            <summary>Taxable bank entries included (@Review.BankEntries.Count)</summary>
+            <table class="report-table">
+                <thead><tr><th>Date</th><th>Journal</th><th>VAT</th><th class="number">Net amount</th><th class="number">Tax</th></tr></thead>
+                <tbody>
+                    @foreach (var bank in Review.BankEntries)
+                    {
+                        <tr><td>@bank.Source.Date.ToString("dd MMM yyyy")</td><td><a href="@JournalUrl(bank.Source.SourceId)">@bank.Source.Reference</a></td>
+                            <td>@(bank.Source.IsInput ? "Input" : "Output")</td><td class="number">@bank.Net.ToString("N2")</td><td class="number">@bank.Source.Tax.ToString("N2")</td></tr>
+                    }
+                </tbody>
+            </table>
+        </details>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public VatWorkpaper Workpaper { get; set; } = null!;
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public bool UsesXero { get; set; }
+    [Parameter, EditorRequired] public string Currency { get; set; } = "";
+    private FijiVatReconciliation Review => Workpaper.Reconciliation!;
+    private string JournalUrl(Guid id) => $"/o/{OrganisationId}/journals/{id}";
+}

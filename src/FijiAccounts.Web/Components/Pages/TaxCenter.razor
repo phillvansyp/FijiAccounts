@@ -22,6 +22,10 @@
         You do not have access to this organisation.
     </div>
 }
+else if (restrictedFijiReport)
+{
+    <div class="alert alert-info">The Fiji VAT workpaper requires organisation-wide reporting access.</div>
+}
 else if (usesXero && IsNewZealand)
 {
     <XeroReportPanel OrganisationId="OrganisationId" Kind="gst" Title="GST workpaper" />
@@ -144,12 +148,12 @@ else
                 <article>
                     <span>Output @access.Organisation.TaxLabel</span>
                     <strong>$@workpaper.OutputTax.ToString("N2")</strong>
-                    <small>Sales tax less credit notes</small>
+                    <small>@(workpaper.Reconciliation is null ? "Sales tax less credit notes" : "Sales and taxable bank entries, after credits")</small>
                 </article>
                 <article>
                     <span>Input @access.Organisation.TaxLabel</span>
                     <strong>$@workpaper.InputTax.ToString("N2")</strong>
-                    <small>Supplier bill tax after reversals and credits</small>
+                    <small>@(workpaper.Reconciliation is null ? "Supplier bill tax after reversals and credits" : "Purchases and taxable bank entries, after credits")</small>
                 </article>
                 <article class="@(workpaper.NetTax > 0 ? "needs-attention" : null)">
                     <span>Net position</span>
@@ -162,6 +166,10 @@ else
                 </article>
             </div>
 
+            @if (workpaper.Reconciliation is not null)
+            {
+                <FijiVatReview Workpaper="workpaper" OrganisationId="OrganisationId" UsesXero="usesXero" Currency="@access.Organisation.BaseCurrency" />
+            }
             @if (nzReturn is not null)
             {
                 <section class="financial-report">
@@ -313,6 +321,7 @@ else
 
 @code {
     private bool usesXero;
+    private bool restrictedFijiReport;
     [Parameter]
     public Guid OrganisationId { get; set; }
 
@@ -332,7 +341,10 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
-        usesXero = await XeroReports.UsesXeroAsync(OrganisationId);
+        workpaper = null;
+        turnover = null;
+        error = null;
+        forecastMessage = null;
         var state =
             await AuthenticationStateProvider.GetAuthenticationStateAsync();
 
@@ -343,7 +355,10 @@ else
                 userId,
                 OrganisationId);
 
-        if (access is null || (usesXero && IsNewZealand))
+        restrictedFijiReport = access?.Organisation.CountryCode == "FJ" &&
+            await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is not null;
+        usesXero = access is not null && !restrictedFijiReport && await XeroReports.UsesXeroAsync(OrganisationId);
+        if (access is null || restrictedFijiReport || (usesXero && IsNewZealand))
         {
             return;
         }
