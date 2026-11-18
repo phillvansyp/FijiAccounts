@@ -17,6 +17,7 @@ public sealed class NzPayInboundIntegrationServiceTests
 
         var issued = await service.RotateCredentialAsync(test.UserId, test.Organisation.Id);
         var stored = await test.Db.NzPayApiCredentials.AsNoTracking().SingleAsync();
+        Assert.Equal(stored.Id, (await service.GetActiveCredentialAsync(test.UserId, test.Organisation.Id))?.Id);
         var authenticated = await service.AuthenticateAsync($"Bearer {issued.Token}", test.Organisation.Id,
             NzPayInboundIntegrationService.FixedAssetsReadScope);
         var assets = await service.SearchAssetsAsync(test.Organisation.Id, "ABC123");
@@ -48,6 +49,9 @@ public sealed class NzPayInboundIntegrationServiceTests
         Assert.Equal("draft", first.Status);
         Assert.Empty(await test.Db.PostedJournals.ToListAsync());
         Assert.Single(await test.Db.NzPayFbtJournalDrafts.ToListAsync());
+        var listed = Assert.Single(await service.ListDraftsAsync(test.UserId, test.Organisation.Id));
+        Assert.Equal(first.JournalId, listed.Id);
+        Assert.NotEmpty(listed.Lines);
 
         var posted = await service.ApproveDraftAsync(test.UserId, test.Organisation.Id, first.JournalId);
         var stored = await test.LoadJournalAsync(posted.Id);
