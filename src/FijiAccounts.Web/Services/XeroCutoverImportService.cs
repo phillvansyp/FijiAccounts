@@ -46,6 +46,23 @@ public sealed class XeroCutoverImportService(
         if (!await access.CanPostJournalsAsync(userId, organisationId))
             throw new UnauthorizedAccessException("You cannot create the Xero cutover for this organisation.");
 
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        try
+        {
+            var result = await BuildCoreAsync(userId, organisationId, ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
+            return result;
+        }
+        catch
+        {
+            if (transaction is not null) db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private async Task<XeroCutoverImportResult> BuildCoreAsync(string userId, Guid organisationId, CancellationToken ct)
+    {
+        var company = await db.Organisations.AsNoTracking().SingleAsync(x => x.Id == organisationId, ct);
         var migration = await db.XeroMigrations.Include(x => x.Files)
             .SingleOrDefaultAsync(x => x.OrganisationId == organisationId, ct)
             ?? throw new InvalidOperationException("Save the Xero migration setup first.");
@@ -73,6 +90,12 @@ public sealed class XeroCutoverImportService(
         if (pendingMasters)
             throw new InvalidOperationException("Add the prepared accounts, contacts, currencies and items before creating the cutover.");
 
+        if (company.CountryCode == "FJ")
+        {
+            var settings = await ReadDatasetAsync(organisationId, migration.Id, "organisation", "Organisations", ct);
+            if (settings.Count != 1 || !Text(settings[0], "BaseCurrency").Equals(company.BaseCurrency, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Copy the Xero organisation settings and confirm its base currency matches Account Island before posting opening balances.");
+        }
         await EnsureNoUnallocatedCreditsAsync(organisationId, migration.Id, ct);
         var retainedAttachments = await ReadDocumentAttachmentsAsync(
             organisationId, migration.Files, ct);
@@ -82,13 +105,15 @@ public sealed class XeroCutoverImportService(
         if (prior is null)
         {
             var balances = await ReadTrialBalanceAsync(organisationId, migration, ct);
-            opening = await PostOpeningJournalAsync(userId, organisationId, migration, balances, ct);
+            opening = await PostOpeningJournalAsync(userId, organisationId, migration, balances, company.BaseCurrency, ct);
         }
         else opening = prior;
 
         var openSales = await ImportOpenSalesInvoicesAsync(userId, organisationId, migration, opening, ct);
         var openBills = await ImportOpenSupplierBillsAsync(userId, organisationId, migration, opening, ct);
         var openSupplierCredits = await ImportOpenSupplierCreditsAsync(userId, organisationId, migration, opening, ct);
+        if (company.CountryCode == "FJ" && (prior is null || openSales + openBills + openSupplierCredits > 0))
+            await VerifyOpeningControlAccountsAsync(organisationId, opening, ct);
         var fixedAssets = await ImportFixedAssetsAsync(userId, organisationId, migration, opening, ct);
         var attachedDocuments = await AttachImportedDocumentsAsync(
             userId, organisationId, migration.Id, retainedAttachments, ct);
@@ -138,6 +163,25 @@ public sealed class XeroCutoverImportService(
         await db.SaveChangesAsync(ct);
         await preparation.RefreshIssuesAsync(userId, organisationId, migration.Id, ct);
         return new(opening.Id, opening.Lines.Count, openSales, openBills, openSupplierCredits, fixedAssets, archived);
+    }
+
+    private async Task VerifyOpeningControlAccountsAsync(Guid organisationId, PostedJournal opening, CancellationToken ct)
+    {
+        var lines = await db.PostedJournalLines.Where(x => x.PostedJournalId == opening.Id &&
+                (x.LedgerAccount.Code == "1100" || x.LedgerAccount.Code == "2000"))
+            .Select(x => new { x.LedgerAccount.Code, x.Debit, x.Credit }).ToListAsync(ct);
+        var receivables = lines.Where(x => x.Code == "1100").Sum(x => x.Debit - x.Credit);
+        var payables = lines.Where(x => x.Code == "2000").Sum(x => x.Credit - x.Debit);
+        var invoices = await db.SalesInvoices.Where(x => x.OrganisationId == organisationId && x.PostedJournalId == opening.Id)
+            .Select(x => new { x.Total, x.AmountPaid }).ToListAsync(ct);
+        var bills = await db.SupplierBills.Where(x => x.OrganisationId == organisationId && x.PostedJournalId == opening.Id)
+            .Select(x => new { x.Total, x.AmountPaid }).ToListAsync(ct);
+        var credits = await db.SupplierCreditNotes.Where(x => x.OrganisationId == organisationId && x.PostedJournalId == opening.Id)
+            .Select(x => x.Total).ToListAsync(ct);
+        var customerTotal = invoices.Sum(x => x.Total - x.AmountPaid);
+        var supplierTotal = bills.Sum(x => x.Total - x.AmountPaid) - credits.Sum();
+        if (customerTotal != receivables || supplierTotal != payables)
+            throw new InvalidDataException($"Opening balance mismatch in {opening.Currency}. Receivables: documents {customerTotal:N2}, ledger {receivables:N2}. Payables after credits: documents {supplierTotal:N2}, ledger {payables:N2}. Review the trial balance and open documents at the same cutoff.");
     }
 
     private async Task<IReadOnlyList<RetainedXeroAttachment>> ReadDocumentAttachmentsAsync(
@@ -480,7 +524,7 @@ public sealed class XeroCutoverImportService(
 
     private async Task<PostedJournal> PostOpeningJournalAsync(
         string userId, Guid organisationId, XeroMigration migration,
-        IReadOnlyList<OpeningBalance> balances, CancellationToken ct)
+        IReadOnlyList<OpeningBalance> balances, string baseCurrency, CancellationToken ct)
     {
         var journal = await posting.PostAsync(userId, new JournalPostRequest(
             organisationId,
@@ -488,7 +532,7 @@ public sealed class XeroCutoverImportService(
             $"XERO-OPEN-{migration.CutoverDate:yyyyMMdd}",
             $"Verified Xero closing Trial Balance for migration from {migration.SourceOrganisationName}",
             balances.Select(x => new JournalLineInput(x.AccountId, "Xero opening balance · " + x.Label, x.Debit, x.Credit)).ToArray(),
-            Currency: "NZD"), ct);
+            Currency: baseCurrency), ct);
         db.AuditEvents.Add(Audit(organisationId, userId, "XeroOpeningBalancePosted", migration.Id, new
         {
             OpeningJournalId = journal.Id.ToString(), migration.CutoverDate,
@@ -513,13 +557,14 @@ public sealed class XeroCutoverImportService(
             var number = Short(Text(source, "InvoiceNumber"), 40, "XERO-" + externalId[..Math.Min(30, externalId.Length)]);
             if (await db.SalesInvoices.AnyAsync(x => x.OrganisationId == organisationId && x.InvoiceNumber == number, ct))
                 throw new InvalidDataException($"Sales invoice number '{number}' already exists in Account Island.");
-            var rate = Decimal(source, "CurrencyRate"); if (rate <= 0m) rate = 1m;
+            var (currency, rate) = DocumentCurrency(source, opening.Currency);
             var total = Decimal(source, "Total"); var due = Decimal(source, "AmountDue");
             var invoice = new SalesInvoice
             {
+                BranchId = opening.Lines.First().BranchId, DivisionId = opening.Lines.First().DivisionId,
                 OrganisationId = organisationId, CustomerId = contactId, SequenceNumber = ++sequence,
                 InvoiceNumber = number, IssueDate = Date(source, "Date"), DueDate = Date(source, "DueDate"),
-                Currency = Short(Text(source, "CurrencyCode"), 3, "NZD"), ExchangeRateToBase = rate,
+                Currency = currency, ExchangeRateToBase = rate,
                 TransactionSubtotal = Decimal(source, "SubTotal"), TransactionVatTotal = Decimal(source, "TotalTax"), TransactionTotal = total,
                 Subtotal = Round(Decimal(source, "SubTotal") * rate), VatTotal = Round(Decimal(source, "TotalTax") * rate), Total = Round(total * rate),
                 TransactionAmountPaid = total - due, AmountPaid = Round((total - due) * rate),
@@ -550,14 +595,15 @@ public sealed class XeroCutoverImportService(
             var reference = Short(Text(source, "InvoiceNumber", "Reference"), 80, "XERO-" + externalId);
             if (await db.SupplierBills.AnyAsync(x => x.OrganisationId == organisationId && x.SupplierId == supplierId && x.SupplierReference == reference, ct))
                 throw new InvalidDataException($"Supplier bill reference '{reference}' already exists in Account Island.");
-            var rate = Decimal(source, "CurrencyRate"); if (rate <= 0m) rate = 1m;
+            var (currency, rate) = DocumentCurrency(source, opening.Currency);
             var total = Decimal(source, "Total"); var due = Decimal(source, "AmountDue");
             var bill = new SupplierBill
             {
+                BranchId = opening.Lines.First().BranchId, DivisionId = opening.Lines.First().DivisionId,
                 OrganisationId = organisationId, SupplierId = supplierId, SequenceNumber = ++sequence,
                 BillNumber = Short("XERO-" + externalId, 40, reference), SupplierReference = reference,
                 BillDate = Date(source, "Date"), DueDate = Date(source, "DueDate"),
-                Currency = Short(Text(source, "CurrencyCode"), 3, "NZD"), ExchangeRateToBase = rate,
+                Currency = currency, ExchangeRateToBase = rate,
                 TransactionSubtotal = Decimal(source, "SubTotal"), TransactionVatTotal = Decimal(source, "TotalTax"), TransactionTotal = total,
                 Subtotal = Round(Decimal(source, "SubTotal") * rate), VatTotal = Round(Decimal(source, "TotalTax") * rate), Total = Round(total * rate),
                 TransactionAmountPaid = total - due, AmountPaid = Round((total - due) * rate),
@@ -594,8 +640,7 @@ public sealed class XeroCutoverImportService(
                     x.CreditNoteNumber == number, ct))
                 throw new InvalidDataException($"Supplier credit note number '{number}' already exists in Account Island.");
 
-            var rate = Decimal(source, "CurrencyRate");
-            if (rate <= 0m) rate = 1m;
+            var (currency, rate) = DocumentCurrency(source, opening.Currency);
             var sourceTotal = Decimal(source, "Total");
             var remaining = Decimal(source, "RemainingCredit");
             var ratio = sourceTotal > 0m ? remaining / sourceTotal : 1m;
@@ -608,7 +653,7 @@ public sealed class XeroCutoverImportService(
                 CreditDate = Date(source, "Date"),
                 Reason = Short("Xero opening supplier credit · " + Text(source, "Reference", "CreditNoteNumber"),
                     300, "Xero opening supplier credit"),
-                Currency = Short(Text(source, "CurrencyCode"), 3, "NZD"),
+                Currency = currency,
                 Subtotal = Round(Decimal(source, "SubTotal") * ratio * rate),
                 VatTotal = Round(Decimal(source, "TotalTax") * ratio * rate),
                 Total = Round(remaining * rate),
@@ -623,13 +668,28 @@ public sealed class XeroCutoverImportService(
         return count;
     }
 
+    internal static (string Currency, decimal RateToBase) DocumentCurrency(JsonElement source, string baseCurrency)
+    {
+        var currency = Text(source, "CurrencyCode").Trim().ToUpperInvariant();
+        var rate = Decimal(source, "CurrencyRate");
+        if (currency.Length != 3 || !currency.All(char.IsAsciiLetter))
+            throw new InvalidDataException($"Xero document {Text(source, "InvoiceNumber", "CreditNoteNumber", "InvoiceID")} has no valid currency code. Refresh the source document.");
+        if (currency == baseCurrency) return (currency, 1m);
+        if (rate <= 0m)
+            throw new InvalidDataException($"Xero document {Text(source, "InvoiceNumber", "CreditNoteNumber", "InvoiceID")} lacks the exchange rate for {currency}.");
+        return (currency, 1m / rate);
+    }
+
     private async Task<List<SalesInvoiceLine>> SalesLinesAsync(Guid migrationId, JsonElement source, decimal rate, CancellationToken ct)
     {
         var result = new List<SalesInvoiceLine>();
         foreach (var line in Array(source, "LineItems"))
         {
             var accountId = await ResolveAccountAsync(migrationId, Text(line, "AccountCode"), ct);
-            var net = Decimal(line, "LineAmount"); var tax = Decimal(line, "TaxAmount");
+            var tax = Decimal(line, "TaxAmount");
+            var net = Decimal(line, "LineAmount");
+            if (Text(source, "LineAmountTypes").Equals("Inclusive", StringComparison.OrdinalIgnoreCase))
+                net -= tax;
             result.Add(new SalesInvoiceLine
             {
                 Description = Short(Text(line, "Description"), 300, "Xero invoice line"), Quantity = Decimal(line, "Quantity", 1m),
@@ -649,7 +709,10 @@ public sealed class XeroCutoverImportService(
         foreach (var line in Array(source, "LineItems"))
         {
             var accountId = await ResolveAccountAsync(migrationId, Text(line, "AccountCode"), ct);
-            var net = Decimal(line, "LineAmount"); var tax = Decimal(line, "TaxAmount");
+            var tax = Decimal(line, "TaxAmount");
+            var net = Decimal(line, "LineAmount");
+            if (Text(source, "LineAmountTypes").Equals("Inclusive", StringComparison.OrdinalIgnoreCase))
+                net -= tax;
             result.Add(new SupplierBillLine
             {
                 Description = Short(Text(line, "Description"), 300, "Xero bill line"), Quantity = Decimal(line, "Quantity", 1m),
@@ -683,7 +746,11 @@ public sealed class XeroCutoverImportService(
     {
         var mapping = await db.XeroMigrationMappings.AsNoTracking().FirstOrDefaultAsync(x => x.XeroMigrationId == migrationId &&
             x.Kind == XeroMigrationMappingKind.TaxRate && x.SourceKey == key && x.Status == XeroMigrationMappingStatus.Confirmed, ct);
-        return Enum.TryParse<VatTreatment>(mapping?.TargetDisplayName, true, out var treatment) ? treatment : VatTreatment.Standard;
+        if (Enum.TryParse<VatTreatment>(mapping?.TargetDisplayName, true, out var treatment))
+            return treatment;
+        if (await db.XeroMigrations.AnyAsync(x => x.Id == migrationId && x.Organisation.CountryCode == "FJ", ct))
+            throw new InvalidDataException($"Confirm a Fiji VAT treatment for Xero tax code '{key}' before importing open documents.");
+        return VatTreatment.Standard;
     }
 
     private async Task<XeroMigrationRecord?> FindRecordAsync(Guid migrationId, string dataset, string externalId, CancellationToken ct) =>
