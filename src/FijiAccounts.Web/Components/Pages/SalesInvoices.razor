@@ -1,5 +1,6 @@
 @page "/o/{OrganisationId:guid}/sales"
 @attribute [Authorize]
+@attribute [StreamRendering]
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
@@ -9,6 +10,7 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
+@inject Microsoft.Extensions.Caching.Memory.IMemoryCache Cache
 @inject TenantAccessService TenantAccess
 @inject PaymentConnectionsService PaymentConnections
 @inject SalesInvoiceService InvoiceService
@@ -18,9 +20,11 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>Sales invoices</PageTitle>
-@if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
+@if (loading) { <p role="status">Loading sales invoices…</p> }
+else if (access is null) { <div class="alert alert-danger">You do not have access to this organisation.</div> }
 else
 {
+    RefreshSummary();
     <div class="page-heading">
         <div>
             <p class="eyebrow">Money in</p>
@@ -39,7 +43,7 @@ else
         <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>@access.Organisation.BaseCurrency @OverdueTotal.ToString("N2")</strong><small>@OverdueCount invoice@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
 
-    @if (canPost && customers.Count == 0)
+    @if (canPost && !hasCustomers)
     {
         <div class="alert alert-info">Add a customer before creating an invoice. <a href="o/@OrganisationId/contacts">Open contacts</a></div>
     }
@@ -55,7 +59,7 @@ else
 
                 <button type="button"
                         class="btn btn-outline-secondary"
-                        @onclick="() => showRecurringInvoices = !showRecurringInvoices">
+                        @onclick="ToggleRecurringInvoices">
                     @(showRecurringInvoices
                         ? "Hide recurring invoices"
                         : "Open recurring invoices")
@@ -296,7 +300,8 @@ else
     <section class="invoice-list">
         @{
             var localMatchCount = FilteredInvoices.Count();
-            var matchCount = localMatchCount + FilteredXeroInvoices.Count();
+            var xeroMatches = GetXeroMatches();
+            var matchCount = localMatchCount + xeroMatches.Count;
             var offset = invoicePage * InvoicePageSize;
         }
         <div class="list-heading">
@@ -409,7 +414,7 @@ else
                             </td>
                         </tr>
                     }
-                    @foreach (var invoice in SortedFilteredXeroInvoices
+                    @foreach (var invoice in xeroMatches
                         .Skip(Math.Max(0, offset - localMatchCount))
                         .Take(InvoicePageSize - Math.Clamp(localMatchCount - offset, 0, InvoicePageSize)))
                     {
@@ -454,9 +459,12 @@ else
     private string userId = string.Empty;
     private bool canPost;
     private bool showRecurringInvoices;
-    private List<BusinessParty> customers = [];
+    private bool hasCustomers;
+    private bool loading = true;
     private List<SalesInvoice> invoices = [];
-    private List<XeroSalesInvoiceProjection> xeroInvoices = [];
+    private IReadOnlyList<XeroSalesInvoiceProjection> xeroInvoices = [];
+    private IReadOnlyList<XeroSalesInvoiceProjection> sortedXeroMatches = [];
+    private (string Search, string Status, string Sort, bool Descending, DateOnly Date)? matchKey;
     private const int InvoicePageSize = 100;
     private int invoicePage;
     private string invoiceSearch = string.Empty;
@@ -475,12 +483,17 @@ else
     private string recurringStatusClass = "alert-success";
     protected override async Task OnParametersSetAsync()
     {
+        loading = true;
         invoiceSearch = ReferenceSearch ?? string.Empty;
 
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         userId = UserManager.GetUserId(state.User)!;
         access = await TenantAccess.FindAsync(userId, OrganisationId);
-        if (access is null) return;
+        if (access is null)
+        {
+            loading = false;
+            return;
+        }
 
         automationEnabled =
             access.Organisation.RecurringInvoiceAutomationEnabled;
@@ -490,12 +503,11 @@ else
 
         canPost = await TenantAccess.CanPostJournalsAsync(userId, OrganisationId);
         accessibleDivisionIds = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
-        customers = await Db.BusinessParties.AsNoTracking()
-            .Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0)
-            .OrderBy(x => x.Name)
-            .ToListAsync();
+        hasCustomers = canPost && await Db.BusinessParties.AnyAsync(x => x.OrganisationId == OrganisationId
+            && x.IsActive && (x.Type & PartyType.Customer) != 0);
 
         await Reload();
+        loading = false;
     }
 
     private Dictionary<Guid, string> invoiceMatchLinks = [];
@@ -519,19 +531,23 @@ else
             var localInvoiceNumbers = invoices
                 .Select(x => x.InvoiceNumber.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            xeroInvoices = (await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(Db, OrganisationId))
-                .Where(x => !localInvoiceNumbers.Contains(x.InvoiceNumber.Trim()))
-                .ToList();
+            var directory = await XeroSalesDirectory.ReadAsync(Db, Cache, OrganisationId);
+            xeroInvoices = localInvoiceNumbers.Count == 0 ? directory :
+                directory.Where(x => !localInvoiceNumbers.Contains(x.InvoiceNumber.Trim())).ToList();
         }
+        matchKey = null;
+        summaryDate = null;
 
         invoiceMatchLinks.Clear();
-        if (canPost && access != null)
+        var matchableIds = invoices.Where(x => x.Total > x.AmountPaid + x.AmountCredited
+            && x.Status is not (InvoiceStatus.Draft or InvoiceStatus.Voided or InvoiceStatus.Paid or InvoiceStatus.Credited))
+            .Select(x => x.Id).ToHashSet();
+        if (canPost && access != null && matchableIds.Count > 0)
         {
             var workspace = await PaymentConnections.ReadAsync(userId, OrganisationId);
-            var visibleIds = invoices.Select(x => x.Id).ToHashSet();
-            foreach (var document in workspace.Documents.Where(d => d.IsSales && visibleIds.Contains(d.Id)))
+            foreach (var document in workspace.Documents.Where(d => d.IsSales && matchableIds.Contains(d.Id)))
             {
-                var candidates = workspace.Statements.Where(bank => PaymentMatchSuggestion.Matches(workspace, document, bank, access.Organisation.BaseCurrency)).ToArray();
+                var candidates = workspace.Statements.Where(bank => PaymentMatchSuggestion.Matches(workspace, document, bank, access.Organisation.BaseCurrency)).Take(2).ToArray();
                 if (candidates.Length > 0)
                     invoiceMatchLinks[document.Id] = candidates.Length == 1
                         ? $"/o/{OrganisationId}/payments/statement/{candidates[0].Id}?matchDocument={document.Id}"
@@ -539,6 +555,17 @@ else
             }
         }
 
+        if (canPost && showRecurringInvoices) await LoadRecurringInvoices();
+    }
+
+    private async Task ToggleRecurringInvoices()
+    {
+        if (!showRecurringInvoices) await LoadRecurringInvoices();
+        showRecurringInvoices = !showRecurringInvoices;
+    }
+
+    private async Task LoadRecurringInvoices()
+    {
         recurringInvoices =
             await Db.RecurringSalesInvoices
                 .AsNoTracking()
@@ -815,6 +842,19 @@ else
 
     private void ResetInvoicePage() => invoicePage = 0;
 
+    private IReadOnlyList<XeroSalesInvoiceProjection> GetXeroMatches()
+    {
+        var key = (invoiceSearch, invoiceStatusFilter, invoiceSort, invoiceSortDescending, DateOnly.FromDateTime(DateTime.Today));
+        if (matchKey != key)
+        {
+            sortedXeroMatches = invoiceSort == "Invoice" && invoiceSortDescending &&
+                string.IsNullOrWhiteSpace(invoiceSearch) && string.IsNullOrWhiteSpace(invoiceStatusFilter)
+                ? xeroInvoices : SortedFilteredXeroInvoices.ToList();
+            matchKey = key;
+        }
+        return sortedXeroMatches;
+    }
+
     private static string FormatCustomerPurchaseOrders(
         SalesInvoice invoice)
         => FormatCustomerPurchaseOrders(
@@ -857,14 +897,34 @@ else
         invoice.AmountPaid + invoice.AmountCredited < invoice.Total;
 
     private int TotalInvoiceCount => invoices.Count + xeroInvoices.Count;
-    private decimal TotalInvoiced =>
-        invoices.Where(x => x.Status != InvoiceStatus.Voided).Sum(x => x.Total) +
-        xeroInvoices.Where(x => x.SourceStatus is not "VOIDED" and not "DELETED").Sum(x => x.BaseTotal);
-    private decimal OutstandingTotal =>
-        invoices.Where(x => x.Status != InvoiceStatus.Voided).Sum(x => x.Total - x.AmountPaid - x.AmountCredited) +
-        xeroInvoices.Where(x => x.SourceStatus is not "VOIDED" and not "DELETED").Sum(x => x.BaseAmountDue);
-    private int OverdueCount => invoices.Count(IsOverdue) + xeroInvoices.Count(x => x.IsOverdue);
-    private decimal OverdueTotal =>
-        invoices.Where(IsOverdue).Sum(x => x.Total - x.AmountPaid - x.AmountCredited) +
-        xeroInvoices.Where(x => x.IsOverdue).Sum(x => x.BaseAmountDue);
+    private DateOnly? summaryDate;
+    private decimal TotalInvoiced, OutstandingTotal, OverdueTotal;
+    private int OverdueCount;
+
+    private void RefreshSummary()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (summaryDate == today) return;
+        TotalInvoiced = OutstandingTotal = OverdueTotal = 0;
+        OverdueCount = 0;
+        foreach (var invoice in invoices.Where(x => x.Status != InvoiceStatus.Voided))
+        {
+            var due = invoice.Total - invoice.AmountPaid - invoice.AmountCredited;
+            TotalInvoiced += invoice.Total;
+            OutstandingTotal += due;
+            if (!IsOverdue(invoice)) continue;
+            OverdueTotal += due;
+            OverdueCount++;
+        }
+        foreach (var invoice in xeroInvoices.Where(x => x.SourceStatus is not ("VOIDED" or "DELETED")))
+        {
+            var due = invoice.BaseAmountDue;
+            TotalInvoiced += invoice.BaseTotal;
+            OutstandingTotal += due;
+            if (!invoice.IsAwaitingPayment || invoice.DueDate >= today) continue;
+            OverdueTotal += due;
+            OverdueCount++;
+        }
+        summaryDate = today;
+    }
 }
