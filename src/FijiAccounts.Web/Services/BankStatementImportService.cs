@@ -14,6 +14,26 @@ namespace FijiAccounts.Web.Services;
 public sealed record BankImportResult(int Imported, int Skipped, Guid BatchId);
 public sealed record StatementPreviewLine(DateOnly Date, string Description, string? Reference, decimal Amount);
 public sealed record StatementPreview(string Format, IReadOnlyList<StatementPreviewLine> Lines);
+public sealed class StatementCoverage
+{
+    public DateOnly? Start { get; set; }
+    public DateOnly? End { get; set; }
+    public decimal? Opening { get; set; }
+    public decimal? Closing { get; set; }
+    public bool Supplied => Start.HasValue || End.HasValue || Opening.HasValue || Closing.HasValue;
+
+    public string? Check(IReadOnlyList<StatementPreviewLine> lines)
+    {
+        if (!Supplied) return null;
+        if (Start is null || End is null || Opening is null || Closing is null)
+            return "Enter both dates and both balances to check statement coverage.";
+        if (Start > End || lines.Any(x => x.Date < Start || x.Date > End))
+            return "One or more transaction dates are outside the statement period.";
+        var expected = Opening.Value + lines.Sum(x => x.Amount);
+        return expected == Closing.Value ? null :
+            $"Opening balance plus statement movement is {expected:N2}. Difference from closing balance: {expected - Closing.Value:N2}.";
+    }
+}
 public sealed record BankStatementDocumentRequest(
     string FileName,
     string? ContentType,
@@ -74,9 +94,10 @@ public sealed class BankStatementImportService(
         IReadOnlyList<StatementPreviewLine> lines,
         string source,
         BankStatementDocumentRequest? document = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, StatementCoverage? coverage = null)
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot import statements for this organisation.");
+        if (coverage?.Check(lines) is string error) throw new InvalidOperationException(error);
         var bankAccount = await db.LedgerAccounts.SingleOrDefaultAsync(
             x => x.Id == bankAccountId && x.OrganisationId == organisationId && x.IsActive && x.IsBankAccount,
             ct) ?? throw new InvalidOperationException("Select an active bank account.");
@@ -165,6 +186,7 @@ public sealed class BankStatementImportService(
                     source,
                     imported,
                     skipped,
+                    Coverage = coverage?.Supplied == true ? coverage : null,
                     StatementDocument = storedDocument is null
                         ? null
                         : new
