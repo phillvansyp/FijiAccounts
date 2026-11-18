@@ -32,6 +32,10 @@ else
                 : "Connect the correct Xero organisation to begin again with read-only access.")</p>
         </div>
         <div class="heading-actions">
+            @if (access.Organisation.CountryCode == "FJ")
+            {
+                <a class="btn btn-secondary" href="/o/@OrganisationId/migration/xero">Fiji migration workspace</a>
+            }
             @if (status?.Connection.IsConnected == true)
             {
                 <span class="status-pill @(status.Connection.ContinuousSyncEnabled ? "complete" : "progress")">
