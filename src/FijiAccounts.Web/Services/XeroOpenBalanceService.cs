@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FijiAccounts.Web.Services;
 
 public sealed record XeroOpenBalance(
-    string Contact, string Document, DateOnly? DueDate, decimal Amount);
+    string Contact, string Document, DateOnly? DueDate, decimal Amount, Guid? ContactId = null);
 
 /// <summary>Open documents and unapplied credits in the current Xero mirror.</summary>
 public sealed class XeroOpenBalanceService(ApplicationDbContext db)
@@ -21,7 +21,10 @@ public sealed class XeroOpenBalanceService(ApplicationDbContext db)
         var documents = await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(
             db, organisationId, supplierBills: payables, openOnly: true);
         var result = documents.Select(x => new XeroOpenBalance(
-            x.ContactName, x.InvoiceNumber, x.DueDate, x.BaseAmountDue)).ToList();
+            x.ContactName, x.InvoiceNumber, x.DueDate,
+            x.Currency.Equals(baseCurrency, StringComparison.OrdinalIgnoreCase) ? x.AmountDue :
+                x.SourceExchangeRate is > 0m ? decimal.Round(x.AmountDue / x.SourceExchangeRate.Value, 2, MidpointRounding.AwayFromZero) :
+                throw new InvalidOperationException("An open Xero invoice lacks its exchange rate."), x.SourceContactId)).ToList();
 
         var creditDataset = payables ? "supplier-credits" : "sales-credits";
         var credits = db.XeroMirrorRecords.AsNoTracking().Where(x => x.XeroConnectionId == connection.Id &&
@@ -65,7 +68,8 @@ public sealed class XeroOpenBalanceService(ApplicationDbContext db)
             var contact = body.TryGetProperty("Contact", out var c) ? Text(c, "Name") : "";
             var hasAgeingDate = XeroSalesInvoiceProjectionParser.TryDate(body, "DueDate", out var ageingDate) ||
                                 XeroSalesInvoiceProjectionParser.TryDate(body, "Date", out ageingDate);
-            return new(contact, label, hasAgeingDate ? ageingDate : null, -remaining);
+            return new(contact, label, hasAgeingDate ? ageingDate : null, -remaining,
+                c.ValueKind == JsonValueKind.Object && Guid.TryParse(Text(c, "ContactID"), out var id) ? id : null);
         }
         catch (JsonException)
         {

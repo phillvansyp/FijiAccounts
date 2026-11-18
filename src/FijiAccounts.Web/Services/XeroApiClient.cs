@@ -22,7 +22,7 @@ public sealed class XeroApiOptions
         "accounting.invoices.read accounting.payments.read accounting.banktransactions.read " +
         "accounting.manualjournals.read accounting.reports.trialbalance.read " +
         "accounting.reports.profitandloss.read accounting.reports.balancesheet.read " +
-        "accounting.reports.aged.read accounting.reports.banksummary.read " +
+        "accounting.reports.aged.read accounting.reports.banksummary.read accounting.reports.budgetsummary.read accounting.reports.taxreports.read " +
         "accounting.attachments.read accounting.budgets.read assets.read";
 }
 
