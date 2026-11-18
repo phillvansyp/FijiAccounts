@@ -91,7 +91,12 @@ public sealed class ImmutableDocumentIntegrityService(
             }
         }
 
-        var linkedDocumentCount =
+        var vatSchedules = await db.Database.SqlQuery<Guid>($"""
+            SELECT DISTINCT upper(json_extract(JsonData, '$.LocalScheduleId')) AS Value FROM AuditEvents
+            WHERE OrganisationId = {organisationId} AND EventType = 'FijiVatFilingSaved'
+                AND json_extract(JsonData, '$.LocalScheduleId') IS NOT NULL
+            """).ToListAsync(cancellationToken);
+        var linkedDocumentCount = vatSchedules.Count +
             await db.BusinessPartyDocuments.AsNoTracking().CountAsync(
                 x => x.OrganisationId == organisationId && x.ImmutableDocumentObjectId != null,
                 cancellationToken) +
@@ -121,7 +126,9 @@ public sealed class ImmutableDocumentIntegrityService(
                 x => x.OrganisationId == organisationId && x.ImmutableDocumentObjectId == null,
                 cancellationToken);
 
-        var missingObjectReferenceCount =
+        var existingSchedules = await db.ImmutableDocumentObjects.CountAsync(x =>
+            x.OrganisationId == organisationId && vatSchedules.Contains(x.Id), cancellationToken);
+        var missingObjectReferenceCount = vatSchedules.Count - existingSchedules +
             await db.BusinessPartyDocuments.AsNoTracking().CountAsync(
                 x => x.OrganisationId == organisationId &&
                      x.ImmutableDocumentObjectId != null &&
@@ -166,6 +173,7 @@ public sealed class ImmutableDocumentIntegrityService(
             .AsNoTracking()
             .CountAsync(
                 x => x.OrganisationId == organisationId &&
+                     !vatSchedules.Contains(x.Id) &&
                      !db.BusinessPartyDocuments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.SupplierBillAttachments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&
                      !db.SalesInvoiceAttachments.Any(d => d.ImmutableDocumentObjectId == x.Id) &&

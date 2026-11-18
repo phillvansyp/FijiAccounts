@@ -1,0 +1,57 @@
+@using FijiAccounts.Web.Services
+@inject ExternalFiscalReceiptService Receipts
+<details class="card card-body mb-3">
+    <summary>External fiscal @(Refund ? "refund" : "receipt") reference</summary>
+    @foreach (var revision in revisions)
+    {
+        <p>@revision.Receipt.IssuedOn.ToString("dd MMM yyyy") · @revision.Receipt.Device · @revision.Receipt.ReceiptNumber @revision.Receipt.Note</p>
+    }
+    @if (CanSave)
+    {
+        <p>Record the fiscal document issued through your external provider. Account Island stores a reference for reconciliation.</p>
+        <div class="row">
+            <label class="form-label col-md-4">Device or provider<input class="form-control" maxlength="100" @bind="device" /></label>
+            <label class="form-label col-md-4">External receipt number<input class="form-control" maxlength="120" @bind="number" /></label>
+            <label class="form-label col-md-4">Date issued<input class="form-control" type="date" @bind="issued" /></label>
+        </div>
+        <label class="form-label">Notes or reason for correction<input class="form-control" maxlength="500" @bind="note" /></label>
+        <button type="button" class="btn btn-secondary no-print" disabled="@saving" @onclick="Save">Save external reference</button>
+    }
+    @if (message is not null) { <p role="status">@message</p> }
+</details>
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public bool Refund { get; set; }
+    [Parameter] public bool CanSave { get; set; }
+    [Parameter] public string UserId { get; set; } = "";
+    private IReadOnlyList<ExternalFiscalReceiptRevision> revisions = [];
+    private string device = "", number = "", note = "";
+    private DateOnly? issued;
+    private string? message;
+    private bool saving;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        revisions = await Receipts.ReadAsync(UserId, OrganisationId, DocumentId, Refund);
+        var latest = revisions.FirstOrDefault()?.Receipt;
+        device = latest?.Device ?? ""; number = latest?.ReceiptNumber ?? ""; issued = latest?.IssuedOn; note = "";
+    }
+
+    private async Task Save()
+    {
+        if (saving) return;
+        saving = true;
+        try
+        {
+            await Receipts.SaveAsync(UserId, OrganisationId, DocumentId, Refund, revisions.FirstOrDefault()?.Id ?? 0,
+                new(device, number, issued ?? default, note));
+            await Load();
+            message = "External reference saved.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { message = ex.Message; }
+        finally { saving = false; }
+    }
+}

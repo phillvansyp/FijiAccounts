@@ -46,14 +46,14 @@
     @if (Review.BankEntries.Count > 0)
     {
         <details>
-            <summary>Taxable bank entries included (@Review.BankEntries.Count)</summary>
+            <summary>Bank entries included (@Review.BankEntries.Count)</summary>
             <table class="report-table">
-                <thead><tr><th>Date</th><th>Journal</th><th>VAT</th><th class="number">Net amount</th><th class="number">Tax</th></tr></thead>
+                <thead><tr><th>Date</th><th>Journal</th><th>Treatment</th><th>VAT</th><th class="number">Net amount</th><th class="number">Tax</th></tr></thead>
                 <tbody>
                     @foreach (var bank in Review.BankEntries)
                     {
                         <tr><td>@bank.Source.Date.ToString("dd MMM yyyy")</td><td><a href="@JournalUrl(bank.Source.SourceId)">@bank.Source.Reference</a></td>
-                            <td>@(bank.Source.IsInput ? "Input" : "Output")</td><td class="number">@bank.Net.ToString("N2")</td><td class="number">@bank.Source.Tax.ToString("N2")</td></tr>
+                            <td>@(bank.Treatment == FijiAccounts.Domain.Tax.VatTreatment.ZeroRated ? "Zero-rated" : bank.Treatment.ToString())</td><td>@(bank.Source.IsInput ? "Input" : "Output")</td><td class="number">@bank.Net.ToString("N2")</td><td class="number">@bank.Source.Tax.ToString("N2")</td></tr>
                     }
                 </tbody>
             </table>

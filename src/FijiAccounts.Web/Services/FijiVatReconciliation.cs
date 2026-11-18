@@ -1,11 +1,17 @@
 using System.Text.Json;
+using FijiAccounts.Domain.Accounting;
+using FijiAccounts.Domain.Tax;
 using FijiAccounts.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace FijiAccounts.Web.Services;
 
-public sealed record VatSource(Guid? JournalId, Guid SourceId, DateOnly Date, string Reference, bool IsInput, decimal Tax);
-public sealed record BankVatEntry(VatSource Source, decimal Net);
+public sealed record VatSource(Guid? JournalId, Guid SourceId, DateOnly Date, string Reference, bool IsInput, decimal Tax)
+{
+    public string? Party { get; init; }
+    public string? Tin { get; init; }
+}
+public sealed record BankVatEntry(VatSource Source, decimal Net, VatTreatment Treatment);
 public sealed record VatDifference(VatSource Source, decimal Workpaper, decimal Ledger)
 {
     public decimal Difference => Ledger - Workpaper;
@@ -68,13 +74,15 @@ public sealed record FijiVatReconciliation(decimal LedgerInput, decimal LedgerOu
                     AND c.OriginalId = upper(json_extract(r.JsonData, '$.OriginalJournalId'))
                 WHERE r.OrganisationId = {organisationId} AND r.EventType = 'BankTransactionCodingReopened'
             )
-            SELECT j.Id AS JournalId, j.Reference, j.EntryDate AS Date, m.JsonData, m.Direction,
+            SELECT j.Id AS JournalId, j.Reference, j.EntryDate AS Date, m.JsonData, m.Direction, target.Type AS TargetType,
                 EXISTS(SELECT 1 FROM PostedJournalLines l JOIN LedgerAccounts a ON a.Id = l.LedgerAccountId
                        WHERE l.PostedJournalId = m.OriginalId AND a.Code = '1150'
                          AND a.Id <> upper(json_extract(m.JsonData, '$.TargetAccountId'))) AS HasGeneratedInput
             FROM movements m JOIN PostedJournals j ON j.Id = m.JournalId
+            JOIN LedgerAccounts target ON target.Id = upper(json_extract(m.JsonData, '$.TargetAccountId')) AND target.OrganisationId = j.OrganisationId
             WHERE j.OrganisationId = {organisationId} AND j.EntryDate BETWEEN {from} AND {to}
-                AND json_extract(m.JsonData, '$.VatAmount') > 0
+                AND (json_extract(m.JsonData, '$.VatAmount') > 0 OR
+                     json_extract(m.JsonData, '$.VatTreatment') IN ({(int)VatTreatment.ZeroRated}, {(int)VatTreatment.Exempt}))
             ORDER BY j.EntryDate, j.SequenceNumber
             """).ToListAsync(ct);
         var entries = new List<BankVatEntry>();
@@ -83,10 +91,16 @@ public sealed record FijiVatReconciliation(decimal LedgerInput, decimal LedgerOu
             using var audit = JsonDocument.Parse(row.JsonData);
             var amount = audit.RootElement.GetProperty("Amount").GetDecimal();
             var tax = audit.RootElement.GetProperty("VatAmount").GetDecimal();
-            var isInput = amount < 0 || row.HasGeneratedInput;
-            var sign = row.Direction * (isInput && amount > 0 ? -1 : 1);
+            var treatment = (VatTreatment)audit.RootElement.GetProperty("VatTreatment").GetInt32();
+            var isInput = tax != 0m ? amount < 0 || row.HasGeneratedInput : row.TargetType switch
+            {
+                AccountType.Expense => true,
+                AccountType.Revenue => false,
+                _ => amount < 0
+            };
+            var sign = row.Direction * (isInput ? -Math.Sign(amount) : Math.Sign(amount));
             entries.Add(new(new(row.JournalId, row.JournalId, row.Date, row.Reference, isInput, sign * tax),
-                sign * (Math.Abs(amount) - tax)));
+                sign * (Math.Abs(amount) - tax), treatment));
         }
         return entries;
     }
@@ -98,6 +112,7 @@ public sealed record FijiVatReconciliation(decimal LedgerInput, decimal LedgerOu
         public DateOnly Date { get; set; }
         public required string JsonData { get; set; }
         public int Direction { get; set; }
+        public AccountType TargetType { get; set; }
         public bool HasGeneratedInput { get; set; }
     }
 }

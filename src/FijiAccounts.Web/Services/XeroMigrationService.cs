@@ -128,9 +128,9 @@ public sealed class XeroMigrationService(
         var organisation = await db.Organisations.SingleAsync(
             x => x.Id == organisationId,
             cancellationToken);
-        if (!organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase))
+        if (organisation.CountryCode is not ("FJ" or "NZ"))
         {
-            throw new InvalidOperationException("Xero migration is currently available for New Zealand organisations.");
+            throw new InvalidOperationException("Xero migration is currently available for Fiji and New Zealand organisations.");
         }
 
         var sourceName = request.SourceOrganisationName.Trim();

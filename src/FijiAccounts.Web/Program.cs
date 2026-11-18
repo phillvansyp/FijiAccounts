@@ -300,6 +300,8 @@ builder.Services.AddScoped<FinancialControlService>();
 builder.Services.AddScoped<FinancialIntelligenceService>();
 builder.Services.AddScoped<CashRunwayService>();
 builder.Services.AddScoped<VatWorkpaperService>();
+builder.Services.AddScoped<FijiVatFilingService>();
+builder.Services.AddScoped<ExternalFiscalReceiptService>();
 builder.Services.AddScoped<NewZealandGstReturnService>();
 builder.Services.AddScoped<VatTurnoverMonitorService>();
 builder.Services.AddScoped<PurchasingService>();
@@ -439,6 +441,20 @@ app.MapGet("/api/o/{organisationId:guid}/xero-migration/files/{fileId:guid}",
         http.Response.Headers["X-Content-Type-Options"] = "nosniff";
         return Results.File(file.Content, file.ContentType, file.FileName);
     }).RequireAuthorization();
+app.MapGet("/api/o/{organisationId:guid}/fiji-vat/{revision:long}/schedule", async (Guid organisationId, long revision,
+    FijiVatFilingService filings, ClaimsPrincipal principal, HttpContext http, CancellationToken ct) =>
+{
+    var user = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (user is null) return Results.Unauthorized();
+    try
+    {
+        var content = await filings.ReadScheduleAsync(user, organisationId, revision, ct);
+        if (content is null) return Results.NotFound();
+        http.Response.Headers.CacheControl = "private, no-store";
+        return Results.File(content, "text/csv; charset=utf-8", $"Fiji-VAT-schedule-{revision}.csv");
+    }
+    catch (UnauthorizedAccessException) { return Results.NotFound(); }
+}).RequireAuthorization();
 app.MapBankStatementDocumentEndpoints();
 app.MapYearEndHandoverPackEndpoints();
 app.MapYearEndReviewAttachmentEndpoints();

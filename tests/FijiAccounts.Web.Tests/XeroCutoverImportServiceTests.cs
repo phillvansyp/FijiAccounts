@@ -228,6 +228,50 @@ public sealed class XeroCutoverImportServiceTests
         Assert.Equal(billFile, billAttachment.Content);
     }
 
+    [Theory]
+    [InlineData("FJD", false)]
+    [InlineData("NZD", false)]
+    [InlineData("FJD", true)]
+    public async Task FijiCutoverChecksSourceCurrencyAndOpeningControlsAtomically(string sourceCurrency, bool unmatched)
+    {
+        await using var t = await AccountingTestDatabase.CreateAsync();
+        var migration = ApprovedMigration(t, new DateOnly(2026, 10, 18));
+        t.Db.XeroMigrations.Add(migration);
+        var store = new DatabaseImmutableDocumentStore(t.Db);
+        var balance = "1100,Receivables";
+        await AddRequiredExportsAsync(t, migration, store,
+            $"Account Code,Account,Debit,Credit\r\n{balance},230.00,\r\n3000,Equity,,230.00\r\n");
+        if (!unmatched)
+        {
+            await AddInvoiceSnapshotAsync(t, migration, store, "sales-invoices", Guid.NewGuid(),
+                "ACCREC", "FJ-OPEN", "customer", t.Customer.Name, "4000", 115m, 0.5m, true);
+            AddMapping(t, migration, XeroMigrationMappingKind.Contact, "customer", t.Customer.Id, nameof(BusinessParty), t.Customer.Name);
+            AddMapping(t, migration, XeroMigrationMappingKind.Account, "4000", t.Account("4000").Id, nameof(LedgerAccount), "4000");
+            AddMapping(t, migration, XeroMigrationMappingKind.TaxRate, "OUTPUT2", Guid.Empty, "VatTreatment", "Standard");
+        }
+        var data = JsonSerializer.SerializeToUtf8Bytes(new { pages = new[] { new { Organisations = new[] { new { BaseCurrency = sourceCurrency } } } } });
+        var obj = store.Stage(t.Organisation.Id, t.UserId, data);
+        t.Db.XeroApiSnapshots.Add(new XeroApiSnapshot { OrganisationId = t.Organisation.Id, XeroMigrationId = migration.Id,
+            DatasetKey = "organisation", DisplayName = "Organisation", Endpoint = "Organisation", RecordCount = 1, PageCount = 1,
+            Size = data.Length, Sha256 = obj.Sha256, ImmutableDocumentObjectId = obj.Id, RetrievedByUserId = t.UserId });
+        await t.Db.SaveChangesAsync();
+        var service = new XeroCutoverImportService(t.Db, t.Access, store, t.Posting, new(t.Db, t.Access, store));
+        if (unmatched || sourceCurrency != "FJD")
+        {
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => service.BuildAsync(t.UserId, t.Organisation.Id));
+            Assert.Contains(unmatched ? "Opening balance mismatch" : "base currency", error.Message);
+            Assert.Empty(await t.Db.PostedJournals.ToListAsync());
+            return;
+        }
+        var result = await service.BuildAsync(t.UserId, t.Organisation.Id);
+        Assert.Equal("FJD", (await t.LoadJournalAsync(result.OpeningJournalId)).Currency);
+        var invoice = await t.Db.SalesInvoices.Include(x => x.Lines).SingleAsync();
+        Assert.Equal("NZD", invoice.Currency);
+        Assert.Equal(230m, invoice.Total);
+        Assert.Equal(200m, Assert.Single(invoice.Lines).NetAmount);
+        Assert.Equal(30m, invoice.VatTotal);
+    }
+
     private static XeroMigration ApprovedMigration(AccountingTestDatabase test, DateOnly cutoverDate) => new()
     {
         OrganisationId = test.Organisation.Id, SourceOrganisationName = "Xero Test Limited",
@@ -260,18 +304,18 @@ public sealed class XeroCutoverImportServiceTests
     private static async Task AddInvoiceSnapshotAsync(
         AccountingTestDatabase test, XeroMigration migration, DatabaseImmutableDocumentStore store,
         string dataset, Guid sourceId, string type, string number, string contactId,
-        string contactName, string accountCode, decimal total)
+        string contactName, string accountCode, decimal total, decimal currencyRate = 1m, bool inclusive = false)
     {
         var root = dataset == "bills" ? "bills" : "sales-invoices";
         var json = $$"""
             {"dataset":"{{root}}","pages":[{"Invoices":[{
               "InvoiceID":"{{sourceId:D}}","InvoiceNumber":"{{number}}","Type":"{{type}}",
               "Date":"2026-10-17","DueDate":"2026-10-31","Status":"AUTHORISED",
-              "CurrencyCode":"NZD","CurrencyRate":1,"SubTotal":{{total / 1.15m}},
+              "LineAmountTypes":"{{(inclusive ? "Inclusive" : "Exclusive")}}","CurrencyCode":"NZD","CurrencyRate":{{currencyRate}},"SubTotal":{{total / 1.15m}},
               "TotalTax":{{total - total / 1.15m}},"Total":{{total}},"AmountDue":{{total}},
               "Contact":{"ContactID":"{{contactId}}","Name":"{{contactName}}"},
               "LineItems":[{"Description":"Imported line","Quantity":1,"UnitAmount":{{total / 1.15m}},
-                "LineAmount":{{total / 1.15m}},"TaxAmount":{{total - total / 1.15m}},
+                "LineAmount":{{(inclusive ? total : total / 1.15m)}},"TaxAmount":{{total - total / 1.15m}},
                 "AccountCode":"{{accountCode}}","TaxType":"OUTPUT2"}]
             }]}]}
             """;

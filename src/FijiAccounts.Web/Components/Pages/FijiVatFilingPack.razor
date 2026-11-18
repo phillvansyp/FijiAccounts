@@ -1,0 +1,145 @@
+@using FijiAccounts.Web.Services
+@inject FijiVatFilingService Filings
+
+<section class="financial-report">
+    <header><div><h2>Manual VAT filing pack</h2><p>@Workpaper.From.ToString("dd MMM yyyy") to @Workpaper.To.ToString("dd MMM yyyy") · @Currency</p></div></header>
+    <p>Prepare the figures here, complete the applicable schedules in TPOS, then record the filing reference. Use the print review button to keep a copy.</p>
+    @if (message is not null) { <div role="status" class="alert @(failed ? "alert-warning" : "alert-success")">@message</div> }
+    @if (CanSave && loaded)
+    {
+        <EditForm Model="form" FormName="fiji-manual-filing" OnSubmit="SaveDraft">
+        <fieldset disabled="@busy">
+        <label class="form-label">VAT accounting basis
+            <select class="form-select" value="@(form.PaymentsBasis ? "payments" : "invoice")" @onchange="ChangeBasis">
+                <option value="invoice">Invoice basis</option><option value="payments">Approved payments basis</option>
+            </select>
+        </label>
+        @if (form.PaymentsBasis)
+        {
+            <label class="form-label">FRCS approval reference<InputText class="form-control" @bind-Value="form.ApprovalReference" maxlength="160" /></label>
+            <p>Enter the figures reviewed against receipts and payments for this period. The local comparison below uses invoice dates.</p>
+        }
+        <p>Check supporting tax invoices, asset sales, partial business use and Xero-only activity. Separate any Customs or reverse-charge amount already included in purchases before entering it on its own line.</p>
+        <div class="row">
+            <label class="col-md-4 form-label">Standard-rated sales including VAT<InputNumber class="form-control" @bind-Value="form.StandardSalesIncludingVat" step="0.01" /></label>
+            <label class="col-md-4 form-label">Zero-rated sales<InputNumber class="form-control" @bind-Value="form.ZeroRatedSales" step="0.01" /></label>
+            <label class="col-md-4 form-label">Exempt sales<InputNumber class="form-control" @bind-Value="form.ExemptSales" step="0.01" /></label>
+            <label class="col-md-4 form-label">Output VAT before filing adjustments<InputNumber class="form-control" @bind-Value="form.OutputVat" step="0.01" /></label>
+            <label class="col-md-4 form-label">Output VAT adjustment (+/−)<InputNumber class="form-control" @bind-Value="form.OutputAdjustment" step="0.01" /></label>
+            <label class="col-md-4 form-label">Eligible VAT on purchases and expenses<InputNumber class="form-control" @bind-Value="form.InputVat" step="0.01" /></label>
+            <label class="col-md-4 form-label">VAT paid to Customs<InputNumber class="form-control" @bind-Value="form.CustomsVat" step="0.01" /></label>
+            <label class="col-md-4 form-label">Reverse-charge VAT paid<InputNumber class="form-control" @bind-Value="form.ReverseChargePaid" step="0.01" /></label>
+            <label class="col-md-4 form-label">Reverse-charge VAT shown in TPOS<InputNumber class="form-control" @bind-Value="form.ReverseChargeOnPortal" step="0.01" /></label>
+            <label class="col-md-4 form-label">Input VAT adjustment (+/−)<InputNumber class="form-control" @bind-Value="form.InputAdjustment" step="0.01" /></label>
+            <label class="col-md-4 form-label">VAT excluded for non-business use<InputNumber class="form-control" @bind-Value="form.NonBusinessVat" step="0.01" /></label>
+        </div>
+        <label class="form-label w-100">Customs or reverse-charge payment evidence (date and receipt or bank reference)<InputText class="form-control" @bind-Value="form.PaymentEvidence" maxlength="500" /></label>
+        <label class="form-label w-100">Adjustments and supporting schedules<InputTextArea class="form-control" @bind-Value="form.Notes" maxlength="2000" /></label>
+        <p><strong>Net VAT payable / (refundable) · @Currency @Format(form.NetVat)</strong></p>
+        <div class="row">
+            <label class="form-label col-md-6">External filing reference<InputText class="form-control" @bind-Value="form.FilingReference" maxlength="160" /></label>
+            <label class="form-label col-md-6">Date filed in TPOS<InputDate class="form-control" @bind-Value="form.FiledOn" /></label>
+        </div>
+        <label class="form-check mb-3"><InputCheckbox class="form-check-input" @bind-Value="reviewed" /> I checked the schedules and these figures agree with the return filed in TPOS.</label>
+        <div class="d-flex gap-2 no-print"><button class="btn btn-secondary" type="submit">Save prepared pack</button>
+        <button class="btn btn-primary" type="button" disabled="@(!reviewed)" @onclick="() => Save(true)">Record external filing</button></div>
+        </fieldset></EditForm>
+    }
+    @if (history.Count > 0)
+    {
+        <h3>Saved packs for this period</h3>
+        @foreach (var revision in history)
+        {
+            var saved = revision.Snapshot;
+            <details><summary>@(saved.Filed ? "Filed externally" : "Prepared") · @revision.SavedAt.ToString("dd MMM yyyy HH:mm 'UTC'") · @saved.Currency @Format(saved.Return.NetVat) @saved.Return.FilingReference</summary>
+                <p>@(saved.Return.PaymentsBasis ? "Payments basis" : "Invoice basis") @saved.Return.ApprovalReference · Filed on @saved.Return.FiledOn?.ToString("dd MMM yyyy")</p>
+                <table class="report-table"><tbody>
+                    <tr><th>Standard-rated sales including VAT</th><td class="number">@Format(saved.Return.StandardSalesIncludingVat)</td></tr>
+                    <tr><th>Zero-rated sales</th><td class="number">@Format(saved.Return.ZeroRatedSales)</td></tr>
+                    <tr><th>Exempt sales</th><td class="number">@Format(saved.Return.ExemptSales)</td></tr>
+                    <tr><th>Output VAT before filing adjustments</th><td class="number">@Format(saved.Return.OutputVat)</td></tr>
+                    <tr><th>Output VAT adjustment (+/−)</th><td class="number">@Format(saved.Return.OutputAdjustment)</td></tr>
+                    <tr><th>Eligible VAT on purchases and expenses</th><td class="number">@Format(saved.Return.InputVat)</td></tr>
+                    <tr><th>VAT paid to Customs</th><td class="number">@Format(saved.Return.CustomsVat)</td></tr>
+                    <tr><th>Reverse-charge VAT paid</th><td class="number">@Format(saved.Return.ReverseChargePaid)</td></tr>
+                    <tr><th>Reverse-charge VAT shown in TPOS</th><td class="number">@Format(saved.Return.ReverseChargeOnPortal)</td></tr>
+                    <tr><th>Input VAT adjustment (+/−)</th><td class="number">@Format(saved.Return.InputAdjustment)</td></tr>
+                    <tr><th>VAT excluded for non-business use</th><td class="number">@Format(saved.Return.NonBusinessVat)</td></tr>
+                </tbody></table>
+                @if (saved.LocalScheduleId is not null)
+                {
+                    <p><a href="@($"/api/o/{OrganisationId}/fiji-vat/{revision.Id}/schedule")" data-enhance-nav="false">Download local transaction schedule (CSV)</a></p>
+                }
+                <p>Evidence and notes: @saved.Return.PaymentEvidence @saved.Return.Notes</p>
+                <p>Local input VAT @Format(saved.Local.InputVat), output VAT @Format(saved.Local.OutputVat). @saved.LedgerDifferences journal differences at review.</p>
+                @if (saved.XeroReview) { <p>Xero coverage required review for this revision.</p> }
+            </details>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public VatWorkpaper Workpaper { get; set; } = null!;
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter, EditorRequired] public string UserId { get; set; } = "";
+    [Parameter, EditorRequired] public string Currency { get; set; } = "";
+    [Parameter] public bool CanSave { get; set; }
+    private IReadOnlyList<FijiVatFilingRevision> history = [];
+    private FijiVatFilingForm form = new();
+    private FijiVatFigures local = null!;
+    private bool reviewed, busy, loaded, failed;
+    private string? message;
+    private static string Format(decimal? amount) => amount?.ToString("N2") ?? "—";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loaded && local == Workpaper.FilingFigures) return;
+        local = Workpaper.FilingFigures!;
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        history = await Filings.HistoryAsync(UserId, OrganisationId, Workpaper.From, Workpaper.To);
+        var latest = history.FirstOrDefault()?.Snapshot;
+        form = latest is null ? FijiVatFilingForm.FromLocal(local)
+            : System.Text.Json.JsonSerializer.Deserialize<FijiVatFilingForm>(System.Text.Json.JsonSerializer.Serialize(latest.Return))!;
+        if (latest is not null && latest.Local != local)
+        {
+            message = "Local totals have changed since this pack was saved. Review the saved figures before recording a new revision.";
+            failed = true;
+        }
+        reviewed = false;
+        loaded = true;
+    }
+
+    private void ChangeBasis(ChangeEventArgs args)
+    {
+        var payments = args.Value?.ToString() == "payments";
+        form = payments ? new FijiVatFilingForm { PaymentsBasis = true } : FijiVatFilingForm.FromLocal(local);
+        reviewed = false;
+        message = "The accounting basis changed. Review the amounts for this basis.";
+        failed = false;
+    }
+
+    private Task SaveDraft() => Save(false);
+    private async Task Save(bool filed)
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            await Filings.SaveAsync(UserId, OrganisationId, Workpaper.From, Workpaper.To, local, form, filed,
+                history.FirstOrDefault()?.Id ?? 0, reviewed);
+            message = filed ? "External filing recorded." : "Prepared pack saved.";
+            failed = false;
+            await Reload();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or UnauthorizedAccessException)
+        {
+            message = ex.Message;
+            failed = true;
+        }
+        finally { busy = false; }
+    }
+}

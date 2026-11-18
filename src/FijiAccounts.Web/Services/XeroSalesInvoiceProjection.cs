@@ -59,7 +59,7 @@ public sealed record XeroSalesInvoiceProjection(
     };
 
     private decimal Base(decimal amount) =>
-        decimal.Round(amount * (CurrencyRate > 0m ? CurrencyRate : 1m), 2, MidpointRounding.AwayFromZero);
+        decimal.Round(amount / (CurrencyRate > 0m ? CurrencyRate : 1m), 2, MidpointRounding.AwayFromZero);
 }
 
 public static class XeroSalesInvoiceProjectionParser
@@ -121,7 +121,7 @@ public static class XeroSalesInvoiceProjectionParser
                 issueDate,
                 dueDate,
                 Text(source, "Status").Trim().ToUpperInvariant(),
-                Fallback(Text(source, "CurrencyCode"), "NZD").ToUpperInvariant(),
+                Fallback(Text(source, "CurrencyCode").ToUpperInvariant(), "Unspecified"),
                 rate,
                 Decimal(source, "SubTotal"),
                 Decimal(source, "TotalTax"),

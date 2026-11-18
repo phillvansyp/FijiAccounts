@@ -178,7 +178,28 @@ else
         </label>
     }
     @if (showImport && accounts.Count > 0) { <section class="add-bank import-panel"><h2>Read bank statement</h2><p>Drop in or select a PDF, CSV, OFX, QFX or QIF statement. We read and preview it before anything is imported. Maximum 5 MB.</p>@if (statementError is not null) { <div class="alert alert-danger">@statementError</div> }<div class="import-fields"><div><label class="form-label">Bank account</label><InputSelect class="form-select" @bind-Value="importBankAccountId"><option value="@Guid.Empty">Choose a bank account</option>@foreach (var account in accounts) { <option value="@account.Id">@account.Name</option> }</InputSelect></div><div><label class="form-label">Statement file</label><InputFile @key="statementInputVersion" class="form-control" OnChange="SelectStatement" accept=".csv,.txt,.ofx,.qfx,.qif,.pdf" />@if (selectedStatement is not null) { <small class="d-block mt-2 text-muted">@selectedStatement.Name - @FormatFileSize(selectedStatement.Size)</small> }</div><div class="d-flex align-items-end"><button type="button" class="btn btn-primary" disabled="@(selectedStatement is null || readingStatement)" @onclick="ReadSelectedStatement">@(readingStatement ? "Reading..." : "Upload and read statement")</button></div></div>
-        @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement - @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
+        @if (statementPreview is not null && access?.Organisation.CountryCode == "FJ")
+        {
+            <fieldset class="mt-3"><legend>Statement coverage check</legend>
+                <p>Enter the period and balances printed on the statement. Use signed balances consistent with the imported amounts.</p>
+                <div class="row">
+                    <label class="col-md-3 form-label">Statement from<input type="date" class="form-control" @bind="coverage.Start" /></label>
+                    <label class="col-md-3 form-label">Statement to<input type="date" class="form-control" @bind="coverage.End" /></label>
+                    <label class="col-md-3 form-label">Opening balance<input type="number" step="0.01" class="form-control" @bind="coverage.Opening" /></label>
+                    <label class="col-md-3 form-label">Closing balance<input type="number" step="0.01" class="form-control" @bind="coverage.Closing" /></label>
+                </div>
+                @if (coverage.Supplied)
+                {
+                    var issue = coverage.Check(statementPreview.Lines);
+                    <p role="status" class="@(issue is null ? "text-success" : "text-danger")">@(issue ?? "Statement movement agrees with the closing balance.")</p>
+                    @if (previousReconciledEnd is DateOnly end && coverage.Start is DateOnly start && start > end.AddDays(1))
+                    {
+                        <p class="alert alert-warning">The last completed reconciliation ends @end.ToString("dd MMM yyyy"). Check coverage from @end.AddDays(1).ToString("dd MMM yyyy") to @start.AddDays(-1).ToString("dd MMM yyyy").</p>
+                    }
+                }
+            </fieldset>
+        }
+        @if (statementPreview is not null) { <div class="mt-4"><div class="d-flex justify-content-between align-items-center"><div><strong>@statementPreview.Format statement - @statementPreview.Lines.Count transactions</strong><small class="d-block text-muted">Check every date and amount before importing, especially values read from PDF.</small></div><button class="btn btn-primary" disabled="@(coverage.Check(statementPreview.Lines) is not null)" @onclick="ImportPreview">Import statement</button></div><div class="table-responsive mt-3"><table class="table"><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="text-end">Amount</th></tr></thead><tbody>@foreach (var line in statementPreview.Lines) { <tr><td>@line.Date.ToString("dd MMM yyyy")</td><td>@line.Description</td><td>@line.Reference</td><td class="text-end @(line.Amount >= 0 ? "money-in" : "money-out")">@line.Amount.ToString("N2")</td></tr> }</tbody></table></div></div> }
     </section> }
     @if (showImportHistory)
     {
@@ -943,7 +964,7 @@ else
     [Parameter] public Guid OrganisationId { get; set; }
     private const long MaxStatementBytes = 5 * 1024 * 1024;
     private const int ReconciliationPageSize = 25;
-    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private Guid[] accessibleDivisionIds = []; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<Branch> branches = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
+    private AccessibleOrganisation? access; private string userId = ""; private bool canManage, canReconcile, showAdd, showStatement, showImport, showImportHistory, showFeeds, readingStatement, postingCoding, deletingImport; private Guid importBankAccountId; private Guid? codingStatementId; private Guid? confirmingImportBatchId; private SelectedStatementFile? selectedStatement; private int statementInputVersion; private StatementCoverage coverage = new(); private DateOnly? previousReconciledEnd; private StatementPreview? statementPreview; private string? statementError; private string? codingError; private string? codingSuggestion; private Guid[] accessibleDivisionIds = []; private List<LedgerAccount> accounts = []; private List<LedgerAccount> codingAccounts = []; private List<Branch> branches = []; private List<PostedJournalLine> transactions = []; private List<BankStatementLine> statementLines = []; private List<BankStatementImportBatch> statementImports = []; private Dictionary<Guid, LedgerAccount> codedAccounts = []; private Dictionary<Guid, CodedVatInfo> codedVat = []; private Dictionary<Guid, decimal> balances = []; private BankModel model = new(); private StatementModel statementModel = new(); private CodingModel codingModel = new(); private string codingMode = "ledger"; private string? status; private string statusClass = "alert-success";
     private List<BankReconciliationSession> reconciliationSessions = [];
     private HashSet<Guid> changedCompletedSessionIds = [];
     private string reconciliationSearch = string.Empty;
@@ -2011,6 +2032,8 @@ await Reload();
     {
         selectedStatement = null;
         statementPreview = null;
+        coverage = new();
+        previousReconciledEnd = null;
         statementError = null;
         readingStatement = false;
         statementInputVersion++;
@@ -2035,6 +2058,8 @@ await Reload();
          */
         selectedStatement = null;
         statementPreview = null;
+        coverage = new();
+        previousReconciledEnd = null;
         statementError = null;
         readingStatement = false;
         status = null;
@@ -2084,6 +2109,10 @@ await Reload();
             selectedStatement.Content,
             writable: false);
 
+        coverage = new();
+        previousReconciledEnd = await Db.BankReconciliationSessions.AsNoTracking()
+            .Where(x => x.OrganisationId == OrganisationId && x.BankAccountId == importBankAccountId && x.IsCompleted)
+            .MaxAsync(x => (DateOnly?)x.StatementEndDate);
         statementPreview = await StatementImport.ReadAsync(
             stream,
             selectedStatement.Name,
@@ -2099,6 +2128,8 @@ await Reload();
     catch (Exception ex)
     {
         statementPreview = null;
+        coverage = new();
+        previousReconciledEnd = null;
 
         statementError = $"We could not read this statement: {ex.Message}";
         status = null;
@@ -2124,7 +2155,7 @@ await Reload();
                     selectedStatement!.Name,
                     selectedStatement.ContentType,
                     selectedStatement.Size,
-                    selectedStatement.Content));
+                    selectedStatement.Content), coverage: coverage);
             var automatic = await CodingAutomation.ApplyAllAsync(userId, OrganisationId);
             statusClass = "alert-success";
             status = $"Imported {result.Imported} statement line{(result.Imported == 1 ? "" : "s")}. " +

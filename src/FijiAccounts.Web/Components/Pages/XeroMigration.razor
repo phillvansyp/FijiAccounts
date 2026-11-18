@@ -25,9 +25,9 @@ else if (access is null)
 {
     <div class="alert alert-danger">You do not have access to this organisation.</div>
 }
-else if (!IsNz)
+else if (!SupportsMigration)
 {
-    <div class="alert alert-warning">This Xero migration workspace is available for New Zealand organisations.</div>
+    <div class="alert alert-warning">This Xero migration workspace is available for Fiji and New Zealand organisations.</div>
 }
 else
 {
@@ -171,7 +171,7 @@ else
                     case XeroMigrationAssistantAction.SupplyEvidence:
                         <div class="guided-action-panel guided-evidence">
                             <div>
-                                <strong>Add @CurrentMissingEvidenceCategory</strong>
+                                <strong>Add @EvidenceLabel(CurrentMissingEvidenceCategory)</strong>
                                 <p>@CurrentEvidenceGuidance</p>
                                 <small>@MissingEvidenceCategories.Count required report set(s) remain. The original file is retained with its fingerprint.</small>
                             </div>
@@ -303,7 +303,7 @@ else
                 <ul>
                     @foreach (var category in MissingEvidenceCategories.Take(5))
                     {
-                        <li>@category</li>
+                        <li>@EvidenceLabel(category)</li>
                     }
                     @if (MissingEvidenceCategories.Count > 5)
                     {
@@ -441,7 +441,7 @@ else
                     <li>Chart of Accounts, Contacts, invoices, bills, credit notes, payments, prepayments and overpayments.</li>
                     <li>Receivable Invoice Detail and Payable Invoice Detail, including all open allocations.</li>
                     <li>Bank Reconciliation reports plus statements for every bank, card and loan account.</li>
-                    <li>Fixed Asset Reconciliation and asset list for each year, every filed GST return, and annual payroll activity reports.</li>
+                    <li>Fixed Asset Reconciliation and asset list for each year, every filed @TaxName return, and annual payroll activity reports.</li>
                     <li>If used, export inventory, budgets and tracking categories. Retain quotes, purchase orders and repeating templates separately. Account Island copies available Xero attachments automatically.</li>
                     <li>Keep every original Xero export unchanged.</li>
                     <li>Before the final copy, allocate or refund any unallocated credit notes, prepayments and overpayments so the opening customer and supplier ledgers can be recreated exactly.</li>
@@ -482,7 +482,7 @@ else
                     <select class="form-select" @bind="selectedCategory" disabled="@(!canPrepare || uploading)">
                         @foreach (var category in XeroMigrationService.Categories)
                         {
-                            <option value="@category">@category</option>
+                            <option value="@category">@EvidenceLabel(category)</option>
                         }
                     </select>
                 </div>
@@ -504,7 +504,7 @@ else
                     <div>
                         <span class="dataset-check">@(categorySupplied ? "✓" : "○")</span>
                         <div>
-                            <strong>@category</strong>
+                            <strong>@EvidenceLabel(category)</strong>
                             <small>@(categoryFiles.Count > 0 ? (required ? "Required · source file retained" : "Source file retained") : categorySupplied ? "Copied directly from Xero" : required ? "Required" : "If used")</small>
                         </div>
                     </div>
@@ -524,7 +524,7 @@ else
             <div><p class="step-label">Step 3</p><h2>Prepare and map the Xero records</h2></div>
             <span>@(workspace.SourceRecordCount == 0 ? "Not prepared" : $"{workspace.SourceRecordCount:N0} source records")</span>
         </div>
-        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, GST rates, contacts, currencies, items and tracking options to Account Island. At approved cutover, the final Trial Balance CSV creates one opening journal, open invoices and bills continue as live records with their Xero attachments, active assets enter the asset register, and older transactions and files remain available in the immutable Xero archive. This avoids posting the same history twice.</p>
+        <p class="section-intro">This builds the traceable import index, checks every source identity and matches Xero accounts, @TaxName rates, contacts, currencies, items and tracking options to Account Island. At approved cutover, the final Trial Balance CSV creates one opening journal, open invoices and bills continue as live records with their Xero attachments, active assets enter the asset register, and older transactions and files remain available in the immutable Xero archive. This avoids posting the same history twice.</p>
         <div class="import-actions">
             @if (canPrepare && migration is not null)
             {
@@ -615,7 +615,7 @@ else
             @Check("Payables agree", "Open supplier bills and credits agree to the aged payables control total.", nameof(model.PayablesReconciled), model.PayablesReconciled)
             @Check("Banks agree", "Every bank, card and loan agrees to its final reconciled statement balance.", nameof(model.BankReconciled), model.BankReconciled)
             @Check("Fixed assets agree", "Cost, accumulated depreciation and net book value agree to Xero.", nameof(model.FixedAssetsReconciled), model.FixedAssetsReconciled)
-            @Check("GST agrees", "The GST control accounts agree to the last filed return and the next unfiled period.", nameof(model.GstReconciled), model.GstReconciled)
+            @Check($"{TaxName} agrees", $"The {TaxName} control accounts agree to the last filed return and the next unfiled period.", nameof(model.GstReconciled), model.GstReconciled)
         </div>
         <label class="option-card approval mt-3">
             <InputCheckbox class="form-check-input" @bind-Value="model.ManagementApproved" disabled="@(!canApprove || !CutoverCanBeApproved || busy)" />
@@ -656,7 +656,9 @@ else
     private readonly List<string> unclassifiedFiles = [];
     private bool loading = true, busy, uploading, syncing, preparingImport, runningAutomation, canPrepare, canApprove;
     private bool restartConfirmationVisible, restartAcknowledged;
-    private bool IsNz => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true;
+    private bool SupportsMigration => access?.Organisation.CountryCode is "FJ" or "NZ";
+    private string TaxName => access?.Organisation.TaxLabel ?? "GST";
+    private string EvidenceLabel(string value) => value.Replace("GST", TaxName);
     private string OrganisationName => access is null ? string.Empty : OrganisationDisplay.NameWithCountry(access.Organisation);
     private int SuppliedRequiredCount => migration is null ? 0 : XeroMigrationService.RequiredCategories.Count(category =>
         XeroMigrationService.HasRequiredEvidenceCategory(migration, category));
@@ -673,7 +675,7 @@ else
         "Payable Invoice Detail" => "Export Payable Invoice Detail at the final Xero date, including supplier credits and allocations.",
         "Bank statements and reconciliation" => "Export the reconciliation report and final statement for every bank, card and loan account.",
         "Fixed assets and depreciation reconciliation" => "Export the fixed asset list and depreciation reconciliation for each financial year.",
-        "GST returns and reconciliation" => "Export every filed GST return and the reconciliation for the next unfiled period.",
+        "GST returns and reconciliation" => $"Export every filed {TaxName} return and the reconciliation for the next unfiled period.",
         "Payroll history reports" => "Export annual payroll activity and liability reports. Employee payroll records will continue in NZ Pay.",
         "Document attachments" => "Account Island normally copies Xero attachments automatically. If Xero could not provide them, download the supporting documents from Xero and upload the retained ZIP here.",
         _ => $"Export the original {CurrentMissingEvidenceCategory} report from Xero without editing it."
@@ -689,7 +691,7 @@ else
         !model.PayablesReconciled ? new("Confirm payables", "Compare open supplier bills and credits to Xero's final aged payables total.", nameof(model.PayablesReconciled)) :
         !model.BankReconciled ? new("Confirm bank balances", "Compare every bank, card and loan account to its final reconciled Xero statement balance.", nameof(model.BankReconciled)) :
         !model.FixedAssetsReconciled ? new("Confirm fixed assets", "Compare asset cost, accumulated depreciation and net book value to the final Xero fixed asset reconciliation.", nameof(model.FixedAssetsReconciled)) :
-        !model.GstReconciled ? new("Confirm GST", "Compare the GST control accounts to the last filed return and the next unfiled Xero period.", nameof(model.GstReconciled)) : null;
+        !model.GstReconciled ? new($"Confirm {TaxName}", $"Compare the {TaxName} control accounts to the last filed return and the next unfiled Xero period.", nameof(model.GstReconciled)) : null;
     private List<XeroApiSnapshot> LatestSnapshots => migration?.ApiSnapshots
         .GroupBy(x => x.DatasetKey)
         .Select(group => group.OrderByDescending(x => x.RetrievedAt).First())
@@ -708,7 +710,7 @@ else
         EvidenceControl("Payables", "Payable Invoice Detail", "bills", "Supplier bills, credits and open allocations."),
         EvidenceControl("Banks", "Bank statements and reconciliation", "bank-transactions", "Final statements support every bank, card and loan."),
         EvidenceControl("Fixed assets", "Fixed assets and depreciation reconciliation", "assets", "The report supports cost and depreciation when Xero cannot return individual assets."),
-        EvidenceControl("GST", "GST returns and reconciliation", "tax-rates", "Filed returns and the next unfiled period support the GST control."),
+        EvidenceControl(TaxName, "GST returns and reconciliation", "tax-rates", $"Filed returns and the next unfiled period support the {TaxName} control."),
         new("Final Xero stop", model.XeroEntryStopped,
             model.XeroEntryStopped ? "Management has confirmed that no later entries will be made in Xero." : "Confirm this only after the final Xero copy has been taken.")
     ];
@@ -1164,9 +1166,9 @@ else
     private IReadOnlyList<XeroMappingTarget> Targets(XeroMigrationMappingKind kind) =>
         mappingTargets.GetValueOrDefault(kind) ?? [];
     private string MappingSelection(Guid mappingId) => mappingSelections.GetValueOrDefault(mappingId) ?? string.Empty;
-    private static string MappingKindLabel(XeroMigrationMappingKind kind) => kind switch
+    private string MappingKindLabel(XeroMigrationMappingKind kind) => kind switch
     {
-        XeroMigrationMappingKind.TaxRate => "GST rate",
+        XeroMigrationMappingKind.TaxRate => $"{TaxName} rate",
         XeroMigrationMappingKind.TrackingCategory => "Xero tracking category",
         XeroMigrationMappingKind.TrackingOption => "Xero tracking value",
         XeroMigrationMappingKind.AssetType => "Fixed asset account",

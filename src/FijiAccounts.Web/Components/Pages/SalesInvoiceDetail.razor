@@ -24,6 +24,10 @@
 @if (invoice is null || access is null) { <div class="alert alert-danger">Invoice not found or access denied.</div> }
 else
 {
+    @if (access.Organisation.CountryCode == "FJ" && invoice.Status != InvoiceStatus.Draft)
+    {
+        <ExternalFiscalReceiptPanel @key="InvoiceId" OrganisationId="OrganisationId" DocumentId="InvoiceId" UserId="@userId" CanSave="canPost" />
+    }
     <InvoiceCorrectionNotice OrganisationId="OrganisationId" DocumentId="InvoiceId" IsSales="true" />
     <a class="btn btn-outline-primary mb-3" href="@($"/o/{OrganisationId}/payments/document/{InvoiceId}")">Payments and bank connections</a>
     <div class="detail-actions no-print justify-content-end"><div>

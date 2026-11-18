@@ -52,8 +52,8 @@ public sealed class XeroSalesInvoiceProjectionTests
         Assert.Equal("Example Customer", invoice.ContactName);
         Assert.Equal("PartPaid", invoice.StatusKey);
         Assert.Equal("Part paid", invoice.StatusLabel);
-        Assert.Equal(172.50m, invoice.BaseTotal);
-        Assert.Equal(112.50m, invoice.BaseAmountDue);
+        Assert.Equal(76.67m, invoice.BaseTotal);
+        Assert.Equal(50m, invoice.BaseAmountDue);
         Assert.Single(invoice.Lines);
         Assert.Equal("Consulting", invoice.Lines[0].Description);
         Assert.Equal(15m, invoice.Lines[0].TaxAmount);

@@ -840,8 +840,8 @@ public sealed class XeroImportPreparationService(
         var text = $"{mapping.SourceKey} {mapping.SourceName}".ToUpperInvariant();
         var target = text.Contains("EXEMPT") ? nameof(VatTreatment.Exempt)
             : text.Contains("ZERO") ? nameof(VatTreatment.ZeroRated)
-            : text.Contains("OUTPUT") || text.Contains("INPUT") || text.Contains("GST") ? nameof(VatTreatment.Standard)
-            : text.Contains("NONE") || text.Contains("EXCLUDED") || text.Contains("OUT OF SCOPE") ? nameof(VatTreatment.OutOfScope)
+            : text.Contains("NONE") || text.Contains("EXCLUDED") || text.Contains("OUT OF SCOPE") || text.Contains("NO VAT") || text.Contains("NO GST") ? nameof(VatTreatment.OutOfScope)
+            : text.Contains("OUTPUT") || text.Contains("INPUT") || text.Contains("GST") || text.Contains("VAT") ? nameof(VatTreatment.Standard)
             : null;
         return (null, target, nameof(VatTreatment));
     }

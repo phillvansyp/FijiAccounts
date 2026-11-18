@@ -33,6 +33,8 @@ public sealed record VatWorkpaper(
     public VatTreatmentSummary? PurchasesBeforeAdjustments { get; init; }
     public IReadOnlyList<VatBillAdjustment> BillAdjustments { get; init; } = [];
 
+    public IReadOnlyList<FijiVatScheduleLine> LocalSchedule { get; init; } = [];
+    public FijiVatFigures? FilingFigures { get; init; }
     public FijiVatReconciliation? Reconciliation { get; init; }
 
     public decimal OutputTax =>
@@ -95,7 +97,7 @@ public sealed class VatWorkpaperService(
                         x.VatTreatment,
                         x.NetAmount,
                         x.VatAmount,
-                        new VatSource(x.SalesInvoice.PostedJournalId, x.SalesInvoiceId, x.SalesInvoice.IssueDate, x.SalesInvoice.InvoiceNumber, false, 0m)))
+                        new VatSource(x.SalesInvoice.PostedJournalId, x.SalesInvoiceId, x.SalesInvoice.IssueDate, x.SalesInvoice.InvoiceNumber, false, 0m) { Party = x.SalesInvoice.RecipientNameSnapshot ?? x.SalesInvoice.Customer.Name, Tin = x.SalesInvoice.RecipientTinSnapshot ?? x.SalesInvoice.Customer.Tin }))
                 .ToListAsync(ct);
 
         var salesVoids =
@@ -104,7 +106,7 @@ public sealed class VatWorkpaperService(
                     v.VoidDate >= from && v.VoidDate <= to)
                 .Join(db.SalesInvoiceLines, v => v.SalesInvoiceId, x => x.SalesInvoiceId, (v, x) => new VatLine(
                     x.VatTreatment, -x.NetAmount, -x.VatAmount,
-                    new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SalesInvoice.InvoiceNumber, false, 0m)))
+                    new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SalesInvoice.InvoiceNumber, false, 0m) { Party = v.SalesInvoice.RecipientNameSnapshot ?? v.SalesInvoice.Customer.Name, Tin = v.SalesInvoice.RecipientTinSnapshot ?? v.SalesInvoice.Customer.Tin }))
                 .ToListAsync(ct);
 
         sales.AddRange(salesVoids);
@@ -121,10 +123,10 @@ public sealed class VatWorkpaperService(
                         x.VatTreatment,
                         x.NetAmount,
                         x.VatAmount,
-                        new VatSource(x.SupplierBill.PostedJournalId, x.SupplierBillId, x.SupplierBill.BillDate, x.SupplierBill.BillNumber, true, 0m)))
+                        new VatSource(x.SupplierBill.PostedJournalId, x.SupplierBillId, x.SupplierBill.BillDate, x.SupplierBill.BillNumber, true, 0m) { Party = x.SupplierBill.Supplier.Name, Tin = x.SupplierBill.Supplier.Tin }))
                 .ToListAsync(ct);
 
-        var purchasesBeforeAdjustments = Summarise(purchases);
+        var originalPurchases = purchases.ToList();
         var adjustments = await db.SupplierBillVoids.AsNoTracking()
             .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
             .Select(v => new VatBillAdjustment(v.SupplierBillId, v.SupplierBill.BillNumber,
@@ -139,14 +141,14 @@ public sealed class VatWorkpaperService(
         var purchaseVoids = await db.SupplierBillVoids.AsNoTracking()
             .Where(v => v.OrganisationId == organisationId && v.VoidDate >= from && v.VoidDate <= to)
             .Join(db.SupplierBillLines, v => v.SupplierBillId, x => x.SupplierBillId, (v, x) => new VatLine(x.VatTreatment, -x.NetAmount, -x.VatAmount,
-                new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SupplierBill.BillNumber, true, 0m)))
+                new VatSource(v.PostedJournalId, v.Id, v.VoidDate, v.SupplierBill.BillNumber, true, 0m) { Party = v.SupplierBill.Supplier.Name, Tin = v.SupplierBill.Supplier.Tin }))
             .ToListAsync(ct);
         purchases.AddRange(purchaseVoids);
 
         var purchaseReinstatements = await db.SupplierBillReinstatements.AsNoTracking()
             .Where(r => r.OrganisationId == organisationId && r.ReinstatementDate >= from && r.ReinstatementDate <= to)
             .Join(db.SupplierBillLines, r => r.SupplierBillId, x => x.SupplierBillId, (r, x) => new VatLine(x.VatTreatment, x.NetAmount, x.VatAmount,
-                new VatSource(r.PostedJournalId, r.Id, r.ReinstatementDate, r.SupplierBill.BillNumber, true, 0m)))
+                new VatSource(r.PostedJournalId, r.Id, r.ReinstatementDate, r.SupplierBill.BillNumber, true, 0m) { Party = r.SupplierBill.Supplier.Name, Tin = r.SupplierBill.Supplier.Tin }))
             .ToListAsync(ct);
         purchases.AddRange(purchaseReinstatements);
 
@@ -213,29 +215,47 @@ public sealed class VatWorkpaperService(
             foreach (var bank in reconciliation.BankEntries)
             {
                 var lines = bank.Source.IsInput ? purchases : sales;
-                lines.Add(new VatLine(VatTreatment.Standard, bank.Net, bank.Source.Tax, bank.Source));
+                var line = new VatLine(bank.Treatment, bank.Net, bank.Source.Tax, bank.Source);
+                lines.Add(line);
+                if (bank.Source.IsInput) originalPurchases.Add(line);
             }
-            purchasesBeforeAdjustments = purchasesBeforeAdjustments with
-            {
-                StandardTax = purchasesBeforeAdjustments.StandardTax + reconciliation.BankEntries.Where(x => x.Source.IsInput).Sum(x => x.Source.Tax),
-                StandardNet = purchasesBeforeAdjustments.StandardNet + reconciliation.BankEntries.Where(x => x.Source.IsInput).Sum(x => x.Net)
-            };
+        }
+
+        var summarisedSales = Summarise(sales);
+        var salesCreditTotals = NetAdjustments(salesCredits, salesCreditReversals);
+        var supplierCreditTotals = NetAdjustments(supplierCredits, supplierCreditReversals);
+        var summarisedPurchases = Summarise(purchases);
+        FijiVatFigures? filing = null;
+        if (isFiji)
+        {
+            var creditLines = await db.SalesCreditNoteLines.AsNoTracking()
+                .Where(x => x.SalesCreditNote.OrganisationId == organisationId && x.SalesCreditNote.Status == SalesCreditNoteStatus.Posted &&
+                    x.SalesCreditNote.CreditDate >= from && x.SalesCreditNote.CreditDate <= to)
+                .Select(x => new { x.VatTreatment, Net = -x.NetAmount }).ToListAsync(ct);
+            creditLines.AddRange(await db.SalesCreditNoteReversals.AsNoTracking()
+                .Where(r => r.OrganisationId == organisationId && r.Status == SalesCreditNoteReversalStatus.Posted && r.ReversalDate >= from && r.ReversalDate <= to)
+                .Join(db.SalesCreditNoteLines, r => r.SalesCreditNoteId, x => x.SalesCreditNoteId,
+                    (r,x) => new { x.VatTreatment, Net = x.NetAmount }).ToListAsync(ct));
+            var output = summarisedSales.TotalTax - salesCreditTotals.Tax;
+            filing = new(summarisedSales.StandardNet + output + creditLines.Where(x => x.VatTreatment == VatTreatment.Standard).Sum(x => x.Net),
+                summarisedSales.ZeroRatedNet + creditLines.Where(x => x.VatTreatment == VatTreatment.ZeroRated).Sum(x => x.Net),
+                summarisedSales.ExemptNet + creditLines.Where(x => x.VatTreatment == VatTreatment.Exempt).Sum(x => x.Net),
+                output, summarisedPurchases.TotalTax - supplierCreditTotals.Tax);
         }
 
         return new VatWorkpaper(
             from,
             to,
-            Summarise(sales),
-            NetAdjustments(
-                salesCredits,
-                salesCreditReversals),
-            Summarise(purchases),
-            NetAdjustments(
-                supplierCredits,
-                supplierCreditReversals))
+            summarisedSales, salesCreditTotals, summarisedPurchases, supplierCreditTotals)
         {
+            LocalSchedule = isFiji ? sales.Concat(purchases).Select(x => new FijiVatScheduleLine(x.Source, x.Treatment.ToString(), x.Net, x.Tax))
+                .Concat(salesCredits.Concat(supplierCredits).Select(x => new FijiVatScheduleLine(x.Source, "Credit", -x.Net, -x.Tax)))
+                .Concat(salesCreditReversals.Concat(supplierCreditReversals).Select(x => new FijiVatScheduleLine(x.Source, "Credit reversal", x.Net, x.Tax)))
+                .OrderBy(x => x.Source.Date).ThenBy(x => x.Source.Reference).ThenBy(x => x.Source.SourceId)
+                .ThenBy(x => x.Treatment).ThenBy(x => x.Net).ThenBy(x => x.Vat).ToArray() : [],
+            FilingFigures = filing,
             Reconciliation = reconciliation,
-            PurchasesBeforeAdjustments = purchasesBeforeAdjustments,
+            PurchasesBeforeAdjustments = Summarise(originalPurchases),
             BillAdjustments = adjustments.OrderBy(x => x.Date).ThenBy(x => x.BillNumber).ToArray()
         };
     }
