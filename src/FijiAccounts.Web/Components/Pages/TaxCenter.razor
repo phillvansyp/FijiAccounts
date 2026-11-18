@@ -168,6 +168,7 @@ else
 
             @if (workpaper.Reconciliation is not null)
             {
+                <FijiVatFilingPack @key="(OrganisationId, workpaper.From, workpaper.To)" Workpaper="workpaper" OrganisationId="OrganisationId" UserId="@(userId!)" CanSave="canEditForecast" Currency="@access.Organisation.BaseCurrency" />
                 <FijiVatReview Workpaper="workpaper" OrganisationId="OrganisationId" UsesXero="usesXero" Currency="@access.Organisation.BaseCurrency" />
             }
             @if (nzReturn is not null)

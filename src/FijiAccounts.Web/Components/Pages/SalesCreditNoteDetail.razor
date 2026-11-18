@@ -20,6 +20,10 @@
 }
 else
 {
+    @if (access.Organisation.CountryCode == "FJ" && credit.Status == SalesCreditNoteStatus.Posted)
+    {
+        <ExternalFiscalReceiptPanel @key="CreditNoteId" OrganisationId="OrganisationId" DocumentId="CreditNoteId" Refund="true" UserId="@userId" CanSave="canPost" />
+    }
     <div class="detail-actions no-print">
         @if (credit.Status == SalesCreditNoteStatus.Draft && canPost)
         {
