@@ -1,0 +1,209 @@
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
+@inject IServiceScopeFactory Scopes
+@inject AuthenticationStateProvider Authentication
+
+<h1>Xero reconciliation and monthly reports</h1>
+@if (!ready)
+{
+    <p role="status">Loading reconciliation.</p>
+}
+else if (organisation is null || connection is null)
+{
+    <p>A connected Xero organisation and organisation-wide reporting access are required.</p>
+}
+else
+{
+    <p>@organisation.LegalName · @organisation.BaseCurrency · Xero organisation @connection.XeroTenantName</p>
+    <form action="@($"o/{OrganisationId}/integrations/xero/reconciliation")" method="get" class="d-flex align-items-end gap-2 mb-3">
+        <label>As at <input class="form-control" type="date" name="asAt" value="@date.ToString("yyyy-MM-dd")" required /></label>
+        <button class="btn btn-secondary">Change date</button>
+    </form>
+    @if (message.Length > 0) { <p role="status" class="alert alert-info">@message</p> }
+    @if (!string.IsNullOrWhiteSpace(connection.LastSyncError))
+    {
+        <p class="alert alert-warning">@connection.LastSyncError <a href="@($"o/{OrganisationId}/integrations/xero")">Dataset checks and retry time</a></p>
+    }
+    <h2>Balances at @date.ToString("d MMM yyyy")</h2>
+    <p>Compare the posted Account Island ledger with the closing balances in the retained Xero Trial Balance. A dash means the source or matching account is unavailable. An opening balance that has yet to be posted can leave the local ledger incomplete.</p>
+    <p>Xero Trial Balance retrieved @TimeOf(checklist.GetValueOrDefault("trial-balance")). Local ledger read @TimeOf(readAt).</p>
+    <div class="table-responsive"><table class="table">
+        <thead><tr><th>Account</th><th>Account Island ledger</th><th>Xero ledger</th><th>Local less Xero</th></tr></thead>
+        <tbody>@foreach (var item in comparisons)
+        {
+            <tr><td>@if (item.Code is { } code) { <a href="@($"o/{OrganisationId}/report-transactions?account={Uri.EscapeDataString(code)}&to={date:yyyy-MM-dd}")">@item.Label</a> } else { @item.Label }</td>
+            <td>@Money(item.Ledger)</td><td>@Money(item.Xero)</td><td>@Money(item.Ledger - item.Xero)</td></tr>
+        }</tbody>
+    </table></div>
+    <h2>Bank reconciliation</h2>
+    <div class="table-responsive"><table class="table">
+        <thead><tr><th>Bank account</th><th>Statement ending on selected date</th><th>Statement less Xero ledger</th><th>Currently unmatched lines through date</th><th>Last completed statement period</th></tr></thead>
+        <tbody>@foreach (var item in comparisons.Where(x => x.Bank))
+        {
+            <tr><td>@item.Label</td><td>@Money(item.Statement)</td><td>@Money(item.Statement - item.Xero)</td><td>@(item.Unmatched?.ToString() ?? "—")</td><td>@(item.LastReconciliation?.ToString("d MMM yyyy") ?? "—")</td></tr>
+        }</tbody>
+    </table></div>
+    <p>Statement balances and reconciliation dates come from Account Island bank reconciliation sessions. <a href="@($"o/{OrganisationId}/banking")">Open Banking</a></p>
+    <h2>Invoices, bills and unapplied credits</h2>
+    @if (date == today)
+    {
+        <button class="btn btn-secondary" disabled="@busy" @onclick="ReadDocuments">Check current open documents</button>
+        @if (documents != null)
+        {
+            @foreach (var side in documents)
+            {
+                <details class="my-2"><summary>@side.Name · @Money(side.Items.Sum(i => i.Amount)) · difference from Xero control @Money(side.Items.Sum(i => i.Amount) - side.Control)</summary>
+                @foreach (var contact in side.Items.GroupBy(i => (i.ContactId, i.Contact)).OrderBy(g => g.Key.Contact))
+                {
+                    <details class="ms-3"><summary>@contact.Key.Contact · @Money(contact.Sum(i => i.Amount))</summary>
+                    <ul>@foreach (var doc in contact) { <li>@doc.Document · @Money(doc.Amount)</li> }</ul>
+                    @if (contact.Key.ContactId is Guid id)
+                    {
+                        <button disabled="@busy" class="btn btn-outline-secondary btn-sm" @onclick="() => FetchContact(side.Payable, id, contact.Key.Contact)">Compare with Xero ageing for this contact</button>
+                    }
+                    </details>
+                }
+                </details>
+            }
+        }
+    }
+    else
+    {
+        <p>Historical local balances use postings through the selected date. For document-level historical balances, use Xero's dated receivable and payable invoice detail exports in the <a href="@LibraryUrl">report library</a>.</p>
+    }
+    <h2>Monthly report checklist</h2>
+    <p>Reporting month @date.ToString("MMMM yyyy"), through @date.ToString("d MMM"). Retrieving a report keeps a dated copy in Account Island.</p>
+    <table class="table"><thead><tr><th>Report</th><th>Source</th><th>Copy retrieved</th><th></th></tr></thead>
+    <tbody>@foreach (var item in ReportKinds)
+    {
+        <tr><td>@item.Name</td><td>Xero Reporting API</td><td>@TimeOf(checklist.GetValueOrDefault(item.Key))</td>
+        <td><button class="btn btn-outline-secondary btn-sm" disabled="@(busy || (item.Key == "balance-sheet" && date.Day != DateTime.DaysInMonth(date.Year, date.Month)))" @onclick="() => Fetch(item.Key, item.Name)">Retrieve report</button>
+        @if (checklist.ContainsKey(item.Key)) { <button class="btn btn-link btn-sm" disabled="@busy" @onclick="() => OpenCopy(item.Key, item.Name)">View copy</button> }</td></tr>
+    }</tbody></table>
+    @if (report != null)
+    {
+        <h3>@reportLabel</h3>
+        @if (report.Message != null) { <p>@report.Message <a href="@report.Source" target="_blank" rel="noopener">Open in Xero</a></p> }
+        @if (report.RetrievedAt.HasValue) { <p>Source retrieved @TimeOf(report.RetrievedAt).</p> }
+        <div class="table-responsive"><table class="table table-sm"><tbody>@foreach (var row in report.Rows)
+        {
+            @if (row.Title != null) { <tr><th colspan="8">@row.Title</th></tr> }
+            @if (row.Cells.Count > 0) { <tr>@foreach (var cell in row.Cells) { <td>@cell</td> }</tr> }
+        }</tbody></table></div>
+    }
+    <h2>Original reports and supporting documents</h2>
+    <p>Retain the full Cash Summary, Bank Reconciliation, statements and dated aged-detail exports in the <a href="@LibraryUrl">Xero report library</a>. The <a href="@($"o/{OrganisationId}/migration/xero#source-evidence")">migration workspace</a> collects original exports, source attachments and posted journals where authorised. Quotes, purchase orders and repeating templates are also checked by scheduled sync.</p>
+    <h2>Collection coverage</h2>
+    <p><a href="@($"o/{OrganisationId}/assets")">Fixed asset types and register</a> · <a href="@($"o/{OrganisationId}/integrations/xero")">Record counts and last successful check by dataset</a></p>
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public DateOnly? RequestedDate { get; set; }
+    private static readonly (string Key, string Name)[] ReportKinds = [("trial-balance","Trial Balance"),("profit-loss","Profit and Loss"),
+        ("balance-sheet","Balance Sheet (month-end)"),("bank-summary","Bank Summary"),("budget","Budget Summary"),("gst","Finalised GST return for these dates")];
+    private sealed record Side(string Name, bool Payable, decimal? Control, IReadOnlyList<XeroOpenBalance> Items);
+    private Organisation? organisation;
+    private XeroConnection? connection;
+    private IReadOnlyList<XeroControlRow> comparisons = [];
+    private Dictionary<string,DateTimeOffset?> checklist = [];
+    private List<Side>? documents;
+    private string user = "", message = "", reportLabel = "";
+    private bool ready, busy;
+    private DateOnly date, today;
+    private DateTimeOffset? readAt;
+    private XeroReportResult? report;
+    private string LibraryUrl => $"o/{OrganisationId}/migration/xero/reports";
+    private DateOnly From(string kind) => kind is "profit-loss" or "bank-summary" or "gst" ? new(date.Year,date.Month,1) : date;
+    private string Money(decimal? n) => n?.ToString("N2") ?? "—";
+    private string TimeOf(DateTimeOffset? n) => n.HasValue ? OrganisationTime.Convert(n.Value, organisation!).ToString("d MMM yyyy, h:mm tt") : "No copy recorded";
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+        await using var scope = Scopes.CreateAsyncScope();
+        var access = scope.ServiceProvider.GetRequiredService<TenantAccessService>();
+        if (await access.FindAsync(user, OrganisationId) is { } available &&
+            await access.GetReportDivisionScopeAsync(user, OrganisationId) is null)
+        {
+            organisation = available.Organisation;
+            today = DateOnly.FromDateTime(OrganisationTime.Convert(DateTimeOffset.UtcNow, organisation).Date);
+            date = RequestedDate ?? today;
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            connection = await db.XeroConnections.AsNoTracking().SingleOrDefaultAsync(x => x.OrganisationId == OrganisationId && x.IsActive && x.XeroTenantId != null);
+            if (connection != null) await Load(db);
+        }
+        ready = true;
+    }
+
+    private async Task Load(ApplicationDbContext db)
+    {
+        var copies = db.XeroPeriodReports.AsNoTracking().Where(x => x.ConnectionId == connection!.Id &&
+            x.TenantId == connection.XeroTenantId && x.PeriodTo == date);
+        var periods = await copies.Select(x => new { x.Kind,x.PeriodFrom,x.RetrievedAt }).ToListAsync();
+        checklist = periods.Where(p => p.PeriodFrom == From(p.Kind)).ToDictionary(x => x.Kind, x => (DateTimeOffset?)x.RetrievedAt);
+        var trial = await copies.Where(x => x.Kind == "trial-balance" && x.PeriodFrom == date).Select(x => x.Payload).SingleOrDefaultAsync();
+        comparisons = await XeroControlComparison.ReadAsync(db, OrganisationId, connection!.Id, date, trial);
+        readAt = DateTimeOffset.UtcNow;
+    }
+
+    private async Task Act(Func<IServiceProvider,Task> work)
+    {
+        if (busy) return;
+        busy = true;
+        message = "";
+        try
+        {
+            await using var scope = Scopes.CreateAsyncScope();
+            var svc = scope.ServiceProvider;
+            var access = svc.GetRequiredService<TenantAccessService>();
+            var db = svc.GetRequiredService<ApplicationDbContext>();
+            if (await access.GetReportDivisionScopeAsync(user,OrganisationId) != null ||
+                !await db.XeroConnections.AnyAsync(c => c.Id == connection!.Id && c.IsActive &&
+                    c.OrganisationId == OrganisationId && c.XeroTenantId == connection.XeroTenantId))
+            {
+                organisation = null;
+                return;
+            }
+            await work(svc);
+        }
+        finally { busy = false; }
+    }
+    private Task ReadDocuments() => Act(async svc =>
+    {
+        var balances = svc.GetRequiredService<XeroOpenBalanceService>();
+        var sides = new List<Side>();
+        try
+        {
+            foreach (var pay in new[] { false,true })
+            {
+                var rows = comparisons.Where(c => !c.Bank && c.Payable == pay).ToList();
+                sides.Add(new(pay ? "Suppliers owing" : "Customers owing", pay,
+                    rows.Count == 1 ? rows[0].Xero : null, await balances.ReadAsync(OrganisationId,pay)));
+            }
+            documents = sides;
+        }
+        catch (InvalidOperationException) { documents = null; message = "The mirror could not supply a complete current balance."; }
+    });
+    private Task FetchContact(bool pay, Guid id, string name) =>
+        Fetch((pay ? "contact-payables:" : "contact-receivables:") + id.ToString("D"), name);
+    private Task Fetch(string kind,string label) => Act(async svc =>
+    {
+        report = await svc.GetRequiredService<XeroReportingService>().ReadAsync(user,OrganisationId,kind,From(kind),date);
+        reportLabel = label;
+        message = report.Message ?? $"Retrieved {label}.";
+        await Load(svc.GetRequiredService<ApplicationDbContext>());
+    });
+    private Task OpenCopy(string kind,string label) => Act(async svc =>
+    {
+        var db = svc.GetRequiredService<ApplicationDbContext>();
+        var from = From(kind);
+        var copy = await db.XeroPeriodReports.AsNoTracking().SingleOrDefaultAsync(x => x.ConnectionId == connection!.Id &&
+            x.TenantId == connection.XeroTenantId && x.Kind == kind && x.PeriodFrom == from && x.PeriodTo == date);
+        if (copy == null) return;
+        report = XeroReportingService.ParseReport(copy.Payload,connection!.XeroTenantName,new Uri("https://reporting.xero.com"),null,copy.RetrievedAt);
+        reportLabel = label;
+    });
+}

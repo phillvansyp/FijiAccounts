@@ -27,6 +27,7 @@
 }
 else if (usesXero)
 {
+    <XeroDatasetDates OrganisationId="OrganisationId" Kind="fixed-assets" />
     <div class="page-heading">
         <h1>Fixed assets</h1>
         <a class="btn btn-outline-secondary" href="o/@OrganisationId/integrations/xero">Xero sync status</a>
@@ -60,6 +61,7 @@ else if (usesXero)
             @xeroAssets.Count(x => IsAssetStatus(x, "Registered")) registered,
             @xeroAssets.Count(x => IsAssetStatus(x, "Disposed")) sold or disposed,
             @xeroAssets.Count(x => IsAssetStatus(x, "Draft")) draft.
+            Asset types supplied for @xeroAssets.Count(x => !string.IsNullOrWhiteSpace(x.AssetTypeName)) of @xeroAssets.Count assets.
         </p>
         <div class="table-responsive">
             <table class="table table-sm">

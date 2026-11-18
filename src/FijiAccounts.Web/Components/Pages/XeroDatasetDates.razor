@@ -1,0 +1,52 @@
+@using FijiAccounts.Web.Data
+@using FijiAccounts.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
+@inject AuthenticationStateProvider Authentication
+@inject IServiceScopeFactory Scopes
+
+@if (visible)
+{
+    <details class="mb-3"><summary>Last successful Xero dataset checks</summary>
+        <dl>@foreach (var item in checks)
+        {
+            <dt>@item.Key</dt><dd>@(item.Value.HasValue ? OrganisationTime.Convert(item.Value.Value, organisation!).ToString("d MMM yyyy, h:mm tt") : "No completed check recorded")</dd>
+        }</dl>
+        <a href="@($"o/{OrganisationId}/integrations/xero/reconciliation")">Reconciliation and monthly reports</a>
+    </details>
+}
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter] public string Kind { get; set; } = "";
+    private Dictionary<string,DateTimeOffset?> checks = [];
+    private bool visible;
+    private Organisation? organisation;
+    protected override async Task OnParametersSetAsync()
+    {
+        visible = false;
+        var org = OrganisationId;
+        var kind = Kind;
+        var user = (await Authentication.GetAuthenticationStateAsync()).User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+        await using var scope = Scopes.CreateAsyncScope();
+        var tenant = scope.ServiceProvider.GetRequiredService<TenantAccessService>();
+        if (await tenant.FindAsync(user,org) is not { } access || await tenant.GetReportDivisionScopeAsync(user,org) != null) return;
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var connection = await db.XeroConnections.Where(x => x.OrganisationId == org && x.IsActive && x.XeroTenantId != null)
+            .Select(x => new {x.Id,x.XeroTenantId}).SingleOrDefaultAsync();
+        if (connection == null) return;
+        string[] keys = kind switch
+        {
+            "receivables" => ["sales-invoices","sales-credits","payments","prepayments","overpayments"],
+            "payables" => ["bills","supplier-credits","payments","prepayments","overpayments"],
+            "fixed-assets" => ["fixed-assets"],
+            "bank-summary" or "cash-summary" or "bank-reconciliation" => ["bank-transactions","bank-transfers","payments"],
+            _ => ["sales-invoices","bills","sales-credits","supplier-credits","payments","prepayments","overpayments","bank-transactions"]
+        };
+        var dates = await db.XeroDatasetChecks.AsNoTracking().Where(c => c.ConnectionId == connection.Id &&
+            c.TenantId == connection.XeroTenantId && keys.Contains(c.Dataset)).ToDictionaryAsync(c => c.Dataset,c => (DateTimeOffset?)c.CheckedAt);
+        if (org != OrganisationId || kind != Kind) return;
+        organisation = access.Organisation;
+        checks = keys.ToDictionary(k => k.Replace('-', ' '), k => dates.GetValueOrDefault(k));
+        visible = true;
+    }
+}

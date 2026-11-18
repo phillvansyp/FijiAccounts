@@ -1,0 +1,10 @@
+@page "/o/{OrganisationId:guid}/integrations/xero/reconciliation"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+<PageTitle>Xero reconciliation and monthly reports</PageTitle>
+<XeroReconciliationReview @key="(OrganisationId, AsAt)" OrganisationId="OrganisationId" RequestedDate="AsAt" />
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [SupplyParameterFromQuery(Name = "asAt")] public DateOnly? AsAt { get; set; }
+}
