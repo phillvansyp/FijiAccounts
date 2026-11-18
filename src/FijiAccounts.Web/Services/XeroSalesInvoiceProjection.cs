@@ -78,18 +78,27 @@ public static class XeroSalesInvoiceProjectionParser
         if (!record.DatasetKey.Equals(datasetKey, StringComparison.OrdinalIgnoreCase) || record.IsArchived)
             return false;
 
+        return TryParseHeader(record.Id, record.ExternalId, record.DisplayName, record.SourceJson, out invoice,
+            includeLines, supplierBill);
+    }
+
+    internal static bool TryParseHeader(Guid id, string externalId, string displayName, string json,
+        out XeroSalesInvoiceProjection invoice, bool includeLines = false, bool supplierBill = false)
+    {
+        invoice = null!;
         try
         {
-            using var document = JsonDocument.Parse(record.SourceJson);
+            using var document = JsonDocument.Parse(json);
             var source = document.RootElement;
             if (!TryDate(source, "Date", out var issueDate) || !TryDate(source, "DueDate", out var dueDate))
                 return false;
 
             var rate = Decimal(source, "CurrencyRate", 1m);
             if (rate <= 0m) rate = 1m;
-            var lines = new List<XeroSalesInvoiceLineProjection>();
+            List<XeroSalesInvoiceLineProjection>? lines = null;
             if (includeLines && source.TryGetProperty("LineItems", out var lineItems) && lineItems.ValueKind == JsonValueKind.Array)
             {
+                lines = new(lineItems.GetArrayLength());
                 foreach (var line in lineItems.EnumerateArray())
                 {
                     lines.Add(new(
@@ -104,9 +113,9 @@ public static class XeroSalesInvoiceProjectionParser
             }
 
             invoice = new(
-                record.Id,
-                record.ExternalId,
-                Fallback(Text(source, "InvoiceNumber"), record.DisplayName),
+                id,
+                externalId,
+                Fallback(Text(source, "InvoiceNumber"), displayName),
                 ContactName(source, supplierBill ? "Xero supplier" : "Xero customer"),
                 Text(source, "Reference"),
                 issueDate,
@@ -120,7 +129,7 @@ public static class XeroSalesInvoiceProjectionParser
                 Decimal(source, "AmountDue"),
                 Decimal(source, "AmountPaid"),
                 Decimal(source, "AmountCredited"),
-                lines)
+                lines ?? (IReadOnlyList<XeroSalesInvoiceLineProjection>)[])
             {
                 SourceContactId = source.TryGetProperty("Contact", out var party) &&
                     Guid.TryParse(Text(party, "ContactID"), out var contactId) ? contactId : null,
@@ -176,22 +185,22 @@ public static class XeroSalesInvoiceProjectionParser
     internal static bool TryDate(JsonElement source, string name, out DateOnly date)
     {
         var value = Text(source, name);
-        if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true;
-        if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp))
-        {
-            date = DateOnly.FromDateTime(timestamp.DateTime);
-            return true;
-        }
-
         if (value.StartsWith("/Date(", StringComparison.Ordinal))
         {
             var end = value.IndexOfAny(['+', '-', ')'], 6);
             if (end < 0) end = value.Length;
-            if (long.TryParse(value[6..end], NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds))
+            if (long.TryParse(value.AsSpan(6, end - 6), NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds)
+                && milliseconds is >= -62135596800000 and <= 253402300799999)
             {
                 date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds).UtcDateTime);
                 return true;
             }
+        }
+        else if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return true;
+        else if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp))
+        {
+            date = DateOnly.FromDateTime(timestamp.DateTime);
+            return true;
         }
 
         date = default;
