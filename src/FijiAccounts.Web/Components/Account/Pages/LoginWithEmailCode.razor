@@ -30,7 +30,7 @@
 
 @code {
     private string? message;
-    private ApplicationUser user = default!;
+    private ApplicationUser? user;
     [SupplyParameterFromForm] private InputModel Input { get; set; } = default!;
     [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
     [SupplyParameterFromQuery] private bool RememberMe { get; set; }
@@ -38,12 +38,16 @@
     protected override async Task OnInitializedAsync()
     {
         Input ??= new();
-        user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
-            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+        user = await SignInManager.GetTwoFactorAuthenticationUserAsync();
+        if (user is null)
+        {
+            RedirectManager.RedirectTo("Account/Login", new() { ["returnUrl"] = ReturnUrl });
+        }
     }
 
     private async Task VerifyAsync()
     {
+        if (user is null) return;
         var code = Input.Code!.Replace(" ", string.Empty).Replace("-", string.Empty);
         var result = await SignInManager.TwoFactorSignInAsync(TokenOptions.DefaultEmailProvider, code, RememberMe, Input.RememberMachine);
         var userId = await UserManager.GetUserIdAsync(user);

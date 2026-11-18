@@ -1,4 +1,4 @@
-﻿@page "/Account/LoginWithRecoveryCode"
+@page "/Account/LoginWithRecoveryCode"
 
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
@@ -35,7 +35,7 @@
 
 @code {
     private string? message;
-    private ApplicationUser user = default!;
+    private ApplicationUser? user;
 
     [SupplyParameterFromForm]
     private InputModel Input { get; set; } = default!;
@@ -48,12 +48,16 @@
         Input ??= new();
 
         // Ensure the user has gone through the username & password screen first
-        user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
-            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+        user = await SignInManager.GetTwoFactorAuthenticationUserAsync();
+        if (user is null)
+        {
+            RedirectManager.RedirectTo("Account/Login", new() { ["returnUrl"] = ReturnUrl });
+        }
     }
 
     private async Task OnValidSubmitAsync()
     {
+        if (user is null) return;
         var recoveryCode = Input.RecoveryCode.Replace(" ", string.Empty);
 
         var result = await SignInManager.TwoFactorRecoveryCodeSignInAsync(recoveryCode);

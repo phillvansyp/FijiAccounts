@@ -1,4 +1,4 @@
-﻿@page "/Account/LoginWith2fa"
+@page "/Account/LoginWith2fa"
 
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
@@ -52,7 +52,7 @@
 
 @code {
     private string? message;
-    private ApplicationUser user = default!;
+    private ApplicationUser? user;
 
     [SupplyParameterFromForm]
     private InputModel Input { get; set; } = default!;
@@ -68,12 +68,16 @@
         Input ??= new();
 
         // Ensure the user has gone through the username & password screen first
-        user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
-            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+        user = await SignInManager.GetTwoFactorAuthenticationUserAsync();
+        if (user is null)
+        {
+            RedirectManager.RedirectTo("Account/Login", new() { ["returnUrl"] = ReturnUrl });
+        }
     }
 
     private async Task OnValidSubmitAsync()
     {
+        if (user is null) return;
         var authenticatorCode = Input.TwoFactorCode!.Replace(" ", string.Empty).Replace("-", string.Empty);
         var result = await SignInManager.TwoFactorAuthenticatorSignInAsync(authenticatorCode, RememberMe, Input.RememberMachine);
         var userId = await UserManager.GetUserIdAsync(user);
@@ -97,6 +101,7 @@
 
     private async Task SendEmailCodeAsync()
     {
+        if (user is null) return;
         var email = await UserManager.GetEmailAsync(user);
         if (string.IsNullOrWhiteSpace(email) || !await UserManager.IsEmailConfirmedAsync(user))
         {

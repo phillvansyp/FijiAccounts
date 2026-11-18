@@ -1,4 +1,4 @@
-﻿@page "/Account/Manage/GenerateRecoveryCodes"
+@page "/Account/Manage/GenerateRecoveryCodes"
 
 @using Microsoft.AspNetCore.Identity
 @using FijiAccounts.Web.Data
@@ -57,7 +57,8 @@ else
         var isTwoFactorEnabled = await UserManager.GetTwoFactorEnabledAsync(user);
         if (!isTwoFactorEnabled)
         {
-            throw new InvalidOperationException("Cannot generate recovery codes for user because they do not have 2FA enabled.");
+            user = null;
+            RedirectManager.RedirectTo("Account/Manage/TwoFactorAuthentication");
         }
     }
 

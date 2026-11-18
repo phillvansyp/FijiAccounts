@@ -14,6 +14,7 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
+@inject Microsoft.Extensions.Caching.Memory.IMemoryCache Cache
 @inject TenantAccessService TenantAccess
 @inject PurchasingService Purchasing
 @inject BusinessPartyService BusinessParties
@@ -852,7 +853,7 @@ protected override async Task OnParametersSetAsync()
             var localBillReferences = bills.Where(x => !string.IsNullOrWhiteSpace(x.SupplierReference))
                 .Select(x => XeroSalesInvoiceProjectionParser.BillKey(x.Supplier.Name, x.SupplierReference!))
                 .ToHashSet();
-            xeroBills = (await XeroSalesInvoiceProjectionParser.ReadCurrentAsync(Db, OrganisationId, supplierBills: true))
+            xeroBills = (await XeroBillDirectory.ReadAsync(Db, Cache, OrganisationId))
                 .Where(x => !localBillReferences.Contains(XeroSalesInvoiceProjectionParser.BillKey(x.ContactName, x.InvoiceNumber)))
                 .ToList();
         }

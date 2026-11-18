@@ -47,10 +47,10 @@ public sealed class NzPayInboundIntegrationService(
         CancellationToken ct = default)
     {
         await EnsureOrganisationAccessAsync(userId, organisationId, ct);
-        return await db.NzPayApiCredentials.AsNoTracking()
+        var active = await db.NzPayApiCredentials.AsNoTracking()
             .Where(x => x.OrganisationId == organisationId && x.IsActive)
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+        return active.OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id).FirstOrDefault();
     }
 
     public async Task<NzPayIssuedCredential> RotateCredentialAsync(
@@ -234,13 +234,19 @@ public sealed class NzPayInboundIntegrationService(
         CancellationToken ct = default)
     {
         await EnsureOrganisationAccessAsync(userId, organisationId, ct);
-        return await db.NzPayFbtJournalDrafts.AsNoTracking()
+        var timestamps = await db.NzPayFbtJournalDrafts.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId)
+            .Select(x => new { x.Id, x.ReceivedAt })
+            .ToListAsync(ct);
+        var ids = timestamps.OrderByDescending(x => x.ReceivedAt).ThenBy(x => x.Id)
+            .Take(100).Select(x => x.Id).ToArray();
+        if (ids.Length == 0) return [];
+        var drafts = await db.NzPayFbtJournalDrafts.AsNoTracking()
             .Include(x => x.Lines).ThenInclude(x => x.LedgerAccount)
             .Include(x => x.PostedJournal)
-            .Where(x => x.OrganisationId == organisationId)
-            .OrderByDescending(x => x.ReceivedAt)
-            .Take(100)
+            .Where(x => x.OrganisationId == organisationId && ids.Contains(x.Id))
             .ToListAsync(ct);
+        return drafts.OrderByDescending(x => x.ReceivedAt).ThenBy(x => x.Id).ToArray();
     }
 
     public async Task<PostedJournal> ApproveDraftAsync(

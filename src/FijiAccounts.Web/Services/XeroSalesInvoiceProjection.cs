@@ -148,10 +148,19 @@ public static class XeroSalesInvoiceProjectionParser
     {
         var datasetKey = supplierBills ? "bills" : "sales-invoices";
         var results = new List<XeroSalesInvoiceProjection>();
-        var records = db.XeroMirrorRecords.AsNoTracking()
-            .Where(x => x.OrganisationId == organisationId && x.DatasetKey == datasetKey &&
-                !x.IsArchived && x.Connection.IsActive)
-            .AsAsyncEnumerable();
+        // Begin the indexed lookup at the organisation's active connection. SQLite
+        // otherwise prefers the full dataset index on large invoice histories.
+        const string openDocumentsSql = """
+            SELECT r.* FROM XeroConnections c CROSS JOIN XeroMirrorRecords r
+            WHERE c.OrganisationId = {0} AND c.IsActive
+              AND r.OrganisationId = c.OrganisationId AND r.XeroConnectionId = c.Id
+              AND r.DatasetKey = {1} AND
+            """ + " " + Data.Migrations.IndexOpenXeroDocuments.CandidateFilter;
+        var query = openOnly
+            ? db.XeroMirrorRecords.FromSqlRaw(openDocumentsSql, organisationId, datasetKey)
+            : db.XeroMirrorRecords.Where(x => x.OrganisationId == organisationId &&
+                x.DatasetKey == datasetKey && !x.IsArchived && x.Connection.IsActive);
+        var records = query.AsNoTracking().AsAsyncEnumerable();
         await foreach (var record in records)
         {
             if (TryParse(record, out var projection, includeLines: false, supplierBill: supplierBills) &&

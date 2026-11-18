@@ -166,13 +166,9 @@ else
         }
         var localNumbers = rows.Where(x => x.Path is not null && x.Status != "Draft")
             .Select(x => (x.Supplier, x.Number.Trim().ToUpperInvariant())).ToHashSet();
-        string[] datasets = ["sales-invoices", "bills", "sales-credits", "supplier-credits", "prepayments", "overpayments"];
         foreach (var key in keys.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var needle = key.ToUpperInvariant();
-            var records = Db.XeroMirrorRecords.AsNoTracking().Where(x => x.OrganisationId == OrganisationId &&
-                x.XeroConnectionId == connection.Id && !x.IsArchived && datasets.Contains(x.DatasetKey) &&
-                x.SourceJson.ToUpper().Contains(needle)).AsAsyncEnumerable();
+            var records = XeroContactDocumentQuery.Read(Db, OrganisationId, connection.Id, key);
             await foreach (var record in records)
             {
                 try { ReadMirrorRecord(record, key, baseCurrency, localNumbers); }
