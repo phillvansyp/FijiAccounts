@@ -10,6 +10,7 @@
 @using FijiAccounts.Web.Data
 @using FijiAccounts.Web.Services
 @inject ApplicationDbContext Db
+@inject XeroOpenBalanceService XeroOpenBalances
 @inject Microsoft.Extensions.Caching.Memory.IMemoryCache Cache
 @inject TenantAccessService TenantAccess
 @inject PaymentConnectionsService PaymentConnections
@@ -39,7 +40,10 @@ else
 
     <div class="invoice-summary">
         <article><span>Total invoiced</span><strong>@access.Organisation.BaseCurrency @TotalInvoiced.ToString("N2")</strong><small>@TotalInvoiceCount invoice@(TotalInvoiceCount == 1 ? "" : "s")</small></article>
-        <article><span>Outstanding</span><strong>@access.Organisation.BaseCurrency @OutstandingTotal.ToString("N2")</strong><small>Awaiting payment</small></article>
+        <article><span>Owed to you</span><strong>@access.Organisation.BaseCurrency @((OutstandingTotal - (UnappliedCreditsTotal ?? 0m)).ToString("N2"))</strong>
+            <small>@(UnappliedCreditsTotal is { } credits
+                ? $"{access.Organisation.BaseCurrency} {OutstandingTotal:N2} unpaid invoices less {access.Organisation.BaseCurrency} {credits:N2} unapplied credits"
+                : XeroCreditsUnavailable ? "Unpaid invoices; Xero credits could not be checked" : "Unpaid invoices awaiting payment")</small></article>
         <article class="@(OverdueTotal > 0 ? "needs-attention" : null)"><span>Overdue</span><strong>@access.Organisation.BaseCurrency @OverdueTotal.ToString("N2")</strong><small>@OverdueCount invoice@(OverdueCount == 1 ? "" : "s") past due</small></article>
     </div>
 
@@ -521,6 +525,21 @@ else
             xeroInvoices = localInvoiceNumbers.Count == 0 ? directory :
                 directory.Where(x => !localInvoiceNumbers.Contains(x.InvoiceNumber.Trim())).ToList();
         }
+        UnappliedCreditsTotal = null;
+        XeroCreditsUnavailable = false;
+        if (reportDivisionScope is null && await Db.XeroConnections.AsNoTracking().AnyAsync(x =>
+                x.OrganisationId == OrganisationId && x.IsActive && x.ContinuousSyncEnabled))
+        {
+            try
+            {
+                var credits = await XeroOpenBalances.ReadCreditsAsync(OrganisationId, payables: false);
+                UnappliedCreditsTotal = -credits.Sum(x => x.Amount);
+            }
+            catch (InvalidOperationException)
+            {
+                XeroCreditsUnavailable = true;
+            }
+        }
         matchKey = null;
         summaryDate = null;
 
@@ -882,6 +901,8 @@ else
     private int TotalInvoiceCount => invoices.Count + xeroInvoices.Count;
     private DateOnly? summaryDate;
     private decimal TotalInvoiced, OutstandingTotal, OverdueTotal;
+    private decimal? UnappliedCreditsTotal;
+    private bool XeroCreditsUnavailable;
     private int OverdueCount;
 
     private void RefreshSummary()
@@ -911,3 +932,4 @@ else
         summaryDate = today;
     }
 }
+
