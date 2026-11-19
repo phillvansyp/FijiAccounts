@@ -304,7 +304,7 @@ else
     <section class="invoice-list">
         @{
             RefreshInvoiceMatches();
-            var matchCount = localMatches.Count + sortedXeroMatches.Count;
+            var matchCount = invoiceRows.Count;
         }
         <div class="list-heading">
             <div>
@@ -391,9 +391,8 @@ else
                     </thead>
                     <tbody>
                     <RegisterRows Count="@matchCount" Context="index">
-                        @if (index < localMatches.Count)
+                        @if (invoiceRows[index].Local is { } invoice)
                     {
-                        var invoice = localMatches[index];
                         var overdue = IsOverdue(invoice);
                         <tr class="@(overdue ? "overdue-row" : null)">
                             <td><a href="o/@OrganisationId/sales/@invoice.Id"><strong>@invoice.InvoiceNumber</strong></a></td>
@@ -418,21 +417,21 @@ else
                     }
                     else
                     {
-                        var invoice = sortedXeroMatches[index - localMatches.Count];
-                        <tr class="@(invoice.IsOverdue ? "overdue-row" : null)">
+                        var xeroInvoice = invoiceRows[index].Xero!;
+                        <tr class="@(xeroInvoice.IsOverdue ? "overdue-row" : null)">
                             <td>
-                                <a href="o/@OrganisationId/sales/xero/@invoice.RecordId"><strong>@invoice.InvoiceNumber</strong></a>
+                                <a href="o/@OrganisationId/sales/xero/@xeroInvoice.RecordId"><strong>@xeroInvoice.InvoiceNumber</strong></a>
                                 <span class="xero-source-badge">Xero · read-only</span>
                             </td>
-                            <td>@invoice.IssueDate.ToString("dd MMM yyyy")</td>
-                            <td>@invoice.DueDate.ToString("dd MMM yyyy")</td>
-                            <td>@invoice.ContactName</td>
-                            <td class="customer-po-summary">@(string.IsNullOrWhiteSpace(invoice.Reference) ? "—" : invoice.Reference)</td>
-                            <td><span class="status-badge status-@invoice.StatusKey.ToLowerInvariant()">@invoice.StatusLabel</span></td>
-                            <td class="text-end">@invoice.Currency @invoice.Subtotal.ToString("N2")</td>
-                            <td class="text-end">@invoice.Currency @invoice.TaxTotal.ToString("N2")</td>
-                            <td class="text-end">@invoice.Currency @invoice.Total.ToString("N2")</td>
-                            <td class="text-end outstanding">@access.Organisation.BaseCurrency @invoice.BaseAmountDue.ToString("N2")</td>
+                            <td>@xeroInvoice.IssueDate.ToString("dd MMM yyyy")</td>
+                            <td>@xeroInvoice.DueDate.ToString("dd MMM yyyy")</td>
+                            <td>@xeroInvoice.ContactName</td>
+                            <td class="customer-po-summary">@(string.IsNullOrWhiteSpace(xeroInvoice.Reference) ? "—" : xeroInvoice.Reference)</td>
+                            <td><span class="status-badge status-@xeroInvoice.StatusKey.ToLowerInvariant()">@xeroInvoice.StatusLabel</span></td>
+                            <td class="text-end">@xeroInvoice.Currency @xeroInvoice.Subtotal.ToString("N2")</td>
+                            <td class="text-end">@xeroInvoice.Currency @xeroInvoice.TaxTotal.ToString("N2")</td>
+                            <td class="text-end">@xeroInvoice.Currency @xeroInvoice.Total.ToString("N2")</td>
+                            <td class="text-end outstanding">@access.Organisation.BaseCurrency @xeroInvoice.BaseAmountDue.ToString("N2")</td>
                             <td></td>
                         </tr>
                     }
@@ -455,12 +454,11 @@ else
     private bool loading = true;
     private List<SalesInvoice> invoices = [];
     private IReadOnlyList<XeroSalesInvoiceProjection> xeroInvoices = [];
-    private IReadOnlyList<XeroSalesInvoiceProjection> sortedXeroMatches = [];
+    private IReadOnlyList<InvoiceRegisterRow> invoiceRows = [];
     private (string Search, string Status, string Sort, bool Descending, DateOnly Date)? matchKey;
-    private IReadOnlyList<SalesInvoice> localMatches = [];
     private string invoiceSearch = string.Empty;
     private string invoiceStatusFilter = string.Empty;
-    private string invoiceSort = "Invoice";
+    private string invoiceSort = "Date";
     private bool invoiceSortDescending = true;
     private List<RecurringSalesInvoice> recurringInvoices = [];
     private Guid[] accessibleDivisionIds = [];
@@ -764,36 +762,6 @@ else
                 )
             ));
 
-    private IEnumerable<SalesInvoice> SortedFilteredInvoices =>
-        invoiceSort switch
-        {
-            "Date" => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(x => x.IssueDate)
-                : FilteredInvoices.OrderBy(x => x.IssueDate),
-
-            "Due" => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(x => x.DueDate)
-                : FilteredInvoices.OrderBy(x => x.DueDate),
-
-            "Customer" => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(x => x.Customer.Name)
-                : FilteredInvoices.OrderBy(x => x.Customer.Name),
-
-            "Total" => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(x => x.Total)
-                : FilteredInvoices.OrderBy(x => x.Total),
-
-            "Outstanding" => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(
-                    x => x.Total - x.AmountPaid - x.AmountCredited)
-                : FilteredInvoices.OrderBy(
-                    x => x.Total - x.AmountPaid - x.AmountCredited),
-
-            _ => invoiceSortDescending
-                ? FilteredInvoices.OrderByDescending(x => x.SequenceNumber)
-                : FilteredInvoices.OrderBy(x => x.SequenceNumber)
-        };
-
     private IEnumerable<XeroSalesInvoiceProjection> FilteredXeroInvoices =>
         xeroInvoices.Where(invoice =>
             (
@@ -807,28 +775,18 @@ else
                 invoice.StatusKey == invoiceStatusFilter
             ));
 
-    private IEnumerable<XeroSalesInvoiceProjection> SortedFilteredXeroInvoices =>
-        invoiceSort switch
-        {
-            "Date" => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.IssueDate)
-                : FilteredXeroInvoices.OrderBy(x => x.IssueDate),
-            "Due" => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.DueDate)
-                : FilteredXeroInvoices.OrderBy(x => x.DueDate),
-            "Customer" => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.ContactName)
-                : FilteredXeroInvoices.OrderBy(x => x.ContactName),
-            "Total" => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.BaseTotal)
-                : FilteredXeroInvoices.OrderBy(x => x.BaseTotal),
-            "Outstanding" => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.BaseAmountDue)
-                : FilteredXeroInvoices.OrderBy(x => x.BaseAmountDue),
-            _ => invoiceSortDescending
-                ? FilteredXeroInvoices.OrderByDescending(x => x.InvoiceNumber)
-                : FilteredXeroInvoices.OrderBy(x => x.InvoiceNumber)
-        };
+    private readonly record struct InvoiceRegisterRow(
+        SalesInvoice? Local, XeroSalesInvoiceProjection? Xero)
+    {
+        public DateOnly IssueDate => Local?.IssueDate ?? Xero!.IssueDate;
+        public DateOnly DueDate => Local?.DueDate ?? Xero!.DueDate;
+        public string InvoiceNumber => Local?.InvoiceNumber ?? Xero!.InvoiceNumber;
+        public string CustomerName => Local?.Customer.Name ?? Xero!.ContactName;
+        public decimal Total => Local?.Total ?? Xero!.BaseTotal;
+        public decimal Outstanding => Local is { } invoice
+            ? invoice.Total - invoice.AmountPaid - invoice.AmountCredited
+            : Xero!.BaseAmountDue;
+    }
 
     private void SortInvoicesBy(string sort)
     {
@@ -849,10 +807,18 @@ else
         var key = (invoiceSearch, invoiceStatusFilter, invoiceSort, invoiceSortDescending, DateOnly.FromDateTime(DateTime.Today));
         if (matchKey != key)
         {
-            localMatches = SortedFilteredInvoices.ToList();
-            sortedXeroMatches = invoiceSort == "Invoice" && invoiceSortDescending &&
-                string.IsNullOrWhiteSpace(invoiceSearch) && string.IsNullOrWhiteSpace(invoiceStatusFilter)
-                ? xeroInvoices : SortedFilteredXeroInvoices.ToList();
+            var matches = FilteredInvoices.Select(x => new InvoiceRegisterRow(x, null))
+                .Concat(FilteredXeroInvoices.Select(x => new InvoiceRegisterRow(null, x)));
+            var ordered = invoiceSort switch
+            {
+                "Date" => invoiceSortDescending ? matches.OrderByDescending(x => x.IssueDate) : matches.OrderBy(x => x.IssueDate),
+                "Due" => invoiceSortDescending ? matches.OrderByDescending(x => x.DueDate) : matches.OrderBy(x => x.DueDate),
+                "Customer" => invoiceSortDescending ? matches.OrderByDescending(x => x.CustomerName) : matches.OrderBy(x => x.CustomerName),
+                "Total" => invoiceSortDescending ? matches.OrderByDescending(x => x.Total) : matches.OrderBy(x => x.Total),
+                "Outstanding" => invoiceSortDescending ? matches.OrderByDescending(x => x.Outstanding) : matches.OrderBy(x => x.Outstanding),
+                _ => invoiceSortDescending ? matches.OrderByDescending(x => x.InvoiceNumber) : matches.OrderBy(x => x.InvoiceNumber)
+            };
+            invoiceRows = ordered.ThenByDescending(x => x.InvoiceNumber, StringComparer.OrdinalIgnoreCase).ToList();
             matchKey = key;
         }
     }
