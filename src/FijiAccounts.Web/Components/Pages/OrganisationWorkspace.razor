@@ -600,8 +600,8 @@ else
             var importedBills = await XeroOpenBalances.ReadAsync(OrganisationId, payables: true);
             receivables = importedInvoices.Sum(x => x.Amount);
             payables = importedBills.Sum(x => x.Amount);
-            overdueInvoices = importedInvoices.Count(x => x.DueDate < today);
-            overdueBills = importedBills.Count(x => x.DueDate < today);
+            overdueInvoices = importedInvoices.Count(x => x.Amount > 0m && x.DueDate < today);
+            overdueBills = importedBills.Count(x => x.Amount > 0m && x.DueDate < today);
         }
         else if (organisationWide)
         {
