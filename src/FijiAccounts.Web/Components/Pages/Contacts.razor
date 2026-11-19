@@ -145,7 +145,7 @@ else
             }
             else
             {
-                <span>@FirstContact–@LastContact of @totalContacts.ToString("N0") contacts</span>
+                <span>@totalContacts.ToString("N0") contacts</span>
             }
             @if (!string.IsNullOrWhiteSpace(searchTerm))
             {
@@ -160,7 +160,7 @@ else
                 <span>Includes archived contacts.</span>
             }
         </div>
-        <div class="contacts-table-scroll">
+        <div @key="orderedContactIds" class="contacts-table-scroll @(totalContacts > PageSize ? "register-scroll" : null)" tabindex="0" role="region" aria-label="Contact directory">
         <table class="table contacts-table">
             <thead>
                 <tr>
@@ -175,8 +175,7 @@ else
                 {
                     <tr><td colspan="4" class="contacts-empty">@(string.IsNullOrWhiteSpace(searchTerm) ? "Contacts will appear here when added." : "Try a different name, email or account number.")</td></tr>
                 }
-                @foreach (var party in parties)
-                {
+                <ContactWindow OrganisationId="@OrganisationId" OrderedIds="@orderedContactIds" Offset="@(FirstContact - 1)" InitialRows="@parties" Context="party">
                     <tr @key="party.Id" class="contact-row">
                         <td>
                             <button type="button" class="contact-name" @onclick="() => ToggleDetails(party.Id)" aria-expanded="@(expandedPartyId == party.Id)" aria-controls="contact-details-@party.Id">@party.Name</button>
@@ -659,14 +658,14 @@ else
                             </td>
                         </tr>
                     }
-                }
+                </ContactWindow>
             </tbody>
         </table>
         </div>
         @if (totalContacts > PageSize)
         {
             <nav class="contacts-pagination" aria-label="Contact pages">
-                <span>Page @currentPage of @TotalPages</span>
+                <span>Starting at contact @FirstContact of @totalContacts</span>
                 <div>
                     @if (currentPage > 1)
                     {
@@ -701,7 +700,7 @@ else
     private HashSet<Guid> archivedIds = [];
     private int TotalPages => Math.Max(1, (int)Math.Ceiling(totalContacts / (double)PageSize));
     private int FirstContact => (currentPage - 1) * PageSize + 1;
-    private int LastContact => Math.Min(currentPage * PageSize, totalContacts);
+    private List<Guid> orderedContactIds = [];
     private string searchInput = "";
     private Guid? expandedPartyId;
     private string TaxIdentifierLabel => access?.Organisation.CountryCode == "NZ" ? "IRD number" : "TIN";
@@ -839,6 +838,9 @@ else
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         xeroGroups = [];
         parties = [];
+        orderedContactIds = [];
+        totalContacts = 0;
+        currentPage = 1;
         expandedPartyId = null;
         CancelEmails();
         CancelCustomerSettings();
@@ -921,17 +923,14 @@ else
         else if (string.IsNullOrWhiteSpace(searchTerm))
             ids.RemoveAll(archivedIds.Contains);
         totalContacts = ids.Count;
+        if (editingPartyId is Guid editingId && ids.IndexOf(editingId) is var position && position >= 0)
+            currentPage = position / PageSize + 1;
         currentPage = Math.Min(currentPage, TotalPages);
-        var pageIds = ids.Skip((currentPage - 1) * PageSize).Take(PageSize).ToArray();
-        parties = await query.Where(x => pageIds.Contains(x.Id))
-            .Include(x => x.DefaultSalesAccount)
-            .Include(x => x.DefaultPurchaseAccount)
-            .Include(x => x.SupplierAccounts)
-            .Include(x => x.SupplierBankAccounts.Where(a => a.IsActive))
-            .OrderBy(x => roleView && x.Type == (PartyType.Customer | PartyType.Supplier))
-            .ThenBy(x => x.Name)
-            .ThenBy(x => x.Id)
-            .ToListAsync();
+        var offset = FirstContact - 1;
+        var pageIds = ids.GetRange(offset, Math.Min(PageSize, ids.Count - offset));
+        var firstRows = await ContactWindow.ReadRowsAsync(Db, OrganisationId, pageIds);
+        orderedContactIds = ids;
+        parties = firstRows;
     }
 
     private void ClearContract()

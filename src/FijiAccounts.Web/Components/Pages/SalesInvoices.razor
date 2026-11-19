@@ -299,10 +299,8 @@ else
     }
     <section class="invoice-list">
         @{
-            var localMatchCount = FilteredInvoices.Count();
-            var xeroMatches = GetXeroMatches();
-            var matchCount = localMatchCount + xeroMatches.Count;
-            var offset = invoicePage * InvoicePageSize;
+            RefreshInvoiceMatches();
+            var matchCount = localMatches.Count + sortedXeroMatches.Count;
         }
         <div class="list-heading">
             <div>
@@ -314,12 +312,10 @@ else
                 <input class="form-control"
                        @bind="invoiceSearch"
                        @bind:event="oninput"
-                       @bind:after="ResetInvoicePage"
                        placeholder="Search invoice or customer" />
 
                 <InputSelect class="form-select"
-                             @bind-Value="invoiceStatusFilter"
-                             @bind-Value:after="ResetInvoicePage">
+                             @bind-Value="invoiceStatusFilter">
                     <option value="">All statuses</option>
                     <option value="Draft">Draft</option>
                     <option value="Posted">Posted</option>
@@ -336,7 +332,7 @@ else
         }
         else
         {
-            <div class="table-responsive">
+            <div @key="(OrganisationId, matchKey, invoices)" class="table-responsive @(RegisterRows.IsLarge(matchCount) ? "register-scroll" : null)" tabindex="0" role="region" aria-label="Invoice activity">
                 <table class="table">
                     <thead>
                         <tr>
@@ -390,8 +386,10 @@ else
                         </tr>
                     </thead>
                     <tbody>
-                    @foreach (var invoice in SortedFilteredInvoices.Skip(offset).Take(InvoicePageSize))
+                    <RegisterRows Count="@matchCount" Context="index">
+                        @if (index < localMatches.Count)
                     {
+                        var invoice = localMatches[index];
                         var overdue = IsOverdue(invoice);
                         <tr class="@(overdue ? "overdue-row" : null)">
                             <td><a href="o/@OrganisationId/sales/@invoice.Id"><strong>@invoice.InvoiceNumber</strong></a></td>
@@ -414,10 +412,9 @@ else
                             </td>
                         </tr>
                     }
-                    @foreach (var invoice in xeroMatches
-                        .Skip(Math.Max(0, offset - localMatchCount))
-                        .Take(InvoicePageSize - Math.Clamp(localMatchCount - offset, 0, InvoicePageSize)))
+                    else
                     {
+                        var invoice = sortedXeroMatches[index - localMatches.Count];
                         <tr class="@(invoice.IsOverdue ? "overdue-row" : null)">
                             <td>
                                 <a href="o/@OrganisationId/sales/xero/@invoice.RecordId"><strong>@invoice.InvoiceNumber</strong></a>
@@ -435,19 +432,10 @@ else
                             <td></td>
                         </tr>
                     }
+                    </RegisterRows>
                     </tbody>
                 </table>
             </div>
-            @if (matchCount > InvoicePageSize)
-            {
-                <nav class="d-flex align-items-center gap-2 mt-3" aria-label="Invoice pages">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(invoicePage == 0)"
-                            @onclick="() => invoicePage--">Previous</button>
-                    <span>@(offset + 1)–@Math.Min(offset + InvoicePageSize, matchCount) of @matchCount</span>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(offset + InvoicePageSize >= matchCount)"
-                            @onclick="() => invoicePage++">Next</button>
-                </nav>
-            }
         }
     </section>
 }
@@ -465,8 +453,7 @@ else
     private IReadOnlyList<XeroSalesInvoiceProjection> xeroInvoices = [];
     private IReadOnlyList<XeroSalesInvoiceProjection> sortedXeroMatches = [];
     private (string Search, string Status, string Sort, bool Descending, DateOnly Date)? matchKey;
-    private const int InvoicePageSize = 100;
-    private int invoicePage;
+    private IReadOnlyList<SalesInvoice> localMatches = [];
     private string invoiceSearch = string.Empty;
     private string invoiceStatusFilter = string.Empty;
     private string invoiceSort = "Invoice";
@@ -513,7 +500,6 @@ else
     private Dictionary<Guid, string> invoiceMatchLinks = [];
     private async Task Reload()
     {
-        ResetInvoicePage();
         invoices =
             await Db.SalesInvoices
                 .AsNoTracking()
@@ -827,7 +813,6 @@ else
 
     private void SortInvoicesBy(string sort)
     {
-        ResetInvoicePage();
         if (invoiceSort == sort)
         {
             invoiceSortDescending =
@@ -840,19 +825,17 @@ else
         invoiceSortDescending = false;
     }
 
-    private void ResetInvoicePage() => invoicePage = 0;
-
-    private IReadOnlyList<XeroSalesInvoiceProjection> GetXeroMatches()
+    private void RefreshInvoiceMatches()
     {
         var key = (invoiceSearch, invoiceStatusFilter, invoiceSort, invoiceSortDescending, DateOnly.FromDateTime(DateTime.Today));
         if (matchKey != key)
         {
+            localMatches = SortedFilteredInvoices.ToList();
             sortedXeroMatches = invoiceSort == "Invoice" && invoiceSortDescending &&
                 string.IsNullOrWhiteSpace(invoiceSearch) && string.IsNullOrWhiteSpace(invoiceStatusFilter)
                 ? xeroInvoices : SortedFilteredXeroInvoices.ToList();
             matchKey = key;
         }
-        return sortedXeroMatches;
     }
 
     private static string FormatCustomerPurchaseOrders(

@@ -342,3 +342,15 @@ body{overflow-x:clip}
     .heading-actions>* ,.banner-actions>* ,.detail-actions>*{flex:1 1 auto}
     .selected-attachment{align-items:flex-start;flex-direction:column}
 }
+
+
+.register-scroll {
+    max-height: 70vh;
+    overflow: auto;
+}
+.register-scroll > table > thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bs-body-bg, white);
+}
