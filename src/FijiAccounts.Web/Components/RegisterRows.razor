@@ -1,0 +1,33 @@
+@if (RendererInfo.IsInteractive && IsLarge(Count))
+{
+    <Virtualize TItem="int" ItemsProvider="ReadWindow" Context="index"
+                ItemSize="48" OverscanCount="5" SpacerElement="tr">
+        @ChildContent(index)
+    </Virtualize>
+}
+else
+{
+    var count = IsLarge(Count) ? 30 : Count;
+    for (var i = 0; i < count; i++)
+    {
+        @ChildContent(i)
+    }
+}
+
+@code {
+    [Parameter] public int Count { get; set; }
+    [Parameter, EditorRequired] public RenderFragment<int> ChildContent { get; set; } = default!;
+
+    public static bool IsLarge(int count) => count > 100;
+
+    private ValueTask<ItemsProviderResult<int>> ReadWindow(ItemsProviderRequest request)
+    {
+        return ValueTask.FromResult(new ItemsProviderResult<int>(Window(Count, request.StartIndex, request.Count), Count));
+    }
+
+    internal static IEnumerable<int> Window(int total, int start, int count)
+    {
+        start = Math.Min(start, total);
+        return Enumerable.Range(start, Math.Min(count, total - start));
+    }
+}
