@@ -354,3 +354,10 @@ body{overflow-x:clip}
     z-index: 1;
     background: var(--bs-body-bg, white);
 }
+
+@media (max-width: 900px) {
+    .page-content .register-scroll > .table {
+        display: table;
+        overflow: visible;
+    }
+}
