@@ -1,0 +1,55 @@
+@using FijiAccounts.Web.Data
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+@if (RendererInfo.IsInteractive && Count > InitialRows.Count)
+{
+    <Virtualize TItem="BusinessParty" ItemsProvider="ReadWindow" ItemContent="ChildContent"
+                ItemSize="76" OverscanCount="4" SpacerElement="tr" />
+}
+else
+{
+    @foreach (var party in InitialRows)
+    {
+        @ChildContent(party)
+    }
+}
+
+@code {
+    [Parameter] public Guid OrganisationId { get; set; }
+    [Parameter, EditorRequired] public List<Guid> OrderedIds { get; set; } = [];
+    [Parameter] public int Offset { get; set; }
+    [Parameter, EditorRequired] public List<BusinessParty> InitialRows { get; set; } = [];
+    [Parameter, EditorRequired] public RenderFragment<BusinessParty> ChildContent { get; set; } = default!;
+
+    private int Count => Math.Max(0, OrderedIds.Count - Offset);
+
+    private async ValueTask<ItemsProviderResult<BusinessParty>> ReadWindow(ItemsProviderRequest request)
+    {
+        var total = Count;
+        var start = Math.Min(request.StartIndex, total);
+        var length = Math.Min(request.Count, total - start);
+        if (start + length <= InitialRows.Count)
+            return new(InitialRows.GetRange(start, length), total);
+
+        var ids = OrderedIds.GetRange(Offset + start, length);
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var rows = await ReadRowsAsync(db, OrganisationId, ids, request.CancellationToken);
+        return new(rows, total);
+    }
+
+    internal static async Task<List<BusinessParty>> ReadRowsAsync(ApplicationDbContext db,
+        Guid organisationId, List<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return [];
+        var byId = await db.BusinessParties.AsNoTracking().AsSplitQuery()
+            .Where(x => x.OrganisationId == organisationId && ids.Contains(x.Id))
+            .Include(x => x.DefaultSalesAccount)
+            .Include(x => x.DefaultPurchaseAccount)
+            .Include(x => x.SupplierAccounts)
+            .Include(x => x.SupplierBankAccounts.Where(a => a.IsActive))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+        return ids.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
+    }
+}

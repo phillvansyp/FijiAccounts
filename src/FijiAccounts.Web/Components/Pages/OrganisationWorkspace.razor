@@ -315,7 +315,10 @@ else
         </section>
     }
 
-    <section id="chart-of-accounts" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Accounting</span><h2>Chart of accounts</h2></div><span>@accounts.Count accounts</span></div><div class="table-responsive"><table class="table"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Status</th></tr></thead><tbody>@foreach (var account in accounts) { <tr><td><code>@account.Code</code></td><td>@account.Name</td><td>@account.Type</td><td><span class="status-pill">@(account.IsActive ? "Active" : "Archived")</span></td></tr> }</tbody></table></div></section>
+    <section id="chart-of-accounts" class="detail-card"><div class="card-heading"><div><span class="eyebrow">Accounting</span><h2>Chart of accounts</h2></div><span>@accounts.Count accounts</span></div><div @key="accounts" class="table-responsive @(RegisterRows.IsLarge(accounts.Count) ? "register-scroll" : null)" tabindex="0" role="region" aria-label="Chart of accounts"><table class="table"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Status</th></tr></thead><tbody><RegisterRows Count="@accounts.Count" Context="index">
+        @{ var account = accounts[index]; }
+        <tr><td><code>@account.Code</code></td><td>@account.Name</td><td>@account.Type</td><td><span class="status-pill">@(account.IsActive ? "Active" : "Archived")</span></td></tr>
+    </RegisterRows></tbody></table></div></section>
     }
     @if (IsTeamPage)
     {
@@ -519,8 +522,11 @@ else
         if (access is not null)
         {
             canManageTeam = await TenantAccess.CanManageTeamAsync(userId, OrganisationId);
-            await LoadAccessManagement();
-            if (!IsTeamPage)
+            if (IsTeamPage)
+            {
+                await LoadAccessManagement();
+            }
+            else
             {
                 accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId).OrderBy(x => x.Code).ToListAsync();
                 contactCount = await Db.BusinessParties.CountAsync(x => x.OrganisationId == OrganisationId && x.IsActive);
@@ -644,7 +650,7 @@ else
 
     private void OrganisationUpdated(Guid organisationId)
     {
-        if (organisationId != OrganisationId)
+        if (organisationId != OrganisationId || IsTeamPage)
         {
             return;
         }
