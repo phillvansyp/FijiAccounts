@@ -26,6 +26,48 @@ public sealed class XeroReportingServiceTests
     }
 
     [Fact]
+    public void Matches_Xero_browser_balance_sheet_classification_without_changing_net_assets()
+    {
+        var report = new XeroReportResult("Xero Test", new Uri("https://reporting.xero.com"),
+            null, "Balance Sheet", [], new XeroReportRow[]
+            {
+                new("Section", "Assets", [], 0),
+                new("Section", "Bank", [], 1),
+                new("Row", null, ["Business Term Lending-003", "-953823.38", "-1000000.00"], 2),
+                new("SummaryRow", null, ["Total Bank", "-844305.08", "-680248.39"], 2),
+                new("Section", "Current Assets", [], 1),
+                new("SummaryRow", null, ["Total Current Assets", "1349572.50", "3797384.90"], 2),
+                new("SummaryRow", null, ["Total Assets", "766709.76", "3348334.94"], 1),
+                new("Section", "Liabilities", [], 0),
+                new("Section", "Current Liabilities", [], 1),
+                new("Row", null, ["JCR Visa's", "-11306.16", "4188.18"], 2),
+                new("Row", null, ["Provision for Holiday Pay", "-1809098.60", "2810581.28"], 2),
+                new("SummaryRow", null, ["Total Current Liabilities", "499036.81", "4401892.20"], 2),
+                new("SummaryRow", null, ["Total Liabilities", "499037.21", "4401892.93"], 1),
+                new("Row", null, ["Net Assets", "267672.55", "-1053557.99"], 0)
+            }, DateTimeOffset.UtcNow, null);
+
+        var displayed = XeroReportingService.MatchXeroBalanceSheet(report,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Business Term Lending-003", "JCR Visa's" });
+        string[] Amount(string label) => displayed.Rows.Single(x => x.Cells.Count > 0 && x.Cells[0] == label)
+            .Cells.Skip(1).ToArray();
+
+        Assert.Equal(["120824.46", "319751.61"], Amount("Total Bank"));
+        Assert.Equal(["1731839.30", "4348334.94"], Amount("Total Assets"));
+        Assert.Equal(["1464166.35", "5401892.20"], Amount("Total Current Liabilities"));
+        Assert.Equal(["1464166.75", "5401892.93"], Amount("Total Liabilities"));
+        Assert.Equal(["267672.55", "-1053557.99"], Amount("Net Assets"));
+        Assert.Equal(["953823.38", "1000000.00"], Amount("Business Term Lending-003"));
+        Assert.Equal(["11306.16", ""], displayed.Rows.Single(x =>
+            x.Cells.Count > 0 && x.Cells[0] == "JCR Visa's" && x.Cells[1] == "11306.16").Cells.Skip(1));
+        Assert.Equal(["0.00", "4188.18"], displayed.Rows.Single(x =>
+            x.Cells.Count > 0 && x.Cells[0] == "JCR Visa's" && x.Cells[1] == "0.00").Cells.Skip(1));
+        Assert.Equal(["-1809098.60", "2810581.28"], Amount("Provision for Holiday Pay"));
+        Assert.Equal(["766709.76", "3348334.94"], report.Rows.Single(x => x.Cells.Count > 0 &&
+            x.Cells[0] == "Total Assets").Cells.Skip(1));
+    }
+
+    [Fact]
     public void Rejects_an_empty_or_malformed_Xero_response()
     {
         Assert.Throws<System.Text.Json.JsonException>(() => XeroReportingService.ParseReport(
@@ -125,3 +167,4 @@ public sealed class XeroReportingServiceTests
             report[^1].Cells);
     }
 }
+
