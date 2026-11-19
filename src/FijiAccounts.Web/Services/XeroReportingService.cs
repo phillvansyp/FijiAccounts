@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using FijiAccounts.Web.Data;
@@ -55,8 +56,12 @@ public sealed class XeroReportingService(
                 x.ConnectionId == connection.Id && x.TenantId == tenantId && x.Kind == kind &&
                 x.PeriodFrom == copyFrom && x.PeriodTo == to, ct);
             if (retained is not null)
+            {
                 saved = ParseReport(retained.Payload, connection.XeroTenantName, SourceLink(identity, kind, from, to),
                     identity?.TaxBasis, retained.RetrievedAt);
+                if (kind == "balance-sheet")
+                    saved = await MatchXeroBalanceSheetAsync(saved, organisationId, ct);
+            }
         }
         if (saved?.RetrievedAt is { } retrieved && now - retrieved < FreshFor)
             return saved;
@@ -141,6 +146,8 @@ public sealed class XeroReportingService(
             var payload = await api.GetJsonAsync(token, tenantId, endpoint, ct);
             var readAt = DateTimeOffset.UtcNow;
             var result = ParseReport(payload, connected.XeroTenantName, source, identity?.TaxBasis, readAt);
+            if (kind == "balance-sheet")
+                result = await MatchXeroBalanceSheetAsync(result, organisationId, ct);
             var retained = await db.XeroPeriodReports.FindAsync(new object[] { connection.Id, tenantId, kind, copyFrom, to }, ct);
             if (retained is null)
                 db.XeroPeriodReports.Add(new XeroPeriodReport { ConnectionId = connection.Id, TenantId = tenantId,
@@ -241,6 +248,114 @@ public sealed class XeroReportingService(
             throw new JsonException("Xero returned a report without rows.");
         return new(organisation, source, taxBasis, PropertyText(report, "ReportName"), titles, rows, time, null);
     }
+
+    private async Task<XeroReportResult> MatchXeroBalanceSheetAsync(
+        XeroReportResult report, Guid organisationId, CancellationToken ct)
+    {
+        var names = await db.LedgerAccounts.AsNoTracking()
+            .Where(x => x.OrganisationId == organisationId && x.IsBankAccount)
+            .Select(x => x.Name).ToArrayAsync(ct);
+        return MatchXeroBalanceSheet(report, names.ToHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Xero's browser Balance Sheet presents bank and credit card balances by their sign.
+    /// The accounting API instead leaves them in their chart-of-accounts sections.
+    /// Reclassify the display rows and both sides of the sheet without changing the Xero payload.
+    /// </summary>
+    internal static XeroReportResult MatchXeroBalanceSheet(
+        XeroReportResult report, IReadOnlySet<string> bankAccountNames)
+    {
+        var rows = report.Rows;
+        if (bankAccountNames.Count == 0) return report;
+        var bank = FindSection("Bank");
+        var liabilities = FindSection("Current Liabilities");
+        var bankTotal = FindTotal("Total Bank");
+        var currentLiabilitiesTotal = FindTotal("Total Current Liabilities");
+        var assetsTotal = FindTotal("Total Assets");
+        var liabilitiesTotal = FindTotal("Total Liabilities");
+        if (bank < 0 || liabilities < 0 || bankTotal < 0 || currentLiabilitiesTotal < 0 ||
+            assetsTotal < 0 || liabilitiesTotal < 0) return report;
+
+        int FindSection(string title) => Enumerable.Range(0, rows.Count)
+            .FirstOrDefault(i => rows[i].Kind == "Section" &&
+                string.Equals(rows[i].Title, title, StringComparison.OrdinalIgnoreCase), -1);
+        int FindTotal(string title) => Enumerable.Range(0, rows.Count)
+            .FirstOrDefault(i => rows[i].Cells.Count > 0 &&
+                string.Equals(rows[i].Cells[0], title, StringComparison.OrdinalIgnoreCase), -1);
+        bool InSection(int index, int section) =>
+            index > section && !rows.Skip(section + 1).Take(index - section)
+                .Any(r => r.Kind == "Section" && r.Depth <= rows[section].Depth);
+
+        var columnCount = rows.Max(r => r.Cells.Count) - 1;
+        var adjustment = new decimal[columnCount];
+        var replacements = new Dictionary<int, XeroReportRow>();
+        var removed = new HashSet<int>();
+        var intoBank = new List<XeroReportRow>();
+        var intoLiabilities = new List<XeroReportRow>();
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            if (row.Kind != "Row" || row.Cells.Count < 2 ||
+                !bankAccountNames.Contains(row.Cells[0])) continue;
+            var fromBank = InSection(index, bank);
+            var fromLiabilities = InSection(index, liabilities);
+            if (!fromBank && !fromLiabilities) continue;
+
+            var kept = row.Cells.ToArray();
+            var moved = row.Cells.ToArray();
+            var hasMove = false;
+            for (var column = 1; column < row.Cells.Count; column++)
+            {
+                if (!TryAmount(row.Cells[column], out var value) || value >= 0)
+                {
+                    moved[column] = string.Empty;
+                    continue;
+                }
+                kept[column] = "0.00";
+                moved[column] = (-value).ToString("0.00", CultureInfo.InvariantCulture);
+                adjustment[column - 1] -= value;
+                hasMove = true;
+            }
+            if (!hasMove) continue;
+            if (kept.Skip(1).Any(cell => TryAmount(cell, out var value) && value != 0))
+                replacements[index] = row with { Cells = kept };
+            else
+                removed.Add(index);
+            var target = row with
+            {
+                Cells = moved,
+                Depth = rows[fromBank ? liabilities : bank].Depth + 1
+            };
+            (fromBank ? intoLiabilities : intoBank).Add(target);
+        }
+        if (intoBank.Count == 0 && intoLiabilities.Count == 0) return report;
+
+        var adjusted = new List<XeroReportRow>(rows.Count + intoBank.Count + intoLiabilities.Count);
+        for (var index = 0; index < rows.Count; index++)
+        {
+            if (index == bankTotal) adjusted.AddRange(intoBank);
+            if (index == currentLiabilitiesTotal) adjusted.AddRange(intoLiabilities);
+            if (removed.Contains(index)) continue;
+            var row = replacements.GetValueOrDefault(index) ?? rows[index];
+            if (index == bankTotal || index == currentLiabilitiesTotal ||
+                index == assetsTotal || index == liabilitiesTotal)
+            {
+                var cells = row.Cells.ToArray();
+                for (var column = 1; column < cells.Length; column++)
+                    if (TryAmount(cells[column], out var value))
+                        cells[column] = (value + adjustment[column - 1])
+                            .ToString("0.00", CultureInfo.InvariantCulture);
+                row = row with { Cells = cells };
+            }
+            adjusted.Add(row);
+        }
+        return report with { Rows = adjusted };
+    }
+
+    private static bool TryAmount(string value, out decimal amount) =>
+        decimal.TryParse(value, NumberStyles.Number | NumberStyles.AllowParentheses,
+            CultureInfo.InvariantCulture, out amount);
 
     internal static IReadOnlyList<XeroReportRow> RenderAgeing(IEnumerable<XeroOpenBalance> balances, DateOnly asAt)
     {
@@ -370,3 +485,4 @@ public sealed class XeroReportingService(
 
     internal sealed record OrganisationInfo(string? ShortCode, string? TaxBasis);
 }
+

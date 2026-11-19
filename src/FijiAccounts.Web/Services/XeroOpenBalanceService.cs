@@ -26,8 +26,27 @@ public sealed class XeroOpenBalanceService(ApplicationDbContext db)
                 x.SourceExchangeRate is > 0m ? decimal.Round(x.AmountDue / x.SourceExchangeRate.Value, 2, MidpointRounding.AwayFromZero) :
                 throw new InvalidOperationException("An open Xero invoice lacks its exchange rate."), x.SourceContactId)).ToList();
 
+        result.AddRange(await ReadCreditsAsync(connection.Id, baseCurrency, payables, ct));
+        return result;
+    }
+
+    internal async Task<IReadOnlyList<XeroOpenBalance>> ReadCreditsAsync(
+        Guid organisationId, bool payables, CancellationToken ct = default)
+    {
+        var connectionId = await db.XeroConnections.AsNoTracking().Where(x =>
+            x.OrganisationId == organisationId && x.IsActive && x.ContinuousSyncEnabled)
+            .Select(x => x.Id).SingleAsync(ct);
+        var baseCurrency = await db.Organisations.AsNoTracking().Where(x => x.Id == organisationId)
+            .Select(x => x.BaseCurrency).SingleAsync(ct);
+        return await ReadCreditsAsync(connectionId, baseCurrency, payables, ct);
+    }
+
+    private async Task<IReadOnlyList<XeroOpenBalance>> ReadCreditsAsync(
+        Guid connectionId, string baseCurrency, bool payables, CancellationToken ct)
+    {
+        var result = new List<XeroOpenBalance>();
         var creditDataset = payables ? "supplier-credits" : "sales-credits";
-        var credits = db.XeroMirrorRecords.AsNoTracking().Where(x => x.XeroConnectionId == connection.Id &&
+        var credits = db.XeroMirrorRecords.AsNoTracking().Where(x => x.XeroConnectionId == connectionId &&
             !x.IsArchived && (x.DatasetKey == creditDataset || x.DatasetKey == "overpayments" || x.DatasetKey == "prepayments"))
             .AsAsyncEnumerable().WithCancellation(ct);
         await foreach (var row in credits)
@@ -85,3 +104,4 @@ public sealed class XeroOpenBalanceService(ApplicationDbContext db)
         body.ValueKind == JsonValueKind.Object && body.TryGetProperty(property, out var value)
             ? value.ToString() : "";
 }
+
