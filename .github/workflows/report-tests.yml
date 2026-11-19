@@ -1,0 +1,25 @@
+name: Test pull requests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: [self-hosted, Linux, X64, account-island]
+    timeout-minutes: 20
+    env:
+      DOTNET_ROOT: /mnt/data/account-island/dotnet
+      DOTNET_CLI_HOME: /mnt/data/account-island/dotnet-cli
+      NUGET_PACKAGES: /mnt/data/account-island/nuget/packages
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+      - name: Run test suite
+        run: /mnt/data/account-island/dotnet/dotnet test FijiAccounts.slnx --configuration Release
