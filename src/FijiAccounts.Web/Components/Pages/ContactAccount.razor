@@ -1,4 +1,5 @@
 @page "/o/{OrganisationId:guid}/contacts/{ContactId:guid}/balances"
+@page "/o/{OrganisationId:guid}/contacts/{ContactId:guid}"
 @attribute [Authorize]
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
@@ -12,7 +13,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Invoices and balances</PageTitle>
+<PageTitle>@(contact is null ? "Client file" : $"{contact.Name} - Client file")</PageTitle>
 @if (loading)
 {
     <p role="status">Loading contact balances…</p>
@@ -23,23 +24,100 @@ else if (contact is null || access is null)
 }
 else
 {
-    <a href="o/@OrganisationId/contacts">Back to contacts</a>
-    <h1 class="mt-2">@contact.Name</h1>
-    <XeroDatasetDates OrganisationId="OrganisationId" />
-    @if (sourceNote is not null)
-    {
-        <p class="text-muted">@sourceNote</p>
-    }
-    @if (incompleteData)
-    {
-        <p class="alert alert-warning">Some Xero records could not be read. The amounts below are partial.</p>
-    }
-    <label class="mb-3"><input type="checkbox" @bind="onlyOutstanding" /> Show outstanding items only</label>
+    var customerItems = rows.Where(x => !x.Supplier).ToList();
+    var supplierItems = rows.Where(x => x.Supplier).ToList();
+
+    <a class="contact-file-back" href="o/@OrganisationId/contacts">Back to contacts</a>
+
+    <header class="contact-file-header">
+        <div class="contact-file-identity">
+            <span class="contact-file-avatar" aria-hidden="true">@Initials(contact.Name)</span>
+            <div>
+                <div class="contact-file-kicker">Client file</div>
+                <h1>@contact.Name</h1>
+                <div class="contact-file-meta">
+                    @if (!string.IsNullOrWhiteSpace(contact.Email))
+                    {
+                        <a href="mailto:@contact.Email">@contact.Email</a>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(contact.Phone))
+                    {
+                        <a href="tel:@contact.Phone">@contact.Phone</a>
+                    }
+                    @if ((contact.Type & PartyType.Customer) != 0)
+                    {
+                        <span class="contact-file-badge">Customer</span>
+                    }
+                    @if ((contact.Type & PartyType.Supplier) != 0)
+                    {
+                        <span class="contact-file-badge supplier">Supplier</span>
+                    }
+                    @if (contact.TradingStatus != PartyTradingStatus.Active)
+                    {
+                        <span class="contact-file-badge @(contact.TradingStatus == PartyTradingStatus.Blacklisted ? "blocked" : "paused")">@contact.TradingStatus</span>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="contact-file-actions">
+            @if ((contact.Type & PartyType.Customer) != 0)
+            {
+                <a class="btn btn-outline-secondary" href="o/@OrganisationId/contacts/@ContactId/statement">Statement</a>
+            }
+            <a class="btn btn-primary" href="o/@OrganisationId/contacts/@ContactId/documents">Documents</a>
+        </div>
+    </header>
+
+    <nav class="contact-file-tabs" aria-label="Client file sections">
+        <a href="#activity">Activity</a>
+        <a href="#contact-details">Contact details</a>
+        <a href="#financial-details">Financial details</a>
+        <a href="o/@OrganisationId/contacts/@ContactId/documents">Documents <span>@documentCount</span></a>
+    </nav>
+
+    <section id="activity" class="contact-file-section">
+        <div class="contact-summary-grid">
+            <article class="contact-summary-card">
+                <span>Invoices owed to you</span>
+                <strong>@BalanceText(customerItems)</strong>
+                <small>@OpenCount(customerItems) outstanding</small>
+            </article>
+            <article class="contact-summary-card">
+                <span>Bills you owe</span>
+                <strong>@BalanceText(supplierItems)</strong>
+                <small>@OpenCount(supplierItems) outstanding</small>
+            </article>
+            <article class="contact-summary-card">
+                <span>Documents</span>
+                <strong>@documentCount.ToString("N0")</strong>
+                <small>Stored in this client file</small>
+            </article>
+        </div>
+
+        <div class="contact-file-dataset">
+            <XeroDatasetDates OrganisationId="OrganisationId" />
+            @if (sourceNote is not null)
+            {
+                <p class="text-muted">@sourceNote</p>
+            }
+            @if (incompleteData)
+            {
+                <p class="alert alert-warning">Some Xero records could not be read. The amounts below are partial.</p>
+            }
+        </div>
+
+        <div class="contact-register-heading">
+            <div>
+                <p class="contact-file-kicker">Activity</p>
+                <h2>Invoices and bills</h2>
+            </div>
+            <label><input type="checkbox" @bind="onlyOutstanding" /> Show outstanding items only</label>
+        </div>
     @foreach (var supplier in new[] { false, true })
     {
         var items = rows.Where(x => x.Supplier == supplier).ToList();
         if (items.Count == 0 && !contact.Type.HasFlag(supplier ? PartyType.Supplier : PartyType.Customer)) { continue; }
-        <section class="setup-card mb-3">
+        <section class="contact-register mb-3">
             <h2>@(supplier ? "Supplier bills" : "Customer invoices")</h2>
             @foreach (var group in items.GroupBy(x => x.Currency).OrderBy(x => x.Key))
             {
@@ -71,6 +149,46 @@ else
             }
         </section>
     }
+    </section>
+
+    <section id="contact-details" class="contact-file-panel">
+        <div>
+            <p class="contact-file-kicker">Client record</p>
+            <h2>Contact details</h2>
+        </div>
+        <dl class="contact-file-details">
+            <dt>Primary email</dt><dd>@Display(contact.Email)</dd>
+            <dt>Accounts email</dt><dd>@Display(contact.AccountsEmail)</dd>
+            <dt>Phone</dt><dd>@Display(contact.Phone)</dd>
+            <dt>Address</dt><dd class="contact-file-address">@Display(contact.Address)</dd>
+            <dt>@TaxIdentifierLabel</dt><dd>@Display(contact.Tin)</dd>
+            <dt>Trading status</dt><dd>@contact.TradingStatus@if (!string.IsNullOrWhiteSpace(contact.TradingStatusReason)) { <span> - @contact.TradingStatusReason</span> }</dd>
+        </dl>
+    </section>
+
+    <section id="financial-details" class="contact-file-panel">
+        <div>
+            <p class="contact-file-kicker">Defaults</p>
+            <h2>Financial details</h2>
+        </div>
+        <dl class="contact-file-details">
+            @if ((contact.Type & PartyType.Customer) != 0)
+            {
+                <dt>Sales account</dt><dd>@AccountText(contact.DefaultSalesAccount, "Choose on invoice")</dd>
+                <dt>Sales @access.Organisation.TaxLabel</dt><dd>@(contact.DefaultSalesVatTreatment?.ToString() ?? "Choose on invoice")</dd>
+                <dt>Invoice currency</dt><dd>@(contact.DefaultSalesCurrency ?? access.Organisation.BaseCurrency)</dd>
+                <dt>Invoice payment terms</dt><dd>@FormatPaymentTerms(contact.DefaultSalesInvoicePaymentTermType, contact.DefaultSalesInvoiceDueDays)</dd>
+            }
+            @if ((contact.Type & PartyType.Supplier) != 0)
+            {
+                <dt>Purchase account</dt><dd>@AccountText(contact.DefaultPurchaseAccount, "Choose on bill")</dd>
+                <dt>Purchase @access.Organisation.TaxLabel</dt><dd>@(contact.DefaultPurchaseVatTreatment?.ToString() ?? "Choose on bill")</dd>
+                <dt>Bill currency</dt><dd>@(contact.DefaultPurchaseCurrency ?? access.Organisation.BaseCurrency)</dd>
+                <dt>Bill payment terms</dt><dd>@FormatPaymentTerms(contact.DefaultSupplierBillPaymentTermType, contact.DefaultSupplierBillDueDays)</dd>
+                <dt>@access.Organisation.TaxLabel registration</dt><dd>@Display(contact.VatRegistrationNumber)</dd>
+            }
+        </dl>
+    </section>
 }
 
 @code {
@@ -81,6 +199,10 @@ else
     private List<Entry> rows = [];
     private bool loading = true, onlyOutstanding, incompleteData;
     private string? sourceNote;
+    private int documentCount;
+    private string TaxIdentifierLabel => access?.Organisation.CountryCode.Equals("NZ", StringComparison.OrdinalIgnoreCase) == true
+        ? "IRD number"
+        : "TIN";
     private sealed record Entry(bool Supplier, string Number, DateOnly? Date, DateOnly? DueDate, string Status,
         string Currency, decimal? Total, decimal Due, string? Path);
 
@@ -90,6 +212,7 @@ else
         rows = [];
         contact = null;
         sourceNote = null;
+        documentCount = 0;
         incompleteData = false;
         onlyOutstanding = false;
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -97,9 +220,14 @@ else
         access = await TenantAccess.FindAsync(userId, OrganisationId);
         if (access is not null)
         {
-            contact = await Db.BusinessParties.AsNoTracking().SingleOrDefaultAsync(x => x.Id == ContactId && x.OrganisationId == OrganisationId);
+            contact = await Db.BusinessParties.AsNoTracking()
+                .Include(x => x.DefaultSalesAccount)
+                .Include(x => x.DefaultPurchaseAccount)
+                .Include(x => x.Documents)
+                .SingleOrDefaultAsync(x => x.Id == ContactId && x.OrganisationId == OrganisationId);
             if (contact is not null)
             {
+                documentCount = contact.Documents.Count;
                 var divisions = await TenantAccess.ListAccessibleDivisionIdsAsync(userId, OrganisationId);
                 await LoadLocal(divisions, access.Organisation.BaseCurrency);
                 if (await TenantAccess.GetReportDivisionScopeAsync(userId, OrganisationId) is null)
@@ -141,6 +269,36 @@ else
     private static string StatusText(string status) => status switch
     {
         "Posted" => "Awaiting payment", "PartPaid" => "Part paid", _ => status
+    };
+
+    private static string Initials(string name)
+    {
+        var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Concat(words.Take(2).Select(x => char.ToUpperInvariant(x[0])));
+    }
+
+    private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    private static string AccountText(LedgerAccount? account, string fallback) =>
+        account is null ? fallback : $"{account.Code} - {account.Name}";
+
+    private static int OpenCount(IEnumerable<Entry> items) => items.Count(x => x.Due != 0m);
+
+    private static string BalanceText(IEnumerable<Entry> items)
+    {
+        var balances = items.GroupBy(x => x.Currency)
+            .Select(group => $"{group.Key} {Math.Abs(group.Sum(x => x.Due)):N2}")
+            .ToArray();
+        return balances.Length == 0 ? "0.00" : string.Join(" / ", balances);
+    }
+
+    private static string FormatPaymentTerms(PaymentTermType type, int value) => type switch
+    {
+        PaymentTermType.DaysAfterDocumentDate => $"{value} days",
+        PaymentTermType.DayOfFollowingMonth => $"Day {value} of following month",
+        PaymentTermType.EndOfCurrentMonth => "End of current month",
+        PaymentTermType.EndOfFollowingMonth => "End of following month",
+        _ => $"{value} days"
     };
 
     private async Task LoadXero(string baseCurrency)

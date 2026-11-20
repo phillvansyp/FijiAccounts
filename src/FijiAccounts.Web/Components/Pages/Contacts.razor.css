@@ -97,8 +97,6 @@
 .contact-row:hover > td { background: #fbfdfd; }
 .contact-name {
     display: block;
-    border: 0;
-    background: transparent;
     padding: 0;
     color: #153c4c;
     text-align: left;
@@ -106,6 +104,7 @@
     font-weight: 600;
     line-height: 1.45;
     overflow-wrap: anywhere;
+    text-decoration: none;
 }
 .contact-name:hover { color: #067383; text-decoration: underline; }
 .contact-types { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .35rem; }
