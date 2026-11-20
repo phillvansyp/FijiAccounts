@@ -178,7 +178,7 @@ else
                 <ContactWindow OrganisationId="@OrganisationId" OrderedIds="@orderedContactIds" Offset="@(FirstContact - 1)" InitialRows="@parties" Context="party">
                     <tr @key="party.Id" class="contact-row">
                         <td>
-                            <button type="button" class="contact-name" @onclick="() => ToggleDetails(party.Id)" aria-expanded="@(expandedPartyId == party.Id)" aria-controls="contact-details-@party.Id">@party.Name</button>
+                                                        <a class="contact-name" href="o/@OrganisationId/contacts/@party.Id">@party.Name</a>
                             <a class="small" href="o/@OrganisationId/contacts/@party.Id/balances">Invoices &amp; balances</a>
                             <div class="contact-types">
                                 @if (archivedIds.Contains(party.Id))
@@ -238,7 +238,7 @@ else
                             <details class="contact-menu">
                                 <summary>Actions</summary>
                                 <div class="contact-menu-items">
-                                    <button type="button" @onclick="() => ToggleDetails(party.Id)">View details</button>
+                                                                        <a href="o/@OrganisationId/contacts/@party.Id">Open client file</a>
                                     @if (canEdit)
                                     {
                                         <button type="button" @onclick="() => EditEmails(party)">Edit contact</button>
