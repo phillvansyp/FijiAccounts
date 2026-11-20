@@ -41,6 +41,9 @@ public sealed record UpdateBusinessPartyContactDetailsRequest(
     string? AccountsEmail,
     string? Address);
 
+public sealed record UpdatePartyTradingStatusRequest(
+    Guid OrganisationId, Guid BusinessPartyId, PartyTradingStatus Status, string? Reason);
+
 public sealed record UpdateCustomerDefaultsRequest(
     Guid OrganisationId,
     Guid BusinessPartyId,
@@ -92,6 +95,29 @@ public sealed class BusinessPartyService(
     TransactionCurrencyService? currencyService = null,
     BusinessPartyDocumentService? documentService = null)
 {
+    public async Task UpdateTradingStatusAsync(string userId, UpdatePartyTradingStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAccessAsync(userId, request.OrganisationId, cancellationToken);
+        if (!Enum.IsDefined(request.Status))
+            throw new InvalidOperationException("Choose a valid contact status.");
+        var reason = OptionalText(request.Reason, 500, "status reason");
+        if (request.Status != PartyTradingStatus.Active && reason is null)
+            throw new InvalidOperationException("Enter a reason to suspend or blacklist this contact.");
+        var party = await db.BusinessParties.SingleOrDefaultAsync(x =>
+            x.Id == request.BusinessPartyId && x.OrganisationId == request.OrganisationId,
+            cancellationToken) ?? throw new InvalidOperationException("Contact not found.");
+        if (party.TradingStatus == request.Status && party.TradingStatusReason == reason) return;
+        var previous = new { Status = party.TradingStatus.ToString(), party.TradingStatusReason };
+        party.TradingStatus = request.Status;
+        party.TradingStatusReason = reason;
+        party.TradingStatusChangedAt = DateTimeOffset.UtcNow;
+        db.AuditEvents.Add(CreateAuditEvent(request.OrganisationId, userId,
+            "BusinessPartyTradingStatusChanged", party.Id,
+            new { party.Name, Previous = previous, Status = request.Status.ToString(), Reason = reason }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     private readonly TransactionCurrencyService currencies =
         currencyService ?? new TransactionCurrencyService(db, access);
     public async Task<BusinessParty> CreateAsync(

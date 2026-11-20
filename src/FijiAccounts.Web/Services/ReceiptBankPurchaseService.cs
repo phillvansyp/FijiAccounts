@@ -42,7 +42,7 @@ public sealed class ReceiptBankPurchaseService(
             if (organisation.RequireSupplierPaymentApproval)
                 throw new InvalidOperationException("This company requires independent payment approval. Create the purchase draft and use the payment approval workflow.");
             if (!await db.BusinessParties.AnyAsync(x => x.Id == supplierId && x.OrganisationId == organisationId &&
-                x.IsActive && (x.Type & PartyType.Supplier) != 0, ct))
+                x.IsActive && x.TradingStatus == PartyTradingStatus.Active && (x.Type & PartyType.Supplier) != 0, ct))
                 throw new InvalidOperationException("Choose an active supplier for this bill.");
             if (!await db.LedgerAccounts.AnyAsync(x => x.Id == expenseAccountId && x.OrganisationId == organisationId &&
                 x.IsActive && !x.IsBankAccount && x.Code != "1150" &&

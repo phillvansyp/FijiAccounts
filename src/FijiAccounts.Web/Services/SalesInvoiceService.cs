@@ -93,6 +93,10 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
                 x => x.Id == invoiceId && x.OrganisationId == organisationId,
                 cancellationToken)
             ?? throw new InvalidOperationException("Invoice not found.");
+        if (!await db.BusinessParties.AnyAsync(x => x.Id == invoice.CustomerId &&
+                x.OrganisationId == organisationId && x.TradingStatus == PartyTradingStatus.Active,
+                cancellationToken))
+            throw new InvalidOperationException("This customer is suspended or blacklisted. Reactivate them before posting an invoice.");
         if (invoice.Status != InvoiceStatus.Draft)
         {
             throw new InvalidOperationException("Only draft invoices can be prepared.");
@@ -129,6 +133,10 @@ public sealed class SalesInvoiceService(ApplicationDbContext db, TenantAccessSer
     {
         if (!await access.CanPostJournalsAsync(userId, organisationId)) throw new UnauthorizedAccessException("You cannot post invoices for this organisation.");
         var invoice = await db.SalesInvoices.Include(x => x.Lines).ThenInclude(x => x.ProductItem).SingleOrDefaultAsync(x => x.Id == invoiceId && x.OrganisationId == organisationId, cancellationToken) ?? throw new InvalidOperationException("Invoice not found.");
+        if (!await db.BusinessParties.AnyAsync(x => x.Id == invoice.CustomerId &&
+                x.OrganisationId == organisationId && x.TradingStatus == PartyTradingStatus.Active,
+                cancellationToken))
+            throw new InvalidOperationException("This customer is suspended or blacklisted. Reactivate them before posting an invoice.");
         if (invoice.Status != InvoiceStatus.Draft) throw new InvalidOperationException("Only draft invoices can be posted.");
         if (invoice.Lines.Any(x => string.IsNullOrWhiteSpace(x.Description)))
         {
@@ -380,7 +388,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
     {
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode); if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.IssueDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter valid invoice dates and at least one line.");
-        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer in this organisation.");
+        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && x.TradingStatus == PartyTradingStatus.Active && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer who is not suspended or blacklisted.");
         var accountIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray(); if (await db.LedgerAccounts.CountAsync(x => x.OrganisationId == request.OrganisationId && x.IsActive && accountIds.Contains(x.Id) && x.Type == AccountType.Revenue, cancellationToken) != accountIds.Length) throw new InvalidOperationException("Every line must use an active revenue account.");
         var schedule = IndirectTaxSchedules.For(organisation.CountryCode); return request.Lines.Select(x => { if (string.IsNullOrWhiteSpace(x.Description) || x.Quantity <= 0 || x.UnitPrice < 0) throw new InvalidOperationException("Each invoice line needs a description, positive quantity and non-negative price."); var tax = schedule.CalculateFromExclusive(new Money(x.Quantity * x.UnitPrice, currency).Round(), request.IssueDate, x.VatTreatment); return CreateLine(x, tax, exchangeRateToBase); }).ToList();
     }
@@ -435,7 +443,7 @@ invoice.Total = lines.Sum(x => x.GrossAmount);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.IssueDate) throw new InvalidOperationException("The due date cannot be before the issue date.");
         if (request.Lines.Count == 0) throw new InvalidOperationException("An invoice needs at least one line.");
-        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer in this organisation.");
+        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.CustomerId && x.OrganisationId == request.OrganisationId && x.IsActive && x.TradingStatus == PartyTradingStatus.Active && (x.Type & PartyType.Customer) != 0, cancellationToken)) throw new InvalidOperationException("Select an active customer who is not suspended or blacklisted.");
 
         var revenueIds = request.Lines.Select(x => x.RevenueAccountId).Distinct().ToArray();
         var revenue = await db.LedgerAccounts.Where(x => x.OrganisationId == request.OrganisationId && x.IsActive && revenueIds.Contains(x.Id) && x.Type == AccountType.Revenue).ToDictionaryAsync(x => x.Id, cancellationToken);

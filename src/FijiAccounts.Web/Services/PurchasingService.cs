@@ -112,7 +112,7 @@ public sealed class PurchasingService(
         var jurisdiction = IslandJurisdictions.Get(organisation.CountryCode);
         if (!jurisdiction.TaxPackEnabled) throw new InvalidOperationException($"The {jurisdiction.CountryName} tax pack is not yet enabled. Transactions are locked until its rules have been verified.");
         if (request.DueDate < request.BillDate || request.Lines.Count == 0) throw new InvalidOperationException("Enter a valid bill date, due date and at least one line.");
-        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.SupplierId && x.OrganisationId == request.OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0, ct)) throw new InvalidOperationException("Select an active supplier in this organisation.");
+        if (!await db.BusinessParties.AnyAsync(x => x.Id == request.SupplierId && x.OrganisationId == request.OrganisationId && x.IsActive && x.TradingStatus == PartyTradingStatus.Active && (x.Type & PartyType.Supplier) != 0, ct)) throw new InvalidOperationException("Select an active supplier who is not suspended or blacklisted.");
         var supplierReference = request.SupplierReference.Trim();
         var duplicateBill = await SupplierReferenceDuplicateLookup.FindAsync(
             db, request.OrganisationId, request.SupplierId,

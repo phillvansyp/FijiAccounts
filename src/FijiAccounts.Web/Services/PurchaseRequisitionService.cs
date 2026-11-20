@@ -290,6 +290,7 @@ public sealed class PurchaseRequisitionService(
             x.Branch.OrganisationId == request.OrganisationId && x.IsActive && x.Branch.IsActive, ct);
         var supplierExists = await db.BusinessParties.AnyAsync(x =>
             x.Id == request.SupplierId && x.OrganisationId == request.OrganisationId && x.IsActive &&
+            x.TradingStatus == PartyTradingStatus.Active &&
             (x.Type & PartyType.Supplier) != 0, ct);
         if (!dimensionExists || !supplierExists)
         {
