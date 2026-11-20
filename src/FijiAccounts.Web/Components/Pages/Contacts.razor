@@ -185,6 +185,10 @@ else
                                 {
                                     <span class="contact-type">Archived</span>
                                 }
+                                @if (party.TradingStatus != PartyTradingStatus.Active)
+                                {
+                                    <span class="badge @(party.TradingStatus == PartyTradingStatus.Blacklisted ? "bg-danger" : "bg-warning text-dark")">@party.TradingStatus</span>
+                                }
                                 @if (party.Type == 0)
                                 {
                                     <span class="contact-muted">No trading role</span>
@@ -238,6 +242,7 @@ else
                                     @if (canEdit)
                                     {
                                         <button type="button" @onclick="() => EditEmails(party)">Edit contact</button>
+                                        <button type="button" @onclick="() => EditTradingStatus(party)">@(party.TradingStatus == PartyTradingStatus.Active ? "Suspend or blacklist" : "Change trading status")</button>
                                     }
                                     @if ((party.Type & PartyType.Customer) != 0)
                                     {
@@ -267,6 +272,7 @@ else
                                     <dl>
                                         <dt>@TaxIdentifierLabel</dt><dd>@(party.Tin ?? "—")</dd>
                                         <dt>Address</dt><dd class="contact-address">@(party.Address ?? "—")</dd>
+                                        <dt>Trading status</dt><dd>@party.TradingStatus @(string.IsNullOrWhiteSpace(party.TradingStatusReason) ? "" : $"— {party.TradingStatusReason}")</dd>
                                     </dl>
                                     @if ((party.Type & PartyType.Customer) != 0)
                                     {
@@ -296,6 +302,28 @@ else
                                 </div>
                             </td>
                         </tr>
+                    }
+
+                    @if (editingStatusPartyId == party.Id)
+                    {
+                        <tr><td colspan="4"><div class="setup-card">
+                            <h3>Trading status for @party.Name</h3>
+                            <p class="text-muted">Suspended and blacklisted contacts remain in reports and existing balances, but cannot be used for new trading documents.</p>
+                            <div class="row mb-3">
+                                <div class="col-md-4"><label class="form-label">Status</label>
+                                    <select class="form-select" @bind="editingTradingStatus">
+                                        <option value="@PartyTradingStatus.Active">Active</option>
+                                        <option value="@PartyTradingStatus.Suspended">Suspended</option>
+                                        <option value="@PartyTradingStatus.Blacklisted">Blacklisted</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-8"><label class="form-label">Reason @(editingTradingStatus == PartyTradingStatus.Active ? "(optional)" : "(required)")</label>
+                                    <textarea class="form-control" maxlength="500" @bind="editingStatusReason" @bind:event="oninput"></textarea>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-primary me-2" disabled="@savingTradingStatus" @onclick="SaveTradingStatus">Save status</button>
+                            <button type="button" class="btn btn-outline-secondary" @onclick="CancelTradingStatus">Cancel</button>
+                        </div></td></tr>
                     }
 
                     @if (editingEmailPartyId == party.Id)
@@ -750,6 +778,42 @@ else
         }
     }
     private Guid? editingEmailPartyId;
+    private Guid? editingStatusPartyId;
+    private PartyTradingStatus editingTradingStatus;
+    private string? editingStatusReason;
+    private bool savingTradingStatus;
+
+    private void EditTradingStatus(BusinessParty party)
+    {
+        editingStatusPartyId = party.Id;
+        editingTradingStatus = party.TradingStatus;
+        editingStatusReason = party.TradingStatusReason;
+    }
+
+    private void CancelTradingStatus()
+    {
+        editingStatusPartyId = null;
+        editingStatusReason = null;
+    }
+
+    private async Task SaveTradingStatus()
+    {
+        if (editingStatusPartyId is not Guid id || !canEdit || savingTradingStatus) return;
+        savingTradingStatus = true;
+        try
+        {
+            await BusinessParties.UpdateTradingStatusAsync(userId,
+                new UpdatePartyTradingStatusRequest(OrganisationId, id, editingTradingStatus, editingStatusReason));
+            CancelTradingStatus();
+            await Reload();
+            ShowStatus("Contact trading status updated.", "alert-success");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            ShowStatus(ex.Message, "alert-danger");
+        }
+        finally { savingTradingStatus = false; }
+    }
     private string? editingEmail;
     private string? editingAccountsEmail;
     private string? editingAddress;
@@ -843,6 +907,7 @@ else
         currentPage = 1;
         expandedPartyId = null;
         CancelEmails();
+        CancelTradingStatus();
         CancelCustomerSettings();
         CancelDefaults();
         if (access is not null)

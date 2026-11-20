@@ -4,6 +4,7 @@ using FijiAccounts.Domain.Tax;
 namespace FijiAccounts.Web.Data;
 
 [Flags] public enum PartyType { Customer = 1, Supplier = 2 }
+public enum PartyTradingStatus { Active = 0, Suspended = 1, Blacklisted = 2 }
 public enum InvoiceStatus { Draft, Posted, PartPaid, Paid, Voided, Credited }
 public enum SalesCreditNoteStatus { Posted = 0, Draft = 1 }
 
@@ -45,6 +46,9 @@ public sealed class BusinessParty
     public int DefaultSupplierBillDueDays { get; set; } = 30;
 
     public bool IsActive { get; set; } = true;
+    public PartyTradingStatus TradingStatus { get; set; } = PartyTradingStatus.Active;
+    [MaxLength(500)] public string? TradingStatusReason { get; set; }
+    public DateTimeOffset? TradingStatusChangedAt { get; set; }
 }
 
 public sealed class SupplierAccountProfile

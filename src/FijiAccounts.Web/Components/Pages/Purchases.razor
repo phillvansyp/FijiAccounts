@@ -775,6 +775,7 @@ protected override async Task OnParametersSetAsync()
             .Where(x =>
                 x.OrganisationId == OrganisationId &&
                 x.IsActive &&
+                x.TradingStatus == PartyTradingStatus.Active &&
                 (x.Type & PartyType.Supplier) != 0)
             .OrderBy(x => x.Name)
             .ToListAsync();

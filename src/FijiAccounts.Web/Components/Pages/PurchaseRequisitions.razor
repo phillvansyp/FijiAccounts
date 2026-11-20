@@ -233,7 +233,7 @@ else
 
         if (canCreate)
         {
-            suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
+suppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && x.TradingStatus == PartyTradingStatus.Active && (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
             accounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == OrganisationId && x.IsActive && (x.Type == AccountType.Expense || x.Type == AccountType.Asset)).OrderBy(x => x.Code).ToListAsync();
             branches = await TenantAccess.ListAccessibleBranchesAsync(userId, OrganisationId);
             projects = await ProjectService.ListAsync(userId, OrganisationId);

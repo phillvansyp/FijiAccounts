@@ -9,6 +9,31 @@ namespace FijiAccounts.Web.Tests;
 public sealed class BusinessPartyServiceTests
 {
     [Fact]
+    public async Task TradingStatus_RequiresReasonAndRecordsTransitions()
+    {
+        await using var test = await AccountingTestDatabase.CreateAsync();
+        var service = new BusinessPartyService(test.Db, test.Access);
+        var party = await service.CreateAsync(test.UserId,
+            CreateRequest(test.Organisation.Id, test.Account("4000").Id, test.Account("6000").Id));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateTradingStatusAsync(
+            test.UserId, new(test.Organisation.Id, party.Id, PartyTradingStatus.Blacklisted, " ")));
+        await service.UpdateTradingStatusAsync(test.UserId,
+            new(test.Organisation.Id, party.Id, PartyTradingStatus.Suspended, "Account review"));
+        await service.UpdateTradingStatusAsync(test.UserId,
+            new(test.Organisation.Id, party.Id, PartyTradingStatus.Blacklisted, "Fraud concern"));
+        await service.UpdateTradingStatusAsync(test.UserId,
+            new(test.Organisation.Id, party.Id, PartyTradingStatus.Active, "Review completed"));
+
+        var stored = await test.Db.BusinessParties.AsNoTracking().SingleAsync(x => x.Id == party.Id);
+        Assert.Equal(PartyTradingStatus.Active, stored.TradingStatus);
+        Assert.Equal("Review completed", stored.TradingStatusReason);
+        Assert.NotNull(stored.TradingStatusChangedAt);
+        Assert.Equal(3, await test.Db.AuditEvents.CountAsync(x =>
+            x.EntityId == party.Id.ToString() && x.EventType == "BusinessPartyTradingStatusChanged"));
+    }
+
+    [Fact]
     public async Task CreateSupplierWithContract_RejectsInvalidFileAndPersistsValidContract()
     {
         await using var test = await AccountingTestDatabase.CreateAsync();

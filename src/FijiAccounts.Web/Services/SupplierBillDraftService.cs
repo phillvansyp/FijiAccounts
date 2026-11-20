@@ -387,6 +387,7 @@ public sealed class SupplierBillDraftService(
                     x.Id == supplierId &&
                     x.OrganisationId == request.OrganisationId &&
                     x.IsActive &&
+                    x.TradingStatus == PartyTradingStatus.Active &&
                     (x.Type & PartyType.Supplier) != 0,
                 cancellationToken))
         {

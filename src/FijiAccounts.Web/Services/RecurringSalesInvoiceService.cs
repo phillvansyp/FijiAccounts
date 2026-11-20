@@ -87,6 +87,7 @@ public sealed class RecurringSalesInvoiceService(
                     x.Id == request.CustomerId &&
                     x.OrganisationId == request.OrganisationId &&
                     x.IsActive &&
+                    x.TradingStatus == PartyTradingStatus.Active &&
                     (x.Type & PartyType.Customer) != 0,
                 ct);
 
@@ -265,6 +266,7 @@ public sealed class RecurringSalesInvoiceService(
                     x.Id == request.CustomerId &&
                     x.OrganisationId == request.OrganisationId &&
                     x.IsActive &&
+                    x.TradingStatus == PartyTradingStatus.Active &&
                     (x.Type & PartyType.Customer) != 0,
                 ct);
 

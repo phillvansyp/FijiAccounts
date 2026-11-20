@@ -299,7 +299,7 @@ else
         selectedBankReceiptId = receipt.Id; selectedBankMatch = match;
         var statement = await Db.BankStatementLines.AsNoTracking().SingleAsync(x => x.Id == match.Id && x.OrganisationId == org);
         var company = await Db.Organisations.AsNoTracking().SingleAsync(x => x.Id == org);
-        bankMatchSuppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == org && x.IsActive &&
+        bankMatchSuppliers = await Db.BusinessParties.AsNoTracking().Where(x => x.OrganisationId == org && x.IsActive && x.TradingStatus == PartyTradingStatus.Active &&
             (x.Type & PartyType.Supplier) != 0).OrderBy(x => x.Name).ToListAsync();
         bankMatchAccounts = await Db.LedgerAccounts.AsNoTracking().Where(x => x.OrganisationId == org && x.IsActive &&
             !x.IsBankAccount && x.Code != "1150" &&

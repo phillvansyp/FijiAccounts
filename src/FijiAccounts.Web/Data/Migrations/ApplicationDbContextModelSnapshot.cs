@@ -762,6 +762,16 @@ namespace FijiAccounts.Web.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("TradingStatus")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("TradingStatusChangedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TradingStatusReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
 

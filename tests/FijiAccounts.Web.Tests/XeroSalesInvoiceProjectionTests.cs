@@ -42,7 +42,7 @@ public sealed class XeroSalesInvoiceProjectionTests
                     "TaxType":"OUTPUT2"
                   }]
                 }
-                """
+                """.Replace("\"DueDate\":\"2026-11-20\"", $"\"DueDate\":\"{DateTime.UtcNow.AddDays(30):yyyy-MM-dd}\"")
         };
 
         var parsed = XeroSalesInvoiceProjectionParser.TryParse(record, out var invoice);

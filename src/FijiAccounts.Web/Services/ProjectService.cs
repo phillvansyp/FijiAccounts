@@ -115,6 +115,7 @@ public sealed class ProjectService(
                 x => x.Id == customerId &&
                      x.OrganisationId == request.OrganisationId &&
                      x.IsActive &&
+                     x.TradingStatus == PartyTradingStatus.Active &&
                      (x.Type & PartyType.Customer) != 0,
                 cancellationToken))
         {
