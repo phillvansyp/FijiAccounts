@@ -319,7 +319,7 @@ else
                        placeholder="Search invoice or customer" />
 
                 <InputSelect class="form-select"
-                             @bind-Value="invoiceStatusFilter">
+                             @bind-Value="InvoiceStatusFilter">
                     <option value="">All statuses</option>
                     <option value="Draft">Draft</option>
                     <option value="Posted">Posted</option>
@@ -460,6 +460,24 @@ else
     private string invoiceStatusFilter = string.Empty;
     private string invoiceSort = "Date";
     private bool invoiceSortDescending = true;
+    private string InvoiceStatusFilter
+    {
+        get => invoiceStatusFilter;
+        set
+        {
+            if (invoiceStatusFilter == value)
+            {
+                return;
+            }
+
+            invoiceStatusFilter = value;
+            if (value == "Overdue")
+            {
+                invoiceSort = "Due";
+                invoiceSortDescending = false;
+            }
+        }
+    }
     private List<RecurringSalesInvoice> recurringInvoices = [];
     private Guid[] accessibleDivisionIds = [];
     private RecurringInvoiceAutomationRun? latestAutomationRun;
