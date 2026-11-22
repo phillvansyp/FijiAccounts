@@ -189,7 +189,7 @@ else
                             <tr>
                                 <th>Customer</th>
                                 <th>Customer PO</th>
-                            <th>Status</th>
+                            <th class="invoice-status-cell" style="min-width:9.75rem;white-space:nowrap">Status</th>
                                 <th>Frequency</th>
                                 <th>Next invoice</th>
                                 <th>Due terms</th>
@@ -369,7 +369,7 @@ else
                                 </button>
                             </th>
                             <th>Customer PO</th>
-                            <th>Status</th>
+                            <th class="invoice-status-cell" style="min-width:9.75rem;white-space:nowrap">Status</th>
                             <th class="text-end">Net</th>
                             <th class="text-end">VAT</th>
                             <th class="text-end">
@@ -402,7 +402,7 @@ else
                             <td class="customer-po-summary">
                                 @FormatCustomerPurchaseOrders(invoice)
                             </td>
-                            <td><span class="status-badge status-@invoice.Status.ToString().ToLowerInvariant()">@(overdue ? "Overdue" : invoice.Status)</span></td>
+                            <td class="invoice-status-cell" style="min-width:9.75rem;white-space:nowrap"><span class="status-badge text-nowrap status-@invoice.Status.ToString().ToLowerInvariant()">@(overdue ? FormatOverdueStatus(invoice.DueDate) : invoice.Status.ToString())</span></td>
                             <td class="text-end">@invoice.Currency @invoice.TransactionSubtotal.ToString("N2")</td>
                             <td class="text-end">@invoice.Currency @invoice.TransactionVatTotal.ToString("N2")</td>
                             <td class="text-end">@invoice.Currency @invoice.TransactionTotal.ToString("N2")</td>
@@ -427,7 +427,7 @@ else
                             <td>@xeroInvoice.DueDate.ToString("dd MMM yyyy")</td>
                             <td>@xeroInvoice.ContactName</td>
                             <td class="customer-po-summary">@(string.IsNullOrWhiteSpace(xeroInvoice.Reference) ? "—" : xeroInvoice.Reference)</td>
-                            <td><span class="status-badge status-@xeroInvoice.StatusKey.ToLowerInvariant()">@xeroInvoice.StatusLabel</span></td>
+                            <td class="invoice-status-cell" style="min-width:9.75rem;white-space:nowrap"><span class="status-badge text-nowrap status-@xeroInvoice.StatusKey.ToLowerInvariant()">@(xeroInvoice.IsOverdue ? FormatOverdueStatus(xeroInvoice.DueDate) : xeroInvoice.StatusLabel)</span></td>
                             <td class="text-end">@xeroInvoice.Currency @xeroInvoice.Subtotal.ToString("N2")</td>
                             <td class="text-end">@xeroInvoice.Currency @xeroInvoice.TaxTotal.ToString("N2")</td>
                             <td class="text-end">@xeroInvoice.Currency @xeroInvoice.Total.ToString("N2")</td>
@@ -859,7 +859,7 @@ else
             $"+{purchaseOrders.Count - 2} more";
     }
 
-    private static bool IsOverdue(SalesInvoice invoice) =>
+    private static string FormatOverdueStatus(DateOnly dueDate)    {        var days = Math.Max(            1,            DateOnly.FromDateTime(DateTime.Today).DayNumber - dueDate.DayNumber);        return $"Overdue · {days} day{(days == 1 ? "" : "s")}";    }    private static bool IsOverdue(SalesInvoice invoice) =>
         invoice.Status is not InvoiceStatus.Paid and not InvoiceStatus.Voided and not InvoiceStatus.Credited &&
         invoice.DueDate < DateOnly.FromDateTime(DateTime.Today) &&
         invoice.AmountPaid + invoice.AmountCredited < invoice.Total;
